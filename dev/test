@@ -1,0 +1,140 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "======================================"
+echo "Invariant Spark Plugin Test Suite"
+echo "======================================"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+PLUGIN_JAR="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
+RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
+REPORT_DIR="demo/output"
+REPORT_FILE="$REPORT_DIR/report.json"
+
+cleanup() {
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}✕ Test suite failed${NC}"
+  fi
+  return $exit_code
+}
+
+trap cleanup EXIT
+
+# Step 1: Build Plugin
+echo ""
+echo -e "${YELLOW}Step 1/7: Building plugin...${NC}"
+cd plugin
+sbt clean compile test assembly 2>&1 | grep -E "^(.*error.*|.*warning.*|.*Test.*|.*BUILD.*)" || true
+cd ..
+
+if [ ! -f "$PLUGIN_JAR" ]; then
+  echo -e "${RED}✗ Plugin JAR not found: $PLUGIN_JAR${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✓ Plugin built successfully${NC}"
+
+# Step 2: Verify plugin JAR
+echo ""
+echo -e "${YELLOW}Step 2/7: Verifying plugin JAR...${NC}"
+JAR_SIZE=$(du -h "$PLUGIN_JAR" | cut -f1)
+echo "  JAR size: $JAR_SIZE"
+echo "  Main classes:"
+jar tf "$PLUGIN_JAR" | grep "com/example/plugin" | head -5
+
+# Step 3: Build Runner
+echo ""
+echo -e "${YELLOW}Step 3/7: Building runner...${NC}"
+cd runner
+sbt clean compile assembly 2>&1 | grep -E "^(.*error.*|.*warning.*|.*BUILD.*)" || true
+cd ..
+
+if [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Runner JAR not found: $RUNNER_JAR${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✓ Runner built successfully${NC}"
+
+# Step 4: Verify Spark availability
+echo ""
+echo -e "${YELLOW}Step 4/7: Verifying Spark environment...${NC}"
+if command -v spark-submit &> /dev/null; then
+  SPARK_VERSION=$(spark-submit --version 2>&1 | grep "version" | head -1)
+  echo "  Spark: $SPARK_VERSION"
+else
+  echo -e "${YELLOW}⚠ spark-submit not in PATH, will use local execution${NC}"
+fi
+
+# Step 5: Prepare output directory
+echo ""
+echo -e "${YELLOW}Step 5/7: Preparing output directory...${NC}"
+mkdir -p "$REPORT_DIR"
+rm -f "$REPORT_FILE"
+
+# Step 6: Run Spark Job
+echo ""
+echo -e "${YELLOW}Step 6/7: Executing Spark integration test...${NC}"
+echo "  Input: demo/input/sample.csv"
+echo "  Output: demo/output/result.parquet"
+echo "  Report: $REPORT_FILE"
+
+if command -v spark-submit &> /dev/null; then
+  spark-submit \
+    --class com.example.runner.PluginRunner \
+    --master local[*] \
+    --jars "$PLUGIN_JAR" \
+    "$RUNNER_JAR" \
+    "demo/input/sample.csv" \
+    "demo/output/result.parquet" \
+    "$REPORT_FILE"
+else
+  java -cp "$PLUGIN_JAR:$RUNNER_JAR" com.example.runner.PluginRunner \
+    "demo/input/sample.csv" \
+    "demo/output/result.parquet" \
+    "$REPORT_FILE"
+fi
+
+SPARK_EXIT=$?
+
+# Step 7: Validate Report
+echo ""
+echo -e "${YELLOW}Step 7/7: Validating execution report...${NC}"
+
+if [ ! -f "$REPORT_FILE" ]; then
+  echo -e "${RED}✗ Report file not generated${NC}"
+  exit 1
+fi
+
+# Parse report
+STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | cut -d'"' -f4)
+PLUGIN_VERSION=$(grep -o '"pluginVersion": "[^"]*"' "$REPORT_FILE" | cut -d'"' -f4)
+DURATION=$(grep -o '"durationMs": [0-9]*' "$REPORT_FILE" | cut -d' ' -f2)
+
+echo "  Status: $STATUS"
+echo "  Plugin Version: $PLUGIN_VERSION"
+echo "  Duration: ${DURATION}ms"
+
+if [ "$STATUS" != "PASS" ]; then
+  echo -e "${RED}✗ Plugin execution failed${NC}"
+  cat "$REPORT_FILE"
+  exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✓ All validation passed${NC}"
+echo -e "${GREEN}✓ Plugin JAR is ready: $PLUGIN_JAR${NC}"
+echo -e "${GREEN}✓ Execution report: $REPORT_FILE${NC}"
+echo ""
+echo "To view results in web UI:"
+echo "  ./dev/report"
+echo ""
+
+exit 0
