@@ -10,6 +10,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion
 )
 
+unmanagedJars in Compile += file("../plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar")
+
 assembly / assemblyJarName := "invariant-spark-runner.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard

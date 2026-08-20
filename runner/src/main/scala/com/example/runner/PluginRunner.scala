@@ -139,7 +139,7 @@ object PluginRunner {
 
   private def reportToJson(report: ExecutionReport): String = {
     import scala.collection.mutable
-    val sb = mutable.StringBuilder()
+    val sb = new mutable.StringBuilder()
     sb.append("{\n")
     sb.append(s"""  "status": "${report.status}",\n""")
     sb.append(s"""  "timestamp": "${report.timestamp}",\n""")
