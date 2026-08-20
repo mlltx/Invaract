@@ -66,6 +66,7 @@ Real Spark execution is the source of truth. Unit test passing ≠ plugin workin
 │   │   ├── layout.tsx
 │   │   ├── page.tsx             # Main report viewer component
 │   │   ├── page.module.css      # Mobile-first styling
+│   │   ├── globals.css
 │   │   └── api/report/route.ts  # API endpoint for report JSON
 │   ├── package.json             # Next.js + TypeScript
 │   ├── tsconfig.json
@@ -360,8 +361,8 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 5. Setup Spark 3.5.1
 6. Run Spark integration test
 7. Validate report
-8. Comment on PR with results
-9. Upload artifacts
+8. Upload test report artifact
+9. Fail job if tests fail
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.
 
@@ -517,7 +518,7 @@ spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar
 - **Browser Compatibility**: Works in Safari, Chrome, Firefox on iOS and Android.
 - **Screen Width**: UI optimized for 375–430px (iPhone SE to Pro Max).
 - **Offline**: Web UI requires connection to Codespace; cannot work offline.
-- **Real-time Updates**: UI polls for new reports every 2 seconds while open.
+- **Real-time Updates**: Web UI polls for new reports every 2 seconds while open.
 
 ## Typical Development Session
 

@@ -1,154 +1,50 @@
-name: Spark Plugin Test Suite
+name: Spark Plugin Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
-
-env:
-  JAVA_VERSION: '21'
-  SCALA_VERSION: '2.12.18'
-  SPARK_VERSION: '3.5.1'
+    branches: [ main, develop ]
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-
-      - name: Cache sbt dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.sbt
-            ~/.cache/coursier
-          key: ${{ runner.os }}-sbt-${{ hashFiles('**/build.sbt') }}
-
-      - name: Build plugin and run unit tests
-        run: |
-          cd plugin
-          sbt clean compile test assembly
-
-      - name: Verify plugin JAR
-        run: |
-          JAR_FILE="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
-          if [ ! -f "$JAR_FILE" ]; then
-            echo "Plugin JAR not found at $JAR_FILE"
-            exit 1
-          fi
-          echo "Plugin JAR created: $JAR_FILE"
-          du -h "$JAR_FILE"
-
-      - name: Setup Apache Spark
-        run: |
-          SPARK_VERSION="3.5.1"
-          HADOOP_VERSION="3"
-          SPARK_DIST="spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}"
-          cd /tmp
-          if [ ! -d "$SPARK_DIST" ]; then
-            wget -q "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_DIST}.tgz" -O spark.tgz
-            tar -xzf spark.tgz
-          fi
-          echo "SPARK_HOME=/tmp/$SPARK_DIST" >> $GITHUB_ENV
-          echo "/tmp/$SPARK_DIST/bin" >> $GITHUB_PATH
-
-      - name: Build runner application
-        run: |
-          cd runner
-          sbt clean compile assembly
-
-      - name: Verify runner JAR
-        run: |
-          JAR_FILE="runner/target/scala-2.12/invariant-spark-runner.jar"
-          if [ ! -f "$JAR_FILE" ]; then
-            echo "Runner JAR not found at $JAR_FILE"
-            exit 1
-          fi
-          echo "Runner JAR created: $JAR_FILE"
-
-      - name: Prepare output directory
-        run: |
-          mkdir -p demo/output
-
-      - name: Run Spark integration test
-        run: |
-          PLUGIN_JAR="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
-          RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
-          REPORT_FILE="demo/output/report.json"
-
-          spark-submit \
-            --class com.example.runner.PluginRunner \
-            --master local[*] \
-            --jars "$PLUGIN_JAR" \
-            "$RUNNER_JAR" \
-            "demo/input/sample.csv" \
-            "demo/output/result.parquet" \
-            "$REPORT_FILE"
-
-      - name: Validate execution report
-        run: |
-          REPORT_FILE="demo/output/report.json"
-          if [ ! -f "$REPORT_FILE" ]; then
-            echo "Report file not found: $REPORT_FILE"
-            exit 1
-          fi
-
-          # Check status
-          STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | cut -d'"' -f4)
-          echo "Execution Status: $STATUS"
-
-          if [ "$STATUS" != "PASS" ]; then
-            echo "Plugin execution failed"
-            cat "$REPORT_FILE"
-            exit 1
-          fi
-
-          echo "Test suite PASSED"
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: |
-            demo/output/report.json
-            demo/output/result.parquet
-
-      - name: Comment on PR with results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = JSON.parse(fs.readFileSync('demo/output/report.json', 'utf8'));
-            const status = report.status === 'PASS' ? '✅' : '❌';
-            const comment = `## ${status} Plugin Test Results
-
-            - **Status**: ${report.status}
-            - **Duration**: ${report.durationMs}ms
-            - **Spark Version**: ${report.sparkVersion}
-            - **Java Version**: ${report.javaVersion}
-
-            **Unit Tests**: ${report.tests.unit.passed}/${report.tests.unit.passed + report.tests.unit.failed} ✓
-            **Integration Tests**: ${report.tests.integration.passed}/${report.tests.integration.passed + report.tests.integration.failed} ✓
-
-            Input Rows: ${report.input.rowCount}
-            Output Rows: ${report.output.rowCount}
-            `;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: 'sbt'
+    
+    - name: Download and setup Spark
+      run: |
+        mkdir -p /opt/spark
+        cd /opt
+        wget -q https://archive.apache.org/dist/spark/spark-3.5.1/spark-3.5.1-bin-hadoop3.tgz
+        tar -xzf spark-3.5.1-bin-hadoop3.tgz
+        mv spark-3.5.1-bin-hadoop3 spark
+        rm spark-3.5.1-bin-hadoop3.tgz
+        echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
+        echo "/opt/spark/bin" >> $GITHUB_PATH
+    
+    - name: Run test suite
+      run: |
+        chmod +x ./dev/test
+        ./dev/test
+    
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: demo/output/report.json
+    
+    - name: Check test status
+      if: failure()
+      run: |
+        echo "Tests failed. Check the report artifact."
+        exit 1

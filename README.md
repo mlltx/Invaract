@@ -1,4 +1,190 @@
-# Invariant Spark Plugin
+# Invariant - Spark Plugin Mobile Development Environment
+
+A complete, production-ready development environment for building and testing Apache Spark plugins from a mobile device using GitHub Codespaces and Claude Code.
+
+## Quick Start
+
+### Prerequisites
+
+- GitHub account with Codespaces access
+- Modern web browser (Safari, Chrome, Firefox)
+- No local development setup required
+
+### Setup
+
+1. **Clone and open in Codespaces**:
+   ```bash
+   git clone https://github.com/mlltx/Invariant.git
+   # Open in GitHub Codespaces (Dev Container auto-provisions everything)
+   ```
+
+2. **Wait for setup** (~5 minutes first time):
+   - JDK 21
+   - sbt
+   - Apache Spark 3.5.1
+   - Node.js 20
+
+3. **Run tests**:
+   ```bash
+   ./dev/test
+   ```
+
+4. **View results**:
+   ```bash
+   ./dev/report
+   ```
+
+5. **Forward port 3000 to your phone and open `http://localhost:3000`**
+
+## Development Workflow
+
+```
+Phone Browser
+    ↓
+Claude Code (Claude.ai/code)
+    ↓
+Edit plugin source
+    ↓
+./dev/test
+    ↓
+Spark executes real JAR
+    ↓
+Results → demo/output/report.json
+    ↓
+./dev/report (port 3000)
+    ↓
+View on phone
+```
+
+## Key Features
+
+✅ **Real Spark Execution**: Packages plugin into JAR, runs via `spark-submit`  
+✅ **Mobile-First UI**: Fully responsive, 375px+ screens  
+✅ **One Command Testing**: `./dev/test` = full pipeline  
+✅ **GitHub Codespaces**: Complete environment in cloud  
+✅ **CI/CD Pipeline**: GitHub Actions mirrors local testing  
+✅ **Deterministic Results**: Fixed demo data, reproducible outputs  
+✅ **Structured Reports**: JSON output, machine-readable  
+✅ **Event Logging**: Track plugin execution steps  
+
+## File Structure
+
+```
+plugin/              # Scala/Spark plugin source
+  └── src/main/...   # InvariantPlugin.scala
+demo/
+  ├── input/         # Deterministic test data (CSV)
+  └── output/        # Generated results (parquet, report.json)
+runner/              # Spark job executor (reads plugin JAR)
+web/                 # Next.js + TypeScript results viewer
+dev/
+  ├── test           # Main test harness (7-step verification)
+  └── report         # Start web UI (port 3000)
+.devcontainer/       # Codespaces configuration
+.github/workflows/   # GitHub Actions CI/CD
+CLAUDE.md            # Complete development guide
+```
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `./dev/test` | Build, test, package, execute plugin, generate report |
+| `./dev/report` | Start web UI on localhost:3000 |
+| `cd plugin && sbt test` | Run unit tests only |
+| `cd plugin && sbt assembly` | Build JAR only |
+
+## Example Plugin
+
+The included example plugin demonstrates:
+
+- **Schema Validation**: Ensures required columns exist
+- **Transformation**: Adds `value_squared` computed column
+- **Event Logging**: Records execution timeline
+- **Error Handling**: Validates input before processing
+
+See `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala`
+
+## Test Results
+
+Each run of `./dev/test` generates:
+
+1. **report.json** - Structured test results
+   - Status (PASS/FAIL)
+   - Build info (versions, duration)
+   - Test counts (unit, integration)
+   - Input/output schema and sample data
+   - Plugin events and diagnostics
+
+2. **result.parquet** - Output data from plugin execution
+
+3. **Web UI** - Mobile-friendly visualization of results
+
+## Mobile Access
+
+1. Run `./dev/test` to generate report
+2. Run `./dev/report` to start web UI
+3. Codespaces forwards port 3000
+4. Open forwarded URL on phone (375px+ responsive)
+5. UI polls every 2 seconds for new reports
+
+## Architecture
+
+```
+Local Spark Master (local[*])
+    ↓
+Plugin JAR (sbt assembly)
+    ↓
+Spark Job Runner (Scala executor)
+    ↓
+Input: demo/input/sample.csv
+    ↓
+Plugin: InvariantPlugin.scala
+    ↓
+Output: demo/output/result.parquet + report.json
+    ↓
+Web UI: Next.js (typescript + CSS)
+```
+
+## CI/CD
+
+GitHub Actions workflow (`.github/workflows/test.yml`):
+- Runs on every push/PR
+- Sets up JDK 21 + Spark 3.5.1
+- Executes `./dev/test`
+- Uploads report artifact
+- Fails job if tests fail
+
+## Important Notes
+
+- **Real Spark Execution**: Plugin runs via actual `spark-submit`, not unit test mocks
+- **Exit Code 0**: Success means true plugin execution passed
+- **Mobile-First**: Optimized for 375-430px screens
+- **No Infrastructure**: Uses local Spark master, no cloud required
+- **Deterministic**: Same demo data every run, reproducible results
+
+## Documentation
+
+See [CLAUDE.md](CLAUDE.md) for:
+- Complete development guide
+- Building and modifying plugins
+- Report format specification
+- Troubleshooting failures
+- Performance expectations
+- Future extensibility
+
+## References
+
+- [Apache Spark](https://spark.apache.org/) - Data processing framework
+- [Scala 2.12](https://docs.scala-lang.org/2.12/) - Programming language
+- [sbt](https://www.scala-sbt.org/) - Build tool
+- [Next.js 14](https://nextjs.org/) - React framework
+- [GitHub Codespaces](https://github.com/features/codespaces) - Cloud development
+
+---
+
+**Status**: Ready for production  
+**Last Updated**: 2024-08-20 Spark Plugin
 
 A complete, mobile-first Apache Spark plugin development environment designed for GitHub Codespaces and mobile device development with Claude Code.
 
