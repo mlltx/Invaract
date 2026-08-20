@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mobile-responsive results viewer (Next.js web UI)
 - GitHub Actions CI/CD workflow
 - Comprehensive test harness (`./dev/test`)
+- **Contract model (Phase 1a)**: new `contract` module representing data
+  contracts, modeled after ODCS
+  - `ContractParser`: YAML → object model, fail-fast on structural errors
+  - `ContractValidator`: structural validation (duplicate names, empty
+    schemas, contradictory flags, unrecognized types)
+  - `ContractCompatibility`: diffs two contract versions and classifies the
+    required MAJOR/MINOR/PATCH bump; flags version bumps inconsistent with
+    the actual scope of change
+  - 31 unit tests, real YAML fixtures (valid, additive, breaking, invalid)
+  - Documentation: [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
 
 ### Changed
 

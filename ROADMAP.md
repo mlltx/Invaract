@@ -351,22 +351,89 @@ Once Phase 0 is complete, implementation work can proceed with confidence that t
 
 ## Phase 1 — Core Verification Engine
 
-### Objective
+### Phase 1a — Contract Model
 
-Implement the core verification engine for Spark transformations against data contracts.
+#### Objective
 
-### Scope (Future)
+Represent the minimum contract required to verify a transformation while
+remaining compatible with an established open contract standard.
 
-- [ ] Contract representation (ODCS-based)
-- [ ] Spark logical plan analysis
-- [ ] Contract verification algorithm
-- [ ] Verification result format
-- [ ] Column-level lineage tracking
-- [ ] Integration tests
+ODCS (Open Data Contract Standard) was evaluated as the base representation.
+Invariant avoids redefining concepts ODCS already standardizes (schema,
+fields, types) and folds anything else it doesn't yet interpret into
+`extensions` rather than rejecting it. See
+[docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md) for the full design.
 
-### Dependencies
+```yaml
+id: customer_orders
+version: 1.0
+
+inputs:
+  - location: raw.orders
+    schema:
+      ...
+
+outputs:
+  - location: gold.customer_orders
+    schema:
+      ...
+
+rules:
+  ...
+```
+
+#### Requirements
+
+The model supports:
+
+- [x] Contract identity
+- [x] Version
+- [x] Input datasets
+- [x] Output datasets
+- [x] Physical locations
+- [x] Schemas
+- [x] Field names
+- [x] Types
+- [x] Nullability
+- [x] Required/optional semantics
+- [x] Compatibility rules
+- [x] Contract extensions
+
+#### Deliverables
+
+- [x] **Contract parser** — `ContractParser` (YAML → object model), fail-fast on structural errors (`contract/src/main/scala/com/example/contract/ContractParser.scala`)
+- [x] **Contract object model** — `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule` (`contract/src/main/scala/com/example/contract/ContractModel.scala`)
+- [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/example/contract/ContractValidator.scala`)
+- [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/example/contract/ContractCompatibility.scala`)
+- [x] **Contract fixtures** — valid, additive, breaking, and invalid example contracts (`contract/src/test/resources/fixtures/`)
+- [x] **Documentation** — [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
+
+31 unit tests across parser, validator, and compatibility engine, run via `cd contract && sbt test`.
+
+#### Dependencies
 
 - Phase 0 completion
+
+---
+
+### Phase 1b — Verification Engine (Next)
+
+#### Objective
+
+Verify that a Spark transformation's actual behavior conforms to a parsed,
+validated `Contract`.
+
+#### Scope (Future)
+
+- [ ] Spark logical plan analysis
+- [ ] Contract verification algorithm (schema/dependency/transformation checks per [MISSION.md, §8](MISSION.md#8-contract-verification))
+- [ ] Verification result format
+- [ ] Column-level lineage tracking
+- [ ] Integration tests against the `plugin`/`runner` demo pipeline
+
+#### Dependencies
+
+- Phase 1a completion (contract model)
 
 ---
 

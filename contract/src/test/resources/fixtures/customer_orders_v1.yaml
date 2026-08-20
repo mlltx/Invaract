@@ -1,0 +1,48 @@
+id: customer_orders
+version: "1.0.0"
+status: active
+
+inputs:
+  - name: orders
+    location: raw.orders
+    format: table
+    schema:
+      fields:
+        - name: order_id
+          type: string
+          required: true
+          nullable: false
+        - name: customer_id
+          type: string
+          required: true
+          nullable: false
+        - name: amount
+          type: decimal
+          required: true
+          nullable: false
+
+outputs:
+  - name: customer_orders
+    location: gold.customer_orders
+    format: table
+    schema:
+      fields:
+        - name: customer_id
+          type: string
+          required: true
+          nullable: false
+        - name: total_orders
+          type: integer
+          required: true
+          nullable: false
+        - name: total_amount
+          type: decimal
+          required: true
+          nullable: false
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: data-platform-team

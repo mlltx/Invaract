@@ -1,0 +1,21 @@
+id: warnings_field_issues
+version: "1.0.0"
+status: active
+
+outputs:
+  - name: customer_orders
+    location: gold.customer_orders
+    schema:
+      fields:
+        - name: customer_id
+          type: string
+          required: true
+          nullable: true
+        - name: customer_id
+          type: string
+          required: false
+          nullable: true
+        - name: mystery_field
+          type: variant
+          required: false
+          nullable: true
