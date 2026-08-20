@@ -40,20 +40,20 @@ case class CompatibilityReport(changes: List[CompatibilityChange]) {
 object ContractCompatibility {
 
   def diff(previous: Contract, next: Contract): CompatibilityReport = {
-    val changes = List.newBuilder[CompatibilityChange]
+    val idChange =
+      if (previous.id != next.id)
+        List(CompatibilityChange(
+          CompatibilityLevel.Breaking,
+          "id",
+          s"Contract id changed from '${previous.id}' to '${next.id}'"
+        ))
+      else Nil
 
-    if (previous.id != next.id) {
-      changes += CompatibilityChange(
-        CompatibilityLevel.Breaking,
-        "id",
-        s"Contract id changed from '${previous.id}' to '${next.id}'"
-      )
-    }
+    val changes = idChange ++
+      diffDatasets("outputs", previous.outputs, next.outputs) ++
+      diffDatasets("inputs", previous.inputs, next.inputs)
 
-    changes ++= diffDatasets("outputs", previous.outputs, next.outputs)
-    changes ++= diffDatasets("inputs", previous.inputs, next.inputs)
-
-    CompatibilityReport(changes.result())
+    CompatibilityReport(changes)
   }
 
   /** Returns human-readable problems if `next.version` does not reflect the
@@ -91,90 +91,101 @@ object ContractCompatibility {
     else CompatibilityLevel.Patch
   }
 
-  private def diffDatasets(kind: String, previous: List[Dataset], next: List[Dataset]): List[CompatibilityChange] = {
-    val changes = List.newBuilder[CompatibilityChange]
-    val prevByName = previous.map(d => d.name -> d).toMap
-    val nextByName = next.map(d => d.name -> d).toMap
+  /** Diffs two named collections by matching entries on `name`, classifying
+    * each side-only entry via `onRemoved`/`onAdded` and each matched pair via
+    * `onCommon`. Shared by `diffDatasets` and `diffSchema`, which differ only
+    * in what "removed", "added", and "changed" mean for a `Dataset` vs. a
+    * `Field`.
+    */
+  private def diffByName[T](previous: List[T], next: List[T])(
+    name: T => String,
+    onRemoved: (String, T) => CompatibilityChange,
+    onAdded: (String, T) => CompatibilityChange,
+    onCommon: (String, T, T) => List[CompatibilityChange]
+  ): List[CompatibilityChange] = {
+    val prevByName = previous.map(t => name(t) -> t).toMap
+    val nextByName = next.map(t => name(t) -> t).toMap
 
-    (prevByName.keySet -- nextByName.keySet).foreach { name =>
-      changes += CompatibilityChange(CompatibilityLevel.Breaking, s"$kind.$name", s"Dataset '$name' was removed")
+    val removed = (prevByName.keySet -- nextByName.keySet).toList.sorted.map(n => onRemoved(n, prevByName(n)))
+    val added = (nextByName.keySet -- prevByName.keySet).toList.sorted.map(n => onAdded(n, nextByName(n)))
+    val common = (prevByName.keySet intersect nextByName.keySet).toList.sorted.flatMap { n =>
+      onCommon(n, prevByName(n), nextByName(n))
     }
 
-    (nextByName.keySet -- prevByName.keySet).foreach { name =>
-      changes += CompatibilityChange(CompatibilityLevel.Minor, s"$kind.$name", s"Dataset '$name' was added")
-    }
-
-    (prevByName.keySet intersect nextByName.keySet).toList.sorted.foreach { name =>
-      val prevDs = prevByName(name)
-      val nextDs = nextByName(name)
-
-      if (prevDs.location != nextDs.location) {
-        changes += CompatibilityChange(
-          CompatibilityLevel.Breaking,
-          s"$kind.$name.location",
-          s"Location changed from '${prevDs.location}' to '${nextDs.location}'"
-        )
-      }
-
-      changes ++= diffSchema(s"$kind.$name.schema", prevDs.schema, nextDs.schema)
-    }
-
-    changes.result()
+    removed ++ added ++ common
   }
 
-  private def diffSchema(path: String, previous: Schema, next: Schema): List[CompatibilityChange] = {
-    val changes = List.newBuilder[CompatibilityChange]
-    val prevByName = previous.fields.map(f => f.name -> f).toMap
-    val nextByName = next.fields.map(f => f.name -> f).toMap
+  private def diffDatasets(kind: String, previous: List[Dataset], next: List[Dataset]): List[CompatibilityChange] =
+    diffByName(previous, next)(
+      name = _.name,
+      onRemoved = (n, _) =>
+        CompatibilityChange(CompatibilityLevel.Breaking, s"$kind.$n", s"Dataset '$n' was removed"),
+      onAdded = (n, _) =>
+        CompatibilityChange(CompatibilityLevel.Minor, s"$kind.$n", s"Dataset '$n' was added"),
+      onCommon = (n, prevDs, nextDs) => {
+        val locationChange =
+          if (prevDs.location != nextDs.location)
+            List(CompatibilityChange(
+              CompatibilityLevel.Breaking,
+              s"$kind.$n.location",
+              s"Location changed from '${prevDs.location}' to '${nextDs.location}'"
+            ))
+          else Nil
 
-    (prevByName.keySet -- nextByName.keySet).foreach { name =>
-      changes += CompatibilityChange(CompatibilityLevel.Breaking, s"$path.$name", s"Field '$name' was removed")
-    }
-
-    (nextByName.keySet -- prevByName.keySet).foreach { name =>
-      val field = nextByName(name)
-      if (field.required) {
-        changes += CompatibilityChange(
-          CompatibilityLevel.Breaking,
-          s"$path.$name",
-          s"Required field '$name' was added without a default; existing producers will fail validation"
-        )
-      } else {
-        changes += CompatibilityChange(CompatibilityLevel.Minor, s"$path.$name", s"Optional field '$name' was added")
+        locationChange ++ diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
       }
-    }
+    )
 
-    (prevByName.keySet intersect nextByName.keySet).toList.sorted.foreach { name =>
-      val prevField = prevByName(name)
-      val nextField = nextByName(name)
+  private def diffSchema(path: String, previous: Schema, next: Schema): List[CompatibilityChange] =
+    diffByName(previous.fields, next.fields)(
+      name = _.name,
+      onRemoved = (n, _) =>
+        CompatibilityChange(CompatibilityLevel.Breaking, s"$path.$n", s"Field '$n' was removed"),
+      onAdded = (n, field) =>
+        if (field.required)
+          CompatibilityChange(
+            CompatibilityLevel.Breaking,
+            s"$path.$n",
+            s"Required field '$n' was added without a default; existing producers will fail validation"
+          )
+        else
+          CompatibilityChange(CompatibilityLevel.Minor, s"$path.$n", s"Optional field '$n' was added"),
+      onCommon = (n, prevField, nextField) => {
+        val typeChange =
+          if (prevField.fieldType != nextField.fieldType)
+            List(CompatibilityChange(
+              CompatibilityLevel.Breaking,
+              s"$path.$n.type",
+              s"Type changed from '${prevField.fieldType}' to '${nextField.fieldType}'"
+            ))
+          else Nil
 
-      if (prevField.fieldType != nextField.fieldType) {
-        changes += CompatibilityChange(
-          CompatibilityLevel.Breaking,
-          s"$path.$name.type",
-          s"Type changed from '${prevField.fieldType}' to '${nextField.fieldType}'"
-        )
+        val requiredChange =
+          if (!prevField.required && nextField.required)
+            List(CompatibilityChange(
+              CompatibilityLevel.Breaking,
+              s"$path.$n.required",
+              s"Field '$n' changed from optional to required"
+            ))
+          else Nil
+
+        val nullableChange =
+          if (prevField.nullable && !nextField.nullable)
+            List(CompatibilityChange(
+              CompatibilityLevel.Breaking,
+              s"$path.$n.nullable",
+              s"Field '$n' changed from nullable to non-nullable"
+            ))
+          else Nil
+
+        // Only recurse when at least one side actually declares nested fields;
+        // two leaf fields would otherwise pay for an empty diff every time.
+        val nestedChange =
+          if (prevField.properties.nonEmpty || nextField.properties.nonEmpty)
+            diffSchema(s"$path.$n", Schema(prevField.properties), Schema(nextField.properties))
+          else Nil
+
+        typeChange ++ requiredChange ++ nullableChange ++ nestedChange
       }
-
-      if (!prevField.required && nextField.required) {
-        changes += CompatibilityChange(
-          CompatibilityLevel.Breaking,
-          s"$path.$name.required",
-          s"Field '$name' changed from optional to required"
-        )
-      }
-
-      if (prevField.nullable && !nextField.nullable) {
-        changes += CompatibilityChange(
-          CompatibilityLevel.Breaking,
-          s"$path.$name.nullable",
-          s"Field '$name' changed from nullable to non-nullable"
-        )
-      }
-
-      changes ++= diffSchema(s"$path.$name", Schema(prevField.properties), Schema(nextField.properties))
-    }
-
-    changes.result()
-  }
+    )
 }

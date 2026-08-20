@@ -71,11 +71,8 @@ object ContractParser {
   }
 
   private def parseDatasets(raw: Option[Any], field: String): List[Dataset] = raw match {
-    case None => Nil
-    case Some(value) =>
-      loadList(value, field).zipWithIndex.map { case (item, idx) =>
-        parseDataset(loadMap(item, s"$field[$idx]"), s"$field[$idx]")
-      }
+    case None        => Nil
+    case Some(value) => parseListOf(value, field)(parseDataset)
   }
 
   private def parseDataset(raw: Map[String, Any], context: String): Dataset = {
@@ -95,10 +92,7 @@ object ContractParser {
       "fields",
       throw new ContractParseException(s"Missing 'fields' in $context")
     )
-    val fields = loadList(fieldsRaw, s"$context.fields").zipWithIndex.map { case (item, idx) =>
-      parseField(loadMap(item, s"$context.fields[$idx]"), s"$context.fields[$idx]")
-    }
-    Schema(fields)
+    Schema(parseListOf(fieldsRaw, s"$context.fields")(parseField))
   }
 
   private def parseField(raw: Map[String, Any], context: String): Field = {
@@ -108,11 +102,8 @@ object ContractParser {
     val nullable = optBoolean(raw, "nullable", context).getOrElse(!required)
 
     val properties = raw.get("properties") match {
-      case Some(value) =>
-        loadList(value, s"$context.properties").zipWithIndex.map { case (item, idx) =>
-          parseField(loadMap(item, s"$context.properties[$idx]"), s"$context.properties[$idx]")
-        }
-      case None => Nil
+      case Some(value) => parseListOf(value, s"$context.properties")(parseField)
+      case None        => Nil
     }
 
     Field(name, fieldType, required, nullable, properties)
@@ -121,14 +112,24 @@ object ContractParser {
   private def parseRules(raw: Option[Any]): List[ContractRule] = raw match {
     case None => Nil
     case Some(value) =>
-      loadList(value, "rules").zipWithIndex.map { case (item, idx) =>
-        val map = loadMap(item, s"rules[$idx]")
-        val ruleType = requireString(map, "type", s"rules[$idx]")
+      parseListOf(value, "rules") { (map, context) =>
+        val ruleType = requireString(map, "type", context)
         ContractRule(ruleType, map - "type")
       }
   }
 
   // -- YAML -> Scala coercion helpers -------------------------------------
+
+  /** Parses a YAML sequence of mappings, indexing each item's context as
+    * `$context[idx]` for error messages. Shared by every list-of-object
+    * field in the document (datasets, schema fields, nested properties,
+    * rules).
+    */
+  private def parseListOf[T](raw: Any, context: String)(parseItem: (Map[String, Any], String) => T): List[T] =
+    loadList(raw, context).zipWithIndex.map { case (item, idx) =>
+      val itemContext = s"$context[$idx]"
+      parseItem(loadMap(item, itemContext), itemContext)
+    }
 
   private def loadMap(value: Any, context: String): Map[String, Any] = value match {
     case null => throw new ContractParseException(s"Expected a mapping for '$context', but it was empty")
@@ -144,18 +145,23 @@ object ContractParser {
       throw new ContractParseException(s"Expected a list for '$context', got: $other")
   }
 
+  /** Looks up `key`, treating an explicit YAML `null` the same as an absent
+    * key. The one coercion primitive `requireString`/`optString`/`optBoolean`
+    * all build on, so "is this key present" is decided in exactly one place.
+    */
+  private def optValue(raw: Map[String, Any], key: String): Option[Any] =
+    raw.get(key).filter(_ != null)
+
   private def requireString(raw: Map[String, Any], key: String, context: String): String =
-    raw.get(key) match {
-      case Some(null) | None =>
-        throw new ContractParseException(s"Missing required field '$key' in $context")
-      case Some(value) => String.valueOf(value)
-    }
+    optValue(raw, key)
+      .map(String.valueOf)
+      .getOrElse(throw new ContractParseException(s"Missing required field '$key' in $context"))
 
   private def optString(raw: Map[String, Any], key: String): Option[String] =
-    raw.get(key).filter(_ != null).map(String.valueOf)
+    optValue(raw, key).map(String.valueOf)
 
   private def optBoolean(raw: Map[String, Any], key: String, context: String): Option[Boolean] =
-    raw.get(key).filter(_ != null).map {
+    optValue(raw, key).map {
       case b: java.lang.Boolean => b.booleanValue()
       case s: String            => s.toBoolean
       case other =>

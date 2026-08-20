@@ -12,6 +12,13 @@ class ContractCompatibilityTest extends AnyFunSuite {
   private def fixture(name: String): Contract =
     ContractParser.parseFile(new File(s"src/test/resources/fixtures/$name"))
 
+  /** Rewrites the fields of every output dataset's schema, so tests can
+    * isolate a single field-level change without hand-writing the
+    * Contract -> Dataset -> Schema copy chain at each call site.
+    */
+  private def withOutputFields(contract: Contract)(f: List[Field] => List[Field]): Contract =
+    contract.copy(outputs = contract.outputs.map(ds => ds.copy(schema = Schema(f(ds.schema.fields)))))
+
   test("diff should classify adding an optional field as MINOR") {
     val v1 = fixture("customer_orders_v1.yaml")
     val v1_1 = fixture("customer_orders_v1_1_compatible.yaml")
@@ -45,11 +52,8 @@ class ContractCompatibilityTest extends AnyFunSuite {
   test("diff should classify adding a new required field as BREAKING") {
     val v1 = fixture("customer_orders_v1.yaml")
 
-    val v1WithRequiredAddition = v1.copy(
-      outputs = v1.outputs.map { ds =>
-        ds.copy(schema = Schema(ds.schema.fields :+ Field("region", "string", required = true, nullable = false)))
-      }
-    )
+    val v1WithRequiredAddition =
+      withOutputFields(v1)(_ :+ Field("region", "string", required = true, nullable = false))
 
     val report = ContractCompatibility.diff(v1, v1WithRequiredAddition)
     assert(report.isBreaking)
@@ -61,22 +65,14 @@ class ContractCompatibilityTest extends AnyFunSuite {
 
     // Start from a variant where total_orders is nullable, then tighten it,
     // isolating the nullable -> non-nullable transition from the required flag.
-    val relaxed = v1.copy(
-      outputs = v1.outputs.map { ds =>
-        ds.copy(schema = Schema(ds.schema.fields.map {
-          case f if f.name == "total_orders" => f.copy(nullable = true, required = false)
-          case f                              => f
-        }))
-      }
-    )
-    val tightened = relaxed.copy(
-      outputs = relaxed.outputs.map { ds =>
-        ds.copy(schema = Schema(ds.schema.fields.map {
-          case f if f.name == "total_orders" => f.copy(nullable = false)
-          case f                              => f
-        }))
-      }
-    )
+    val relaxed = withOutputFields(v1)(_.map {
+      case f if f.name == "total_orders" => f.copy(nullable = true, required = false)
+      case f                              => f
+    })
+    val tightened = withOutputFields(relaxed)(_.map {
+      case f if f.name == "total_orders" => f.copy(nullable = false)
+      case f                              => f
+    })
 
     val report = ContractCompatibility.diff(relaxed, tightened)
     assert(report.isBreaking)
