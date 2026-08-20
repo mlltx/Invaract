@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invariant Contributors
+
 package com.example.plugin
 
 import org.apache.spark.sql.SparkSession

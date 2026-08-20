@@ -1,50 +1,151 @@
-name: Spark Plugin Tests
+name: Test and Build
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
+      - 'feature/**'
   pull_request:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    
+    name: Test on ${{ matrix.os }} / Java ${{ matrix.java-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        java-version: ['11', '17', '21']
+        exclude:
+          # Reduce matrix size: test all Java versions on Linux, others on default
+          - os: macos-latest
+            java-version: '11'
+          - os: windows-latest
+            java-version: '11'
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-        cache: 'sbt'
-    
-    - name: Download and setup Spark
-      run: |
-        mkdir -p /opt/spark
-        cd /opt
-        wget -q https://archive.apache.org/dist/spark/spark-3.5.1/spark-3.5.1-bin-hadoop3.tgz
-        tar -xzf spark-3.5.1-bin-hadoop3.tgz
-        mv spark-3.5.1-bin-hadoop3 spark
-        rm spark-3.5.1-bin-hadoop3.tgz
-        echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
-        echo "/opt/spark/bin" >> $GITHUB_PATH
-    
-    - name: Run test suite
-      run: |
-        chmod +x ./dev/test
-        ./dev/test
-    
-    - name: Upload report
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-report
-        path: demo/output/report.json
-    
-    - name: Check test status
-      if: failure()
-      run: |
-        echo "Tests failed. Check the report artifact."
-        exit 1
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Verify sbt installation
+        run: sbt --version
+
+      - name: Set up Spark 3.5.1
+        shell: bash
+        run: |
+          if [ ! -d "/opt/spark" ]; then
+            echo "Installing Apache Spark 3.5.1..."
+            mkdir -p /tmp/spark-setup
+            cd /tmp/spark-setup
+
+            SPARK_VERSION="3.5.1"
+            SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
+            SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+
+            curl -fsSL "$SPARK_URL" -o spark.tgz
+            tar -xzf spark.tgz
+
+            sudo mkdir -p /opt/spark
+            sudo mv ${SPARK_PACKAGE}/* /opt/spark/
+            rm -rf /tmp/spark-setup
+
+            echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
+            echo "/opt/spark/bin" >> $GITHUB_PATH
+          else
+            echo "Spark already installed"
+            echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
+            echo "/opt/spark/bin" >> $GITHUB_PATH
+          fi
+
+      - name: Verify Spark installation
+        shell: bash
+        run: spark-submit --version
+
+      - name: Build and test plugin
+        run: |
+          cd plugin
+          sbt clean compile test assembly
+          cd ..
+        shell: bash
+
+      - name: Verify plugin JAR
+        run: |
+          JAR_PATH="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
+          if [ ! -f "$JAR_PATH" ]; then
+            echo "ERROR: Plugin JAR not found"
+            exit 1
+          fi
+          ls -lh "$JAR_PATH"
+        shell: bash
+
+      - name: Build runner
+        run: |
+          cd runner
+          sbt clean compile assembly
+          cd ..
+        shell: bash
+
+      - name: Prepare test data
+        run: mkdir -p demo/output
+        shell: bash
+
+      - name: Run Spark integration test
+        shell: bash
+        run: |
+          spark-submit \
+            --class com.example.runner.PluginRunner \
+            --master local[*] \
+            --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
+            runner/target/scala-2.12/invariant-spark-runner.jar \
+            demo/input/sample.csv \
+            demo/output/result.parquet \
+            demo/output/report.json
+
+      - name: Validate execution report
+        run: |
+          import json
+          
+          with open('demo/output/report.json', 'r') as f:
+              report = json.load(f)
+          
+          if report['status'] != 'PASS':
+              print(f"ERROR: Report status is {report['status']}")
+              exit(1)
+          
+          print("✓ Test passed")
+        shell: python
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: report-${{ matrix.os }}-java${{ matrix.java-version }}
+          path: demo/output/report.json
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.test.result }}" == "failure" ]; then
+            echo "❌ Tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi
