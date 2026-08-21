@@ -204,13 +204,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       # Validates the same path a contributor with only Docker installed
       # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
       # sbt, Spark 3.5.1, every module built at image-build time) and run
       # it. docker run's exit code is dev/regression's — non-zero fails
       # this step, and therefore the job, exactly as a local run would.
+      #
+      # cache-from/to: type=gha caches Docker layers in GitHub's Actions
+      # cache. The base image, apt-get, sbt-download, and Spark-download
+      # layers all come before COPY . . in the Dockerfile, so they don't
+      # depend on repo content at all — those (the network-bound layers)
+      # get reused across virtually every build regardless of what
+      # changed, even though the final `RUN ./dev/build` layer still
+      # re-runs on any source change (it comes after COPY . .).
       - name: Build regression image
-        run: docker build -t invariant-regression -f docker/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          tags: invariant-regression
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run contract regression pack in Docker
         run: docker run --rm invariant-regression
