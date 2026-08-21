@@ -685,6 +685,12 @@ Docker.
       `dev/regression` on every OS/Java matrix leg, so the contract-abort
       path has CI coverage for the first time — previously CI only checked
       the PASS case.
+- [x] CI also runs a dedicated `docker-regression` job that builds
+      `docker/Dockerfile` and runs it, so the Docker path
+      (`dev/regression-docker`) is verified on every push too, not just
+      documented — this environment's sandbox couldn't verify it directly
+      (its egress policy blocks Docker Hub's image CDN), so CI is this
+      path's actual verification.
 
 #### Scope (Future)
 

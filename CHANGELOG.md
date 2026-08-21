@@ -151,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `dev/regression` on every matrix leg, giving the contract-abort path
     CI coverage for the first time (previously only the PASS case was
     checked in CI)
+  - CI also gained a dedicated `docker-regression` job that builds
+    `docker/Dockerfile` and runs it, exercising the same
+    `./dev/regression-docker` path a Docker-only contributor would use —
+    not just the native-toolchain path the matrix job covers
 
 ### Fixed
 
