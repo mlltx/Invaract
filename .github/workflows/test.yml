@@ -64,17 +64,30 @@ jobs:
       # replaced never actually took in practice.
       - name: Set up Spark 3.5.1
         shell: bash
+        # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
+        # git-bash's tar misparses the backslash-drive-letter form as an
+        # old-style "host:path" remote archive spec ("tar (child): Cannot
+        # connect to D: resolve failed") instead of a local path. Route it
+        # through cygpath -u (bundled with Git for Windows) to get a POSIX
+        # path everywhere; it's a no-op passthrough on Linux/macOS where
+        # cygpath doesn't exist.
         run: |
           SPARK_VERSION="3.5.1"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
-          SPARK_DIR="${RUNNER_TEMP}/spark"
+
+          if command -v cygpath &> /dev/null; then
+            RUNNER_TEMP_POSIX="$(cygpath -u "$RUNNER_TEMP")"
+          else
+            RUNNER_TEMP_POSIX="$RUNNER_TEMP"
+          fi
+          SPARK_DIR="${RUNNER_TEMP_POSIX}/spark"
 
           echo "Installing Apache Spark 3.5.1..."
-          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP}/spark.tgz"
+          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP_POSIX}/spark.tgz"
           mkdir -p "$SPARK_DIR"
-          tar -xzf "${RUNNER_TEMP}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
-          rm -f "${RUNNER_TEMP}/spark.tgz"
+          tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
+          rm -f "${RUNNER_TEMP_POSIX}/spark.tgz"
 
           echo "SPARK_HOME=$SPARK_DIR" >> "$GITHUB_ENV"
           echo "$SPARK_DIR/bin" >> "$GITHUB_PATH"
