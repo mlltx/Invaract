@@ -47,8 +47,15 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # Run from inside a module directory, not the repo root: the sbt
+      # launcher picks its actual sbt version from project/build.properties
+      # in the current directory (every module pins sbt.version=1.9.8), and
+      # the repo root has no project/ dir of its own (no aggregating root
+      # build). Run at the repo root, it falls back to the newest sbt
+      # release (2.x), which refuses to run on JDK <17 and broke this step
+      # on every Java-11 leg.
       - name: Verify sbt installation
-        run: sbt --version
+        run: cd plugin && sbt --version
 
       # Runner-provided $RUNNER_TEMP is writable without elevation on every
       # matrix OS, unlike /opt (root-owned on Linux/macOS, and `sudo`
