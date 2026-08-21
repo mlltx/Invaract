@@ -6,7 +6,7 @@ package com.example.runner
 import com.example.contract.ContractParser
 import com.example.ir.Lineage
 import com.example.ir.PlanPrinter
-import com.example.sparkadapter.{SparkAdapterListener, StructuralVerifier, TranslationResult}
+import com.example.sparkadapter.{ContractEnforcementRule, ContractViolationException, SparkAdapterListener, TranslationResult}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -41,21 +41,37 @@ object PluginRunner {
     val startTime = System.currentTimeMillis()
 
     val report = Try {
+      // Loaded before the SparkSession, since ContractEnforcementRule must
+      // be installed at session-construction time (SparkSessionExtensions
+      // configuration can't be changed on an already-built session).
+      val contract = ContractParser.parseFile(contractPath)
+
+      // Least invasive way to observe a write's real logical plan for
+      // *reporting*: a QueryExecutionListener, registered once, requires no
+      // change to how outputDf.write below is called. See spark-adapter's
+      // SparkPlanAdapter class doc / docs/SPARK_ADAPTER.md for why this
+      // extension point was chosen over SparkSessionExtensions for that
+      // purpose. It is not, however, sufficient to *gate* a write: it only
+      // fires after Spark has already executed the query. Enforcement (see
+      // below) needs a different mechanism entirely.
+      val irListener = new SparkAdapterListener
+
       val spark = SparkSession
         .builder()
         .appName("InvariantPluginRunner")
         .master("local[*]")
         .config("spark.sql.shuffle.partitions", "1")
+        // Moves verification into the Spark execution lifecycle (ROADMAP.md
+        // Phase 5): this check rule runs on the analyzed plan of every
+        // query the session executes, before Spark runs any of them. A
+        // write that violates `contract` throws ContractViolationException
+        // here, aborting before any data is written — see
+        // ContractEnforcementRule's class doc for why a check rule, not the
+        // listener above, is the correct mechanism for this.
+        .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
         .getOrCreate()
 
       spark.sparkContext.setLogLevel("WARN")
-
-      // Least invasive way to observe the write's real logical plan: a
-      // QueryExecutionListener, registered once, requires no change to how
-      // outputDf.write below is called. See spark-adapter's
-      // SparkPlanAdapter class doc / docs/SPARK_ADAPTER.md for why this
-      // extension point was chosen over SparkSessionExtensions.
-      val irListener = new SparkAdapterListener
       spark.listenerManager.register(irListener)
 
       // Load input
@@ -72,7 +88,11 @@ object PluginRunner {
       // Process with plugin
       val outputDf = com.example.plugin.InvariantPlugin.process(inputDf)
 
-      // Capture output
+      // Verification happens as part of this call, before any data is
+      // written (ContractEnforcementRule, installed above). Reaching the
+      // next line means the write already succeeded *and* was verified —
+      // a ContractViolationException here is caught below, and by then no
+      // output file exists at all.
       outputDf.write.mode("overwrite").parquet(outputPath)
 
       // QueryExecutionListener callbacks run on Spark's own listener
@@ -83,10 +103,14 @@ object PluginRunner {
         Map("captured" -> false, "note" -> "Transformation IR was not captured within the timeout")
       )
 
-      // Check the real plan's actual inputs/output against a real contract
-      // — the actual verification, not just extraction. See spark-adapter's
-      // StructuralVerifier for exactly what this does and does not check.
-      val contractVerification = verifyAgainstContract(contractPath, inputPath, inputDf, translationResult, outputDf)
+      // The write only reached this point because ContractEnforcementRule
+      // already verified it; report that outcome rather than re-verifying.
+      val contractVerification = Map(
+        "status" -> "PASSED",
+        "contract" -> s"${contract.id}@${contract.version}",
+        "contractPath" -> contractPath,
+        "violations" -> List()
+      )
 
       val outputSchema = outputDf.schema.fields.map(f => Map(
         "name" -> f.name,
@@ -136,6 +160,30 @@ object PluginRunner {
       )
     } match {
       case Success(r) => r
+      case Failure(e: ContractViolationException) =>
+        ExecutionReport(
+          status = "FAIL",
+          timestamp = Instant.now().toString,
+          pluginVersion = "0.1.0",
+          sparkVersion = "unknown",
+          scalaVersion = scala.util.Properties.versionNumberString,
+          javaVersion = System.getProperty("java.version"),
+          durationMs = System.currentTimeMillis() - startTime,
+          buildInfo = Map(),
+          tests = Map(),
+          input = Map(),
+          output = Map(),
+          plugin = Map(),
+          transformationIR = Map(),
+          contractVerification = Map(
+            "status" -> e.result.status,
+            "contract" -> e.result.contract,
+            "contractPath" -> contractPath,
+            "violations" -> e.result.violations.map(_.toMap),
+            "explanation" -> e.getMessage
+          ),
+          error = Some("Write aborted: this transformation violates its contract. See contractVerification for the full explanation.")
+        )
       case Failure(e) =>
         ExecutionReport(
           status = "FAIL",
@@ -180,76 +228,33 @@ object PluginRunner {
     report.contractVerification.get("status") match {
       case Some(status: String) =>
         println(s"\nContract verification: $status (${report.contractVerification.getOrElse("contract", "?")})")
-        report.contractVerification.get("violations") match {
-          case Some(violations: List[_]) if violations.nonEmpty =>
-            violations.foreach {
-              case v: Map[_, _] =>
-                val m = v.asInstanceOf[Map[String, Any]]
-                val detail = m.collect { case (k, value) if k != "type" && k != "message" => s"$k=$value" }.mkString(", ")
-                val suffix = if (detail.isEmpty) "" else s" ($detail)"
-                println(s"  ✗ ${m("type")}: ${m("message")}$suffix")
-              case _ =>
-            }
+        report.contractVerification.get("explanation") match {
+          case Some(explanation: String) =>
+            // ContractEnforcementRule already built the full what/what/why/
+            // how explanation (see its class doc); print it as-is rather
+            // than re-deriving a shorter summary from the same data.
+            println()
+            println(explanation)
           case _ =>
-            println("  (no violations)")
+            report.contractVerification.get("violations") match {
+              case Some(violations: List[_]) if violations.nonEmpty =>
+                violations.foreach {
+                  case v: Map[_, _] =>
+                    val m = v.asInstanceOf[Map[String, Any]]
+                    val detail = m.collect { case (k, value) if k != "type" && k != "message" => s"$k=$value" }.mkString(", ")
+                    val suffix = if (detail.isEmpty) "" else s" ($detail)"
+                    println(s"  ✗ ${m("type")}: ${m("message")}$suffix")
+                  case _ =>
+                }
+              case _ =>
+                println("  (no violations)")
+            }
         }
       case _ =>
         println("\nContract verification: not run (see report.json for details)")
     }
 
     System.exit(if (report.status == "PASS") 0 else 1)
-  }
-
-  /** Checks the real plan's actual inputs and output against a contract
-    * loaded from `contractPath`. Never throws: a missing/invalid contract
-    * file, or a translation that wasn't captured, both result in a
-    * `contractVerification.status = "FAILED"` entry with an explanatory
-    * violation, rather than failing the whole run — contract verification
-    * is a distinct concern from "did the Spark job execute successfully"
-    * (`ExecutionReport.status`), and is reported separately rather than
-    * conflated with it.
-    */
-  private def verifyAgainstContract(
-    contractPath: String,
-    inputPath: String,
-    inputDf: DataFrame,
-    translationResult: Option[TranslationResult],
-    outputDf: DataFrame
-  ): Map[String, Any] = {
-    translationResult match {
-      case None =>
-        Map(
-          "status" -> "FAILED",
-          "violations" -> List(
-            Map("type" -> "NO_PLAN_CAPTURED", "message" -> "No transformation IR was captured; cannot verify against a contract")
-          )
-        )
-      case Some(result) =>
-        Try {
-          val contract = ContractParser.parseFile(contractPath)
-          val verification = StructuralVerifier.verify(
-            contract,
-            result.plan,
-            inputSchemas = List(inputPath -> inputDf.schema),
-            outputSchema = outputDf.schema
-          )
-          Map(
-            "status" -> verification.status,
-            "contract" -> verification.contract,
-            "contractPath" -> contractPath,
-            "violations" -> verification.violations.map(_.toMap)
-          )
-        } match {
-          case Success(m) => m
-          case Failure(e) =>
-            Map(
-              "status" -> "FAILED",
-              "violations" -> List(
-                Map("type" -> "VERIFICATION_ERROR", "message" -> s"Contract verification could not run: ${e.getMessage}")
-              )
-            )
-        }
-    }
   }
 
   /** Blocks until `listener` has captured a write, or `timeoutMs` elapses.

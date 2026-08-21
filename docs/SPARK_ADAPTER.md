@@ -370,6 +370,106 @@ Supersedes the earlier `ContractVerifier` (output schema only, no inputs,
 no nullability, no undeclared-column rejection) — removed rather than kept
 alongside, to avoid two overlapping verifiers in the codebase.
 
+## Contract-aware execution: verify before, not after
+
+Everything above (`SparkAdapterListener`, `StructuralVerifier`) verifies
+*after* a write has already executed — useful for reporting, useless for
+prevention. `ContractEnforcementRule`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`)
+moves verification *into* the execution lifecycle:
+
+```
+Spark application → Logical plan → Invariant → PASS → execute
+                                             └─→ FAIL → abort
+```
+
+**Why a different Spark mechanism was needed.** `QueryExecutionListener`
+(what `SparkAdapterListener` wraps) fires via `onSuccess` — by definition,
+after Spark has already run the query. Preventing a write requires a hook
+that runs *before* execution and can reject the query. Spark provides
+exactly this: `SparkSessionExtensions.injectCheckRule`, a function invoked
+on every analyzed plan whose only purpose is validation — it can throw to
+reject a query outright. This was confirmed empirically before building on
+it (assumptions about Catalyst internals have been wrong before in this
+project): a probe registering a check rule that unconditionally threw on
+a write command showed the exception propagating out of
+`DataFrame.write.parquet(...)` unwrapped, and — critically — the target
+file was never created. `output file exists? false`, confirmed directly,
+not inferred.
+
+**What triggers a check.** The rule fires on *every* analyzed plan a
+session produces — schema-inference reads, `.count()`, intermediate
+transformations — not just the final write. Only a plan that
+`SparkPlanAdapter.translate`s to an `ir.Write` is verified; everything
+else is a silent no-op, confirmed by a dedicated test using a contract
+that would fail immediately if it were (wrongly) applied to a non-write
+plan.
+
+**Schemas without executing anything.** Every resolved Catalyst
+`LogicalPlan` exposes `.schema` derived from its resolved attributes —
+available at analysis time, before any physical execution. So
+`ContractEnforcementRule` gets both input schemas (via
+`plan.collect { case lr: LogicalRelation => ... }`) and the output schema
+(`InsertIntoHadoopFsRelationCommand.query.schema`) directly from the
+analyzed plan, with no need for a materialized `DataFrame` the way the
+post-hoc reporting path used. (`SparkPlanAdapter.locationOf` was promoted
+from a private `Translator` method to a public one so both paths share
+the same location logic instead of duplicating it.)
+
+**Deterministic, explainable failures.** The task's explicit requirement:
+a developer reading the failure should understand what the contract
+expected, what the plan contains, why it violates the contract, and how
+to correct it. `ContractEnforcementRule.explain` builds exactly this from
+one `VerificationResult` — every `Violation` now carries a `remediation`
+field alongside its `message` (added in `StructuralVerifier`, populated
+at each violation's construction site, since that's where the fix is
+obvious). Determinism isn't just claimed: `StructuralVerifier`'s result
+list is built without ever iterating a `Set`/`Map` to produce output (only
+for membership tests), and a dedicated test runs the identical failing
+scenario three times, asserting byte-identical explanation text.
+
+**Live, not just unit-tested.** Beyond `ContractEnforcementRuleSpec`, the
+real demo pipeline was run via `spark-submit` against
+`demo/contracts/invariant_output_broken_example.yaml` — a contract
+requiring a `customer_name` column the real `InvariantPlugin` never
+produces:
+
+```
+Contract violation: 'invariant_demo_output@1.0.0' rejected this transformation. Write aborted.
+
+What the contract expects:
+  input  'orders' at demo/input/sample.csv: id: integer, value: integer
+  output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
+
+What the plan contains:
+  Write(file:/home/user/Invariant/demo/output/result_broken_example.parquet)
+  └─ Project
+     ├─ Read(file:/home/user/Invariant/demo/input/sample.csv)
+     ├─ id = id
+     ├─ value = value
+     └─ value_squared = value * value
+
+Why it violates the contract (1 violation):
+  1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema
+
+How to correct it:
+  1. Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.
+```
+
+`spark-submit` exited `1`; `demo/output/result_broken_example.parquet` was
+never created. This contract is kept in the repo for reference/reproduction
+but is not wired into `./dev/test` — the real demo pipeline is expected to
+pass its real contract, not this deliberately-broken one.
+
+**Two mechanisms, two moments.** `ContractEnforcementRule` doesn't replace
+`SparkAdapterListener` — a check rule can only approve or reject mid-call;
+it has no equivalent of "give me the finished result to report on
+afterward." `runner/PluginRunner.scala` uses both: the check rule decides
+whether a write happens at all, and the listener (still registered,
+still fed from a write that only proceeded because it already passed
+verification) supplies `demo/output/report.json`'s human-facing
+`transformationIR` summary.
+
 ## Testing
 
 ```bash
@@ -377,7 +477,7 @@ cd spark-adapter
 sbt test
 ```
 
-22 tests against a real `local[*]` `SparkSession` (no mocked plans):
+29 tests against a real `local[*]` `SparkSession` (no mocked plans):
 
 - **`SparkPlanAdapterSpec`** (9) — a bare read, the worked example,
   filter+cast, self-join alias disambiguation, union, window, a UDF, an
@@ -391,6 +491,13 @@ sbt test
   firing correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"`
   example; and the relative-vs-absolute location matching, checked against
   Spark's real reported paths.
+- **`ContractEnforcementRuleSpec`** (7) — PASS executes and creates
+  output; FAIL aborts before any data is written; the explanation contains
+  all four required sections; the same violation produces byte-identical
+  explanations across three repeated attempts; non-write queries never
+  trigger verification even under an always-failing contract;
+  `VerificationOptions` thread through the enforcement path;
+  `forContract`'s public entry point works directly.
 
 To see it running against the actual demo pipeline:
 

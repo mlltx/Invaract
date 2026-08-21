@@ -184,9 +184,19 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(result.status == "FAILED")
     assert(result.contract == "customer_orders@1.2.0")
-    assert(result.violations == List(Violation(ViolationType.UndeclaredOutputColumn, result.violations.head.message, column = Some("country"))))
+    assert(
+      result.violations == List(
+        Violation(
+          ViolationType.UndeclaredOutputColumn,
+          result.violations.head.message,
+          result.violations.head.remediation,
+          column = Some("country")
+        )
+      )
+    )
     assert(result.violations.head.toMap("type") == "UNDECLARED_OUTPUT_COLUMN")
     assert(result.violations.head.toMap("column") == "country")
+    assert(result.violations.head.remediation.nonEmpty)
   }
 
   test("UNDECLARED_OUTPUT_COLUMN is not reported when rejectUndeclaredFields is left at the default") {

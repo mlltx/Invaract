@@ -93,6 +93,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supersedes the earlier `ContractVerifier` (output schema only, no
     inputs, no nullability, no undeclared-column rejection), removed
     rather than kept alongside
+- **Contract-aware Spark execution (Phase 1c / Phase 5)**:
+  `ContractEnforcementRule` moves verification into the Spark execution
+  lifecycle — a write is verified *before* Spark runs it and aborted, no
+  data written, if it violates its contract
+  - Built on `SparkSessionExtensions.injectCheckRule` rather than
+    `SparkAdapterListener`/`QueryExecutionListener`, which only fires
+    after successful execution and so cannot prevent a write; confirmed
+    empirically that throwing inside a check rule aborts
+    `DataFrame.write` with the target file never created
+  - Schemas (input and output) are read directly off the analyzed
+    Catalyst plan via `.schema` — no materialized `DataFrame` needed,
+    so verification genuinely runs before any execution, not just before
+    the write completes
+  - Every `Violation` gained a `remediation` field (`StructuralVerifier`):
+    a concrete next step, not just a restatement of what's wrong
+  - `ContractEnforcementRule.explain` builds a single deterministic
+    message answering all four required questions: what the contract
+    expected, what the plan contains, why it violates the contract, how
+    to correct it — proven byte-identical across repeated runs of the
+    same violation
+  - Wired into `runner/PluginRunner.scala`: the contract is now loaded
+    and the check rule installed before the `SparkSession` is built; the
+    write itself is the verification gate
+  - Live-demonstrated against the real pipeline via `spark-submit` and a
+    deliberately-broken contract
+    (`demo/contracts/invariant_output_broken_example.yaml`): exits 1,
+    output file never created, full explanation printed — not just
+    unit-tested
+  - 7 tests, real Spark: PASS/FAIL, the four-part explanation, message
+    determinism across repeated attempts, non-write queries never
+    triggering verification, `VerificationOptions` threading through,
+    and the public `forContract` entry point
 
 ### Fixed
 

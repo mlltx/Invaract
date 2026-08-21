@@ -121,6 +121,18 @@ object SparkPlanAdapter {
     }
   }
 
+  /** The physical location a resolved relation should be identified by —
+    * the same logic `translate` uses internally for `ir.Read`/`ir.Write`
+    * locations, exposed separately for callers that need to correlate a
+    * real Spark schema with a location without running a full translation
+    * (`ContractEnforcementRule` needs this to collect input schemas before
+    * deciding whether verification even applies to a given analyzed plan).
+    */
+  def locationOf(lr: LogicalRelation): String = lr.relation match {
+    case h: HadoopFsRelation => h.location.rootPaths.headOption.map(_.toString).getOrElse(lr.relation.toString)
+    case _                    => lr.catalogTable.map(_.identifier.toString).getOrElse(lr.relation.toString)
+  }
+
   private class Translator {
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList
@@ -148,7 +160,16 @@ object SparkPlanAdapter {
         }
 
       case lr: LogicalRelation =>
-        ir.Read(ir.DatasetRef(locationOf(lr)))
+        val usedFallback = lr.relation match {
+          case h: HadoopFsRelation => h.location.rootPaths.isEmpty
+          case _                    => lr.catalogTable.isEmpty
+        }
+        if (usedFallback)
+          report(
+            "LogicalRelation",
+            s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
+          )
+        ir.Read(ir.DatasetRef(SparkPlanAdapter.locationOf(lr)))
 
       case p: Project =>
         ir.Project(translatePlan(p.child), p.projectList.map(translateNamed).toList)
@@ -208,22 +229,6 @@ object SparkPlanAdapter {
     private def unwrapWriteWrapper(plan: LogicalPlan): LogicalPlan =
       if (plan.getClass.getSimpleName == "WriteFiles" && plan.children.size == 1) plan.children.head
       else plan
-
-    private def locationOf(lr: LogicalRelation): String = lr.relation match {
-      case h: HadoopFsRelation =>
-        h.location.rootPaths.headOption.map(_.toString).getOrElse {
-          report("LogicalRelation", "HadoopFsRelation reported no root paths; using its toString as a best-effort location")
-          lr.relation.toString
-        }
-      case _ =>
-        lr.catalogTable.map(_.identifier.toString).getOrElse {
-          report(
-            "LogicalRelation",
-            s"Unrecognized relation type ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
-          )
-          lr.relation.toString
-        }
-    }
 
     private def safeSimpleString(plan: LogicalPlan): String =
       scala.util.Try(plan.simpleString(80)).getOrElse(plan.getClass.getName)

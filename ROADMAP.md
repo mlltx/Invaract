@@ -590,6 +590,67 @@ verification run checks the plan's single `Write` against
 `contract.outputs.head`; matching against whichever of several declared
 outputs a plan actually produced is unexercised anywhere in this repo).
 
+#### Sub-phase: Contract-aware Spark execution (done)
+
+Moves verification into the Spark execution lifecycle (this sub-phase's
+own spec called it "Phase 5"): rather than verifying a write after the
+fact (the `SparkAdapterListener`-based flow from the two sub-phases
+above), a write is now verified *before* Spark executes it, and aborted —
+no data written — if it violates its contract.
+
+```
+Spark application → Logical plan → Invariant → PASS → execute
+                                             └─→ FAIL → abort
+```
+
+- [x] `ContractEnforcementRule`
+      (`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`) —
+      builds a Spark check rule
+      (`SparkSessionExtensions.injectCheckRule`) that verifies a write
+      against a contract *before* Spark runs it, throwing
+      `ContractViolationException` to reject the query if verification
+      fails. Confirmed empirically, not assumed: a probe against a fresh
+      `SparkSession` with a check rule that unconditionally throws showed
+      the write's target file never created.
+  - This is a deliberately different mechanism from `SparkAdapterListener`
+    (used for `demo/output/report.json`'s summary): the listener only
+    fires *after* successful execution — structurally incapable of
+    preventing a write — while a check rule is Spark's purpose-built
+    pre-execution validation hook. Both are used, for different moments in
+    the same pipeline.
+  - Fires on every analyzed plan in the session; only a plan that
+    translates to an `ir.Write` is checked, so reads/counts/intermediate
+    queries are unaffected.
+- [x] **Deterministic, explainable failures** — `ContractEnforcementRule.explain`
+      builds a message answering all four required questions from a single,
+      fully-populated `VerificationResult`: what the contract expected
+      (declared input/output schemas), what the plan contains (the
+      rendered IR tree), why it violates the contract (each violation's
+      `message`), and how to correct it (each violation's new
+      `remediation` field, added to `Violation` in `StructuralVerifier`).
+      Proven deterministic by test: the same violation produces a
+      byte-identical explanation across repeated runs.
+- [x] Wired into `runner/PluginRunner.scala`: the contract is loaded and
+      the check rule installed *before* the `SparkSession` is built (a
+      check rule can't be added to an already-built session); the real
+      write is now the verification gate itself, not a separate step
+      after it.
+- [x] Live-demonstrated against the real pipeline, not just unit tests:
+      running `PluginRunner` with a deliberately-broken contract
+      (`demo/contracts/invariant_output_broken_example.yaml`, requiring a
+      `customer_name` column the real plugin never produces) via
+      `spark-submit` exits 1, the target parquet path is never created,
+      and the console/report show the full four-part explanation.
+- [x] 7 tests, all against real Spark (no mocks): PASS executes and
+      creates output; FAIL aborts before any data is written; the
+      explanation contains all four required sections; the same violation
+      produces byte-identical explanations across repeated attempts;
+      non-write queries never trigger verification even under a
+      contract that would always fail; `VerificationOptions` thread
+      through the enforcement path; `forContract`'s public entry point
+      works directly
+      (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractEnforcementRuleSpec.scala`)
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -608,6 +669,10 @@ outputs a plan actually produced is unexercised anywhere in this repo).
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
 - [ ] Interpreting `rules` from the contract model
+- [ ] Enforcement currently only gates `InsertIntoHadoopFsRelationCommand`
+      writes (matching `SparkPlanAdapter`'s translation coverage); other
+      write command types (JDBC sinks, streaming writes, `saveAsTable`)
+      are unexercised
 
 #### Dependencies
 
@@ -615,6 +680,7 @@ outputs a plan actually produced is unexercised anywhere in this repo).
 - Phase 1b completion (transformation IR)
 - Spark adapter completion (above)
 - Structural verification completion (above)
+- Contract-aware Spark execution completion (above)
 
 ---
 

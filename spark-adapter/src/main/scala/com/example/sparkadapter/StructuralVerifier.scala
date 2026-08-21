@@ -11,18 +11,22 @@ import org.apache.spark.sql.types.StructType
 /** One structural rule a plan violated, relative to a contract. `column`,
   * `location`, `expected`, and `actual` are populated only where relevant
   * to `violationType` — see `ViolationType` for which fields each type
-  * carries.
+  * carries. `remediation` is always present: a concrete, actionable next
+  * step, not just a restatement of `message` — see ROADMAP.md Phase 5's
+  * requirement that a developer understand not only what and why, but how
+  * to correct the transformation.
   */
 case class Violation(
   violationType: String,
   message: String,
+  remediation: String,
   column: Option[String] = None,
   location: Option[String] = None,
   expected: Option[String] = None,
   actual: Option[String] = None
 ) {
   def toMap: Map[String, Any] =
-    Map("type" -> violationType, "message" -> message) ++
+    Map("type" -> violationType, "message" -> message, "remediation" -> remediation) ++
       column.map("column" -> _) ++
       location.map("location" -> _) ++
       expected.map("expected" -> _) ++
@@ -82,8 +86,23 @@ object VerificationResult {
   *     Spark `StructType` for each dataset, because the IR deliberately
   *     carries no schema of its own (see `ir.Read`'s doc) — only which
   *     columns were *referenced*, not the dataset's full column set. The
-  *     caller supplies these (in `runner/PluginRunner.scala`, straight off
-  *     `inputDf.schema`/`outputDf.schema`).
+  *     caller supplies these. Every resolved Catalyst `LogicalPlan` exposes
+  *     its own `.schema` derived from resolved attributes, so a caller can
+  *     get these directly from the *analyzed* plan — before anything
+  *     executes — rather than needing a materialized `DataFrame`; see
+  *     `ContractEnforcementRule`, which does exactly this to verify a write
+  *     before Spark runs it.
+  *
+  * ## Determinism
+  *
+  * Given the same `contract`, `plan`, `inputSchemas`, and `outputSchema`,
+  * `verify` always returns the same violations in the same order — no
+  * hash-based `Set`/`Map` iteration in the result-building path (`Set`s are
+  * used only for membership tests, never iterated to produce output). This
+  * matters beyond reproducible tests: ROADMAP.md Phase 5 gates a real
+  * Spark write on this result, and a nondeterministic verdict — or even a
+  * deterministic verdict with nondeterministically-ordered violations —
+  * would make a failure impossible to reliably reproduce or explain.
   *
   * ## Location matching
   *
@@ -123,6 +142,8 @@ object StructuralVerifier {
         Violation(
           ViolationType.MissingInput,
           s"declared input '${input.name}' (${input.location}) was not read by this plan",
+          remediation =
+            s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed.",
           location = Some(input.location)
         )
       )
@@ -135,6 +156,7 @@ object StructuralVerifier {
             Violation(
               ViolationType.UndeclaredInput,
               s"plan reads '$loc' which is not declared as a contract input",
+              remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
               location = Some(loc)
             )
           )
@@ -159,6 +181,8 @@ object StructuralVerifier {
               Violation(
                 ViolationType.OutputLocationMismatch,
                 s"contract declares output location '${expectedOutput.location}' but the plan writes to '${dataset.location}'",
+                remediation =
+                  s"Write to '${expectedOutput.location}' instead, or update the contract's declared output location to '${dataset.location}' if this location change is intentional.",
                 expected = Some(expectedOutput.location),
                 actual = Some(dataset.location)
               )
@@ -168,6 +192,7 @@ object StructuralVerifier {
         val violation = Violation(
           ViolationType.MissingOutput,
           s"the plan does not produce a write; expected output '${expectedOutput.name}' (${expectedOutput.location})",
+          remediation = s"Add a write to '${expectedOutput.location}' to the transformation.",
           location = Some(expectedOutput.location)
         )
         (List(violation), Nil)
@@ -219,6 +244,8 @@ object StructuralVerifier {
           ViolationType.OutputFieldNullabilityMismatch
         )
 
+    val datasetNoun = if (contextPrefix == "INPUT") "input" else "output"
+
     val fieldViolations = contractFields.flatMap { field =>
       actualByName.get(field.name) match {
         case None =>
@@ -227,6 +254,8 @@ object StructuralVerifier {
               Violation(
                 missingFieldType,
                 s"required field '${field.name}' is absent from the actual $contextPrefix schema",
+                remediation =
+                  s"Add a '${field.name}' column (type '${field.fieldType}') to the $datasetNoun, or mark it optional in the contract if it isn't always produced.",
                 column = Some(field.name)
               )
             )
@@ -240,6 +269,8 @@ object StructuralVerifier {
                 Violation(
                   typeMismatchType,
                   s"field '${field.name}' declares type '${field.fieldType}' but the actual $contextPrefix schema has type '$actualType'",
+                  remediation =
+                    s"Cast '${field.name}' to '${field.fieldType}' in the transformation, or update the contract to declare '$actualType' if the new type is intentional.",
                   column = Some(field.name),
                   expected = Some(field.fieldType),
                   actual = Some(actualType)
@@ -258,6 +289,8 @@ object StructuralVerifier {
                 Violation(
                   nullabilityMismatchType,
                   s"field '${field.name}' is declared non-nullable but the actual $contextPrefix schema permits nulls",
+                  remediation =
+                    s"Filter or coalesce nulls out of '${field.name}' before the $datasetNoun is produced, or relax the contract to allow nulls if they're expected.",
                   column = Some(field.name),
                   expected = Some("not null"),
                   actual = Some("nullable")
@@ -277,6 +310,8 @@ object StructuralVerifier {
             Violation(
               undeclaredColumnType,
               s"column '$name' is present in the actual $contextPrefix schema but not declared by the contract",
+              remediation =
+                s"Remove '$name' from the transformation's $datasetNoun, or add it to the contract's declared schema if it's intentional.",
               column = Some(name)
             )
           )
