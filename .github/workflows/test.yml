@@ -92,9 +92,17 @@ jobs:
           echo "SPARK_HOME=$SPARK_DIR" >> "$GITHUB_ENV"
           echo "$SPARK_DIR/bin" >> "$GITHUB_PATH"
 
+      # spark-submit (bash script) calls `ps -o`, unsupported by git-bash's
+      # ps on windows-latest — use Spark's native .cmd launcher there
+      # instead (see dev/lib.sh's run_plugin_runner for the same check).
       - name: Verify Spark installation
         shell: bash
-        run: spark-submit --version
+        run: |
+          if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
+            SPARK_HOME="$(cygpath -w "$SPARK_HOME")" spark-submit.cmd --version
+          else
+            spark-submit --version
+          fi
 
       - name: Build all modules
         # dev/build compiles+tests+assembles contract, ir, plugin and
