@@ -13,8 +13,10 @@
 #   runner                 (needs contract, ir, plugin, spark-adapter)
 #
 # contract/ir/plugin have no dependency on each other, so they build in
-# parallel (background jobs) rather than one after another; spark-adapter
-# starts as soon as contract+ir are ready, without waiting on plugin.
+# parallel (background jobs) rather than one after another on every OS
+# except Windows (see the OSTYPE check below — concurrent sbt/coursier
+# cache access hits hard file locks there); spark-adapter starts as soon
+# as contract+ir are ready, without waiting on plugin.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,12 +83,27 @@ wait_module() {
 }
 
 echo ""
-start_module contract "compile test assembly"
-start_module ir       "compile test assembly"
-start_module plugin   "compile test assembly"
-wait_module contract
-wait_module ir
-wait_module plugin
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+  # Windows: build sequentially. contract/ir/plugin share the same
+  # coursier/ivy cache directory, and Windows enforces hard file locks on
+  # it that Linux/macOS tolerate concurrent access to — confirmed by CI:
+  # running them in parallel failed plugin's dependency resolution with
+  # "not found: ...\Coursier\Cache\v1\.structure.lock (The process cannot
+  # access the file because it is being used by another process)".
+  start_module contract "compile test assembly"
+  wait_module contract
+  start_module ir "compile test assembly"
+  wait_module ir
+  start_module plugin "compile test assembly"
+  wait_module plugin
+else
+  start_module contract "compile test assembly"
+  start_module ir       "compile test assembly"
+  start_module plugin   "compile test assembly"
+  wait_module contract
+  wait_module ir
+  wait_module plugin
+fi
 
 echo ""
 start_module spark-adapter "compile test assembly"
