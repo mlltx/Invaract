@@ -3,8 +3,10 @@
 
 package com.example.runner
 
-import com.example.ir.{Lineage, PlanPrinter}
-import com.example.sparkadapter.{SparkAdapterListener, TranslationResult}
+import com.example.contract.ContractParser
+import com.example.ir.Lineage
+import com.example.ir.PlanPrinter
+import com.example.sparkadapter.{ContractVerifier, SparkAdapterListener, TranslationResult}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -25,6 +27,7 @@ case class ExecutionReport(
   output: Map[String, Any],
   plugin: Map[String, Any],
   transformationIR: Map[String, Any],
+  contractVerification: Map[String, Any],
   error: Option[String]
 )
 
@@ -33,6 +36,7 @@ object PluginRunner {
     val inputPath = args.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = args.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
     val reportPath = args.applyOrElse(2, (_: Int) => "demo/output/report.json")
+    val contractPath = args.applyOrElse(3, (_: Int) => "demo/contracts/invariant_output.yaml")
 
     val startTime = System.currentTimeMillis()
 
@@ -74,9 +78,16 @@ object PluginRunner {
       // QueryExecutionListener callbacks run on Spark's own listener
       // thread, asynchronously with respect to the write call above, so
       // the translation may not be available the instant write() returns.
-      val transformationIR = waitForTranslation(irListener).map(reportOf).getOrElse(
+      val translationResult = waitForTranslation(irListener)
+      val transformationIR = translationResult.map(reportOf).getOrElse(
         Map("captured" -> false, "note" -> "Transformation IR was not captured within the timeout")
       )
+
+      // Check the real output schema and traced lineage against a real
+      // contract — the actual verification, not just extraction. See
+      // spark-adapter's ContractVerifier for exactly what this does and
+      // does not check.
+      val contractVerification = verifyAgainstContract(contractPath, translationResult, outputDf)
 
       val outputSchema = outputDf.schema.fields.map(f => Map(
         "name" -> f.name,
@@ -121,6 +132,7 @@ object PluginRunner {
           "diagnostics" -> List()
         ),
         transformationIR = transformationIR,
+        contractVerification = contractVerification,
         error = None
       )
     } match {
@@ -140,6 +152,7 @@ object PluginRunner {
           output = Map(),
           plugin = Map(),
           transformationIR = Map(),
+          contractVerification = Map(),
           error = Some(e.getMessage)
         )
     }
@@ -165,7 +178,65 @@ object PluginRunner {
         println("\nTransformation IR: not captured (see report.json for details)")
     }
 
+    report.contractVerification.get("passed") match {
+      case Some(passed: Boolean) =>
+        val verdict = if (passed) "PASS" else "FAIL"
+        println(s"\nContract verification: $verdict (${report.contractVerification.getOrElse("contractId", "?")})")
+        report.contractVerification.get("checks") match {
+          case Some(checks: List[_]) =>
+            checks.foreach {
+              case c: Map[_, _] =>
+                val m = c.asInstanceOf[Map[String, Any]]
+                val mark = if (m("passed") == true) "✓" else "✗"
+                println(s"  $mark ${m("field")}: ${m("message")}")
+              case _ =>
+            }
+          case _ =>
+        }
+      case _ =>
+        println(s"\nContract verification: not run (${report.contractVerification.getOrElse("note", report.contractVerification.getOrElse("error", "unknown reason"))})")
+    }
+
     System.exit(if (report.status == "PASS") 0 else 1)
+  }
+
+  /** Checks the real output schema and traced lineage against a contract
+    * loaded from `contractPath`. Never throws: a missing/invalid contract
+    * file or a translation that wasn't captured both result in a
+    * `contractVerification.passed = false` entry with an explanatory
+    * message, rather than failing the whole run — contract verification is
+    * a distinct concern from "did the Spark job execute successfully"
+    * (`ExecutionReport.status`), and is reported separately rather than
+    * conflated with it.
+    */
+  private def verifyAgainstContract(
+    contractPath: String,
+    translationResult: Option[TranslationResult],
+    outputDf: DataFrame
+  ): Map[String, Any] = {
+    translationResult match {
+      case None =>
+        Map("passed" -> false, "note" -> "No transformation IR was captured; cannot verify against a contract")
+      case Some(result) =>
+        Try {
+          val contract = ContractParser.parseFile(contractPath)
+          val lineage = Lineage.trace(result.plan)
+          val verification = ContractVerifier.verify(contract, outputDf.schema, lineage)
+          Map(
+            "contractId" -> contract.id,
+            "contractVersion" -> contract.version.toString,
+            "contractPath" -> contractPath,
+            "dataset" -> verification.datasetName,
+            "passed" -> verification.passed,
+            "checks" -> verification.checks.map(c =>
+              Map("field" -> c.name, "passed" -> c.passed, "message" -> c.message)
+            )
+          )
+        } match {
+          case Success(m) => m
+          case Failure(e) => Map("passed" -> false, "error" -> s"Contract verification could not run: ${e.getMessage}")
+        }
+    }
   }
 
   /** Blocks until `listener` has captured a write, or `timeoutMs` elapses.
@@ -213,7 +284,8 @@ object PluginRunner {
     sb.append(s"""  "input": ${anyToJson(report.input)},\n""")
     sb.append(s"""  "output": ${anyToJson(report.output)},\n""")
     sb.append(s"""  "plugin": ${anyToJson(report.plugin)},\n""")
-    sb.append(s"""  "transformationIR": ${anyToJson(report.transformationIR)}""")
+    sb.append(s"""  "transformationIR": ${anyToJson(report.transformationIR)},\n""")
+    sb.append(s"""  "contractVerification": ${anyToJson(report.contractVerification)}""")
     if (report.error.isDefined) {
       sb.append(s""",\n  "error": "${report.error.get}" """)
     }

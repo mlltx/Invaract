@@ -1,0 +1,50 @@
+id: invariant_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    Contract for the output of the demo InvariantPlugin pipeline
+    (plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala),
+    written by runner/PluginRunner.scala to demo/output/result.parquet.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result.parquet
+    format: parquet
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invariant-demo

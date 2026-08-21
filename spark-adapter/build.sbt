@@ -14,6 +14,7 @@ libraryDependencies ++= Seq(
 )
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invariant-ir-0.1.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invariant-contract-0.1.0.jar")
 
 assembly / assemblyJarName := "invariant-spark-adapter-0.1.0.jar"
 assembly / assemblyMergeStrategy := {

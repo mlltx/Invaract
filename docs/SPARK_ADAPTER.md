@@ -286,6 +286,44 @@ From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
   integration tests" deliverable outright otherwise, in any environment
   without `spark-submit` on `PATH`.
 
+## Contract verification (structural)
+
+`ContractVerifier.verify(contract, actualSchema, lineage): VerificationResult`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/ContractVerifier.scala`)
+is the first slice of ROADMAP.md Phase 1c's verification algorithm: it
+checks a `Contract`'s declared output against a real Spark job's actual
+output schema and traced lineage. For each contract-declared field it
+checks presence, type compatibility (Spark's `DataType.typeName` and this
+project's contract type vocabulary already share the same strings —
+`"integer"`, `"long"`, `"string"`, ... — so this is a direct comparison),
+and, for required fields, that `Lineage.trace` can account for it at all.
+See the class doc for exactly what this does and does not check (no
+nullability, no `rules` interpretation, extra columns not flagged).
+
+`runner/PluginRunner.scala` runs this against the real demo pipeline on
+every `./dev/test`, using `demo/contracts/invariant_output.yaml` — a real
+contract for `InvariantPlugin`'s actual output (`id`, `value`,
+`value_squared`, all `integer`). The result is kept in its own
+`contractVerification` report section and console block, separate from
+`ExecutionReport.status`: "did the Spark job execute" and "does its
+output satisfy the contract" are different questions, and conflating them
+would hide which one actually failed.
+
+Actual console output from `./dev/test`:
+
+```
+Contract verification: PASS (invariant_demo_output)
+  ✓ id: type 'integer' matches; sources: file:.../sample.csv.id
+  ✓ value: type 'integer' matches; sources: file:.../sample.csv.value
+  ✓ value_squared: type 'integer' matches; sources: file:.../sample.csv.value
+```
+
+`ContractVerifierSpec` proves this isn't a rubber stamp: alongside the
+real pipeline passing its own contract, two deliberately broken contracts
+(a required field the output doesn't have; a field with the wrong
+declared type) are checked against the same real output and genuinely
+fail, naming the specific field and reason.
+
 ## Testing
 
 ```bash
@@ -293,10 +331,16 @@ cd spark-adapter
 sbt test
 ```
 
-9 integration tests against a real `local[*]` `SparkSession` (no mocked
-plans): a bare read, the worked example, filter+cast, self-join alias
-disambiguation, union, window, a UDF, an unsupported construct, and a full
-write captured end-to-end through `SparkAdapterListener`.
+13 tests against a real `local[*]` `SparkSession` (no mocked plans):
+
+- **`SparkPlanAdapterSpec`** (9) — a bare read, the worked example,
+  filter+cast, self-join alias disambiguation, union, window, a UDF, an
+  unsupported construct, and a full write captured end-to-end through
+  `SparkAdapterListener`.
+- **`ContractVerifierSpec`** (4) — the real demo pipeline's actual output
+  passing its real contract; two deliberately broken contracts genuinely
+  failing; a passing check reporting its traced source, not just a
+  boolean.
 
 To see it running against the actual demo pipeline:
 

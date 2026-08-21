@@ -63,6 +63,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     console via `./dev/test`
   - 9 integration tests against real Spark 3.5.1 DataFrames (no mocks)
   - Documentation: [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)
+- **Structural contract verification (Phase 1c, first slice)**:
+  `ContractVerifier.verify` checks a `Contract`'s declared output against
+  a real Spark job's actual output schema and traced lineage — per-field
+  presence, type compatibility, and lineage-traceability
+  - `demo/contracts/invariant_output.yaml`: a real contract for the demo
+    pipeline's actual output
+  - Wired into `runner/PluginRunner.scala`: every `./dev/test` run now
+    verifies the real output against the real contract, reported in its
+    own `contractVerification` section (kept distinct from
+    `ExecutionReport.status` — job success and contract compliance are
+    different questions)
+  - 4 tests: the real pipeline passing its own contract, and two
+    deliberately broken contracts (missing required field; wrong
+    declared type) genuinely failing against the same real output
 
 ### Fixed
 

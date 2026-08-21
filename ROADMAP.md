@@ -530,17 +530,64 @@ assumption) that shaped the design.
       engine-agnostic "could not translate this" node any future front-end
       can use, not a Spark-adapter-specific workaround
 
+#### Sub-phase: Structural contract verification (done)
+
+The first slice of the verification algorithm — checks a `Contract`'s
+declared output against a real Spark job's actual output schema and
+traced lineage. Covers the "Structural" checks from
+[MISSION.md, §8](MISSION.md#8-contract-verification): output exists,
+schema matches, required fields exist, types are compatible.
+
+- [x] `ContractVerifier.verify(contract, actualSchema, lineage): VerificationResult`
+      (`spark-adapter/src/main/scala/com/example/sparkadapter/ContractVerifier.scala`) —
+      per-field presence, type compatibility, and lineage-traceability
+      checks; never throws, reports every field's outcome, not just the
+      first failure
+- [x] `demo/contracts/invariant_output.yaml`: a real contract for the
+      demo pipeline's actual output (`id`, `value`, `value_squared`)
+- [x] Wired into `runner/PluginRunner.scala`: after the real write,
+      verifies the actual output against the contract and adds a
+      `contractVerification` section to `demo/output/report.json`
+      (`passed`, per-field `checks` with messages), printed to the
+      console as ✓/✗ per field. Kept separate from `ExecutionReport.status`
+      — "did the Spark job run" and "does its output satisfy the
+      contract" are different questions with different answers.
+- [x] 4 tests, all against real Spark output (no mocks): the real demo
+      pipeline passing its own contract, and two deliberately broken
+      contracts (a required field the output doesn't have; a field with
+      the wrong declared type) genuinely failing with the specific
+      field and reason
+      (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractVerifierSpec.scala`)
+
+Deliberately out of scope for this slice: nullability (Spark's inferred
+`nullable` is permissive enough that comparing it to a contract's
+declaration would produce false failures more often than real ones),
+`rules` interpretation (compatibility mode, quality expectations — the
+contract model records these but nothing acts on them yet), and treating
+extra output columns the contract doesn't mention as a failure (a
+contract narrowing its declared surface is normal, compatible evolution).
+
 #### Scope (Future)
 
-- [ ] Contract verification algorithm (schema/dependency/transformation checks per [MISSION.md, §8](MISSION.md#8-contract-verification)), consuming `Lineage.trace` output and a parsed `Contract`
-- [ ] Verification result format
-- [ ] Integration tests against the `plugin`/`runner` demo pipeline verifying an actual contract (not just extracting lineage)
+- [ ] Dependency checks (required/forbidden inputs, undeclared dependencies)
+- [ ] Transformation checks beyond structural (join/aggregation/filter
+      semantics against contract expectations)
+- [ ] Governance checks (restricted field propagation, residency, purpose)
+- [ ] Compatibility checks (classify a contract change against
+      downstream consumers) — note `contract`'s `ContractCompatibility`
+      already does this for two contract *versions*; this is the
+      separate question of whether a *transformation* respects it
+- [ ] A dedicated verification result format/type (today `VerificationResult`
+      is specific to `ContractVerifier`'s structural checks; a general
+      result type spanning all check categories above is still open)
+- [ ] Interpreting `rules` from the contract model
 
 #### Dependencies
 
 - Phase 1a completion (contract model)
 - Phase 1b completion (transformation IR)
 - Spark adapter completion (above)
+- Structural contract verification completion (above)
 
 ---
 
