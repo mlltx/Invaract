@@ -40,35 +40,37 @@ jobs:
           distribution: 'temurin'
           cache: 'sbt'
 
+      # actions/setup-java's cache: 'sbt' only caches sbt's own cache
+      # directories — it doesn't install sbt itself. windows-latest ships
+      # sbt preinstalled, which is why this gap wasn't obvious from that
+      # leg alone; ubuntu-latest and macos-latest do not.
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
       - name: Verify sbt installation
         run: sbt --version
 
+      # Runner-provided $RUNNER_TEMP is writable without elevation on every
+      # matrix OS, unlike /opt (root-owned on Linux/macOS, and `sudo`
+      # doesn't exist at all on windows-latest's git-bash). Every job here
+      # runs on a fresh runner, so the "already installed" branch this
+      # replaced never actually took in practice.
       - name: Set up Spark 3.5.1
         shell: bash
         run: |
-          if [ ! -d "/opt/spark" ]; then
-            echo "Installing Apache Spark 3.5.1..."
-            mkdir -p /tmp/spark-setup
-            cd /tmp/spark-setup
+          SPARK_VERSION="3.5.1"
+          SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
+          SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+          SPARK_DIR="${RUNNER_TEMP}/spark"
 
-            SPARK_VERSION="3.5.1"
-            SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
-            SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+          echo "Installing Apache Spark 3.5.1..."
+          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP}/spark.tgz"
+          mkdir -p "$SPARK_DIR"
+          tar -xzf "${RUNNER_TEMP}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
+          rm -f "${RUNNER_TEMP}/spark.tgz"
 
-            curl -fsSL "$SPARK_URL" -o spark.tgz
-            tar -xzf spark.tgz
-
-            sudo mkdir -p /opt/spark
-            sudo mv ${SPARK_PACKAGE}/* /opt/spark/
-            rm -rf /tmp/spark-setup
-
-            echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
-            echo "/opt/spark/bin" >> $GITHUB_PATH
-          else
-            echo "Spark already installed"
-            echo "SPARK_HOME=/opt/spark" >> $GITHUB_ENV
-            echo "/opt/spark/bin" >> $GITHUB_PATH
-          fi
+          echo "SPARK_HOME=$SPARK_DIR" >> "$GITHUB_ENV"
+          echo "$SPARK_DIR/bin" >> "$GITHUB_PATH"
 
       - name: Verify Spark installation
         shell: bash
