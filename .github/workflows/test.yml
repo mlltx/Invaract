@@ -98,15 +98,20 @@ jobs:
         # Hadoop's RawLocalFileSystem needs winutils.exe on Windows for any
         # local-disk write at all (it shells out to it for chmod-equivalent
         # permission calls) — Apache doesn't ship one. Pinned to a specific
-        # commit of a long-maintained community mirror (cdarlint/winutils)
-        # at the closest published build to Spark 3.5.1's bundled Hadoop
-        # 3.3.4 (winutils.exe's behavior is stable across the 3.3.x line),
+        # commit of a long-maintained community mirror (cdarlint/winutils),
         # with checksums verified against what was downloaded and inspected
         # when this was added.
+        #
+        # Uses the 3.3.6 build, not 3.3.4-matching 3.3.5: 3.3.5's
+        # winutils.exe links MSVCR100.dll (the VC++ 2010 runtime), which
+        # GitHub's windows-latest images no longer ship, so it failed to
+        # even start (Shell$ExitCodeException with no output — the process
+        # never launched). 3.3.6 links the modern VCRUNTIME140.dll /
+        # Universal CRT, which the runner images do carry.
         run: |
           set -e
-          WINUTILS_REF="b780884cca4f524e05b4b0000e9e2ba4119ca52e"
-          WINUTILS_BASE="https://raw.githubusercontent.com/cdarlint/winutils/$WINUTILS_REF/hadoop-3.3.5/bin"
+          WINUTILS_REF="4c12f4040b8bb5ccc4b83938ce520602aea6c884"
+          WINUTILS_BASE="https://raw.githubusercontent.com/cdarlint/winutils/$WINUTILS_REF/hadoop-3.3.6/bin"
 
           RUNNER_TEMP_POSIX="$(cygpath -u "$RUNNER_TEMP")"
           HADOOP_BIN="${RUNNER_TEMP_POSIX}/hadoop/bin"
@@ -115,8 +120,8 @@ jobs:
           curl -fsSL "$WINUTILS_BASE/winutils.exe" -o "$HADOOP_BIN/winutils.exe"
           curl -fsSL "$WINUTILS_BASE/hadoop.dll" -o "$HADOOP_BIN/hadoop.dll"
 
-          echo "a0ca6e358357c41ef56ebdb02c38e4a4d55da7ca7a13001678bb2ef7d644adea  $HADOOP_BIN/winutils.exe" | sha256sum -c -
-          echo "d3dd64afdc85f2a7eb5345abf2ecaa744b0a157de40859313337d47f81ee1c7b  $HADOOP_BIN/hadoop.dll" | sha256sum -c -
+          echo "496a591eb1e67df2a620f710d529ba6ddfe1c19149e6647cc4e320bb0efd8553  $HADOOP_BIN/winutils.exe" | sha256sum -c -
+          echo "d7ab36a68518748cef142be2da5069b4c763c2cd764c1d2e6ac48c7200405be3  $HADOOP_BIN/hadoop.dll" | sha256sum -c -
 
           # HADOOP_HOME is read by Hadoop's own Java code (Shell.java)
           # directly, not just shell tooling, so — unlike PATH entries — it
