@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the actual scope of change
   - 31 unit tests, real YAML fixtures (valid, additive, breaking, invalid)
   - Documentation: [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
+- **Transformation IR (Phase 1b)**: new `ir` module, an engine-independent
+  representation of a data transformation
+  - `Expr`/`Plan` algebras: `Read`, `Write`, `Project`, `Filter`, `Join`,
+    `Aggregate`, `Union`, `Sort`, `Window`, `ColumnReference`, `Literal`,
+    `FunctionCall`, `AggregateCall`, `NamedExpr`
+  - Deliberately does not mirror Spark Catalyst's expression class
+    hierarchy: one `FunctionCall` node covers all scalar operators, and
+    naming (`NamedExpr`) is not an expression the way Catalyst's `Alias` is
+  - `Lineage.trace`: structural column-level provenance tracing (no
+    exprId-based resolution) through renames, aggregation, joins, unions,
+    and windows, flagging which output columns pass through aggregation
+  - `PlanPrinter`: ASCII tree rendering
+  - 21 unit tests, including the worked example from the design spec
+  - Documentation: [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
 
 ### Changed
 

@@ -416,24 +416,91 @@ The model supports:
 
 ---
 
-### Phase 1b — Verification Engine (Next)
+### Phase 1b — Transformation Intermediate Representation
+
+#### Objective
+
+Create an engine-independent representation of a transformation, precise
+enough to establish lineage and verify contracts. This is the most
+important architectural component of the verification engine: without it,
+lineage and verification logic would have to be written once per execution
+engine (Spark, SQL, dbt, ...) instead of once against a shared IR.
+
+Critical principle: the IR represents transformation *semantics*, not one
+engine's implementation classes. See
+[docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md) for the full design
+rationale — in particular, why there is one `FunctionCall` node instead of
+Spark Catalyst's dozens of expression subclasses, why there is no `Alias`
+expression node, and why there is no exprId-based symbol resolution.
+
+```
+Write(gold.customer_orders)
+  └── Project
+       ├── customer_id    <- Read(raw.orders).customer_id
+       └── lifetime_value <- SUM(Read(raw.orders).amount)
+```
+
+#### Requirements
+
+The IR represents:
+
+- [x] Dataset (`DatasetRef`)
+- [x] Column (`ColumnRef`)
+- [x] Expression (`Expr`)
+- [x] Projection (`Project`)
+- [x] Filter (`Filter`)
+- [x] Join (`Join`, with `JoinType`)
+- [x] Aggregation (`Aggregate`, `AggregateCall`)
+- [x] Grouping (`Aggregate.groupBy`)
+- [x] Union (`Union`)
+- [x] Sort (`Sort`, `SortOrder`)
+- [x] Window (`Window`)
+- [x] Alias (`NamedExpr` — deliberately not an `Expr`; see design doc)
+- [x] Literal (`Literal`)
+- [x] Function (`FunctionCall`)
+- [x] Write (`Write`)
+- [x] Read (`Read`)
+
+#### Deliverables
+
+- [x] **Identifiers** — `DatasetRef`, `ColumnRef` (`ir/src/main/scala/com/example/ir/Identifiers.scala`)
+- [x] **Expression algebra** — `Expr`, `ColumnReference`, `Literal`, `FunctionCall`, `AggregateCall`, `NamedExpr`, `SortOrder` (`ir/src/main/scala/com/example/ir/Expr.scala`)
+- [x] **Plan algebra** — `Plan`, `JoinType`, `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`, `Union`, `Sort`, `Window` (`ir/src/main/scala/com/example/ir/Plan.scala`)
+- [x] **Lineage tracing** — `Lineage.trace`, structural column-level provenance resolution through renames, aggregation, filters, joins, unions, and windows (`ir/src/main/scala/com/example/ir/Lineage.scala`)
+- [x] **Plan rendering** — `PlanPrinter`, ASCII tree rendering for debugging and demonstration (`ir/src/main/scala/com/example/ir/PlanPrinter.scala`)
+- [x] **Documentation** — [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
+
+21 unit tests covering construction, lineage resolution (including the
+worked example above, `GROUP BY`, `Filter`/`Sort` passthrough, unambiguous
+and ambiguous `Join` attribution, `Window`, and `Union`), and rendering, run
+via `cd ir && sbt test`.
+
+#### Dependencies
+
+- Phase 0 completion
+
+---
+
+### Phase 1c — Verification Engine (Next)
 
 #### Objective
 
 Verify that a Spark transformation's actual behavior conforms to a parsed,
-validated `Contract`.
+validated `Contract`, using the transformation IR as the common
+representation between "what a Spark logical plan actually does" and "what
+a contract requires."
 
 #### Scope (Future)
 
-- [ ] Spark logical plan analysis
-- [ ] Contract verification algorithm (schema/dependency/transformation checks per [MISSION.md, §8](MISSION.md#8-contract-verification))
+- [ ] Spark logical plan → IR translator (the bridge from `plugin`/`runner`'s real Spark execution into `ir`)
+- [ ] Contract verification algorithm (schema/dependency/transformation checks per [MISSION.md, §8](MISSION.md#8-contract-verification)), consuming `Lineage.trace` output and a parsed `Contract`
 - [ ] Verification result format
-- [ ] Column-level lineage tracking
 - [ ] Integration tests against the `plugin`/`runner` demo pipeline
 
 #### Dependencies
 
 - Phase 1a completion (contract model)
+- Phase 1b completion (transformation IR)
 
 ---
 
