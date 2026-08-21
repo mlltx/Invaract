@@ -481,7 +481,7 @@ via `cd ir && sbt test`.
 
 ---
 
-### Phase 1c — Verification Engine (Next)
+### Phase 1c — Verification Engine
 
 #### Objective
 
@@ -490,17 +490,57 @@ validated `Contract`, using the transformation IR as the common
 representation between "what a Spark logical plan actually does" and "what
 a contract requires."
 
+#### Sub-phase: Spark Adapter (done)
+
+The bridge from `plugin`/`runner`'s real Spark execution into `ir`:
+translates Spark's Catalyst logical plan into the transformation IR.
+Investigated Spark's plan-inspection extension points (direct
+`Dataset.queryExecution` access, `QueryExecutionListener`,
+`SparkSessionExtensions`) and used the least invasive one that fits —
+see [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) for the comparison and
+the empirical findings (grounded in real Spark 3.5.1 behavior, not
+assumption) that shaped the design.
+
+- [x] **Spark adapter** — `SparkPlanAdapter.translate`, covering Read/Write
+      (via `InsertIntoHadoopFsRelationCommand`), relations (`LogicalRelation`
+      + `HadoopFsRelation`), projections, expressions, filters, joins,
+      aggregations (including `GROUP BY`), aliases (`SubqueryAlias` →
+      `Read.alias`, for self-join disambiguation), casts, unions, windows,
+      and arbitrarily nested expressions — never throws; an unrecognized
+      construct becomes `ir.Unsupported`/`ir.UnsupportedExpr` paired with a
+      `Diagnostic` (`spark-adapter/src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala`)
+- [x] **Spark integration tests** — 9 tests against real Spark 3.5.1
+      DataFrames (no mocks): the worked example, filter+cast, self-join
+      alias disambiguation, union, window, a UDF (diagnostic, not a
+      failure), an unsupported construct (`explode`, diagnostic +
+      `Unsupported` node, not a crash), and a full write captured via
+      `SparkAdapterListener`
+      (`spark-adapter/src/test/scala/com/example/sparkadapter/SparkPlanAdapterSpec.scala`)
+- [x] **Plan extraction examples** — see docs/SPARK_ADAPTER.md
+- [x] **Unsupported-operation diagnostics** — `Diagnostic`/`TranslationResult`;
+      translation always produces a best-effort IR, never an exception
+- [x] **Integrated with the test Spark app** — `runner/PluginRunner.scala`
+      registers `SparkAdapterListener`, captures the real write's
+      translated IR and `Lineage.trace` output, prints the rendered plan to
+      the console, and adds a `transformationIR` section to
+      `demo/output/report.json`. Run via `./dev/test` — real Spark
+      execution, not simulated.
+- [x] Extended the IR itself: `ir.Unsupported` / `ir.UnsupportedExpr`
+      (`ir/src/main/scala/com/example/ir/{Plan,Expr}.scala`), a principled,
+      engine-agnostic "could not translate this" node any future front-end
+      can use, not a Spark-adapter-specific workaround
+
 #### Scope (Future)
 
-- [ ] Spark logical plan → IR translator (the bridge from `plugin`/`runner`'s real Spark execution into `ir`)
 - [ ] Contract verification algorithm (schema/dependency/transformation checks per [MISSION.md, §8](MISSION.md#8-contract-verification)), consuming `Lineage.trace` output and a parsed `Contract`
 - [ ] Verification result format
-- [ ] Integration tests against the `plugin`/`runner` demo pipeline
+- [ ] Integration tests against the `plugin`/`runner` demo pipeline verifying an actual contract (not just extracting lineage)
 
 #### Dependencies
 
 - Phase 1a completion (contract model)
 - Phase 1b completion (transformation IR)
+- Spark adapter completion (above)
 
 ---
 

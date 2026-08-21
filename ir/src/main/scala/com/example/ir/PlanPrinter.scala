@@ -63,6 +63,7 @@ object PlanPrinter {
     case AggregateCall(function, arg, distinct) =>
       val d = if (distinct) "DISTINCT " else ""
       s"$function($d${renderExpr(arg)})"
+    case UnsupportedExpr(description) => s"<unsupported: $description>"
   }
 
   private def label(plan: Plan): String = plan match {
@@ -81,5 +82,6 @@ object PlanPrinter {
       val o = if (orderBy.nonEmpty) s"ORDER BY ${orderBy.map(so => renderExpr(so.expr)).mkString(", ")}" else ""
       val spec = List(p, o).filter(_.nonEmpty).mkString(" ")
       s"Window($spec)"
+    case Unsupported(description, _) => s"Unsupported($description)"
   }
 }

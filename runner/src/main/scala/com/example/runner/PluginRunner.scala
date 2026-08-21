@@ -3,6 +3,9 @@
 
 package com.example.runner
 
+import com.example.ir.{Lineage, PlanPrinter}
+import com.example.sparkadapter.{SparkAdapterListener, TranslationResult}
+
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
 import scala.util.{Failure, Success, Try}
@@ -21,6 +24,7 @@ case class ExecutionReport(
   input: Map[String, Any],
   output: Map[String, Any],
   plugin: Map[String, Any],
+  transformationIR: Map[String, Any],
   error: Option[String]
 )
 
@@ -42,6 +46,14 @@ object PluginRunner {
 
       spark.sparkContext.setLogLevel("WARN")
 
+      // Least invasive way to observe the write's real logical plan: a
+      // QueryExecutionListener, registered once, requires no change to how
+      // outputDf.write below is called. See spark-adapter's
+      // SparkPlanAdapter class doc / docs/SPARK_ADAPTER.md for why this
+      // extension point was chosen over SparkSessionExtensions.
+      val irListener = new SparkAdapterListener
+      spark.listenerManager.register(irListener)
+
       // Load input
       val inputDf = spark.read
         .option("header", "true")
@@ -58,6 +70,13 @@ object PluginRunner {
 
       // Capture output
       outputDf.write.mode("overwrite").parquet(outputPath)
+
+      // QueryExecutionListener callbacks run on Spark's own listener
+      // thread, asynchronously with respect to the write call above, so
+      // the translation may not be available the instant write() returns.
+      val transformationIR = waitForTranslation(irListener).map(reportOf).getOrElse(
+        Map("captured" -> false, "note" -> "Transformation IR was not captured within the timeout")
+      )
 
       val outputSchema = outputDf.schema.fields.map(f => Map(
         "name" -> f.name,
@@ -101,6 +120,7 @@ object PluginRunner {
           "events" -> pluginEvents,
           "diagnostics" -> List()
         ),
+        transformationIR = transformationIR,
         error = None
       )
     } match {
@@ -119,6 +139,7 @@ object PluginRunner {
           input = Map(),
           output = Map(),
           plugin = Map(),
+          transformationIR = Map(),
           error = Some(e.getMessage)
         )
     }
@@ -126,7 +147,6 @@ object PluginRunner {
     // Write report
     new File(reportPath).getParentFile.mkdirs()
     val json = reportToJson(report)
-    scala.io.Source.fromFile(reportPath, "UTF-8")
     java.nio.file.Files.write(
       java.nio.file.Paths.get(reportPath),
       json.getBytes("UTF-8")
@@ -137,7 +157,44 @@ object PluginRunner {
     println(s"Status: ${report.status}")
     println(s"Duration: ${report.durationMs}ms")
 
+    report.transformationIR.get("renderedPlan") match {
+      case Some(rendered: String) =>
+        println("\nTransformation IR (translated from the real Spark logical plan):")
+        println(rendered)
+      case _ =>
+        println("\nTransformation IR: not captured (see report.json for details)")
+    }
+
     System.exit(if (report.status == "PASS") 0 else 1)
+  }
+
+  /** Blocks until `listener` has captured a write, or `timeoutMs` elapses.
+    * QueryExecutionListener callbacks run asynchronously on Spark's own
+    * listener thread (see the registration site above), so there is no
+    * synchronous "translate this write" call to make instead.
+    */
+  private def waitForTranslation(listener: SparkAdapterListener, timeoutMs: Long = 5000): Option[TranslationResult] = {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (listener.lastWrite.isEmpty && System.currentTimeMillis() < deadline) {
+      Thread.sleep(50)
+    }
+    listener.lastWrite
+  }
+
+  private def reportOf(result: TranslationResult): Map[String, Any] = {
+    val lineage = Lineage.trace(result.plan).map { cl =>
+      Map(
+        "output" -> cl.output.name,
+        "sources" -> cl.sources.map(_.toString).toList,
+        "aggregated" -> cl.aggregated
+      )
+    }
+    Map(
+      "captured" -> true,
+      "renderedPlan" -> PlanPrinter.render(result.plan),
+      "lineage" -> lineage,
+      "diagnostics" -> result.diagnostics.map(d => s"[${d.nodeType}] ${d.message}")
+    )
   }
 
   private def reportToJson(report: ExecutionReport): String = {
@@ -155,7 +212,8 @@ object PluginRunner {
     sb.append(s"""  "tests": ${anyToJson(report.tests)},\n""")
     sb.append(s"""  "input": ${anyToJson(report.input)},\n""")
     sb.append(s"""  "output": ${anyToJson(report.output)},\n""")
-    sb.append(s"""  "plugin": ${anyToJson(report.plugin)}""")
+    sb.append(s"""  "plugin": ${anyToJson(report.plugin)},\n""")
+    sb.append(s"""  "transformationIR": ${anyToJson(report.transformationIR)}""")
     if (report.error.isDefined) {
       sb.append(s""",\n  "error": "${report.error.get}" """)
     }
@@ -164,7 +222,7 @@ object PluginRunner {
   }
 
   private def mapToJson(m: Map[String, String]): String = {
-    "{" + m.map { case (k, v) => s""""$k": "$v"""" }.mkString(", ") + "}"
+    "{" + m.map { case (k, v) => s""""$k": ${quote(v)}""" }.mkString(", ") + "}"
   }
 
   private def anyToJson(obj: Any): String = {
@@ -176,11 +234,27 @@ object PluginRunner {
         "{" + pairs + "}"
       case l: List[_] =>
         "[" + l.map(anyToJson).mkString(", ") + "]"
-      case s: String => s""""$s""""
+      case s: String => quote(s)
       case n: Number => n.toString
       case b: Boolean => b.toString
       case null => "null"
-      case _ => s""""$obj""""
+      case other => quote(other.toString)
     }
+  }
+
+  /** Escapes a string for embedding as a JSON string literal. Needed once
+    * report values could contain characters JSON forbids unescaped inside a
+    * string (newlines in a rendered multi-line plan, a stray quote) —
+    * unlike the plugin event/schema strings this serializer originally
+    * only had to handle.
+    */
+  private def quote(s: String): String = {
+    val escaped = s
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+      .replace("\n", "\\n")
+      .replace("\r", "\\r")
+      .replace("\t", "\\t")
+    s""""$escaped""""
   }
 }

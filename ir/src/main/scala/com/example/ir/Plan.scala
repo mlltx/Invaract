@@ -107,3 +107,16 @@ case class Window(
 ) extends Plan {
   def children: List[Plan] = List(input)
 }
+
+/** A plan node a front-end translator could not represent in this IR's
+  * vocabulary — an opaque placeholder, not a failure. Any real-world
+  * front-end (this one included: see the `spark-adapter` module) will
+  * eventually meet a construct with no clean equivalent here (an exotic
+  * operator, a vendor extension). Rather than every translator inventing
+  * its own ad hoc "give up" representation, `Unsupported` is a first-class,
+  * engine-agnostic IR concept: the rest of the tree stays inspectable,
+  * `Lineage` degrades to "no known source" for anything that would need to
+  * resolve through it, and a translator is expected to pair this node with
+  * a diagnostic explaining what it couldn't represent and why.
+  */
+case class Unsupported(description: String, children: List[Plan] = Nil) extends Plan

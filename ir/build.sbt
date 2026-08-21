@@ -14,3 +14,5 @@ scalacOptions ++= Seq(
 )
 
 Test / parallelExecution := false
+
+assembly / assemblyJarName := "invariant-ir-0.1.0.jar"

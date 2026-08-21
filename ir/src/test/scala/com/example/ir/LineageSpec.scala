@@ -145,4 +145,25 @@ class LineageSpec extends AnyFunSuite {
   test("trace returns no columns for a bare Read with no Project above it") {
     assert(Lineage.trace(Read(DatasetRef("raw.orders"))).isEmpty)
   }
+
+  test("trace resolves an unsupported reference to no known source instead of crashing") {
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(Unsupported("Generate(explode)"), List(NamedExpr("x", ColumnReference(ColumnRef("x")))))
+    )
+
+    val lineage = Lineage.trace(plan)
+    assert(lineage == List(ColumnLineage(ColumnRef("x"), Set.empty, aggregated = false)))
+  }
+
+  test("trace treats an UnsupportedExpr as contributing no sources") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(orders, List(NamedExpr("mystery", UnsupportedExpr("ScalaUDF(myFunc)"))))
+    )
+
+    val lineage = Lineage.trace(plan)
+    assert(lineage == List(ColumnLineage(ColumnRef("mystery"), Set.empty, aggregated = false)))
+  }
 }

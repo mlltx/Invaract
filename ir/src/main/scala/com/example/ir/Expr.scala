@@ -63,6 +63,15 @@ case class AggregateCall(function: String, arg: Expr, distinct: Boolean = false)
   def references: Set[ColumnRef] = arg.references
 }
 
+/** An expression a front-end translator could not represent in this IR's
+  * vocabulary — the expression-level counterpart to `Unsupported` on
+  * `Plan`. Contributes no known column references, so lineage tracing
+  * degrades to "no known source" rather than crashing or guessing.
+  */
+case class UnsupportedExpr(description: String) extends Expr {
+  def references: Set[ColumnRef] = Set.empty
+}
+
 /** Binds a name to a computed expression. This is how a `Project`,
   * `Aggregate`, or `Window` node declares its output columns.
   *

@@ -39,8 +39,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     exprId-based resolution) through renames, aggregation, joins, unions,
     and windows, flagging which output columns pass through aggregation
   - `PlanPrinter`: ASCII tree rendering
-  - 21 unit tests, including the worked example from the design spec
+  - 27 unit tests (initial 21, plus coverage added for `Unsupported`/
+    `UnsupportedExpr` — see Spark adapter below), including the worked
+    example from the design spec
   - Documentation: [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
+- **Spark adapter (Phase 1c, Spark Adapter sub-phase)**: new
+  `spark-adapter` module translating Spark's Catalyst logical plan into
+  the transformation IR
+  - `SparkPlanAdapter.translate`: Read/Write (via
+    `InsertIntoHadoopFsRelationCommand`), relations, projections,
+    expressions, filters, joins, aggregations (`GROUP BY`), aliases
+    (`SubqueryAlias` → self-join disambiguation), casts, unions, windows,
+    and arbitrarily nested expressions
+  - Never throws: an unrecognized construct becomes
+    `ir.Unsupported`/`ir.UnsupportedExpr` (new, engine-agnostic IR nodes)
+    paired with a `Diagnostic`, not an exception
+  - `SparkAdapterListener`: a `QueryExecutionListener`-based capture,
+    the least invasive of Spark's plan-inspection extension points for
+    observing (not rewriting) a query's plan
+  - Integrated into `runner/PluginRunner.scala`: the real plugin
+    pipeline's write is translated end-to-end, with the rendered plan and
+    traced lineage added to `demo/output/report.json` and printed to the
+    console via `./dev/test`
+  - 9 integration tests against real Spark 3.5.1 DataFrames (no mocks)
+  - Documentation: [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)
+
+### Fixed
+
+- `PluginRunner`: removed a dead `scala.io.Source.fromFile(reportPath, ...)`
+  call that attempted to read the report file before it was ever written,
+  crashing on a first run with no pre-existing `report.json`
+- `PluginRunner`'s JSON serializer (`anyToJson`/`mapToJson`) did not escape
+  special characters in string values (quotes, newlines); surfaced by the
+  new multi-line rendered-plan report field, now fixed for all string
+  values
+- `plugin`'s and `spark-adapter`'s `sbt test`, and `dev/test`'s
+  non-`spark-submit` fallback path, failed on JDK 17+ (`IllegalAccessError`
+  reaching `sun.nio.ch.DirectBuffer`) because `spark-submit`'s own
+  `--add-opens` injection wasn't in play; added the same flag set
+  explicitly to each
 
 ### Changed
 

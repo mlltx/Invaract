@@ -72,4 +72,14 @@ class PlanSpec extends AnyFunSuite {
     assert(ColumnRef("id").toString == "id")
     assert(ColumnRef("id", Some("raw.orders")).toString == "raw.orders.id")
   }
+
+  test("Unsupported carries through whatever children a translator could still resolve") {
+    val known = Read(DatasetRef("raw.orders"))
+    val unsupported = Unsupported("Generate(explode)", List(known))
+    assert(unsupported.children == List(known))
+  }
+
+  test("UnsupportedExpr contributes no references") {
+    assert(UnsupportedExpr("ScalaUDF(myFunc)").references.isEmpty)
+  }
 }

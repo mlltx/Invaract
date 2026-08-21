@@ -86,4 +86,20 @@ class PlanPrinterSpec extends AnyFunSuite {
     assert(rendered.contains("Read(raw.orders AS cur)"))
     assert(rendered.contains("Read(raw.orders AS arch)"))
   }
+
+  test("render shows an Unsupported node's description and any resolvable children") {
+    val known = Read(DatasetRef("raw.orders"))
+    val rendered = PlanPrinter.render(Unsupported("Generate(explode)", List(known)))
+
+    assert(rendered.contains("Unsupported(Generate(explode))"))
+    assert(rendered.contains("Read(raw.orders)"))
+  }
+
+  test("render shows an UnsupportedExpr inline within a Project column") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Project(orders, List(NamedExpr("mystery", UnsupportedExpr("ScalaUDF(myFunc)"))))
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("mystery = <unsupported: ScalaUDF(myFunc)>"))
+  }
 }

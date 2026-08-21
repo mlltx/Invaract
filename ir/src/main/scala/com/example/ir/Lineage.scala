@@ -57,6 +57,10 @@ object Lineage {
     // A bare Read declares no output list of its own (see Plan.scala) —
     // there is nothing to trace until something downstream projects it.
     case Read(_, _) => Nil
+
+    // An untranslated construct declares no known output list either —
+    // there is nothing to trace past it.
+    case Unsupported(_, _) => Nil
   }
 
   private def named(name: String, p: Provenance): ColumnLineage = ColumnLineage(ColumnRef(name), p.sources, p.aggregated)
@@ -71,6 +75,8 @@ object Lineage {
       Provenance(resolved.flatMap(_.sources).toSet, resolved.exists(_.aggregated))
     case AggregateCall(_, arg, _) =>
       Provenance(resolveExpr(arg, input).sources, aggregated = true)
+    case UnsupportedExpr(_) =>
+      Provenance(Set.empty, aggregated = false)
   }
 
   /** Resolves a bare column reference against a plan: does `ref` name a
@@ -116,5 +122,7 @@ object Lineage {
       }
 
     case Write(_, input) => resolveInScope(ref, input)
+
+    case Unsupported(_, _) => None
   }
 }
