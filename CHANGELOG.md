@@ -125,9 +125,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     determinism across repeated attempts, non-write queries never
     triggering verification, `VerificationOptions` threading through,
     and the public `forContract` entry point
+- **Contract regression pack**: `./dev/regression` re-runs the Phase 5
+  PASS/FAIL demonstration as an assertion script instead of a transcript to
+  read — real `spark-submit`, real exit codes, real files checked on disk
+  - `dev/build`: builds every sbt module (`contract`, `ir`, `plugin`,
+    `spark-adapter`, `runner`) in the dependency order their
+    `unmanagedJars` cross-references require; fixes a latent bug where
+    `./dev/test` and CI only ever built `plugin`+`runner` directly and
+    silently depended on the other three modules' jars already existing
+    on disk from an earlier build — a genuinely fresh clone failed
+    `runner`'s compile step (`not found: type ContractViolationException`)
+  - `dev/lib.sh`: extracts the spark-submit/java-fallback invocation
+    shared by `dev/test` and `dev/regression` into one place
+  - `dev/regression` asserts, against real command output: the satisfied
+    case exits 0, reports PASS, and writes its output; the violated case
+    exits non-zero, reports FAIL with `MISSING_OUTPUT_FIELD`, and — the
+    core guarantee — never creates the output file at all
+  - `docker/Dockerfile` + `dev/regression-docker`: a self-contained image
+    (JDK 21, sbt, Spark 3.5.1) that builds every module at image-build
+    time and runs the regression pack as its entrypoint, so any
+    contributor with just Docker installed can run
+    `./dev/regression-docker` and get the same result with nothing else
+    on their machine
+  - CI (`.github/workflows/test.yml`) now builds via `dev/build` and runs
+    `dev/regression` on every matrix leg, giving the contract-abort path
+    CI coverage for the first time (previously only the PASS case was
+    checked in CI)
 
 ### Fixed
 
+- `./dev/test` and CI only ever built `plugin` and `runner` directly, never
+  `contract`, `ir`, or `spark-adapter`. This worked only because those three
+  modules' jars happened to already exist on disk in every environment they
+  had been run in so far; on a genuinely fresh clone, `runner`'s compile
+  step fails (`not found: type ContractViolationException`, `Lineage`,
+  `PlanPrinter`, ...) since its `unmanagedJars` reference jars that were
+  never built. Fixed by adding `dev/build`, which builds all five modules
+  in the dependency order their cross-references require, and having both
+  `./dev/test` and CI's workflow call it instead of building a subset
+  directly
 - `PluginRunner`: removed a dead `scala.io.Source.fromFile(reportPath, ...)`
   call that attempted to read the report file before it was ever written,
   crashing on a first run with no pre-existing `report.json`

@@ -651,6 +651,41 @@ Spark application → Logical plan → Invariant → PASS → execute
       works directly
       (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractEnforcementRuleSpec.scala`)
 
+#### Sub-phase: Contract regression pack (done)
+
+Turns the PASS/FAIL demonstration above from a transcript a reviewer reads
+into a script any contributor (or CI) can re-run, with a real pass/fail
+exit code, in an environment that requires nothing pre-installed but
+Docker.
+
+- [x] `dev/build` — builds `contract`, `ir`, `plugin`, `spark-adapter`, and
+      `runner` in the dependency order their `unmanagedJars`
+      cross-references require. Fixes a real bug this work surfaced:
+      `./dev/test` and CI previously built only `plugin` and `runner`
+      directly, silently relying on the other three modules' jars already
+      existing on disk. Verified by deleting `contract/target`,
+      `ir/target`, `spark-adapter/target` and confirming `runner`'s
+      `sbt compile` then fails — a genuinely fresh clone would have hit
+      this.
+- [x] `dev/lib.sh` — the spark-submit/`java`-fallback invocation, shared by
+      `dev/test` and `dev/regression` instead of duplicated
+- [x] `dev/regression` — runs both cases from a real `spark-submit`
+      invocation each and asserts on the actual results: exit code, report
+      `status`, presence/absence of the output file on disk, and (for the
+      FAIL case) that `MISSING_OUTPUT_FIELD` is the reported violation.
+      Exits 0 only if both cases behaved as contracted.
+- [x] `docker/Dockerfile` + `dev/regression-docker` — a self-contained
+      image (JDK 21, sbt, Spark 3.5.1, mirroring
+      `.devcontainer/post-create.sh`) that builds every module at
+      image-build time and runs the regression pack as its entrypoint.
+      `./dev/regression-docker` is the single command referenced by this
+      sub-phase's name: build the image, run it, get a real pass/fail —
+      no local JDK/sbt/Spark required.
+- [x] CI (`.github/workflows/test.yml`) now builds via `dev/build` and runs
+      `dev/regression` on every OS/Java matrix leg, so the contract-abort
+      path has CI coverage for the first time — previously CI only checked
+      the PASS case.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

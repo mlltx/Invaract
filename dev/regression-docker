@@ -1,0 +1,17 @@
+#!/bin/bash
+# Single-command entry point for contributors: builds the regression image
+# (if needed) and runs the contract regression pack inside it. The only
+# host requirement is Docker — no local JDK, sbt, or Spark install.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+IMAGE_TAG="invariant-regression"
+
+echo "Building $IMAGE_TAG image..."
+docker build -t "$IMAGE_TAG" -f docker/Dockerfile .
+
+echo ""
+echo "Running contract regression pack..."
+docker run --rm "$IMAGE_TAG"

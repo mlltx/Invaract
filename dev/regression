@@ -1,0 +1,142 @@
+#!/bin/bash
+# Contract-enforcement regression pack.
+#
+# Proves, with a real Spark job and no mocking, that ContractEnforcementRule
+# (spark-adapter/.../ContractEnforcementRule.scala) does what Phase 5 of
+# ROADMAP.md requires:
+#   1. a transformation that satisfies its contract executes and writes
+#      its output, and
+#   2. a transformation that violates its contract is aborted *before* any
+#      output is written — not flagged after the fact.
+#
+# This is the same demonstration documented in docs/SPARK_ADAPTER.md,
+# turned into an assertion script so it can be re-run by any contributor,
+# in CI, or in the Docker image built from docker/Dockerfile, with a single
+# command and a real pass/fail exit code instead of a transcript someone
+# has to read.
+#
+# Usage:
+#   ./dev/regression            # builds jars first, then runs both cases
+#   SKIP_BUILD=1 ./dev/regression   # reuse jars already on disk (faster
+#                                    # iteration once dev/build has run once,
+#                                    # e.g. inside the Docker image where the
+#                                    # image build already ran it)
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+source dev/lib.sh
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+FAILURES=0
+
+check() {
+  local description="$1" ok="$2"
+  if [ "$ok" = "true" ]; then
+    echo -e "  ${GREEN}✓${NC} $description"
+  else
+    echo -e "  ${RED}✗${NC} $description"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
+report_field() {
+  # report_field FILE JSON_POINTER-ish-key -> first matching top-level value
+  grep -o "\"$2\": *\"[^\"]*\"" "$1" | head -1 | cut -d'"' -f4
+}
+
+echo "======================================"
+echo "Invariant Contract Regression Pack"
+echo "======================================"
+
+if [ "${SKIP_BUILD:-}" != "1" ]; then
+  ./dev/build
+else
+  echo ""
+  echo "SKIP_BUILD=1 set, reusing existing jars."
+fi
+
+if [ ! -f "$PLUGIN_JAR" ] || [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Required jars missing after build — cannot run regression pack.${NC}"
+  exit 1
+fi
+
+mkdir -p demo/output
+
+# --- Case 1: contract satisfied -> execute -------------------------------
+echo ""
+echo -e "${YELLOW}Case 1/2: contract satisfied -> transformation executes${NC}"
+echo "  contract: demo/contracts/invariant_output.yaml"
+
+# Output location must match what the contract declares — StructuralVerifier
+# checks that too (OUTPUT_LOCATION_MISMATCH), so this can't be an arbitrary
+# path of our choosing the way the report path can.
+PASS_OUTPUT="demo/output/result.parquet"
+PASS_REPORT="demo/output/regression_pass_report.json"
+rm -rf "$PASS_OUTPUT" "$PASS_REPORT"
+
+run_plugin_runner "demo/input/sample.csv" "$PASS_OUTPUT" "$PASS_REPORT" \
+  "demo/contracts/invariant_output.yaml"
+PASS_EXIT=$?
+
+PASS_STATUS="$(report_field "$PASS_REPORT" status)"
+
+[ "$PASS_EXIT" = "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits 0" "$ec_ok"
+
+[ "$PASS_STATUS" = "PASS" ] && st_ok=true || st_ok=false
+check "report status is PASS (got '$PASS_STATUS')" "$st_ok"
+
+[ -e "$PASS_OUTPUT" ] && out_ok=true || out_ok=false
+check "output was written to $PASS_OUTPUT" "$out_ok"
+
+# --- Case 2: contract violated -> abort before write ----------------------
+echo ""
+echo -e "${YELLOW}Case 2/2: contract violated -> write aborted, no output${NC}"
+echo "  contract: demo/contracts/invariant_output_broken_example.yaml"
+
+FAIL_OUTPUT="demo/output/result_broken_example.parquet"
+FAIL_REPORT="demo/output/regression_fail_report.json"
+rm -rf "$FAIL_OUTPUT" "$FAIL_REPORT"
+
+run_plugin_runner "demo/input/sample.csv" "$FAIL_OUTPUT" "$FAIL_REPORT" \
+  "demo/contracts/invariant_output_broken_example.yaml"
+FAIL_EXIT=$?
+
+FAIL_STATUS="$(report_field "$FAIL_REPORT" status)"
+
+[ "$FAIL_EXIT" != "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits non-zero (got $FAIL_EXIT)" "$ec_ok"
+
+[ "$FAIL_STATUS" = "FAIL" ] && st_ok=true || st_ok=false
+check "report status is FAIL (got '$FAIL_STATUS')" "$st_ok"
+
+if grep -q "MISSING_OUTPUT_FIELD" "$FAIL_REPORT" 2>/dev/null; then
+  violation_ok=true
+else
+  violation_ok=false
+fi
+check "report identifies the MISSING_OUTPUT_FIELD violation" "$violation_ok"
+
+if [ ! -e "$FAIL_OUTPUT" ]; then
+  no_output_ok=true
+else
+  no_output_ok=false
+fi
+check "no output was written at $FAIL_OUTPUT (write was actually aborted)" "$no_output_ok"
+
+# --- Summary ---------------------------------------------------------------
+echo ""
+echo "======================================"
+if [ "$FAILURES" -eq 0 ]; then
+  echo -e "${GREEN}✓ Contract regression pack passed (2/2 cases behaved as contracted)${NC}"
+  exit 0
+else
+  echo -e "${RED}✗ Contract regression pack failed ($FAILURES assertion(s) did not hold)${NC}"
+  echo "See $PASS_REPORT and $FAIL_REPORT for full detail."
+  exit 1
+fi

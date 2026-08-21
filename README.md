@@ -90,9 +90,41 @@ CLAUDE.md            # Complete development guide
 | Command | Purpose |
 |---------|---------|
 | `./dev/test` | Build, test, package, execute plugin, generate report |
+| `./dev/build` | Build every module's jar, in dependency order, without running the plugin |
+| `./dev/regression` | Contract regression pack: proves a satisfied contract executes and a violated one is aborted before any output is written (see below) |
+| `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed |
 | `./dev/report` | Start web UI on localhost:3000 |
 | `cd plugin && sbt test` | Run unit tests only |
 | `cd plugin && sbt assembly` | Build JAR only |
+
+## Contract Regression Pack
+
+`ContractEnforcementRule` (see `docs/SPARK_ADAPTER.md`) gates every Spark
+write against a contract before it executes: a write that violates its
+contract is aborted, and no output is ever created. `./dev/regression`
+re-runs that guarantee as a script instead of a transcript, with real
+`spark-submit` invocations and real assertions — not mocks:
+
+```bash
+./dev/regression
+```
+
+It checks two real cases and exits non-zero if either behaves unexpectedly:
+
+1. **Contract satisfied** (`demo/contracts/invariant_output.yaml`) — the
+   job exits 0, the report says `PASS`, and the output file exists.
+2. **Contract violated**
+   (`demo/contracts/invariant_output_broken_example.yaml`, which requires a
+   `customer_name` column the plugin never produces) — the job exits
+   non-zero, the report says `FAIL` with a `MISSING_OUTPUT_FIELD`
+   violation, and — the core guarantee — the output file is never created.
+
+The only requirement is a working `./dev/test` environment (Codespaces
+already provides one). With just Docker installed and nothing else,
+`./dev/regression-docker` builds a self-contained image and runs the same
+pack inside it — useful for verifying the guarantee on a machine that
+hasn't set up JDK/sbt/Spark at all. This same pack now runs in CI on every
+push, so the abort path is checked automatically, not just the happy path.
 
 ## Example Plugin
 

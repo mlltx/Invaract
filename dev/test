@@ -3,6 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
+source dev/lib.sh
 
 echo "======================================"
 echo "Invariant Spark Plugin Test Suite"
@@ -14,8 +15,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-PLUGIN_JAR="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
-RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
 REPORT_DIR="demo/output"
 REPORT_FILE="$REPORT_DIR/report.json"
 
@@ -29,18 +28,28 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Step 1: Build Plugin
+# Step 1: Build all modules
+# dev/build compiles+tests+assembles contract, ir, plugin and spark-adapter
+# before runner, in that order — required because runner's build.sbt pulls
+# each of their jars in via unmanagedJars (no aggregating root build.sbt
+# links these independent sbt projects). Building only plugin+runner here,
+# as this script used to, works only by accident once the other three jars
+# already exist on disk from an earlier build; on a genuinely fresh clone
+# it fails with "not found: type ContractViolationException" etc. in
+# runner's compile step.
 echo ""
-echo -e "${YELLOW}Step 1/7: Building plugin...${NC}"
-cd plugin
-sbt clean compile test assembly 2>&1 | grep -E "^(.*error.*|.*warning.*|.*Test.*|.*BUILD.*)" || true
-cd ..
+echo -e "${YELLOW}Step 1/7: Building all modules...${NC}"
+./dev/build
 
 if [ ! -f "$PLUGIN_JAR" ]; then
   echo -e "${RED}✗ Plugin JAR not found: $PLUGIN_JAR${NC}"
   exit 1
 fi
-echo -e "${GREEN}✓ Plugin built successfully${NC}"
+if [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Runner JAR not found: $RUNNER_JAR${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✓ All modules built successfully${NC}"
 
 # Step 2: Verify plugin JAR
 echo ""
@@ -50,18 +59,11 @@ echo "  JAR size: $JAR_SIZE"
 echo "  Main classes:"
 jar tf "$PLUGIN_JAR" | grep "com/example/plugin" | head -5
 
-# Step 3: Build Runner
+# Step 3: Verify runner JAR
 echo ""
-echo -e "${YELLOW}Step 3/7: Building runner...${NC}"
-cd runner
-sbt clean compile assembly 2>&1 | grep -E "^(.*error.*|.*warning.*|.*BUILD.*)" || true
-cd ..
-
-if [ ! -f "$RUNNER_JAR" ]; then
-  echo -e "${RED}✗ Runner JAR not found: $RUNNER_JAR${NC}"
-  exit 1
-fi
-echo -e "${GREEN}✓ Runner built successfully${NC}"
+echo -e "${YELLOW}Step 3/7: Verifying runner JAR...${NC}"
+RUNNER_JAR_SIZE=$(du -h "$RUNNER_JAR" | cut -f1)
+echo "  JAR size: $RUNNER_JAR_SIZE"
 
 # Step 4: Verify Spark availability
 echo ""
@@ -86,40 +88,7 @@ echo "  Input: demo/input/sample.csv"
 echo "  Output: demo/output/result.parquet"
 echo "  Report: $REPORT_FILE"
 
-if command -v spark-submit &> /dev/null; then
-  spark-submit \
-    --class com.example.runner.PluginRunner \
-    --master local[*] \
-    --jars "$PLUGIN_JAR" \
-    "$RUNNER_JAR" \
-    "demo/input/sample.csv" \
-    "demo/output/result.parquet" \
-    "$REPORT_FILE"
-else
-  # spark-submit's own launch scripts inject --add-opens flags Spark needs
-  # on JDK 17+ (see runner/build.sbt for the same fix applied to `sbt
-  # test`); this fallback path bypasses spark-submit entirely, so it needs
-  # the same flags to run on JDK 17+ without spark-submit on PATH.
-  java \
-    --add-opens=java.base/java.lang=ALL-UNNAMED \
-    --add-opens=java.base/java.lang.invoke=ALL-UNNAMED \
-    --add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
-    --add-opens=java.base/java.io=ALL-UNNAMED \
-    --add-opens=java.base/java.net=ALL-UNNAMED \
-    --add-opens=java.base/java.nio=ALL-UNNAMED \
-    --add-opens=java.base/java.util=ALL-UNNAMED \
-    --add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
-    --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED \
-    --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
-    --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
-    --add-opens=java.base/sun.security.action=ALL-UNNAMED \
-    --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
-    -cp "$PLUGIN_JAR:$RUNNER_JAR" com.example.runner.PluginRunner \
-    "demo/input/sample.csv" \
-    "demo/output/result.parquet" \
-    "$REPORT_FILE"
-fi
-
+run_plugin_runner "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE"
 SPARK_EXIT=$?
 
 # Step 7: Validate Report

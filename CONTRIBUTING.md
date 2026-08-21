@@ -38,11 +38,9 @@ cd Invariant
 git clone https://github.com/mlltx/Invariant.git
 cd Invariant
 
-# Build plugin
-cd plugin && sbt compile test assembly && cd ..
-
-# Build runner
-cd runner && sbt compile assembly && cd ..
+# Build every module (contract, ir, plugin, spark-adapter, runner) in the
+# dependency order their cross-module references require
+./dev/build
 
 # Verify Spark
 spark-submit --version
@@ -56,6 +54,22 @@ spark-submit --version
 
 # Expected output: "All validation passed" with exit code 0
 ```
+
+### Contract Regression Pack
+
+If your change touches the contract model, the IR, the Spark adapter, or
+`ContractEnforcementRule`, also run the regression pack, which asserts
+(against a real `spark-submit` run, not mocks) that a satisfied contract
+executes and a violated one is aborted with no output written:
+
+```bash
+./dev/regression
+
+# Or, with only Docker installed and nothing else set up:
+./dev/regression-docker
+```
+
+This also runs in CI on every push (`.github/workflows/test.yml`).
 
 ### Viewing Results
 

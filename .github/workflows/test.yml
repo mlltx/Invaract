@@ -74,66 +74,33 @@ jobs:
         shell: bash
         run: spark-submit --version
 
-      - name: Build and test plugin
-        run: |
-          cd plugin
-          sbt clean compile test assembly
-          cd ..
+      - name: Build all modules
+        # dev/build compiles+tests+assembles contract, ir, plugin and
+        # spark-adapter before runner, in that dependency order (runner's
+        # build.sbt pulls each of their jars in via unmanagedJars — there's
+        # no aggregating root build.sbt). Building only plugin+runner here
+        # previously worked only by accident when their jars happened to
+        # already exist; on a clean checkout it fails runner's compile.
+        run: ./dev/build
         shell: bash
 
-      - name: Verify plugin JAR
-        run: |
-          JAR_PATH="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
-          if [ ! -f "$JAR_PATH" ]; then
-            echo "ERROR: Plugin JAR not found"
-            exit 1
-          fi
-          ls -lh "$JAR_PATH"
+      - name: Run contract regression pack
+        # Exercises both the PASS case (a transformation that satisfies its
+        # contract executes and writes its output) and the FAIL case (a
+        # transformation that violates its contract is aborted by
+        # ContractEnforcementRule before any output is written) against a
+        # real spark-submit run — see dev/regression and
+        # docs/SPARK_ADAPTER.md. SKIP_BUILD=1 because the previous step
+        # already built every module's jar.
+        run: SKIP_BUILD=1 ./dev/regression
         shell: bash
 
-      - name: Build runner
-        run: |
-          cd runner
-          sbt clean compile assembly
-          cd ..
-        shell: bash
-
-      - name: Prepare test data
-        run: mkdir -p demo/output
-        shell: bash
-
-      - name: Run Spark integration test
-        shell: bash
-        run: |
-          spark-submit \
-            --class com.example.runner.PluginRunner \
-            --master local[*] \
-            --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
-            runner/target/scala-2.12/invariant-spark-runner.jar \
-            demo/input/sample.csv \
-            demo/output/result.parquet \
-            demo/output/report.json
-
-      - name: Validate execution report
-        run: |
-          import json
-          
-          with open('demo/output/report.json', 'r') as f:
-              report = json.load(f)
-          
-          if report['status'] != 'PASS':
-              print(f"ERROR: Report status is {report['status']}")
-              exit(1)
-          
-          print("✓ Test passed")
-        shell: python
-
-      - name: Upload test report
+      - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: report-${{ matrix.os }}-java${{ matrix.java-version }}
-          path: demo/output/report.json
+          name: reports-${{ matrix.os }}-java${{ matrix.java-version }}
+          path: demo/output/*.json
 
   summary:
     name: Test Summary
