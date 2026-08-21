@@ -346,4 +346,36 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
     assert(result.passed, s"expected the relative contract location to match the absolute runtime path: ${result.violations}")
   }
+
+  // KNOWN GAP (see ROADMAP.md Phase 1c "Scope (Future)"): a contract's
+  // declared `format` (e.g. "parquet") is parsed into the object model but
+  // never checked against what the plan actually did. This isn't a missing
+  // if-check that could just be added — the gap runs deeper: `ir.Write`
+  // itself carries only a location, not a format, so there is currently no
+  // way for a translated plan to even represent "this write happened in
+  // format X" for StructuralVerifier to compare against. A contract
+  // declaring parquet would pass unchanged if the real pipeline wrote CSV,
+  // JSON, or anything else at the same location with the same schema. This
+  // test documents that as current, known behavior — not a false green —
+  // so it's discoverable in the suite rather than only in chat history.
+  test("KNOWN GAP: a contract's declared output format is not verified against the actual write") {
+    val contract = realDemoContract()
+    assert(contract.outputs.head.format.contains("parquet"), "sanity check: the real demo contract does declare a format")
+
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    // The IR's Write node has no format field at all, so nothing here
+    // actually distinguishes "wrote parquet" from "wrote CSV" — this line
+    // exercises exactly what a real (non-parquet) write would produce.
+    val plan = realDemoPlan(outputDf)
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+
+    assert(result.passed, "format is not part of what verify() checks today — this passing is the gap, not a bug in this test")
+  }
 }

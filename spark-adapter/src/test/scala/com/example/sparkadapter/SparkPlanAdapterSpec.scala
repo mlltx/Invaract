@@ -173,6 +173,189 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(hasUnsupportedNode, s"expected an Unsupported node somewhere in ${PlanPrinter.render(result.plan)}")
   }
 
+  test("translates Sort, capturing direction and null ordering") {
+    val df = readSample()
+    val sorted = df.orderBy(col("value").desc_nulls_last)
+
+    val result = SparkPlanAdapter.translate(sorted.queryExecution.analyzed)
+
+    // As with the windowed-aggregate test above, the analyzer may wrap the
+    // Sort in an outer Project — search for it rather than assuming exact
+    // nesting depth.
+    def findSort(plan: Plan): Option[Sort] = plan match {
+      case s: Sort => Some(s)
+      case other    => other.children.flatMap(findSort).headOption
+    }
+
+    val sort = findSort(result.plan).getOrElse(fail(s"no Sort node found in ${PlanPrinter.render(result.plan)}"))
+    sort.order match {
+      case List(SortOrder(ColumnReference(ColumnRef("value", _)), ascending, nullsFirst)) =>
+        assert(!ascending, "desc_nulls_last should translate to ascending = false")
+        assert(!nullsFirst, "desc_nulls_last should translate to nullsFirst = false")
+      case other => fail(s"unexpected sort order: $other")
+    }
+  }
+
+  test("translates every join type Spark supports") {
+    val left = readSample().as("l")
+    val right = readSample().as("r")
+
+    def findJoin(plan: Plan): Option[Join] = plan match {
+      case j: Join => Some(j)
+      case other    => other.children.flatMap(findJoin).headOption
+    }
+
+    val namedJoins = Seq(
+      "left_outer"  -> JoinType.LeftOuter,
+      "right_outer" -> JoinType.RightOuter,
+      "full_outer"  -> JoinType.FullOuter,
+      "leftsemi"    -> JoinType.LeftSemi,
+      "leftanti"    -> JoinType.LeftAnti
+    )
+    namedJoins.foreach { case (sparkName, expected) =>
+      val joined = left.join(right, left("id") === right("id"), sparkName)
+      val result = SparkPlanAdapter.translate(joined.queryExecution.analyzed)
+      val join = findJoin(result.plan).getOrElse(fail(s"no Join node found for '$sparkName' in ${PlanPrinter.render(result.plan)}"))
+      assert(join.joinType == expected, s"expected $expected for '$sparkName', got ${join.joinType}")
+    }
+
+    // Cross join has its own DataFrame method (no join condition).
+    val crossed = left.crossJoin(right)
+    val crossResult = SparkPlanAdapter.translate(crossed.queryExecution.analyzed)
+    val crossJoin = findJoin(crossResult.plan).getOrElse(fail(s"no Join node found for cross join in ${PlanPrinter.render(crossResult.plan)}"))
+    assert(crossJoin.joinType == JoinType.Cross)
+  }
+
+  test("translates a multi-way join chain, recursing through nested Join nodes") {
+    val a = readSample().as("a")
+    val b = readSample().as("b")
+    val c = readSample().as("c")
+    val chained = a.join(b, a("id") === b("id")).join(c, a("id") === c("id"))
+
+    val result = SparkPlanAdapter.translate(chained.queryExecution.analyzed)
+
+    def countJoins(plan: Plan): Int = plan match {
+      case j: Join => 1 + countJoins(j.left) + countJoins(j.right)
+      case other     => other.children.map(countJoins).sum
+    }
+    assert(countJoins(result.plan) == 2, s"expected 2 Join nodes in ${PlanPrinter.render(result.plan)}")
+  }
+
+  test("translates COUNT, AVG, MIN, MAX, and COUNT(DISTINCT ...) aggregates") {
+    val df = readSample()
+    val agg = df.groupBy("id").agg(
+      count("value").as("cnt"),
+      countDistinct("value").as("cnt_distinct"),
+      avg("value").as("avg_value"),
+      min("value").as("min_value"),
+      max("value").as("max_value")
+    )
+
+    val result = SparkPlanAdapter.translate(agg.queryExecution.analyzed)
+
+    result.plan match {
+      case Aggregate(_, _, aggregates) =>
+        val byName = aggregates.map(a => a.name -> a.expr).toMap
+        assert(byName("cnt").isInstanceOf[AggregateCall])
+        assert(byName("cnt").asInstanceOf[AggregateCall].function == "COUNT")
+        assert(!byName("cnt").asInstanceOf[AggregateCall].distinct)
+        assert(byName("cnt_distinct").asInstanceOf[AggregateCall].function == "COUNT")
+        assert(byName("cnt_distinct").asInstanceOf[AggregateCall].distinct)
+        assert(byName("avg_value").asInstanceOf[AggregateCall].function == "AVG")
+        assert(byName("min_value").asInstanceOf[AggregateCall].function == "MIN")
+        assert(byName("max_value").asInstanceOf[AggregateCall].function == "MAX")
+      case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
+    }
+  }
+
+  test("wraps a multi-argument aggregate (corr) in an ARGS(...) function call with a diagnostic") {
+    val df = readSample()
+    val agg = df.groupBy("id").agg(corr(col("value"), col("value")).as("correlation"))
+
+    val result = SparkPlanAdapter.translate(agg.queryExecution.analyzed)
+
+    result.plan match {
+      case Aggregate(_, _, aggregates) =>
+        aggregates.find(_.name == "correlation").get.expr match {
+          case AggregateCall(_, FunctionCall("ARGS", args), _) => assert(args.size == 2)
+          case other                                            => fail(s"unexpected multi-arg aggregate translation: $other")
+        }
+      case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.nonEmpty, "a multi-argument aggregate should be flagged, not silently narrowed")
+  }
+
+  test("translates CASE WHEN and IS NULL via the generic expression fallback, with no diagnostic needed") {
+    val df = readSample()
+    // A single select(), not chained withColumn() calls: chaining nests a
+    // second Project atop the first, and the outer one just re-references
+    // "bucket" as a plain column — the computation itself lives one level
+    // down, which the test isn't asserting about here.
+    val withCase = df.select(
+      col("id"),
+      col("value"),
+      when(col("value") > 20, lit("high")).otherwise(lit("low")).as("bucket"),
+      col("value").isNull.as("value_is_null")
+    )
+
+    val result = SparkPlanAdapter.translate(withCase.queryExecution.analyzed)
+
+    result.plan match {
+      case Project(_, columns) =>
+        val bucket = columns.find(_.name == "bucket").get.expr
+        assert(bucket.isInstanceOf[FunctionCall], s"expected CASE WHEN to fall through to a generic FunctionCall, got $bucket")
+
+        columns.find(_.name == "value_is_null").get.expr match {
+          case FunctionCall("ISNULL", List(ColumnReference(ColumnRef("value", _)))) => // expected
+          case other                                                                  => fail(s"unexpected IS NULL translation: $other")
+        }
+      case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, "the generic fallback is not opaque — it shouldn't need a diagnostic")
+  }
+
+  test("translates .limit(n) as a transparent pass-through, preserving the underlying plan") {
+    val df = readSample()
+    val limited = df.limit(2)
+
+    val result = SparkPlanAdapter.translate(limited.queryExecution.analyzed)
+
+    result.plan match {
+      case Read(DatasetRef(location), None) => assert(location.contains("sample.csv"))
+      case other                            => fail(s"expected Limit to be transparent to translation, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty)
+  }
+
+  test("reads translate the same way regardless of source file format: CSV, JSON, and Parquet") {
+    val jsonPath = outputDir.resolve("sample.json")
+    Files.write(
+      jsonPath,
+      "{\"id\":1,\"value\":10}\n{\"id\":2,\"value\":20}\n".getBytes("UTF-8")
+    )
+    val parquetPath = outputDir.resolve("sample_read_format_test.parquet").toString
+    readSample().write.mode(SaveMode.Overwrite).parquet(parquetPath)
+
+    val results = Seq(
+      "csv"     -> SparkPlanAdapter.translate(readSample().queryExecution.analyzed),
+      "json"    -> SparkPlanAdapter.translate(spark.read.json(jsonPath.toString).queryExecution.analyzed),
+      "parquet" -> SparkPlanAdapter.translate(spark.read.parquet(parquetPath).queryExecution.analyzed)
+    )
+
+    results.foreach { case (format, result) =>
+      result.plan match {
+        case Read(DatasetRef(location), None) => assert(location.nonEmpty, s"$format: expected a non-empty location")
+        case other                            => fail(s"$format: expected a bare Read regardless of source format, got ${PlanPrinter.render(other)}")
+      }
+      assert(result.diagnostics.isEmpty, s"$format: a plain relation read should not need a diagnostic")
+    }
+
+    val jsonLocation = results.find(_._1 == "json").get._2.plan.asInstanceOf[Read].dataset.location
+    val parquetLocation = results.find(_._1 == "parquet").get._2.plan.asInstanceOf[Read].dataset.location
+    assert(jsonLocation.contains("sample.json"))
+    assert(parquetLocation.contains("sample_read_format_test.parquet"))
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)

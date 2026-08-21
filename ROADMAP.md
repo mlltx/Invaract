@@ -714,6 +714,33 @@ Docker.
       writes (matching `SparkPlanAdapter`'s translation coverage); other
       write command types (JDBC sinks, streaming writes, `saveAsTable`)
       are unexercised
+- [ ] **Output format is not verified.** `Dataset.format` (e.g. `"parquet"`)
+      is parsed into the contract object model but never checked against
+      what the plan actually did — and the gap runs deeper than a missing
+      if-check: `ir.Write` itself carries only a location, not a format, so
+      there is currently no way for a translated plan to represent "this
+      write happened in format X" at all. A contract declaring `parquet`
+      would pass unchanged today if the real pipeline wrote CSV or JSON to
+      the same location with the same schema. Documented as a characterization
+      test, not silently: `StructuralVerifierSpec`'s
+      `"KNOWN GAP: a contract's declared output format is not verified
+      against the actual write"`.
+- [ ] Other real feature gaps found while extending translation-coverage
+      tests (`SparkPlanAdapterSpec`), not yet fixed:
+      - `Distinct`/`Deduplicate` and `Repartition`/`Coalesce`/
+        `RepartitionByExpression` have no explicit case in
+        `SparkPlanAdapter.translatePlan` — they fall through to the generic
+        `Unsupported` placeholder rather than being translated (`Distinct`)
+        or treated as row-count-only pass-throughs like `GlobalLimit`/
+        `LocalLimit` are (`Repartition`/`Coalesce`).
+      - `SaveMode` (append/overwrite/ignore/error) is not captured by
+        `ir.Write` at all — a contract currently cannot express or verify
+        "this output must be overwritten, not appended to."
+      - Non-file-based sources (`JDBCRelation` and similar) fall back to
+        `SparkPlanAdapter.locationOf`'s `catalogTable`/`.toString` path,
+        which is a lower-fidelity location than the `HadoopFsRelation` path
+        file-based reads get — untested, and likely to produce a location
+        string a contract can't reliably match against.
 
 #### Dependencies
 

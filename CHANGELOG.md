@@ -155,6 +155,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `docker/Dockerfile` and runs it, exercising the same
     `./dev/regression-docker` path a Docker-only contributor would use —
     not just the native-toolchain path the matrix job covers
+- **Broader Spark operation and file-format translation coverage**
+  (`SparkPlanAdapterSpec`): 9 new tests proving `SparkPlanAdapter` against
+  operations the existing suite didn't exercise — `Sort` (direction and
+  null ordering), every `JoinType` (left/right/full outer, semi, anti,
+  cross), multi-way join chains, `COUNT`/`AVG`/`MIN`/`MAX`/
+  `COUNT(DISTINCT ...)` aggregates, a multi-argument aggregate (`corr`)
+  wrapped in `ARGS(...)`, `CASE WHEN`/`IS NULL` via the generic expression
+  fallback, and `.limit(n)` as a transparent pass-through — plus a test
+  reading the same data via CSV, JSON, and Parquet to prove translation is
+  genuinely format-agnostic (works at the `HadoopFsRelation` level, not
+  per-format). Also added a characterization test to `StructuralVerifierSpec`
+  documenting a real gap this surfaced: a contract's declared output
+  `format` is parsed but never verified — see ROADMAP.md Phase 1c "Scope
+  (Future)" for the full list of gaps found (format verification,
+  `Distinct`/`Repartition` translation, `SaveMode`, JDBC location fidelity).
 
 ### Fixed
 
