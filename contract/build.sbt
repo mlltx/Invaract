@@ -14,8 +14,6 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-Test / parallelExecution := false
-
 assembly / assemblyJarName := "invariant-contract-0.1.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
