@@ -144,7 +144,7 @@ workaround bolted onto the adapter alone.
 
 | Spark construct | IR translation |
 |---|---|
-| `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ...)` |
+| `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()`, `None` if it doesn't implement that trait |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` |
 | `SubqueryAlias` over a `Read` | `Read(..., alias = Some(name))` |
 | `SubqueryAlias` over anything else | pass-through + `Diagnostic` (no generic aliased-subplan node in the IR) |
@@ -156,6 +156,8 @@ workaround bolted onto the adapter alone.
 | `Sort` | `Sort(input, order)` |
 | `Window` | `Window(input, windowExpressions, partitionSpec, orderSpec)` |
 | `GlobalLimit` / `LocalLimit` | transparent pass-through (row count doesn't affect column lineage) |
+| `Deduplicate` (`.distinct()`) | transparent pass-through (row count only, no column change) |
+| `Repartition` / `RepartitionByExpression` (`.repartition()`, `.coalesce()`) | transparent pass-through (physical partitioning only) |
 | `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier))` |
 | `Alias` (top-level, in an output list) | `NamedExpr(name, translated child)` |
 | `Alias` (nested elsewhere) | translated child, name discarded (no `Alias` expression node in the IR — see design doc) |
@@ -337,14 +339,17 @@ The result matches the spec's exact shape:
 }
 ```
 
-Twelve violation types, covering inputs and outputs symmetrically:
+Thirteen violation types, covering inputs and outputs symmetrically:
 `MISSING_INPUT`, `UNDECLARED_INPUT`, `MISSING_INPUT_FIELD`,
 `UNDECLARED_INPUT_COLUMN`, `INPUT_FIELD_TYPE_MISMATCH`,
 `INPUT_FIELD_NULLABILITY_MISMATCH`, and the `OUTPUT_*` equivalents
 (`MISSING_OUTPUT`/`OUTPUT_LOCATION_MISMATCH` replace `MISSING_INPUT`'s role
 on the output side, since there's exactly one actual `Write` to compare
 against the contract's declared output, rather than a set of `Read`s to
-match by location).
+match by location). `OUTPUT_FORMAT_MISMATCH` is the one asymmetric
+addition — checked only for outputs, and only when both the contract's
+declared `format` and the actual write's format (from `ir.Write.format`)
+are known; either side being unset skips the check.
 
 `runner/PluginRunner.scala` runs this against the real demo pipeline on
 every `./dev/test`, using `demo/contracts/invariant_output.yaml`. Kept in

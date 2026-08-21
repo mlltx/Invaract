@@ -66,8 +66,11 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(lifetimeValue.sources.exists(_.name == "value"))
 
     result.plan match {
-      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None), List(ColumnReference(_)), aggregates)) =>
+      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None), List(ColumnReference(_)), aggregates), format) =>
         assert(aggregates.map(_.name) == List("id", "lifetime_value"))
+        // translateAsWrite wraps a bare (never actually written) plan as a
+        // Write for convenience — there's no real format to report.
+        assert(format.isEmpty)
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
   }
@@ -327,6 +330,36 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.isEmpty)
   }
 
+  test("translates .distinct() as a transparent pass-through (Deduplicate), preserving the underlying plan") {
+    val df = readSample()
+    val deduped = df.select("id", "value").distinct()
+
+    val result = SparkPlanAdapter.translate(deduped.queryExecution.analyzed)
+
+    result.plan match {
+      case Project(Read(DatasetRef(location), None), _) => assert(location.contains("sample.csv"))
+      case other                                          => fail(s"expected Distinct to be transparent to translation, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty)
+  }
+
+  test("translates .repartition(n), .coalesce(n), and .repartition(col) as transparent pass-throughs") {
+    val df = readSample()
+
+    def assertTransparent(transformed: org.apache.spark.sql.DataFrame, label: String): Unit = {
+      val result = SparkPlanAdapter.translate(transformed.queryExecution.analyzed)
+      result.plan match {
+        case Read(DatasetRef(location), None) => assert(location.contains("sample.csv"), s"$label: unexpected location")
+        case other                            => fail(s"$label: expected a transparent pass-through, got ${PlanPrinter.render(other)}")
+      }
+      assert(result.diagnostics.isEmpty, s"$label: should not need a diagnostic")
+    }
+
+    assertTransparent(df.repartition(4), "repartition(n)")
+    assertTransparent(df.coalesce(1), "coalesce(n)")
+    assertTransparent(df.repartition(col("id")), "repartition(col)")
+  }
+
   test("reads translate the same way regardless of source file format: CSV, JSON, and Parquet") {
     val jsonPath = outputDir.resolve("sample.json")
     Files.write(
@@ -372,9 +405,13 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
         listener.lastWrite.getOrElse(fail("listener has not captured a write yet"))
       }
       result.plan match {
-        case Write(DatasetRef(location), Aggregate(Read(_, None), _, aggregates)) =>
+        case Write(DatasetRef(location), Aggregate(Read(_, None), _, aggregates), format) =>
           assert(location.contains("customer_orders.parquet"))
           assert(aggregates.map(_.name) == List("id", "lifetime_value"))
+          // A real write via spark-submit-style DataFrame.write.parquet(...)
+          // — proves format capture works on the actual end-to-end path,
+          // not just a hand-built InsertIntoHadoopFsRelationCommand.
+          assert(format.contains("parquet"))
         case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
       }
 

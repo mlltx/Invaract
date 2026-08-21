@@ -156,20 +156,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `./dev/regression-docker` path a Docker-only contributor would use —
     not just the native-toolchain path the matrix job covers
 - **Broader Spark operation and file-format translation coverage**
-  (`SparkPlanAdapterSpec`): 9 new tests proving `SparkPlanAdapter` against
+  (`SparkPlanAdapterSpec`): tests proving `SparkPlanAdapter` against
   operations the existing suite didn't exercise — `Sort` (direction and
   null ordering), every `JoinType` (left/right/full outer, semi, anti,
   cross), multi-way join chains, `COUNT`/`AVG`/`MIN`/`MAX`/
   `COUNT(DISTINCT ...)` aggregates, a multi-argument aggregate (`corr`)
   wrapped in `ARGS(...)`, `CASE WHEN`/`IS NULL` via the generic expression
-  fallback, and `.limit(n)` as a transparent pass-through — plus a test
-  reading the same data via CSV, JSON, and Parquet to prove translation is
-  genuinely format-agnostic (works at the `HadoopFsRelation` level, not
-  per-format). Also added a characterization test to `StructuralVerifierSpec`
-  documenting a real gap this surfaced: a contract's declared output
-  `format` is parsed but never verified — see ROADMAP.md Phase 1c "Scope
-  (Future)" for the full list of gaps found (format verification,
-  `Distinct`/`Repartition` translation, `SaveMode`, JDBC location fidelity).
+  fallback, `.limit(n)`, `.distinct()`, and `.repartition()`/`.coalesce()`
+  as transparent pass-throughs — plus a test reading the same data via
+  CSV, JSON, and Parquet to prove translation is genuinely format-agnostic
+  (works at the `HadoopFsRelation` level, not per-format).
+  - This surfaced three real gaps, all now fixed (not just documented):
+    - **Output format was never verified.** `ir.Write` gained a `format:
+      Option[String]` field, populated via Spark's own
+      `DataSourceRegister.shortName()`; `StructuralVerifier` gained
+      `OUTPUT_FORMAT_MISMATCH`, checked only when both the contract's
+      declared format and the actual write's format are known (either
+      side unknown skips the check rather than risking a false
+      rejection). Proven end-to-end, including in `dev/regression`'s own
+      rendered plan output, which now shows `format=parquet`.
+    - **`Distinct`/`Deduplicate`** fell through to the opaque
+      `Unsupported` placeholder instead of being translated — fixed as a
+      transparent pass-through (doesn't change columns, only row count).
+    - **`Repartition`/`Coalesce`/`RepartitionByExpression`** had the same
+      problem and the same fix.
+  - Remaining gaps not yet fixed — `SaveMode` isn't captured by `ir.Write`
+    at all, and JDBC/non-file sources get a lower-fidelity location string
+    than file-based reads — tracked in ROADMAP.md Phase 1c "Scope (Future)".
 
 ### Fixed
 

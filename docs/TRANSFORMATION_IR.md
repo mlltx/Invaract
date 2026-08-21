@@ -83,7 +83,7 @@ the plan, not a different kind of expression.
 | Node | Represents |
 |---|---|
 | `Read(dataset, alias)` | Source: reads a dataset in its entirety. No declared schema — columns come into existence when referenced downstream. `alias` supports self-joins. |
-| `Write(dataset, input)` | Sink: always the root of a complete pipeline. |
+| `Write(dataset, input, format)` | Sink: always the root of a complete pipeline. `format` ("parquet", "csv", ...) is populated when the adapter that produced this node could determine one; `None` otherwise, not "no format." |
 | `Project(input, columns)` | Narrows/computes the output column set. `columns` is always the *complete* output schema — no implicit `SELECT *` passthrough. |
 | `Filter(input, condition)` | Restricts rows; column set unchanged. |
 | `Join(left, right, joinType, condition)` | Combines two datasets row-wise. Both sides' columns appear in the output. |

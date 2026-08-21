@@ -347,27 +347,22 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.passed, s"expected the relative contract location to match the absolute runtime path: ${result.violations}")
   }
 
-  // KNOWN GAP (see ROADMAP.md Phase 1c "Scope (Future)"): a contract's
-  // declared `format` (e.g. "parquet") is parsed into the object model but
-  // never checked against what the plan actually did. This isn't a missing
-  // if-check that could just be added — the gap runs deeper: `ir.Write`
-  // itself carries only a location, not a format, so there is currently no
-  // way for a translated plan to even represent "this write happened in
-  // format X" for StructuralVerifier to compare against. A contract
-  // declaring parquet would pass unchanged if the real pipeline wrote CSV,
-  // JSON, or anything else at the same location with the same schema. This
-  // test documents that as current, known behavior — not a false green —
-  // so it's discoverable in the suite rather than only in chat history.
-  test("KNOWN GAP: a contract's declared output format is not verified against the actual write") {
+  // Previously a KNOWN GAP (see git history / ROADMAP.md Phase 1c): a
+  // contract's declared `format` was parsed into the object model but
+  // never checked against what the plan actually did — `ir.Write` didn't
+  // even carry a format field to compare against. SparkPlanAdapter now
+  // populates it (via Spark's DataSourceRegister.shortName() on the
+  // write's FileFormat) and StructuralVerifier checks it; these tests
+  // replace the old characterization test that documented the gap.
+
+  test("OUTPUT_FORMAT_MISMATCH: contract declares one format but the plan writes in another") {
     val contract = realDemoContract()
     assert(contract.outputs.head.format.contains("parquet"), "sanity check: the real demo contract does declare a format")
 
     val inputDf = realDemoInput()
     val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
-    // The IR's Write node has no format field at all, so nothing here
-    // actually distinguishes "wrote parquet" from "wrote CSV" — this line
-    // exercises exactly what a real (non-parquet) write would produce.
-    val plan = realDemoPlan(outputDf)
+    val bareWrite = realDemoPlan(outputDf)
+    val plan = bareWrite.asInstanceOf[com.example.ir.Write].copy(format = Some("csv"))
 
     val result = StructuralVerifier.verify(
       contract,
@@ -376,6 +371,59 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
       outputSchema = outputDf.schema
     )
 
-    assert(result.passed, "format is not part of what verify() checks today — this passing is the gap, not a bug in this test")
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputFormatMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_FORMAT_MISMATCH violation, got: ${result.violations}"))
+    assert(violation.expected.contains("parquet"))
+    assert(violation.actual.contains("csv"))
+  }
+
+  test("format matches (case-insensitively): no violation when contract and actual format agree") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val bareWrite = realDemoPlan(outputDf)
+    // Contract declares "parquet"; Spark's own shortName() for the format
+    // this real demo actually writes is lowercase too, but the check is
+    // explicitly case-insensitive — prove that, not just the exact-match case.
+    val plan = bareWrite.asInstanceOf[com.example.ir.Write].copy(format = Some("PARQUET"))
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+
+    assert(result.passed, s"expected matching formats to pass: ${result.violations}")
+  }
+
+  test("format is not checked when the contract doesn't declare one, or the actual format is unknown") {
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val bareWrite = realDemoPlan(outputDf)
+
+    // Contract declares no format at all.
+    val contractNoFormat = realDemoContract().copy(
+      outputs = realDemoContract().outputs.map(_.copy(format = None))
+    )
+    val planWithFormat = bareWrite.asInstanceOf[com.example.ir.Write].copy(format = Some("csv"))
+    val resultA = StructuralVerifier.verify(
+      contractNoFormat,
+      planWithFormat,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+    assert(resultA.passed, s"a contract with no declared format shouldn't check it at all: ${resultA.violations}")
+
+    // Contract declares a format, but the adapter couldn't determine the
+    // actual one (format = None, same as realDemoPlan's default synthetic wrap).
+    val resultB = StructuralVerifier.verify(
+      realDemoContract(),
+      bareWrite,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+    assert(resultB.passed, s"an unknown actual format shouldn't be treated as a mismatch: ${resultB.violations}")
   }
 }

@@ -692,6 +692,37 @@ Docker.
       (its egress policy blocks Docker Hub's image CDN), so CI is this
       path's actual verification.
 
+#### Sub-phase: Output format verification, Distinct/Repartition translation (done)
+
+Three gaps found while extending `SparkPlanAdapterSpec`'s translation
+coverage (see git history — a "KNOWN GAP" characterization test in
+`StructuralVerifierSpec` documented the format gap before this fix, and is
+now replaced by tests proving the real behavior).
+
+- [x] **Output format verification.** `ir.Write` gained a `format:
+      Option[String]` field; `SparkPlanAdapter` populates it from the
+      write's Spark `FileFormat` via `DataSourceRegister.shortName()` (the
+      same clean identifier — `"parquet"`, `"csv"`, `"json"` — Spark uses
+      everywhere else, including `df.write.format(...)`). `StructuralVerifier`
+      now emits `OUTPUT_FORMAT_MISMATCH` when the contract's declared
+      format and the actual write's format are both known and disagree
+      (case-insensitively); either side being unknown skips the check
+      rather than risking a false rejection. Proven against a real
+      `spark-submit`-style write end-to-end, not just a hand-built plan —
+      see `SparkPlanAdapterSpec`'s `"end to end: a real write..."` test
+      and `dev/regression`'s own rendered plan output, which now shows
+      `Write(location, format=parquet)`.
+- [x] **`Distinct`/`Deduplicate` translation.** Previously fell through to
+      the opaque `Unsupported` placeholder. `.distinct()` doesn't change
+      which columns exist or their meaning, only row cardinality, so it's
+      now transparent for translation — same treatment as `GlobalLimit`/
+      `LocalLimit` already had.
+- [x] **`Repartition`/`Coalesce`/`RepartitionByExpression` translation.**
+      Same fix, same reasoning: `.repartition(n)`, `.coalesce(n)`, and
+      `.repartition(col(...))` only change physical partitioning, not
+      column shape — all three are now transparent pass-throughs rather
+      than falling to `Unsupported`.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -714,25 +745,8 @@ Docker.
       writes (matching `SparkPlanAdapter`'s translation coverage); other
       write command types (JDBC sinks, streaming writes, `saveAsTable`)
       are unexercised
-- [ ] **Output format is not verified.** `Dataset.format` (e.g. `"parquet"`)
-      is parsed into the contract object model but never checked against
-      what the plan actually did — and the gap runs deeper than a missing
-      if-check: `ir.Write` itself carries only a location, not a format, so
-      there is currently no way for a translated plan to represent "this
-      write happened in format X" at all. A contract declaring `parquet`
-      would pass unchanged today if the real pipeline wrote CSV or JSON to
-      the same location with the same schema. Documented as a characterization
-      test, not silently: `StructuralVerifierSpec`'s
-      `"KNOWN GAP: a contract's declared output format is not verified
-      against the actual write"`.
 - [ ] Other real feature gaps found while extending translation-coverage
       tests (`SparkPlanAdapterSpec`), not yet fixed:
-      - `Distinct`/`Deduplicate` and `Repartition`/`Coalesce`/
-        `RepartitionByExpression` have no explicit case in
-        `SparkPlanAdapter.translatePlan` — they fall through to the generic
-        `Unsupported` placeholder rather than being translated (`Distinct`)
-        or treated as row-count-only pass-throughs like `GlobalLimit`/
-        `LocalLimit` are (`Repartition`/`Coalesce`).
       - `SaveMode` (append/overwrite/ignore/error) is not captured by
         `ir.Write` at all — a contract currently cannot express or verify
         "this output must be overwritten, not appended to."

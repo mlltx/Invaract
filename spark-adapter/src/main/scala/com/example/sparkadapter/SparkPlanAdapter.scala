@@ -31,18 +31,22 @@ import org.apache.spark.sql.catalyst.plans.{
 }
 import org.apache.spark.sql.catalyst.plans.logical.{
   Aggregate,
+  Deduplicate,
   Filter,
   GlobalLimit,
   Join,
   LocalLimit,
   LogicalPlan,
   Project,
+  Repartition,
+  RepartitionByExpression,
   Sort,
   SubqueryAlias,
   Union,
   Window
 }
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation}
+import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -145,7 +149,7 @@ object SparkPlanAdapter {
     def translatePlan(plan: LogicalPlan): ir.Plan = plan match {
       case cmd: InsertIntoHadoopFsRelationCommand =>
         val query = unwrapWriteWrapper(cmd.query)
-        ir.Write(ir.DatasetRef(cmd.outputPath.toString), translatePlan(query))
+        ir.Write(ir.DatasetRef(cmd.outputPath.toString), translatePlan(query), formatOf(cmd.fileFormat))
 
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
@@ -208,10 +212,21 @@ object SparkPlanAdapter {
 
       // Row-count-only operators: they don't change which columns exist or
       // what they mean, so they're transparent for lineage purposes.
+      // Deduplicate (.distinct()) removes duplicate rows but touches no
+      // column's identity or type; Repartition/RepartitionByExpression
+      // (.repartition()/.coalesce()) only change physical partitioning.
+      // Previously these all fell through to the opaque Unsupported
+      // placeholder — none of them actually needed one.
       case g: GlobalLimit =>
         translatePlan(g.child)
       case l: LocalLimit =>
         translatePlan(l.child)
+      case d: Deduplicate =>
+        translatePlan(d.child)
+      case r: Repartition =>
+        translatePlan(r.child)
+      case r: RepartitionByExpression =>
+        translatePlan(r.child)
 
       case other =>
         val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
@@ -226,6 +241,21 @@ object SparkPlanAdapter {
       * rather than importing it directly: an internal class an adapter
       * targeting a different Spark version might not have.
       */
+    /** Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...) mix in
+      * `DataSourceRegister`, whose `shortName()` is the same clean,
+      * stable identifier ("parquet", "csv", ...) used everywhere else in
+      * Spark (e.g. `df.write.format("parquet")`) — including, notably, in
+      * a contract's own declared `format` string, which is exactly what
+      * this needs to line up with for `StructuralVerifier`'s format check.
+      * A custom FileFormat that doesn't implement it has no comparably
+      * reliable name to fall back to, so it's left as `None` rather than
+      * guessing from `getClass.getSimpleName`.
+      */
+    private def formatOf(fileFormat: FileFormat): Option[String] = fileFormat match {
+      case registered: DataSourceRegister => Some(registered.shortName())
+      case _                                => None
+    }
+
     private def unwrapWriteWrapper(plan: LogicalPlan): LogicalPlan =
       if (plan.getClass.getSimpleName == "WriteFiles" && plan.children.size == 1) plan.children.head
       else plan

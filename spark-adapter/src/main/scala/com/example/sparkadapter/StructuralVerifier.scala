@@ -49,6 +49,7 @@ object ViolationType {
 
   val MissingOutput = "MISSING_OUTPUT"
   val OutputLocationMismatch = "OUTPUT_LOCATION_MISMATCH"
+  val OutputFormatMismatch = "OUTPUT_FORMAT_MISMATCH"
   val MissingOutputField = "MISSING_OUTPUT_FIELD"
   val UndeclaredOutputColumn = "UNDECLARED_OUTPUT_COLUMN"
   val OutputFieldTypeMismatch = "OUTPUT_FIELD_TYPE_MISMATCH"
@@ -73,8 +74,9 @@ object VerificationResult {
 /** Checks a transformation plan's actual inputs and output against a
   * `Contract`'s declarations. This is ROADMAP.md Phase 4: the first
   * *useful* verifier, checking exactly the "Structural" class of property
-  * from MISSION.md §8 — existence, location, and schema, for both inputs
-  * and outputs — not yet dependency, transformation, or governance checks.
+  * from MISSION.md §8 — existence, location, schema, and (for outputs)
+  * format, for both inputs and outputs — not yet dependency,
+  * transformation, or governance checks.
   *
   * Two kinds of information feed a check, and they come from different
   * places:
@@ -173,7 +175,7 @@ object StructuralVerifier {
 
     val expectedOutput = contract.outputs.head
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
-      case Write(dataset, _) =>
+      case Write(dataset, _, actualFormat) =>
         val locationViolation =
           if (locationsMatch(expectedOutput.location, dataset.location)) Nil
           else
@@ -187,7 +189,27 @@ object StructuralVerifier {
                 actual = Some(dataset.location)
               )
             )
-        (locationViolation, checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields))
+        // Only checked when both sides are known: a contract that doesn't
+        // declare a format isn't opting into this check at all, and a plan
+        // whose format the adapter couldn't determine (formatOf returned
+        // None) can't be compared without risking a false rejection on a
+        // write this IR simply doesn't have precise format information
+        // for yet.
+        val formatViolation = (expectedOutput.format, actualFormat) match {
+          case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
+            List(
+              Violation(
+                ViolationType.OutputFormatMismatch,
+                s"contract declares output format '$expected' but the plan writes in format '$actual'",
+                remediation =
+                  s"Write in '$expected' format instead, or update the contract's declared format to '$actual' if this format change is intentional.",
+                expected = Some(expected),
+                actual = Some(actual)
+              )
+            )
+          case _ => Nil
+        }
+        (locationViolation ++ formatViolation, checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields))
       case _ =>
         val violation = Violation(
           ViolationType.MissingOutput,

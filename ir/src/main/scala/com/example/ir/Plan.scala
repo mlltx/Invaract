@@ -37,8 +37,15 @@ case class Read(dataset: DatasetRef, alias: Option[String] = None) extends Plan 
 
 /** The sink of a transformation: everything upstream of this node exists to
   * produce `dataset`. Always the root of a complete pipeline.
+  *
+  * @param format the serialization format actually used ("parquet", "csv",
+  *   "json", ...), when the adapter that produced this node could
+  *   determine one. `None` doesn't mean "no format" — it means the
+  *   translator couldn't identify it (e.g. a write path this IR doesn't
+  *   yet model precisely). A contract's declared format can only be
+  *   verified against this when it's populated.
   */
-case class Write(dataset: DatasetRef, input: Plan) extends Plan {
+case class Write(dataset: DatasetRef, input: Plan, format: Option[String] = None) extends Plan {
   def children: List[Plan] = List(input)
 }
 

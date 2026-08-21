@@ -29,7 +29,7 @@ case class ColumnLineage(output: ColumnRef, sources: Set[ColumnRef], aggregated:
 object Lineage {
 
   def trace(plan: Plan): List[ColumnLineage] = plan match {
-    case Write(_, input) => outputsOf(input)
+    case Write(_, input, _) => outputsOf(input)
     case other           => outputsOf(other)
   }
 
@@ -52,7 +52,7 @@ object Lineage {
     case Sort(input, _)   => outputsOf(input)
     case Union(inputs)    => inputs.headOption.map(outputsOf).getOrElse(Nil)
     case Join(left, right, _, _) => outputsOf(left) ++ outputsOf(right)
-    case Write(_, input)  => outputsOf(input)
+    case Write(_, input, _)  => outputsOf(input)
 
     // A bare Read declares no output list of its own (see Plan.scala) —
     // there is nothing to trace until something downstream projects it.
@@ -121,7 +121,7 @@ object Lineage {
         case (None, None)       => None
       }
 
-    case Write(_, input) => resolveInScope(ref, input)
+    case Write(_, input, _) => resolveInScope(ref, input)
 
     case Unsupported(_, _) => None
   }
