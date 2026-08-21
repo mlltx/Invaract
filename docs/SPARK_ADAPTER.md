@@ -286,43 +286,89 @@ From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
   integration tests" deliverable outright otherwise, in any environment
   without `spark-submit` on `PATH`.
 
-## Contract verification (structural)
+## Structural verification
 
-`ContractVerifier.verify(contract, actualSchema, lineage): VerificationResult`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/ContractVerifier.scala`)
-is the first slice of ROADMAP.md Phase 1c's verification algorithm: it
-checks a `Contract`'s declared output against a real Spark job's actual
-output schema and traced lineage. For each contract-declared field it
-checks presence, type compatibility (Spark's `DataType.typeName` and this
-project's contract type vocabulary already share the same strings —
-`"integer"`, `"long"`, `"string"`, ... — so this is a direct comparison),
-and, for required fields, that `Lineage.trace` can account for it at all.
-See the class doc for exactly what this does and does not check (no
-nullability, no `rules` interpretation, extra columns not flagged).
+`StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`)
+is ROADMAP.md Phase 1c's structural verifier (its own spec called this
+"Phase 4"): the first genuinely useful check, covering every item in
+MISSION.md §8's "Structural" class — for both inputs and outputs, not just
+the output slice the earlier `ContractVerifier` covered.
+
+Two different sources feed a check:
+
+- **Existence and location** come straight off the `Plan` — `Read`/`Write`
+  nodes' `DatasetRef.location`. No Spark-specific data needed; the IR
+  already carries this.
+- **Schema** (field presence, type, nullability) needs a real Spark
+  `StructType` per dataset, supplied by the caller, because the IR
+  deliberately carries no schema of its own (`ir.Read` records only which
+  columns were *referenced*, not a dataset's full column set — see
+  [TRANSFORMATION_IR.md](TRANSFORMATION_IR.md)).
+
+**Location matching** bridges a real gap: a contract declares a portable,
+relative location (`"demo/input/sample.csv"`); Spark reports an absolute
+`file:` URI at runtime (`"file:/home/user/.../demo/input/sample.csv"` —
+confirmed empirically earlier in this doc). Comparing with `==` would fail
+every real run for a reason unrelated to actual contract compliance, so
+locations are matched by normalized suffix instead (strip the `file:`
+scheme; a declared location matches if it equals, or is a path-boundary
+suffix of, the actual one).
+
+**Nullability** is checked directionally, not by equality: a contract
+requiring non-null (`nullable: false`) is violated by an actual column
+that permits nulls; the reverse — contract allows null, actual guarantees
+non-null — is a stricter-than-required guarantee, not a violation.
+
+**Unexpected inputs/columns** are opt-in rejectable
+(`VerificationOptions(rejectUndeclaredInputs, rejectUndeclaredFields)`),
+both off by default — matching how most contract/schema tooling treats an
+unlisted extra column: permitted unless a caller opts into strict mode.
+
+The result matches the spec's exact shape:
+
+```json
+{
+  "status": "PASSED" | "FAILED",
+  "contract": "invariant_demo_output@1.0.0",
+  "violations": [
+    { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country" }
+  ]
+}
+```
+
+Twelve violation types, covering inputs and outputs symmetrically:
+`MISSING_INPUT`, `UNDECLARED_INPUT`, `MISSING_INPUT_FIELD`,
+`UNDECLARED_INPUT_COLUMN`, `INPUT_FIELD_TYPE_MISMATCH`,
+`INPUT_FIELD_NULLABILITY_MISMATCH`, and the `OUTPUT_*` equivalents
+(`MISSING_OUTPUT`/`OUTPUT_LOCATION_MISMATCH` replace `MISSING_INPUT`'s role
+on the output side, since there's exactly one actual `Write` to compare
+against the contract's declared output, rather than a set of `Read`s to
+match by location).
 
 `runner/PluginRunner.scala` runs this against the real demo pipeline on
-every `./dev/test`, using `demo/contracts/invariant_output.yaml` — a real
-contract for `InvariantPlugin`'s actual output (`id`, `value`,
-`value_squared`, all `integer`). The result is kept in its own
-`contractVerification` report section and console block, separate from
-`ExecutionReport.status`: "did the Spark job execute" and "does its
+every `./dev/test`, using `demo/contracts/invariant_output.yaml`. Kept in
+its own `contractVerification` report section and console block, separate
+from `ExecutionReport.status`: "did the Spark job execute" and "does its
 output satisfy the contract" are different questions, and conflating them
 would hide which one actually failed.
 
 Actual console output from `./dev/test`:
 
 ```
-Contract verification: PASS (invariant_demo_output)
-  ✓ id: type 'integer' matches; sources: file:.../sample.csv.id
-  ✓ value: type 'integer' matches; sources: file:.../sample.csv.value
-  ✓ value_squared: type 'integer' matches; sources: file:.../sample.csv.value
+Contract verification: PASSED (invariant_demo_output@1.0.0)
+  (no violations)
 ```
 
-`ContractVerifierSpec` proves this isn't a rubber stamp: alongside the
-real pipeline passing its own contract, two deliberately broken contracts
-(a required field the output doesn't have; a field with the wrong
-declared type) are checked against the same real output and genuinely
-fail, naming the specific field and reason.
+`StructuralVerifierSpec` proves this isn't a rubber stamp: every violation
+type fires at least once against real or realistically-constructed
+schemas, both `VerificationOptions` toggles are exercised on and off, and
+a golden test reproduces the Phase 4 spec's own worked example
+(`UNDECLARED_OUTPUT_COLUMN`, column `"country"`) exactly.
+
+Supersedes the earlier `ContractVerifier` (output schema only, no inputs,
+no nullability, no undeclared-column rejection) — removed rather than kept
+alongside, to avoid two overlapping verifiers in the codebase.
 
 ## Testing
 
@@ -331,16 +377,20 @@ cd spark-adapter
 sbt test
 ```
 
-13 tests against a real `local[*]` `SparkSession` (no mocked plans):
+22 tests against a real `local[*]` `SparkSession` (no mocked plans):
 
 - **`SparkPlanAdapterSpec`** (9) — a bare read, the worked example,
   filter+cast, self-join alias disambiguation, union, window, a UDF, an
   unsupported construct, and a full write captured end-to-end through
   `SparkAdapterListener`.
-- **`ContractVerifierSpec`** (4) — the real demo pipeline's actual output
-  passing its real contract; two deliberately broken contracts genuinely
-  failing; a passing check reporting its traced source, not just a
-  boolean.
+- **`StructuralVerifierSpec`** (13) — the real demo pipeline passing its
+  own contract; every violation type (`MISSING_INPUT`, `UNDECLARED_INPUT`,
+  `MISSING_OUTPUT`, `OUTPUT_LOCATION_MISMATCH`, `MISSING_OUTPUT_FIELD`,
+  `UNDECLARED_OUTPUT_COLUMN`, `OUTPUT_FIELD_TYPE_MISMATCH`,
+  `OUTPUT_FIELD_NULLABILITY_MISMATCH`, and the input-side equivalents)
+  firing correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"`
+  example; and the relative-vs-absolute location matching, checked against
+  Spark's real reported paths.
 
 To see it running against the actual demo pipeline:
 

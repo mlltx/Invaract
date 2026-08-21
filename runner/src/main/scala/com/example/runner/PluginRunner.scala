@@ -6,7 +6,7 @@ package com.example.runner
 import com.example.contract.ContractParser
 import com.example.ir.Lineage
 import com.example.ir.PlanPrinter
-import com.example.sparkadapter.{ContractVerifier, SparkAdapterListener, TranslationResult}
+import com.example.sparkadapter.{SparkAdapterListener, StructuralVerifier, TranslationResult}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -83,11 +83,10 @@ object PluginRunner {
         Map("captured" -> false, "note" -> "Transformation IR was not captured within the timeout")
       )
 
-      // Check the real output schema and traced lineage against a real
-      // contract — the actual verification, not just extraction. See
-      // spark-adapter's ContractVerifier for exactly what this does and
-      // does not check.
-      val contractVerification = verifyAgainstContract(contractPath, translationResult, outputDf)
+      // Check the real plan's actual inputs/output against a real contract
+      // — the actual verification, not just extraction. See spark-adapter's
+      // StructuralVerifier for exactly what this does and does not check.
+      val contractVerification = verifyAgainstContract(contractPath, inputPath, inputDf, translationResult, outputDf)
 
       val outputSchema = outputDf.schema.fields.map(f => Map(
         "name" -> f.name,
@@ -178,63 +177,77 @@ object PluginRunner {
         println("\nTransformation IR: not captured (see report.json for details)")
     }
 
-    report.contractVerification.get("passed") match {
-      case Some(passed: Boolean) =>
-        val verdict = if (passed) "PASS" else "FAIL"
-        println(s"\nContract verification: $verdict (${report.contractVerification.getOrElse("contractId", "?")})")
-        report.contractVerification.get("checks") match {
-          case Some(checks: List[_]) =>
-            checks.foreach {
-              case c: Map[_, _] =>
-                val m = c.asInstanceOf[Map[String, Any]]
-                val mark = if (m("passed") == true) "✓" else "✗"
-                println(s"  $mark ${m("field")}: ${m("message")}")
+    report.contractVerification.get("status") match {
+      case Some(status: String) =>
+        println(s"\nContract verification: $status (${report.contractVerification.getOrElse("contract", "?")})")
+        report.contractVerification.get("violations") match {
+          case Some(violations: List[_]) if violations.nonEmpty =>
+            violations.foreach {
+              case v: Map[_, _] =>
+                val m = v.asInstanceOf[Map[String, Any]]
+                val detail = m.collect { case (k, value) if k != "type" && k != "message" => s"$k=$value" }.mkString(", ")
+                val suffix = if (detail.isEmpty) "" else s" ($detail)"
+                println(s"  ✗ ${m("type")}: ${m("message")}$suffix")
               case _ =>
             }
           case _ =>
+            println("  (no violations)")
         }
       case _ =>
-        println(s"\nContract verification: not run (${report.contractVerification.getOrElse("note", report.contractVerification.getOrElse("error", "unknown reason"))})")
+        println("\nContract verification: not run (see report.json for details)")
     }
 
     System.exit(if (report.status == "PASS") 0 else 1)
   }
 
-  /** Checks the real output schema and traced lineage against a contract
+  /** Checks the real plan's actual inputs and output against a contract
     * loaded from `contractPath`. Never throws: a missing/invalid contract
-    * file or a translation that wasn't captured both result in a
-    * `contractVerification.passed = false` entry with an explanatory
-    * message, rather than failing the whole run — contract verification is
-    * a distinct concern from "did the Spark job execute successfully"
+    * file, or a translation that wasn't captured, both result in a
+    * `contractVerification.status = "FAILED"` entry with an explanatory
+    * violation, rather than failing the whole run — contract verification
+    * is a distinct concern from "did the Spark job execute successfully"
     * (`ExecutionReport.status`), and is reported separately rather than
     * conflated with it.
     */
   private def verifyAgainstContract(
     contractPath: String,
+    inputPath: String,
+    inputDf: DataFrame,
     translationResult: Option[TranslationResult],
     outputDf: DataFrame
   ): Map[String, Any] = {
     translationResult match {
       case None =>
-        Map("passed" -> false, "note" -> "No transformation IR was captured; cannot verify against a contract")
+        Map(
+          "status" -> "FAILED",
+          "violations" -> List(
+            Map("type" -> "NO_PLAN_CAPTURED", "message" -> "No transformation IR was captured; cannot verify against a contract")
+          )
+        )
       case Some(result) =>
         Try {
           val contract = ContractParser.parseFile(contractPath)
-          val lineage = Lineage.trace(result.plan)
-          val verification = ContractVerifier.verify(contract, outputDf.schema, lineage)
+          val verification = StructuralVerifier.verify(
+            contract,
+            result.plan,
+            inputSchemas = List(inputPath -> inputDf.schema),
+            outputSchema = outputDf.schema
+          )
           Map(
-            "contractId" -> contract.id,
-            "contractVersion" -> contract.version.toString,
+            "status" -> verification.status,
+            "contract" -> verification.contract,
             "contractPath" -> contractPath,
-            "dataset" -> verification.datasetName,
-            "passed" -> verification.passed,
-            "checks" -> verification.checks.map(c =>
-              Map("field" -> c.name, "passed" -> c.passed, "message" -> c.message)
-            )
+            "violations" -> verification.violations.map(_.toMap)
           )
         } match {
           case Success(m) => m
-          case Failure(e) => Map("passed" -> false, "error" -> s"Contract verification could not run: ${e.getMessage}")
+          case Failure(e) =>
+            Map(
+              "status" -> "FAILED",
+              "violations" -> List(
+                Map("type" -> "VERIFICATION_ERROR", "message" -> s"Contract verification could not run: ${e.getMessage}")
+              )
+            )
         }
     }
   }

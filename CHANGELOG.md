@@ -63,20 +63,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     console via `./dev/test`
   - 9 integration tests against real Spark 3.5.1 DataFrames (no mocks)
   - Documentation: [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)
-- **Structural contract verification (Phase 1c, first slice)**:
-  `ContractVerifier.verify` checks a `Contract`'s declared output against
-  a real Spark job's actual output schema and traced lineage — per-field
-  presence, type compatibility, and lineage-traceability
+- **Structural verification (Phase 1c / Phase 4)**: `StructuralVerifier.verify`
+  checks a `Contract`'s declared inputs *and* output against a real Spark
+  job's actual reads, write, and schemas — existence, location, and
+  schema (required fields, unexpected fields rejectable, type
+  compatibility, nullability compatibility) for both sides, per
+  MISSION.md §8's full "Structural" check class
+  - Result matches the spec's exact shape: `{status, contract,
+    violations}`, with a 12-member violation-type vocabulary
+    (`MISSING_INPUT`/`UNDECLARED_INPUT`/`MISSING_OUTPUT`/
+    `OUTPUT_LOCATION_MISMATCH`/`*_FIELD`/`UNDECLARED_*_COLUMN`/
+    `*_TYPE_MISMATCH`/`*_NULLABILITY_MISMATCH`)
+  - Location matching normalizes a contract's portable relative paths
+    against Spark's absolute `file:` URIs at runtime; nullability is
+    checked directionally (stricter-than-required is not a violation);
+    unexpected inputs/columns are opt-in rejectable via
+    `VerificationOptions`, off by default
   - `demo/contracts/invariant_output.yaml`: a real contract for the demo
-    pipeline's actual output
-  - Wired into `runner/PluginRunner.scala`: every `./dev/test` run now
-    verifies the real output against the real contract, reported in its
-    own `contractVerification` section (kept distinct from
-    `ExecutionReport.status` — job success and contract compliance are
-    different questions)
-  - 4 tests: the real pipeline passing its own contract, and two
-    deliberately broken contracts (missing required field; wrong
-    declared type) genuinely failing against the same real output
+    pipeline's actual inputs and output
+  - Wired into `runner/PluginRunner.scala`: every `./dev/test` run
+    verifies the real plan's actual inputs/output against the real
+    contract, reported in its own `contractVerification` section (kept
+    distinct from `ExecutionReport.status` — job success and contract
+    compliance are different questions)
+  - 22 tests: every violation type fires against real or
+    realistically-constructed Spark schemas, both `VerificationOptions`
+    toggles exercised, the real pipeline passing its own contract, and a
+    golden test reproducing the Phase 4 spec's own worked example exactly
+  - Supersedes the earlier `ContractVerifier` (output schema only, no
+    inputs, no nullability, no undeclared-column rejection), removed
+    rather than kept alongside
 
 ### Fixed
 
@@ -92,6 +108,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaching `sun.nio.ch.DirectBuffer`) because `spark-submit`'s own
   `--add-opens` injection wasn't in play; added the same flag set
   explicitly to each
+- `dev/test`'s Step 7 parsed `report.json` with a naive `grep -o
+  '"status": ...'`, assuming the key appeared exactly once. Adding
+  `contractVerification.status` (nested, same key name as the top-level
+  field) turned the parsed value into a multi-line shell variable,
+  breaking the pass/fail exit code even when the top-level status was
+  `PASS`. Fixed to take the first (top-level) match, which also silently
+  fixed a pre-existing instance of the same issue with `pluginVersion`
+  (duplicated between the top-level field and `buildInfo`)
 
 ### Changed
 

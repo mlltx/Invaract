@@ -530,46 +530,72 @@ assumption) that shaped the design.
       engine-agnostic "could not translate this" node any future front-end
       can use, not a Spark-adapter-specific workaround
 
-#### Sub-phase: Structural contract verification (done)
+#### Sub-phase: Structural verification (done)
 
-The first slice of the verification algorithm — checks a `Contract`'s
-declared output against a real Spark job's actual output schema and
-traced lineage. Covers the "Structural" checks from
-[MISSION.md, §8](MISSION.md#8-contract-verification): output exists,
-schema matches, required fields exist, types are compatible.
+The first *useful* verifier — checks a `Contract`'s declared inputs and
+output against a real Spark job's actual reads, write, and schemas. Covers
+the "Structural" checks from
+[MISSION.md, §8](MISSION.md#8-contract-verification) completely: inputs
+(existence, location, schema), outputs (existence, location, schema), and
+schema (required fields, unexpected fields rejectable, type compatibility,
+nullability compatibility).
 
-- [x] `ContractVerifier.verify(contract, actualSchema, lineage): VerificationResult`
-      (`spark-adapter/src/main/scala/com/example/sparkadapter/ContractVerifier.scala`) —
-      per-field presence, type compatibility, and lineage-traceability
-      checks; never throws, reports every field's outcome, not just the
-      first failure
-- [x] `demo/contracts/invariant_output.yaml`: a real contract for the
-      demo pipeline's actual output (`id`, `value`, `value_squared`)
-- [x] Wired into `runner/PluginRunner.scala`: after the real write,
-      verifies the actual output against the contract and adds a
-      `contractVerification` section to `demo/output/report.json`
-      (`passed`, per-field `checks` with messages), printed to the
-      console as ✓/✗ per field. Kept separate from `ExecutionReport.status`
-      — "did the Spark job run" and "does its output satisfy the
-      contract" are different questions with different answers.
-- [x] 4 tests, all against real Spark output (no mocks): the real demo
-      pipeline passing its own contract, and two deliberately broken
-      contracts (a required field the output doesn't have; a field with
-      the wrong declared type) genuinely failing with the specific
-      field and reason
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractVerifierSpec.scala`)
+- [x] `StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
+      (`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`) —
+      existence/location read directly off the `Plan`'s `Read`/`Write`
+      nodes (no Spark data needed); schema checks (presence, type,
+      nullability) against caller-supplied real `StructType`s, since the
+      IR itself carries no schema (see `ir.Read`'s doc in
+      TRANSFORMATION_IR.md)
+- [x] A structured result matching the spec's exact shape —
+      `{"status": "PASSED"|"FAILED", "contract": "id@version", "violations": [...]}` —
+      with a 12-member violation-type vocabulary
+      (`MISSING_INPUT`/`UNDECLARED_INPUT`/`MISSING_INPUT_FIELD`/`UNDECLARED_INPUT_COLUMN`/
+      `INPUT_FIELD_TYPE_MISMATCH`/`INPUT_FIELD_NULLABILITY_MISMATCH` and the
+      `OUTPUT_*` equivalents), each violation carrying `type`, `message`,
+      and whichever of `column`/`location`/`expected`/`actual` apply
+- [x] `VerificationOptions(rejectUndeclaredInputs, rejectUndeclaredFields)` —
+      both "unexpected X can be rejected" checks are opt-in, off by
+      default, matching how most contract/schema tooling treats an
+      unlisted extra column or input
+- [x] Location matching bridges a contract's portable relative paths
+      (`"demo/input/sample.csv"`) against Spark's absolute `file:` URIs at
+      runtime (confirmed empirically — see docs/SPARK_ADAPTER.md) —
+      without this, every real run would spuriously fail location checks
+      for a reason unrelated to actual contract compliance
+- [x] Nullability checked directionally, not by equality: a contract
+      requiring non-null violated by an actual nullable column is a real
+      violation; the reverse (actual guarantees more than required) isn't
+- [x] Wired into `runner/PluginRunner.scala`: verifies the real plan's
+      actual inputs/output against `demo/contracts/invariant_output.yaml`
+      on every `./dev/test` run, adding a `contractVerification` section
+      to `demo/output/report.json` and console output. Kept separate from
+      `ExecutionReport.status` — "did the Spark job run" and "does its
+      output satisfy the contract" are different questions.
+- [x] 22 tests, all against real Spark (no mocks) — every violation type
+      fires at least once against real or realistically-constructed
+      schemas, both `VerificationOptions` toggles exercised on/off, the
+      real demo pipeline passing its own contract, and a golden test
+      reproducing the spec's own worked example
+      (`UNDECLARED_OUTPUT_COLUMN`/`"country"`) exactly
+      (`spark-adapter/src/test/scala/com/example/sparkadapter/StructuralVerifierSpec.scala`)
 
-Deliberately out of scope for this slice: nullability (Spark's inferred
-`nullable` is permissive enough that comparing it to a contract's
-declaration would produce false failures more often than real ones),
-`rules` interpretation (compatibility mode, quality expectations — the
-contract model records these but nothing acts on them yet), and treating
-extra output columns the contract doesn't mention as a failure (a
-contract narrowing its declared surface is normal, compatible evolution).
+Supersedes the earlier, narrower `ContractVerifier` (output schema only,
+no inputs, no nullability, no undeclared-column rejection) — removed
+rather than kept alongside, to avoid two overlapping verifiers in the
+codebase. Deliberately still out of scope: `rules` interpretation
+(compatibility mode, quality expectations — the contract model records
+these but nothing acts on them yet), and multi-output contracts (one
+verification run checks the plan's single `Write` against
+`contract.outputs.head`; matching against whichever of several declared
+outputs a plan actually produced is unexercised anywhere in this repo).
 
 #### Scope (Future)
 
-- [ ] Dependency checks (required/forbidden inputs, undeclared dependencies)
+- [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
+      covers `MISSING_INPUT`/`UNDECLARED_INPUT` already; explicit
+      "forbidden" inputs (distinct from merely undeclared) and dependency
+      version constraints are not modeled
 - [ ] Transformation checks beyond structural (join/aggregation/filter
       semantics against contract expectations)
 - [ ] Governance checks (restricted field propagation, residency, purpose)
@@ -577,9 +603,10 @@ contract narrowing its declared surface is normal, compatible evolution).
       downstream consumers) — note `contract`'s `ContractCompatibility`
       already does this for two contract *versions*; this is the
       separate question of whether a *transformation* respects it
-- [ ] A dedicated verification result format/type (today `VerificationResult`
-      is specific to `ContractVerifier`'s structural checks; a general
-      result type spanning all check categories above is still open)
+- [ ] Extend `VerificationResult`'s violation vocabulary to the check
+      categories above as they're implemented — its `{status, contract,
+      violations}` shape (matching the Phase 4 spec) is general enough to
+      carry them; only the structural violation types exist today
 - [ ] Interpreting `rules` from the contract model
 
 #### Dependencies
@@ -587,7 +614,7 @@ contract narrowing its declared surface is normal, compatible evolution).
 - Phase 1a completion (contract model)
 - Phase 1b completion (transformation IR)
 - Spark adapter completion (above)
-- Structural contract verification completion (above)
+- Structural verification completion (above)
 
 ---
 

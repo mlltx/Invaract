@@ -131,10 +131,13 @@ if [ ! -f "$REPORT_FILE" ]; then
   exit 1
 fi
 
-# Parse report
-STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | cut -d'"' -f4)
-PLUGIN_VERSION=$(grep -o '"pluginVersion": "[^"]*"' "$REPORT_FILE" | cut -d'"' -f4)
-DURATION=$(grep -o '"durationMs": [0-9]*' "$REPORT_FILE" | cut -d' ' -f2)
+# Parse report. `head -1` takes the first match only: report.json's
+# top-level fields are written first (see PluginRunner.reportToJson), but
+# nested sections (contractVerification.status, buildInfo.pluginVersion)
+# can carry same-named keys, and a naive grep matches all of them.
+STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | head -1 | cut -d'"' -f4)
+PLUGIN_VERSION=$(grep -o '"pluginVersion": "[^"]*"' "$REPORT_FILE" | head -1 | cut -d'"' -f4)
+DURATION=$(grep -o '"durationMs": [0-9]*' "$REPORT_FILE" | head -1 | cut -d' ' -f2)
 
 echo "  Status: $STATUS"
 echo "  Plugin Version: $PLUGIN_VERSION"
