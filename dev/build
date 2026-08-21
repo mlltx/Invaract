@@ -1,16 +1,20 @@
 #!/bin/bash
-# Builds every sbt module in dependency order and assembles a fat jar for
-# each. Each top-level module (contract/, ir/, plugin/, spark-adapter/,
-# runner/) is an independent sbt project (no aggregating root build.sbt);
-# cross-module references go through `unmanagedJars` pointing at a sibling
-# module's target/scala-2.12/*.jar, so a dependency's jar must exist and be
-# up to date *before* sbt compiles anything that depends on it. This script
-# is the single source of truth for that order — see build.sbt in each
-# module for the unmanagedJars lines that encode it:
+# Builds every sbt module and assembles a fat jar for each. Each top-level
+# module (contract/, ir/, plugin/, spark-adapter/, runner/) is an
+# independent sbt project (no aggregating root build.sbt); cross-module
+# references go through `unmanagedJars` pointing at a sibling module's
+# target/scala-2.12/*.jar, so a dependency's jar must exist and be up to
+# date *before* sbt compiles anything that depends on it. This script is
+# the single source of truth for that dependency graph — see build.sbt in
+# each module for the unmanagedJars lines that encode it:
 #
-#   contract, ir, plugin   (no cross-module deps, can build first)
-#   spark-adapter          (needs contract, ir)
+#   contract, ir, plugin   (no cross-module deps — built concurrently)
+#   spark-adapter          (needs contract, ir — not plugin)
 #   runner                 (needs contract, ir, plugin, spark-adapter)
+#
+# contract/ir/plugin have no dependency on each other, so they build in
+# parallel (background jobs) rather than one after another; spark-adapter
+# starts as soon as contract+ir are ready, without waiting on plugin.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,23 +25,35 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-build_module() {
+declare -A MODULE_LOG
+declare -A MODULE_PID
+
+# start_module MODULE SBT_COMMAND — launches the build in the background
+# and records its PID/log file; does not wait for it.
+start_module() {
   local module="$1"
   local sbt_command="$2"
-  echo ""
-  echo -e "${YELLOW}Building $module ($sbt_command)...${NC}"
-
-  # Piping sbt into grep, as this used to do, discards sbt's own exit code
-  # (the pipeline's status becomes grep's) and — worse — the filter itself
-  # (only lines matching error/Test/BUILD) drops most scalatest failure
-  # detail (e.g. "*** FAILED ***" lines and assertion messages don't
-  # match), so a real failure printed a misleadingly brief summary and
-  # this function still reported success regardless. Capture the full
-  # output instead: show the brief filtered summary on success, but dump
-  # everything and fail loudly on a real failure.
   local log_file
   log_file="$(mktemp)"
-  if (cd "$module" && sbt -batch clean $sbt_command) > "$log_file" 2>&1; then
+  MODULE_LOG["$module"]="$log_file"
+  echo -e "${YELLOW}Building $module ($sbt_command)...${NC}"
+  (cd "$module" && sbt -batch clean $sbt_command) > "$log_file" 2>&1 &
+  MODULE_PID["$module"]=$!
+}
+
+# wait_module MODULE — blocks until that module's background build
+# finishes. Piping sbt into grep, as this used to do, discards sbt's own
+# exit code (the pipeline's status becomes grep's) and — worse — the
+# filter itself (only lines matching error/Test/BUILD) drops most
+# scalatest failure detail (e.g. "*** FAILED ***" lines and assertion
+# messages don't match), so a real failure printed a misleadingly brief
+# summary and this script still reported success regardless. The captured
+# log file avoids that: brief filtered summary on success, full dump and a
+# loud failure otherwise.
+wait_module() {
+  local module="$1"
+  local log_file="${MODULE_LOG[$module]}"
+  if wait "${MODULE_PID[$module]}"; then
     grep -E "^(.*error.*|.*Test.*|.*BUILD.*)" "$log_file" || true
     echo -e "${GREEN}✓ $module built${NC}"
     rm -f "$log_file"
@@ -49,11 +65,21 @@ build_module() {
   fi
 }
 
-build_module contract      "compile test assembly"
-build_module ir            "compile test assembly"
-build_module plugin        "compile test assembly"
-build_module spark-adapter "compile test assembly"
-build_module runner        "compile assembly"
+echo ""
+start_module contract "compile test assembly"
+start_module ir       "compile test assembly"
+start_module plugin   "compile test assembly"
+wait_module contract
+wait_module ir
+wait_module plugin
+
+echo ""
+start_module spark-adapter "compile test assembly"
+wait_module spark-adapter
+
+echo ""
+start_module runner "compile assembly"
+wait_module runner
 
 echo ""
 echo -e "${GREEN}✓ All modules built${NC}"
