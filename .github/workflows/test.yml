@@ -62,7 +62,20 @@ jobs:
       # doesn't exist at all on windows-latest's git-bash). Every job here
       # runs on a fresh runner, so the "already installed" branch this
       # replaced never actually took in practice.
-      - name: Set up Spark 3.5.1
+      # Downloading + extracting Spark from archive.apache.org took over two
+      # minutes per job (the single biggest cost in the whole matrix) and
+      # ran fresh on every job of every run. Caching the extracted
+      # directory across runs, keyed on OS + Spark version, turns that into
+      # a cache restore (a few seconds) on every run after the first.
+      - name: Cache Spark distribution
+        id: cache-spark
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spark
+          key: spark-${{ runner.os }}-3.5.1-hadoop3
+
+      - name: Download Spark 3.5.1
+        if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
         # git-bash's tar misparses the backslash-drive-letter form as an
@@ -89,6 +102,17 @@ jobs:
           tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
           rm -f "${RUNNER_TEMP_POSIX}/spark.tgz"
 
+      - name: Configure Spark environment
+        shell: bash
+        # Runs regardless of cache hit/miss — SPARK_HOME/PATH need to be set
+        # either way, and the extraction target is the same path the cache
+        # step restores into.
+        run: |
+          if command -v cygpath &> /dev/null; then
+            SPARK_DIR="$(cygpath -u "$RUNNER_TEMP")/spark"
+          else
+            SPARK_DIR="${RUNNER_TEMP}/spark"
+          fi
           echo "SPARK_HOME=$SPARK_DIR" >> "$GITHUB_ENV"
           echo "$SPARK_DIR/bin" >> "$GITHUB_PATH"
 
