@@ -210,8 +210,14 @@ object StructuralVerifier {
   }
 
   private def locationsMatch(declared: String, actual: String): Boolean = {
-    val normalizedActual = actual.stripPrefix("file:")
-    normalizedActual == declared || normalizedActual.endsWith("/" + declared)
+    // A contract's declared location can come from anywhere (a config file
+    // authored on Windows, e.g.), while Spark always reports actual plan
+    // locations with forward slashes regardless of OS. Normalize both
+    // sides so a Windows-style declared path (C:\...\out.parquet) still
+    // matches Spark's file:/C:/.../out.parquet.
+    val normalizedDeclared = declared.replace('\\', '/')
+    val normalizedActual = actual.stripPrefix("file:").replace('\\', '/')
+    normalizedActual == normalizedDeclared || normalizedActual.endsWith("/" + normalizedDeclared)
   }
 
   /** Shared by both input and output checking — "Schema" in the check list
