@@ -26,8 +26,27 @@ build_module() {
   local sbt_command="$2"
   echo ""
   echo -e "${YELLOW}Building $module ($sbt_command)...${NC}"
-  (cd "$module" && sbt -batch clean $sbt_command 2>&1 | grep -E "^(.*error.*|.*Test.*|.*BUILD.*)" || true)
-  echo -e "${GREEN}✓ $module built${NC}"
+
+  # Piping sbt into grep, as this used to do, discards sbt's own exit code
+  # (the pipeline's status becomes grep's) and — worse — the filter itself
+  # (only lines matching error/Test/BUILD) drops most scalatest failure
+  # detail (e.g. "*** FAILED ***" lines and assertion messages don't
+  # match), so a real failure printed a misleadingly brief summary and
+  # this function still reported success regardless. Capture the full
+  # output instead: show the brief filtered summary on success, but dump
+  # everything and fail loudly on a real failure.
+  local log_file
+  log_file="$(mktemp)"
+  if (cd "$module" && sbt -batch clean $sbt_command) > "$log_file" 2>&1; then
+    grep -E "^(.*error.*|.*Test.*|.*BUILD.*)" "$log_file" || true
+    echo -e "${GREEN}✓ $module built${NC}"
+    rm -f "$log_file"
+  else
+    echo -e "${RED}✗ $module failed${NC}"
+    cat "$log_file"
+    rm -f "$log_file"
+    exit 1
+  fi
 }
 
 build_module contract      "compile test assembly"
