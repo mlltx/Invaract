@@ -406,6 +406,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutation testing, and the still-outstanding compatibility matrix /
   coverage gating / API-compatibility checking) to `contract`/`ir`/
   `spark-adapter`, not to the demo harness.
+- **Narrowed `spark-adapter`'s real public surface**: `SparkPlanAdapter`
+  (the raw Catalyst-to-IR translator) and `StructuralVerifier` (the raw
+  contract-verification function) are now `private[sparkadapter]` — a
+  review of every cross-module reference (grep, not guessing) found
+  neither is ever called outside this module; `ContractEnforcementRule`
+  and `SparkAdapterListener` are the only real callers, both in the same
+  package, and a real user gets both translation and verification
+  automatically via the installed extension. `contract` and `ir` were
+  reviewed the same way and needed no changes — both were already this
+  tight. Surfaced a genuinely useful, non-obvious finding in the process:
+  `private[sparkadapter]`, when the qualifier is a symbol's own
+  containing package, is enforced by the Scala compiler, not the JVM —
+  `javap` on the compiled classes confirms they stay `public final class`
+  in raw bytecode either way. MiMa compares bytecode, so it correctly
+  reports zero issues for this narrowing, not because an exclusion covers
+  it but because nothing detectable to MiMa changed. The narrowing is
+  still worth doing (it stops real Scala code from depending on either
+  class by accident, the failure mode that actually matters) but isn't a
+  MiMa-enforced guarantee the way the module's real public API is — now
+  documented as such in both files' Scaladoc and
+  docs/SPARK_ADAPTER.md's "API compatibility" section. Verified via
+  `spark-adapter`'s own test suite (51/51, package-private doesn't block
+  same-package test access) and a full local `./dev/build` + `./dev/test`
+  + `./dev/regression` run.
 
 ### Deprecated
 

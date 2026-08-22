@@ -699,19 +699,43 @@ against.
 
 ### API compatibility
 
-`SparkPlanAdapter`, `StructuralVerifier`, `ContractEnforcementRule`, and
-`SparkAdapterListener`'s public signatures (plus `TranslationResult`,
-`Diagnostic`, `VerificationResult`, and the other result/error types this
-module exposes) are its binary API surface — checked by
-[MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
-CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
-for the full mechanism: no Maven Central release exists yet to compare
-against, so CI publishes a recent prior commit (the previous push's
-HEAD, not the PR's own base commit - this PR predates `spark-adapter`
-itself, so its base commit doesn't even have this module) to the
-runner's local Ivy cache first and diffs the PR's head against that
-instead — the same rolling comparison the incremental mutation-testing
-check above uses, and for the same reason.
+This module's real, intended public surface is deliberately narrow:
+`ContractEnforcementRule.forContract` (the installation entry point),
+`SparkAdapterListener` (the reporting entry point), and the result/error
+types both produce — `TranslationResult`, `Diagnostic`,
+`ContractViolationException`, `VerificationResult`, `Violation`,
+`VerificationOptions`, `ViolationType`. That list was arrived at by
+grepping every cross-module reference before deciding what stays public,
+not by guessing (see CLAUDE.md's "What's the product, and what's the
+test harness" review that prompted it). `SparkPlanAdapter` and
+`StructuralVerifier` — the raw Catalyst-to-IR translator and the raw
+verification function — are `private[sparkadapter]`: nothing outside
+this module ever called either directly, since a real user gets both
+automatically via the installed extension.
+
+This surface is checked by [MiMa](https://github.com/lightbend/mima) via
+`sbt mimaReportBinaryIssues`, CI-enforced on every PR — see CLAUDE.md's
+"API Compatibility Requirement" for the full mechanism (no Maven Central
+release exists yet to compare against, so CI publishes a recent prior
+commit — the previous push's HEAD, not the PR's own base commit, since
+this PR predates `spark-adapter` itself — to the runner's local Ivy
+cache first and diffs the PR's head against that instead, the same
+rolling comparison the incremental mutation-testing check above uses).
+
+One real limitation worth knowing, discovered while narrowing
+`SparkPlanAdapter`/`StructuralVerifier`: `private[sparkadapter]` is a
+Scala-compiler-enforced restriction, not a JVM one. `javap` on the
+compiled classes shows they stay `public final class` in raw bytecode
+either way (confirmed directly, not assumed) — Scala's qualified-private,
+when the qualifier is the symbol's own containing package, doesn't
+correspond to a bytecode access-flag change for a top-level object.
+MiMa compares bytecode, so it cannot see this narrowing as a change at
+all — `mimaReportBinaryIssues` reports zero issues for it, not because
+an exclusion covers it, but because nothing detectable to MiMa actually
+changed. The narrowing is still worth doing: it stops real Scala code
+from depending on either class by accident, which is the failure mode
+that actually matters. It just isn't a MiMa-enforced guarantee the way
+the module's real public API is.
 
 To see the translation adapter running against the actual demo pipeline:
 

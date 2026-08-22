@@ -127,8 +127,23 @@ object VerificationResult {
   * single-output assumption the rest of this demo pipeline makes. Checking
   * a plan against whichever of several declared outputs it actually
   * produced is future work, not exercised by anything in this repo today.
+  *
+  * ## Visibility
+  *
+  * `private[sparkadapter]`: nothing outside this module calls `verify`
+  * directly (confirmed by grep before narrowing it —
+  * `ContractEnforcementRule` is the only real caller). A real Invariant
+  * user gets verification automatically via the installed extension
+  * (`ContractEnforcementRule.forContract`) and never needs to call this
+  * raw function themselves; `VerificationResult`/`Violation` (the payload
+  * of `ContractViolationException.result`) remain public since a user
+  * does need to inspect those. As with `SparkPlanAdapter`, this is a
+  * Scala-compiler-enforced restriction, not a JVM one — the compiled
+  * class stays `public` in bytecode, so MiMa doesn't (and structurally
+  * can't) enforce this particular boundary; it only stops real Scala code
+  * from depending on this by accident.
   */
-object StructuralVerifier {
+private[sparkadapter] object StructuralVerifier {
 
   def verify(
     contract: Contract,

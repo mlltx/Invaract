@@ -103,8 +103,24 @@ case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
   * recorded as `Diagnostic`s. A partially understood pipeline is more
   * useful to a verification engine than an exception that discards
   * everything the adapter *did* understand.
+  *
+  * ## Visibility
+  *
+  * `private[sparkadapter]`: nothing outside this module calls `translate`/
+  * `translateAsWrite`/`locationOf` directly (confirmed by grep before
+  * narrowing it — `ContractEnforcementRule` and `SparkAdapterListener` are
+  * the only real callers, both in this same package). A real Invariant
+  * user gets translation and verification automatically via the installed
+  * extension (`ContractEnforcementRule.forContract`) and never needs the
+  * raw Catalyst-to-IR translator directly. Note this is a Scala-compiler-
+  * enforced restriction, not a JVM one: the compiled class stays `public`
+  * in raw bytecode (`javap` confirms it), so MiMa — which compares
+  * bytecode, not Scala visibility qualifiers — doesn't and can't protect
+  * this boundary the way it protects genuinely public members. The value
+  * here is purely in stopping real Scala code from depending on this by
+  * accident, not in getting a MiMa-enforced guarantee.
   */
-object SparkPlanAdapter {
+private[sparkadapter] object SparkPlanAdapter {
 
   def translate(plan: LogicalPlan): TranslationResult = {
     val translator = new Translator
@@ -129,10 +145,9 @@ object SparkPlanAdapter {
 
   /** The physical location a resolved relation should be identified by —
     * the same logic `translate` uses internally for `ir.Read`/`ir.Write`
-    * locations, exposed separately for callers that need to correlate a
-    * real Spark schema with a location without running a full translation
-    * (`ContractEnforcementRule` needs this to collect input schemas before
-    * deciding whether verification even applies to a given analyzed plan).
+    * locations, factored out separately since `ContractEnforcementRule`
+    * needs this to collect input schemas before deciding whether
+    * verification even applies to a given analyzed plan.
     */
   def locationOf(lr: LogicalRelation): String = lr.relation match {
     case h: HadoopFsRelation => h.location.rootPaths.headOption.map(_.toString).getOrElse(lr.relation.toString)
