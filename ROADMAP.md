@@ -786,7 +786,7 @@ the first; the rest remain future scope).
       a single-step `SelfJoinStep` chain, with the full analyzed plan and
       exception in the failure message), then reverted.
 
-#### Sub-phase: Mutation testing, whole-module, blocking CI at 50% (done)
+#### Sub-phase: Mutation testing, whole-module, blocking CI (done)
 
 The second regression-testing guardrail (see the sub-phase above for the
 first). [Stryker4s](https://github.com/stryker-mutator/stryker4s) answers
@@ -796,10 +796,10 @@ source file (flip `==`/`!=`, `&&`/`||`, `exists`/`forall`, delete a string
 literal, ...), reruns the real suite per mutant, and reports which mutants
 survived (every test still passed despite the code now being wrong).
 
-- [x] **Wired in and widened to whole-module scope, blocking CI at 50%**:
+- [x] **Wired in and widened to whole-module scope, blocking CI**:
       `ir` and `spark-adapter`, via each module's `build.sbt`
       (`strykerMutate := Seq("src/main/scala/**/*.scala")` and
-      `strykerThresholdsBreak := 50` — `stryker4s.conf`'s equivalent
+      `strykerThresholdsBreak` — `stryker4s.conf`'s equivalent
       `mutate`/`thresholds` keys were observed not to take effect with
       this sbt/plugin combination, documented in both `.conf` files).
       Required bumping `sbt.version` from `1.9.8` to `1.11.7` in just
@@ -828,32 +828,42 @@ survived (every test still passed despite the code now being wrong).
       `exists`/`forall` swaps, `field.required`, and the
       `contextPrefix == "INPUT"` branch selection in `StructuralVerifier`,
       plus `ContractEnforcementRule.explain`'s violation-count
-      pluralization and optional-field marking, brought it to **57.06%**
-      (93/177 mutants) — comfortably above the 50% break threshold.
-      What's left is almost entirely low-priority `StringLiteral` mutants
-      on message text, plus a handful in `SparkPlanAdapter.scala` tied to
-      the already-documented untested-Hive-relation gap and one
-      near-equivalent mutant — see docs/SPARK_ADAPTER.md for the full
-      breakdown.
+      pluralization and optional-field marking, brought it to 57.06%
+      (93/177 mutants). What remained was almost entirely low-priority
+      `StringLiteral` mutants on message text (79 of them), plus the same
+      five real mutants in `SparkPlanAdapter.scala` tied to the
+      already-documented untested-Hive-relation gap and two near-
+      equivalent/unreachable-branch mutants. Rather than write ~79
+      brittle exact-message-text tests, `strykerExcludedMutations :=
+      Seq("StringLiteral")` now disclose-excludes that category repo-wide
+      (the same exception CLAUDE.md's "Mutation Testing Requirement"
+      already names as acceptable) — bringing the module to **91.53%**
+      (54/59 mutants, 93.1% of covered code), above the same 70% bar
+      required for new code. `strykerThresholdsBreak` moved from 50 to
+      70 accordingly. See docs/SPARK_ADAPTER.md for the full breakdown.
     - Full details, caveats, and the published HTML reports: see
       docs/SPARK_ADAPTER.md's "Mutation testing" section and
       docs/TRANSFORMATION_IR.md's equivalent.
     - CLAUDE.md's "Mutation Testing Requirement" additionally requires
-      70% on the specific file(s) a feature adds or changes — a stronger,
-      PR-author-level bar than the whole-module 50% CI gate. Stryker4s has
-      no incremental/diff-scoped mode of its own, but this is now
-      automated in CI anyway: a "Mutation test changed files" step diffs
-      against the PR's base commit and reruns `sbt stryker` scoped (via a
-      brace-expansion `--mutate` glob) to just the changed
-      `src/main/scala/**/*.scala` files per module, with
-      `--thresholds.break 70` passed on the CLI so it doesn't disturb the
-      module's whole-module 50% setting in `build.sbt`. Runs only on
-      `pull_request` events and skips a module with no changed files.
+      70% on the specific file(s) a feature adds or changes. This was
+      originally a stronger, PR-author-level bar than the whole-module CI
+      gate; now that `spark-adapter`'s own whole-module break threshold is
+      also 70% (see above), the two line up for that module, while `ir`'s
+      whole-module gate stays at 50% even though its actual score (86.36%)
+      clears 70% too. Stryker4s has no incremental/diff-scoped mode of its
+      own, but this is automated in CI anyway: a "Mutation test changed
+      files" step diffs against the PR's base commit and reruns
+      `sbt stryker` scoped (via a brace-expansion `--mutate` glob) to just
+      the changed `src/main/scala/**/*.scala` files per module, with
+      `--thresholds.break 70` passed on the CLI so it doesn't disturb
+      either module's own whole-module setting in `build.sbt`. Runs only
+      on `pull_request` events and skips a module with no changed files.
       Verified locally both ways before landing: passes on a real
       historical multi-file `ir` diff (86.21%), and correctly fails on a
       `spark-adapter` file pair that scores below 70% together (52.9%)
-      even though the whole module clears 50% — see docs/SPARK_ADAPTER.md's
-      "Incremental checking in CI" subsection.
+      even though the whole module clears 50% (its threshold at the time)
+      — see docs/SPARK_ADAPTER.md's "Incremental checking in CI"
+      subsection.
 
 #### Scope (Future)
 

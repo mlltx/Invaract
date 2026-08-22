@@ -65,6 +65,28 @@ scalacOptions ++= Seq(
 // initial narrow pass's score was reviewed). `break` is what makes CI's
 // mutation-testing job fail when the score regresses below it.
 strykerMutate := Seq("src/main/scala/**/*.scala")
-strykerThresholdsHigh := 80
-strykerThresholdsLow := 60
-strykerThresholdsBreak := 50
+
+// After genuine test uplift closed every real (non-StringLiteral) gap
+// this module's coverage tooling can reach, the only mutants still
+// surviving are ~80 StringLiteral mutants on human-readable
+// message/remediation/type-name text (see docs/SPARK_ADAPTER.md's
+// "Mutation testing" section) - the category CLAUDE.md's "Mutation
+// Testing Requirement" already names as a documented, acceptable
+// exclusion, since a test asserting an exact error-message string is
+// brittle and doesn't verify behavior. Excluding it here makes that
+// exclusion explicit and repo-wide instead of an ad hoc per-PR judgment
+// call, and lets the break threshold reflect the module's real behavioral
+// mutation coverage rather than being capped by unrelated prose.
+strykerExcludedMutations := Seq("StringLiteral")
+
+// Real measured score after the exclusion above is 91.53% (of total) /
+// 93.1% (of covered code) - 54/59 mutants killed, the same 5 documented,
+// left-on-purpose survivors as before (JDBCRelation near-equivalence,
+// unwrapWriteWrapper's Spark-3.5.1-unreachable branch, and the
+// Hive-relation fallback with no metastore available to exercise it
+// here). Thresholds below match the incremental PR check's values
+// (.github/workflows/test.yml) rather than hugging 91.53% exactly, so a
+// small, explainable regression doesn't fail CI outright.
+strykerThresholdsHigh := 90
+strykerThresholdsLow := 80
+strykerThresholdsBreak := 70

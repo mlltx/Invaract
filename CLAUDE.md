@@ -37,10 +37,13 @@ Real Spark execution is the source of truth. Unit test passing ≠ plugin workin
 `ir` and `spark-adapter` are mutation-tested with Stryker4s (see
 docs/TRANSFORMATION_IR.md and docs/SPARK_ADAPTER.md's "Mutation testing"
 sections). CI blocks on each module's *whole-module* score staying above
-its `break` threshold (currently 50% — see `strykerThresholdsBreak` in
-each module's `build.sbt`), but that only catches an aggregate regression.
-It does not prove new code is well-tested — a large, well-tested module
-can absorb a weakly-tested new file and still clear 50%.
+its `break` threshold (see `strykerThresholdsBreak` in each module's
+`build.sbt` — currently 50% for `ir`, 70% for `spark-adapter`, the latter
+after `strykerExcludedMutations` was set to disclose-and-exclude the
+`StringLiteral` mutator category there; see docs/SPARK_ADAPTER.md), but
+that only catches an aggregate regression. It does not prove new code is
+well-tested — a large, well-tested module can absorb a weakly-tested new
+file and still clear its module's break threshold.
 
 So: when a feature adds or changes code in `ir/src/main/scala/...` or
 `spark-adapter/src/main/scala/...`, passing tests are **not** enough to
