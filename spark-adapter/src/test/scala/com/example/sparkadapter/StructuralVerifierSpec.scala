@@ -502,4 +502,141 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
     assert(resultB.passed, s"an unknown actual saveMode shouldn't be treated as a mismatch: ${resultB.violations}")
   }
+
+  // The tests below were added while raising the module's mutation-testing
+  // score (see ROADMAP.md Phase 1c and CLAUDE.md's mutation-score
+  // requirement): each targets a specific predicate that was previously
+  // *covered* by other tests but not *pinned down* by their assertions.
+
+  test("MISSING_INPUT and UNDECLARED_INPUT check each location independently, not requiring universal agreement") {
+    // Existing tests only ever declare/read a single input, which can't
+    // distinguish `exists` (correct: at least one match) from `forall`
+    // (wrong: every actual location must match every declared one, or
+    // vice versa) — both give the same answer when there's only one item
+    // to compare. This uses two declared inputs and two actual reads,
+    // overlapping on exactly one location, which the two quantifiers
+    // disagree about.
+    val contract = ContractParser.parse(
+      """id: multi_input_demo
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: raw.orders
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |  - name: customers
+        |    location: raw.customers
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    // Reads raw.orders (declared) and raw.extra (undeclared); never reads
+    // raw.customers (declared).
+    val joined = com.example.ir.Join(Read(DatasetRef("raw.orders")), Read(DatasetRef("raw.extra")), com.example.ir.JoinType.Inner)
+    val plan = com.example.ir.Write(DatasetRef("gold.out"), joined)
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("id", IntegerType),
+      options = VerificationOptions(rejectUndeclaredInputs = true)
+    )
+
+    assert(
+      !result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("raw.orders")),
+      s"raw.orders is declared AND read, so it must not be flagged missing: ${result.violations}"
+    )
+    assert(
+      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("raw.customers")),
+      s"raw.customers is declared but never read, so it must be flagged missing: ${result.violations}"
+    )
+    assert(
+      result.violations.exists(v => v.violationType == ViolationType.UndeclaredInput && v.location.contains("raw.extra")),
+      s"raw.extra is read but undeclared, so it must be flagged: ${result.violations}"
+    )
+    assert(
+      !result.violations.exists(v => v.violationType == ViolationType.UndeclaredInput && v.location.contains("raw.orders")),
+      s"raw.orders is read AND declared, so it must not be flagged undeclared: ${result.violations}"
+    )
+  }
+
+  test("an absent field is only flagged when the contract marks it required") {
+    val contract = ContractParser.parse(
+      """id: optional_field_demo
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |        - name: notes
+        |          type: string
+        |          required: false
+        |""".stripMargin
+    )
+    val plan = com.example.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
+    // "notes" is absent from the actual schema, but it's optional. "id" is
+    // explicitly non-nullable to match the contract's required = true (which
+    // implies nullable = false) - otherwise this would also trip an
+    // unrelated OUTPUT_FIELD_NULLABILITY_MISMATCH.
+    val actualSchema = new StructType().add("id", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"an absent optional field should not be a violation: ${result.violations}")
+  }
+
+  test("MISSING_INPUT_FIELD and MISSING_OUTPUT_FIELD remediations name the correct side") {
+    val contract = ContractParser.parse(
+      """id: side_naming_demo
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: raw.orders
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: total
+        |          type: integer
+        |          required: true
+        |""".stripMargin
+    )
+    val plan = com.example.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.orders")))
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = List("raw.orders" -> new StructType()), // "id" absent from the actual input
+      outputSchema = new StructType() // "total" absent from the actual output
+    )
+
+    // `datasetNoun` ("input"/"output", lowercase) only appears in the
+    // remediation text, not `message` (which uses `contextPrefix`,
+    // "INPUT"/"OUTPUT" uppercase, directly).
+    val inputViolation = result.violations.find(_.violationType == ViolationType.MissingInputField).get
+    assert(inputViolation.remediation.contains("to the input,"), inputViolation.remediation)
+    val outputViolation = result.violations.find(_.violationType == ViolationType.MissingOutputField).get
+    assert(outputViolation.remediation.contains("to the output,"), outputViolation.remediation)
+  }
 }

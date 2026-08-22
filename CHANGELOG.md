@@ -215,27 +215,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporarily broken to throw, the fuzz spec failed on its very first
   case with the full analyzed plan and exception in the failure message,
   then the break was reverted.
-- **Mutation testing of `Lineage` and `StructuralVerifier`** (Stryker4s):
-  the second regression-testing guardrail (remaining scope — golden-file
+- **Mutation testing, whole-module, blocking CI at 50%** (Stryker4s): the
+  second regression-testing guardrail (remaining scope — golden-file
   `report.json` snapshots, a multi-Spark-version compatibility matrix,
   coverage gating, API-compatibility checking — tracked in ROADMAP.md
   Phase 1c). Mutates a source file (flip `==`/`!=`, `&&`/`||`,
   `exists`/`forall`, delete a string literal, ...) and reruns the real
   test suite per mutant, answering "does a passing test actually verify
   this line's behavior" rather than just "does it execute the line" —
-  something line coverage can't distinguish. Scoped to `ir/Lineage.scala`
-  and `spark-adapter/StructuralVerifier.scala`, the two files where a
-  wrong answer is worse than an incomplete one. Required bumping
-  `sbt.version` to `1.11.7` in just those two modules (Stryker4s 1.1.1
-  needs sbt ≥ 1.11.2); both modules' full test suites confirmed unaffected
-  by the bump. Initial mutation scores: `ir` 44.4% (8/18, 80% of covered
-  code), `spark-adapter` 50.0% (36/86) — with real, actionable survivors
-  found in both (`Join`'s ambiguous-aggregation propagation and
-  `Project`'s column-name matching in `Lineage`; the `exists`/`forall`
-  input-matching predicates and `field.required` handling in
-  `StructuralVerifier`), documented with file/line references in
-  docs/SPARK_ADAPTER.md and docs/TRANSFORMATION_IR.md. Not yet wired into
-  CI as a gate; `mutate` not yet widened beyond these two files.
+  something line coverage can't distinguish. Scoped to whole-module
+  (`ir` and `spark-adapter`, not just `Lineage.scala`/
+  `StructuralVerifier.scala`), gated at 50% via each module's
+  `strykerThresholdsBreak`, and wired into CI as a new `mutation-testing`
+  job that fails the build below threshold and publishes each module's
+  HTML report as a build artifact. Required bumping `sbt.version` to
+  `1.11.7` in just those two modules (Stryker4s 1.1.1 needs sbt ≥
+  1.11.2); both modules' full test suites, the whole 5-module
+  `./dev/build`, and a real `./dev/test` run all confirmed unaffected by
+  the bump. Real, actionable survivors were fixed via new/strengthened
+  tests rather than by excluding them: `Join`'s ambiguous-aggregation
+  propagation and `Project`'s column-name matching in `Lineage`, plus the
+  previously wholly-uncovered `Aggregate`/`Window`/`Union` cases of
+  `resolveInScope` and several `PlanPrinter` branches; the
+  `exists`/`forall` input-matching predicates, `field.required` handling,
+  and `contextPrefix` branch selection in `StructuralVerifier`; and
+  `ContractEnforcementRule.explain`'s violation-count pluralization and
+  optional-field marking. Final scores: `ir` 86.36% (76/100 mutants),
+  `spark-adapter` 57.06% (93/177) — documented with file/line references
+  in docs/SPARK_ADAPTER.md and docs/TRANSFORMATION_IR.md. CLAUDE.md now
+  requires 70% on the specific file(s) a feature adds or changes to that
+  file as a standing step when a feature touches either module — a
+  stronger, PR-author-level bar than the whole-module 50% CI gate. That
+  bar is now automated for PRs too, not just a manual step: CI's
+  `mutation-testing` job diffs against the PR's base commit and reruns
+  `sbt stryker` scoped (via a brace-expansion `--mutate` glob, e.g.
+  `"{FileA.scala,FileB.scala}"`) to just each module's changed
+  `src/main/scala/**/*.scala` files, overriding the whole-module 50% gate
+  with `--thresholds.break 70` on the CLI only — `build.sbt`'s own
+  setting is untouched. Stryker4s has no incremental/diff mode of its own
+  (unlike StrykerJS), so this is a small CI-level wrapper around the same
+  `--mutate` scoping used throughout, not a built-in capability, and it
+  only runs on `pull_request` events. Verified locally both ways: passes
+  on a real historical multi-file `ir` diff (86.21%), and correctly fails
+  on a `spark-adapter` file pair scoring below 70% together (52.9%) even
+  though the whole module clears 50%.
 
 ### Fixed
 

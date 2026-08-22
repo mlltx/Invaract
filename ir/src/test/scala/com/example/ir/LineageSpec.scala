@@ -126,7 +126,115 @@ class LineageSpec extends AnyFunSuite {
     val lineage = Lineage.trace(plan)
     assert(lineage.map(_.output.name).toSet == Set("customer_id", "amount", "running_total"))
     assert(lineage.find(_.output.name == "running_total").get.aggregated)
+    // Resolving "amount" against the Project below must find the *matching*
+    // declared column, not merely *a* declared column: asserting only
+    // `.aggregated` above wouldn't notice a bug that resolved "amount" to
+    // the Project's other declared column ("customer_id") instead, since
+    // the wrapping AggregateCall would still report aggregated = true
+    // either way. Only checking `.sources` distinguishes the two.
+    assert(lineage.find(_.output.name == "running_total").get.sources == Set(ColumnRef("amount", Some("raw.orders"))))
     assert(!lineage.find(_.output.name == "customer_id").get.aggregated)
+  }
+
+  test("trace resolves a bare reference to an Aggregate's declared output column, when a Project sits directly on top") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val aggregated = Aggregate(
+      orders,
+      groupBy = Nil,
+      aggregates = List(NamedExpr("total", AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders"))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), Project(aggregated, List(NamedExpr("total_value", ColumnReference(ColumnRef("total"))))))
+
+    val lineage = Lineage.trace(plan)
+    val totalValue = lineage.find(_.output.name == "total_value").get
+    assert(totalValue.aggregated)
+    assert(totalValue.sources == Set(ColumnRef("amount", Some("raw.orders"))))
+  }
+
+  test("trace resolves a bare reference to a Window's declared output column, when a Project sits directly on top") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val windowed = Window(
+      orders,
+      windowExprs = List(NamedExpr("running_total", AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders")))))),
+      partitionBy = List(ColumnReference(ColumnRef("customer_id", Some("raw.orders"))))
+    )
+    val plan = Write(DatasetRef("gold.out"), Project(windowed, List(NamedExpr("total_so_far", ColumnReference(ColumnRef("running_total"))))))
+
+    val lineage = Lineage.trace(plan)
+    val totalSoFar = lineage.find(_.output.name == "total_so_far").get
+    assert(totalSoFar.aggregated)
+    assert(totalSoFar.sources == Set(ColumnRef("amount", Some("raw.orders"))))
+  }
+
+  test("trace resolves a Union with mixed aggregation status: either branch aggregating marks the result aggregated") {
+    val plainBranch = Read(DatasetRef("raw.orders_current"))
+    val aggregatedBranch = Aggregate(
+      Read(DatasetRef("raw.orders_detail")),
+      groupBy = Nil,
+      aggregates = List(NamedExpr("total", AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders_detail"))))))
+    )
+    val union = Union(List(aggregatedBranch, plainBranch))
+    val plan = Write(DatasetRef("gold.out"), Project(union, List(NamedExpr("combined_total", ColumnReference(ColumnRef("total"))))))
+
+    val lineage = Lineage.trace(plan)
+    val combinedTotal = lineage.find(_.output.name == "combined_total").get
+    assert(combinedTotal.aggregated, "either branch aggregating the reference should mark the union result aggregated")
+    assert(combinedTotal.sources.exists(s => s.name == "amount" && s.qualifier.contains("raw.orders_detail")))
+    assert(combinedTotal.sources.exists(s => s.name == "total" && s.qualifier.contains("raw.orders_current")))
+  }
+
+  test("trace marks an ambiguous Join reference aggregated when either side aggregates it") {
+    val plainSide = Read(DatasetRef("raw.orders"), alias = Some("plain"))
+    val aggregatedSide = Aggregate(
+      Read(DatasetRef("raw.orders_detail")),
+      groupBy = Nil,
+      aggregates = List(NamedExpr("total", AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders_detail"))))))
+    )
+    val joined = Join(plainSide, aggregatedSide, JoinType.Inner)
+    val plan = Write(DatasetRef("gold.out"), Project(joined, List(NamedExpr("total", ColumnReference(ColumnRef("total"))))))
+
+    val lineage = Lineage.trace(plan)
+    val total = lineage.find(_.output.name == "total").get
+    assert(total.aggregated, "either join side aggregating the reference should mark the combined result aggregated")
+    assert(total.sources.exists(s => s.name == "total" && s.qualifier.contains("plain")))
+    assert(total.sources.exists(s => s.name == "amount" && s.qualifier.contains("raw.orders_detail")))
+  }
+
+  test("trace marks a literal-derived output as non-aggregated with no sources") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Write(DatasetRef("gold.out"), Project(orders, List(NamedExpr("constant_flag", Literal(true, "boolean")))))
+
+    val lineage = Lineage.trace(plan)
+    val constantFlag = lineage.find(_.output.name == "constant_flag").get
+    assert(constantFlag.sources.isEmpty)
+    assert(!constantFlag.aggregated)
+  }
+
+  test("trace propagates aggregation through a multi-argument function call when only one argument aggregates") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(
+        orders,
+        List(
+          NamedExpr(
+            "flagged_total",
+            FunctionCall(
+              ">",
+              List(
+                AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders")))),
+                Literal(0, "integer")
+              )
+            )
+          )
+        )
+      )
+    )
+
+    val lineage = Lineage.trace(plan)
+    val flaggedTotal = lineage.find(_.output.name == "flagged_total").get
+    assert(flaggedTotal.aggregated)
+    assert(flaggedTotal.sources == Set(ColumnRef("amount", Some("raw.orders"))))
   }
 
   test("trace resolves a Union using the first branch's output names") {

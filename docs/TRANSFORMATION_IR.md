@@ -250,22 +250,30 @@ cd ir
 sbt test
 ```
 
-21 tests across `PlanSpec` (construction, `children`, `Expr.references`),
-`LineageSpec` (the worked example verbatim, a full `GROUP BY` stage,
-`Filter`/`Sort` passthrough, `Join` attribution — both unambiguous and
-ambiguous — `Window` pass-through-plus-new-columns, and `Union`), and
-`PlanPrinterSpec` (rendering of each node kind). All run against real
-constructed plans, not mocks.
+38 tests across `PlanSpec` (10 — construction, `children`,
+`Expr.references`), `LineageSpec` (16 — the worked example verbatim, a
+full `GROUP BY` stage, `Filter`/`Sort` passthrough, `Join` attribution —
+both unambiguous and ambiguous, including mixed aggregation status —
+`Window`/`Aggregate`/`Union` resolution when a `Project` sits directly on
+top of them, literal- and multi-argument-function-derived outputs), and
+`PlanPrinterSpec` (12 — rendering of each node kind, exact branch/
+continuation-prefix structure at nested depth, `DISTINCT`, empty
+`GROUP BY`, `Sort` direction, and `Window`'s `PARTITION BY`/`ORDER BY`).
+All run against real constructed plans, not mocks.
 
 ### Mutation testing
 
 [Stryker4s](https://github.com/stryker-mutator/stryker4s) checks whether
-`LineageSpec`'s passing tests actually verify `Lineage`'s resolution logic,
-not just execute it — see docs/SPARK_ADAPTER.md's "Mutation testing"
-section for the full explanation of what this catches that coverage
-can't. `ir/stryker4s.conf` and `build.sbt`'s `strykerMutate` setting scope
-this to `Lineage.scala` (the file responsible for column-level provenance
-correctness). Run it with:
+this module's passing tests actually verify `Lineage`/`PlanPrinter`'s
+logic, not just execute it — see docs/SPARK_ADAPTER.md's "Mutation
+testing" section for the full explanation of what this catches that
+coverage can't, and CLAUDE.md's "Mutation Testing Requirement" for the
+70% bar expected of new/changed code specifically (this module's
+whole-module score, below, is the separate CI-blocking bar).
+`build.sbt`'s `strykerMutate`/`strykerThresholds*` settings scope this to
+the whole module and gate CI at 50% (`stryker4s.conf`'s equivalent keys
+were observed not to take effect with this sbt/plugin version
+combination). Run it locally with:
 
 ```bash
 cd ir
@@ -273,23 +281,46 @@ sbt stryker
 # HTML report: target/stryker4s-report/<timestamp>/index.html
 ```
 
-An initial run scored **44.4%** (8/18 mutants, 80% of the mutants in
-actually-covered code). Two survivors are worth knowing about:
+An initial run scoped to just `Lineage.scala` scored 44.4% (8/18 mutants).
+Adding tests for the real survivors — and widening to the whole module,
+which pulled `PlanPrinter.scala` in too — brought it to **86.36%**
+(76/100 mutants killed):
 
 - **`l.aggregated || r.aggregated` → `&&`** (`Lineage.scala:120`, `Join`'s
-  ambiguous-both-sides resolution) — no test constructs an unqualified
-  column name that resolves on both join sides with *different*
-  aggregation status, so the `||` could silently become `&&` (or vice
-  versa) without any test noticing.
+  ambiguous-both-sides resolution) — fixed with a test joining a plain
+  passthrough side against an aggregated side on an ambiguous reference,
+  the minimum shape where `||` and `&&` actually disagree.
 - **`columns.find(_.name == ref.name)` → `!=`** (`Lineage.scala:97`,
-  `Project`'s name-matching in `resolveInScope`) — covered by some test,
-  but nothing in that test's assertions distinguishes "resolved to the
-  correctly-named column" from "resolved to some other column that
-  happened to satisfy the assertion anyway."
+  `Project`'s name-matching in `resolveInScope`) — fixed by asserting the
+  resolved *sources*, not just the aggregation flag, on the existing
+  windowed-column test (the aggregation flag alone couldn't distinguish
+  "resolved to the right column" from "resolved to some other column that
+  happened to satisfy the old assertion anyway").
+- **`Aggregate`/`Window`/`Union` cases of `resolveInScope`** (previously
+  entirely uncovered — no test stacked a `Project` directly on any of
+  these) — fixed with three new tests doing exactly that.
+- **Exact branch (`├─`/`└─`) and continuation-prefix (`│  `/`   `)
+  correctness** (`PlanPrinter.scala`'s `renderChildren`) — every prior
+  test only asserted `.contains(...)` on node *content*, never on which
+  prefix character preceded it, so a bug that swapped which child counts
+  as "last" left every substring still present, just under the wrong
+  prefix. Fixed with one test asserting a full rendered string, exactly,
+  for a nested two-branch tree.
+- **`DISTINCT`, empty `GROUP BY`, `Sort` direction, and `Window`'s
+  `PARTITION BY`/`ORDER BY`** — none had a test exercising the "true" or
+  "false" side of their respective conditionals (e.g. no test ever
+  rendered a `Sort` or `Window` node's label at all). Fixed with four new
+  tests.
 
-This is a first pass, scoped deliberately narrow (see `ROADMAP.md` Phase
-1c) — `sbt stryker` is not yet wired into CI as a gate, and `mutate` is
-not yet widened to the rest of the module.
+What's left (12/100 undetected) is 11 `StringLiteral` mutants on
+`PlanPrinter`'s pure formatting separators (`", "`, `"\n"`, node-label
+text) — the same low-priority, commonly-excluded category discussed in
+docs/SPARK_ADAPTER.md — plus one genuinely equivalent mutant
+(`Lineage.scala:113`'s `found.isEmpty` forced to `false`: when `found` is
+truly empty, the "wrong" branch computes `Provenance(Set.empty, false)`,
+which is byte-for-byte the same value the correct `None` produces after
+`resolveExpr`'s `.getOrElse` — mathematically unobservable, not a real
+gap).
 
 ---
 

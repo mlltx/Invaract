@@ -488,7 +488,7 @@ cd spark-adapter
 sbt test
 ```
 
-47 tests against a real `local[*]` `SparkSession` (no mocked plans):
+51 tests against a real `local[*]` `SparkSession` (no mocked plans):
 
 - **`SparkPlanAdapterSpec`** (20) — a bare read, the worked example,
   filter+cast, self-join alias disambiguation, union, window, a UDF, an
@@ -498,22 +498,26 @@ sbt test
   `.repartition()`/`.coalesce()`, format-agnosticism across CSV/JSON/
   Parquet, a real H2 JDBC read, and a full write (format + save mode)
   captured end-to-end through `SparkAdapterListener`.
-- **`StructuralVerifierSpec`** (19) — the real demo pipeline passing its
+- **`StructuralVerifierSpec`** (22) — the real demo pipeline passing its
   own contract; every violation type (`MISSING_INPUT`, `UNDECLARED_INPUT`,
   `MISSING_OUTPUT`, `OUTPUT_LOCATION_MISMATCH`, `MISSING_OUTPUT_FIELD`,
   `UNDECLARED_OUTPUT_COLUMN`, `OUTPUT_FIELD_TYPE_MISMATCH`,
   `OUTPUT_FIELD_NULLABILITY_MISMATCH`, `OUTPUT_FORMAT_MISMATCH`,
   `OUTPUT_SAVE_MODE_MISMATCH`, and the input-side equivalents) firing
-  correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"` example; and
-  the relative-vs-absolute location matching, checked against Spark's real
-  reported paths.
-- **`ContractEnforcementRuleSpec`** (7) — PASS executes and creates
+  correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"` example; the
+  relative-vs-absolute location matching, checked against Spark's real
+  reported paths; multi-input `MISSING_INPUT`/`UNDECLARED_INPUT` checked
+  independently rather than requiring universal agreement; an absent
+  optional field producing no violation; and violation
+  messages/remediations naming the correct side.
+- **`ContractEnforcementRuleSpec`** (8) — PASS executes and creates
   output; FAIL aborts before any data is written; the explanation contains
   all four required sections; the same violation produces byte-identical
   explanations across three repeated attempts; non-write queries never
   trigger verification even under an always-failing contract;
   `VerificationOptions` thread through the enforcement path;
-  `forContract`'s public entry point works directly.
+  `forContract`'s public entry point works directly; `explain` pluralizes
+  the violation count and marks optional fields distinctly.
 - **`SparkPlanAdapterFuzzSpec`** (1 property, ~200 generated cases per run)
   — random chains of the operations `SparkPlanAdapterSpec` tests
   individually (filter, recomputed columns, sort, aggregate, self-join,
@@ -574,11 +578,13 @@ one. A test failing means the mutant is *killed* (good — something
 verifies that logic); every test still passing means it *survived*, which
 100% line coverage cannot detect.
 
-`spark-adapter/stryker4s.conf` and `build.sbt`'s `strykerMutate` setting
-scope this to `StructuralVerifier.scala` — the file this project's whole
-value proposition rests on, where a false negative (a real contract
-violation nothing reports) is a far worse failure mode than incomplete
-coverage elsewhere. Run it with:
+`build.sbt`'s `strykerMutate` setting scopes this to the whole module
+(`src/main/scala/**/*.scala`); `strykerThresholdsBreak` gates it at 50% —
+`sbt stryker` exits non-zero below that, which is what makes CI's
+`mutation-testing` job (`.github/workflows/test.yml`) fail the build. Both
+settings live in `build.sbt`, not `stryker4s.conf`: that config file's
+equivalent `mutate`/`thresholds` keys were observed not to take effect
+with this sbt/plugin version combination. Run it locally with:
 
 ```bash
 cd spark-adapter
@@ -586,32 +592,79 @@ sbt stryker
 # HTML report: target/stryker4s-report/<timestamp>/index.html
 ```
 
-An initial run scored **50.0%** (36/86 mutants killed). Most survivors are
-`StringLiteral` mutants on human-readable `message`/`remediation` text —
-a low-priority, commonly-excluded category, since pinning exact error
-wording makes tests brittle for little benefit. Two categories of survivor
-are real, worth knowing about:
+An initial run scoped to just `StructuralVerifier.scala` scored 50.0%.
+Widening to the whole module (`SparkPlanAdapter.scala` and
+`ContractEnforcementRule.scala` too) dropped that to **44.79%** — more
+files, more untested surface. Adding tests for the real (non-`StringLiteral`)
+survivors brought it to **57.06%** (93/177 mutants killed), comfortably
+clearing the 50% break threshold:
 
 - **`exists`/`forall` swaps in the input-matching predicates**
   (`StructuralVerifier.scala:143` and `:157`, the `MISSING_INPUT` and
-  `UNDECLARED_INPUT` checks) — no test distinguishes "declared but never
-  read" from "read but never declared" precisely enough to catch the
-  predicate being inverted.
-- **`field.required` forced to always `true`** (`:296`, inside
-  `checkSchema`) — no test proves a genuinely *optional* field that's
-  absent from the actual schema does **not** produce a violation; only
-  the required-and-missing case is exercised.
+  `UNDECLARED_INPUT` checks) — fixed with a test declaring two inputs and
+  reading two locations that overlap on only one, which is the minimum
+  shape where the two quantifiers actually disagree.
+- **`field.required` forced to always `true`** (`StructuralVerifier.scala:296`,
+  inside `checkSchema`) — fixed with a contract declaring one required and
+  one optional field, both absent from the actual schema; only the
+  required one may produce a violation.
+- **`contextPrefix == "INPUT"` selecting the wrong violation-type/wording
+  pair** (`StructuralVerifier.scala:291`) — fixed with a test asserting
+  the `datasetNoun` text ("input"/"output") that only that branch controls.
+- **Violation-count pluralization and the optional-field marker**
+  (`ContractEnforcementRule.scala:121` and `:136`, inside `explain`) —
+  `explain` is `private[sparkadapter]`, so these were killed by calling it
+  directly with a synthetic one- and two-violation `VerificationResult`,
+  no real Spark write needed.
+
+What's left (70/177 undetected) is overwhelmingly `StringLiteral` mutants
+on message/remediation text (65 of them) — the low-priority,
+commonly-excluded category discussed above — plus five in
+`SparkPlanAdapter.scala` tied to gaps this doc already documents as
+untestable in this environment: the `JDBCRelation`-guard's near-equivalent
+always-true mutant (the `Try`/`toOption` fallback absorbs it either way),
+`lr.catalogTable.isEmpty` and `usedFallback`'s Hive-relation branch (no
+Hive metastore available here — see *Known limitations* above), and
+`unwrapWriteWrapper`'s no-wrapper branch (Spark 3.4+ always inserts the
+`WriteFiles` wrapper this adapter targets, so that branch has no reachable
+real-world trigger under the pinned Spark version).
 
 Note also that Stryker4s's per-mutant reruns use coverage-based test
 selection (only tests observed to execute a mutated line are rerun for
-that mutant) — a handful of survivors here (e.g. the `contextPrefix ==
-"INPUT"` branch selection) may reflect that narrower coverage mapping
-rather than a genuine gap the full suite would also miss; treat "Survived"
-as a strong lead to investigate, not an automatic verdict.
+that mutant) — occasionally this can make a mutant "Survive" that the full
+suite would actually catch, purely because of how coverage was mapped.
+Treat "Survived" as a strong lead to investigate, not an automatic
+verdict.
 
-This is a first pass, scoped deliberately narrow (see `ROADMAP.md` Phase
-1c) — `sbt stryker` is not yet wired into CI as a gate, and `mutate` is
-not yet widened to the rest of the module.
+This module's whole-module score (57.06%) is the CI-blocking bar, not the
+bar for new code — see CLAUDE.md's "Mutation Testing Requirement" for the
+higher (70%) standard expected of code a feature actually adds or
+changes.
+
+#### Incremental checking in CI
+
+That 70%-on-new-code bar was originally a manual step (run a scoped
+`sbt stryker` locally, read the report). `.github/workflows/test.yml`'s
+`mutation-testing` job now automates it for every PR: a "Mutation test
+changed files" step diffs against the PR's base commit
+(`github.event.pull_request.base.sha`), filters to each module's changed
+`src/main/scala/**/*.scala` files, and runs `sbt stryker` scoped to just
+those — via a brace-expansion glob for multiple files
+(`--mutate "{FileA.scala,FileB.scala}"`, confirmed to work with
+Stryker4s's glob matcher) — with `--thresholds.high 90 --thresholds.low 80
+--thresholds.break 70` passed on the CLI to override the module's
+whole-module 50% gate for that run only, without touching `build.sbt`.
+A module with no changed files under `src/main/scala` is skipped entirely
+rather than run with an empty `--mutate` (which Stryker4s tolerates —
+exits 0 reporting "0 mutant(s)" — but still pays the full test-runner
+startup cost for nothing).
+
+This is real incrementality, not Stryker4s's own feature: Stryker4s itself
+has no diff/since mode (unlike StrykerJS), so this is a small CI-level
+wrapper around the same `--mutate` scoping mechanism used throughout this
+section, not a built-in capability. It only runs on `pull_request` events
+— a bare `push` has no unambiguous "changed relative to what" to diff
+against.
 
 To see the translation adapter running against the actual demo pipeline:
 

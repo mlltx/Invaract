@@ -260,4 +260,59 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val df = spark.range(5).withColumn("doubled", col("id") * 2)
     rule(spark)(df.queryExecution.analyzed) // no write command in this plan -> no-op, must not throw
   }
+
+  // Added while raising the module's mutation-testing score (see
+  // ROADMAP.md Phase 1c / CLAUDE.md): explain() is private[sparkadapter],
+  // so it can be exercised directly with a synthetic result — no need to
+  // provoke a real Spark abort just to check its text formatting.
+  test("explain pluralizes the violation count and marks optional fields distinctly") {
+    val contractYaml =
+      """id: explain_demo
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: raw.orders
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |        - name: note
+        |          type: string
+        |          required: false
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |""".stripMargin
+    val contract = parseContract(contractYaml)
+    val plan = com.example.ir.Write(com.example.ir.DatasetRef("gold.out"), com.example.ir.Read(com.example.ir.DatasetRef("raw.orders")))
+
+    val oneViolation = VerificationResult.of(
+      s"${contract.id}@${contract.version}",
+      List(Violation(ViolationType.MissingOutputField, "msg", "remediation", column = Some("id")))
+    )
+    val oneText = ContractEnforcementRule.explain(contract, plan, oneViolation)
+    assert(oneText.contains("(1 violation):"), oneText)
+    assert(!oneText.contains("(1 violations):"), oneText)
+
+    val twoViolations = VerificationResult.of(
+      s"${contract.id}@${contract.version}",
+      List(
+        Violation(ViolationType.MissingOutputField, "msg1", "remediation1", column = Some("id")),
+        Violation(ViolationType.MissingInputField, "msg2", "remediation2", column = Some("note"))
+      )
+    )
+    val twoText = ContractEnforcementRule.explain(contract, plan, twoViolations)
+    assert(twoText.contains("(2 violations):"), twoText)
+
+    // "note" is declared optional (required: false); "id" is required.
+    // Only the optional field's description should carry "(optional)".
+    assert(oneText.contains("id: integer") && !oneText.contains("id: integer (optional)"), oneText)
+    assert(oneText.contains("note: string (optional)"), oneText)
+  }
 }

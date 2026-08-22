@@ -32,6 +32,33 @@ You MUST:
 
 Real Spark execution is the source of truth. Unit test passing ≠ plugin working.
 
+## Mutation Testing Requirement
+
+`ir` and `spark-adapter` are mutation-tested with Stryker4s (see
+docs/TRANSFORMATION_IR.md and docs/SPARK_ADAPTER.md's "Mutation testing"
+sections). CI blocks on each module's *whole-module* score staying above
+its `break` threshold (currently 50% — see `strykerThresholdsBreak` in
+each module's `build.sbt`), but that only catches an aggregate regression.
+It does not prove new code is well-tested — a large, well-tested module
+can absorb a weakly-tested new file and still clear 50%.
+
+So: when a feature adds or changes code in `ir/src/main/scala/...` or
+`spark-adapter/src/main/scala/...`, passing tests are **not** enough to
+call it done. Before considering such a feature complete, you MUST:
+
+1. From inside the module directory, run mutation testing scoped to just
+   the file(s) you touched, e.g. `sbt stryker --mutate "src/main/scala/com/example/ir/YourFile.scala"`.
+2. Confirm the score for those file(s) is at least **70%**.
+3. For every real Survived/NoCoverage mutant in the code you added or
+   changed, either strengthen an assertion to kill it, add a test that
+   reaches it, or note explicitly why it's being left (e.g. a genuinely
+   equivalent mutant, or a `StringLiteral` mutant on human-readable
+   message text — see docs/SPARK_ADAPTER.md's "Mutation testing" section
+   for what's already been judged not worth chasing).
+
+This is a manual, PR-scoped check — Stryker4s has no incremental/diff
+mode, so CI cannot enforce "the new code specifically" on its own.
+
 ## Repository Structure
 
 ```

@@ -786,7 +786,7 @@ the first; the rest remain future scope).
       a single-step `SelfJoinStep` chain, with the full analyzed plan and
       exception in the failure message), then reverted.
 
-#### Sub-phase: Mutation testing of Lineage and StructuralVerifier (done)
+#### Sub-phase: Mutation testing, whole-module, blocking CI at 50% (done)
 
 The second regression-testing guardrail (see the sub-phase above for the
 first). [Stryker4s](https://github.com/stryker-mutator/stryker4s) answers
@@ -796,36 +796,64 @@ source file (flip `==`/`!=`, `&&`/`||`, `exists`/`forall`, delete a string
 literal, ...), reruns the real suite per mutant, and reports which mutants
 survived (every test still passed despite the code now being wrong).
 
-- [x] **Wired in, scoped to the two files where a wrong answer is worse
-      than an incomplete one**: `Lineage.scala` (`ir`) and
-      `StructuralVerifier.scala` (`spark-adapter`), via each module's
-      `stryker4s.conf` + `build.sbt`'s `strykerMutate` setting (the
-      `mutate` key in `stryker4s.conf` itself was observed not to take
-      effect with this sbt/plugin combination — documented in both
-      files). Required bumping `sbt.version` from `1.9.8` to `1.11.7` in
-      just these two modules' `project/build.properties` (Stryker4s 1.1.1
-      requires sbt ≥ 1.11.2); the full existing test suites for both
-      modules were rerun and confirmed unaffected by the bump before
-      proceeding.
-    - `ir`: 44.4% mutation score (8/18 mutants, 80% of covered code).
-      Real survivors: `Join`'s ambiguous-both-sides `aggregated`
-      propagation (`||` could silently become `&&`), and `Project`'s
-      `resolveInScope` column-name matching (covered, but no assertion
-      distinguishes "the right column" from "some column that happened
-      to satisfy the test").
-    - `spark-adapter`: 50.0% mutation score (36/86 mutants). Most
-      survivors are low-priority `StringLiteral` mutants on
-      human-readable message/remediation text. Real survivors: the
-      `exists`/`forall` swaps in the `MISSING_INPUT`/`UNDECLARED_INPUT`
-      matching predicates, and `field.required` forced to always `true`
-      in `checkSchema` (no test proves an absent *optional* field is
-      correctly *not* flagged).
-    - Full details, caveats (coverage-based test selection can produce a
-      "Survived" that the full suite would actually catch), and the
-      published HTML reports: see docs/SPARK_ADAPTER.md's "Mutation
-      testing" section and docs/TRANSFORMATION_IR.md's equivalent.
-    - Deliberately narrow first pass: not yet wired into CI as a gate,
-      and `mutate` not yet widened beyond these two files.
+- [x] **Wired in and widened to whole-module scope, blocking CI at 50%**:
+      `ir` and `spark-adapter`, via each module's `build.sbt`
+      (`strykerMutate := Seq("src/main/scala/**/*.scala")` and
+      `strykerThresholdsBreak := 50` — `stryker4s.conf`'s equivalent
+      `mutate`/`thresholds` keys were observed not to take effect with
+      this sbt/plugin combination, documented in both `.conf` files).
+      Required bumping `sbt.version` from `1.9.8` to `1.11.7` in just
+      these two modules' `project/build.properties` (Stryker4s 1.1.1
+      requires sbt ≥ 1.11.2); the full test suites for both modules, the
+      whole 5-module `./dev/build`, and a real `./dev/test` run were all
+      confirmed unaffected by the bump. A new `mutation-testing` job in
+      `.github/workflows/test.yml` runs `sbt stryker` for both modules on
+      every PR (one Linux/JDK-21 leg — mutation testing measures test
+      quality, not OS/JDK compatibility, so it doesn't need the full
+      matrix) and uploads each module's HTML report as a build artifact;
+      its failure (a module's score dropping below `break`) fails the
+      `summary` gate like any other CI job.
+    - `ir`: widening from the initial single-file 44.4% pass to whole-
+      module scope (pulling in `PlanPrinter.scala`) initially dropped the
+      score, but fixing every real (non-`StringLiteral`) survivor across
+      both files — `Join`'s ambiguous-aggregation propagation, `Project`'s
+      `resolveInScope` column matching, the previously wholly-uncovered
+      `Aggregate`/`Window`/`Union` cases of `resolveInScope`, exact
+      branch/continuation-prefix rendering, and `PlanPrinter`'s untested
+      `DISTINCT`/empty-`GROUP BY`/`Sort`/`Window` branches — brought it to
+      **86.36%** (76/100 mutants).
+    - `spark-adapter`: widening from the initial single-file 50.0% pass to
+      whole-module scope (pulling in `SparkPlanAdapter.scala` and
+      `ContractEnforcementRule.scala`) dropped it to 44.79%; fixing the
+      `exists`/`forall` swaps, `field.required`, and the
+      `contextPrefix == "INPUT"` branch selection in `StructuralVerifier`,
+      plus `ContractEnforcementRule.explain`'s violation-count
+      pluralization and optional-field marking, brought it to **57.06%**
+      (93/177 mutants) — comfortably above the 50% break threshold.
+      What's left is almost entirely low-priority `StringLiteral` mutants
+      on message text, plus a handful in `SparkPlanAdapter.scala` tied to
+      the already-documented untested-Hive-relation gap and one
+      near-equivalent mutant — see docs/SPARK_ADAPTER.md for the full
+      breakdown.
+    - Full details, caveats, and the published HTML reports: see
+      docs/SPARK_ADAPTER.md's "Mutation testing" section and
+      docs/TRANSFORMATION_IR.md's equivalent.
+    - CLAUDE.md's "Mutation Testing Requirement" additionally requires
+      70% on the specific file(s) a feature adds or changes — a stronger,
+      PR-author-level bar than the whole-module 50% CI gate. Stryker4s has
+      no incremental/diff-scoped mode of its own, but this is now
+      automated in CI anyway: a "Mutation test changed files" step diffs
+      against the PR's base commit and reruns `sbt stryker` scoped (via a
+      brace-expansion `--mutate` glob) to just the changed
+      `src/main/scala/**/*.scala` files per module, with
+      `--thresholds.break 70` passed on the CLI so it doesn't disturb the
+      module's whole-module 50% setting in `build.sbt`. Runs only on
+      `pull_request` events and skips a module with no changed files.
+      Verified locally both ways before landing: passes on a real
+      historical multi-file `ir` diff (86.21%), and correctly fails on a
+      `spark-adapter` file pair that scores below 70% together (52.9%)
+      even though the whole module clears 50% — see docs/SPARK_ADAPTER.md's
+      "Incremental checking in CI" subsection.
 
 #### Scope (Future)
 

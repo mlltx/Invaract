@@ -102,4 +102,89 @@ class PlanPrinterSpec extends AnyFunSuite {
     val rendered = PlanPrinter.render(plan)
     assert(rendered.contains("mystery = <unsupported: ScalaUDF(myFunc)>"))
   }
+
+  // The tests above only ever assert `.contains(...)` on a node's own
+  // content, never on which branch/continuation character precedes it —
+  // so a bug that swapped which child is treated as "last" (mutating
+  // renderChildren's `isLast`) would still leave every asserted substring
+  // present somewhere in the output, just under the wrong prefix. Only a
+  // full-string comparison against a real multi-level tree pins that down.
+  test("render distinguishes branch and continuation prefixes exactly, at nested depth") {
+    val plan = Join(
+      Union(List(Read(DatasetRef("raw.a")), Read(DatasetRef("raw.b")))),
+      Union(List(Read(DatasetRef("raw.c")), Read(DatasetRef("raw.d")))),
+      JoinType.Inner
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    val expected =
+      """Join(Inner)
+        |├─ Union
+        |│  ├─ Read(raw.a)
+        |│  └─ Read(raw.b)
+        |└─ Union
+        |   ├─ Read(raw.c)
+        |   └─ Read(raw.d)
+        |""".stripMargin
+
+    assert(rendered == expected)
+  }
+
+  test("render shows DISTINCT for an AggregateCall marked distinct, and omits it otherwise") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Project(
+      orders,
+      List(
+        NamedExpr("unique_customers", AggregateCall("COUNT", ColumnReference(ColumnRef("customer_id")), distinct = true)),
+        NamedExpr("total_orders", AggregateCall("COUNT", ColumnReference(ColumnRef("order_id")), distinct = false))
+      )
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("unique_customers = COUNT(DISTINCT customer_id)"))
+    assert(rendered.contains("total_orders = COUNT(order_id)"))
+  }
+
+  test("render omits GROUP BY when an Aggregate has no grouping keys") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Aggregate(
+      orders,
+      groupBy = Nil,
+      aggregates = List(NamedExpr("total", AggregateCall("COUNT", ColumnReference(ColumnRef("id")))))
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    assert(!rendered.contains("GROUP BY"))
+    assert(rendered.contains("total = COUNT(id)"))
+  }
+
+  test("render shows Sort's direction for ascending and descending keys") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Sort(
+      orders,
+      List(
+        SortOrder(ColumnReference(ColumnRef("id")), ascending = true),
+        SortOrder(ColumnReference(ColumnRef("value")), ascending = false)
+      )
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("Sort(id ASC, value DESC)"))
+  }
+
+  test("render shows Window's PARTITION BY and ORDER BY, and omits both when absent") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val windowExprs = List(NamedExpr("rn", FunctionCall("ROW_NUMBER", Nil)))
+
+    val withSpec = Window(
+      orders,
+      windowExprs,
+      partitionBy = List(ColumnReference(ColumnRef("customer_id"))),
+      orderBy = List(SortOrder(ColumnReference(ColumnRef("order_date")), ascending = true))
+    )
+    assert(PlanPrinter.render(withSpec).contains("Window(PARTITION BY customer_id ORDER BY order_date)"))
+
+    val withoutSpec = Window(orders, windowExprs)
+    assert(PlanPrinter.render(withoutSpec).contains("Window()"))
+  }
 }

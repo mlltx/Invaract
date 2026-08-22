@@ -57,9 +57,14 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-// Mutation testing (Stryker4s) config: see stryker4s.conf for the
-// `mutate` scope rationale. Set here rather than in stryker4s.conf's
-// `mutate` key, which was observed not to take effect via the config
-// file in this sbt/plugin version combination - the CLI flag and this
-// sbt setting both work, so this is used instead.
-strykerMutate := Seq("src/main/scala/com/example/sparkadapter/StructuralVerifier.scala")
+// Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
+// `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
+// equivalent keys were observed not to take effect via the config file in
+// this sbt/plugin version combination - these sbt settings do work.
+// Whole-module scope (widened from just StructuralVerifier.scala once the
+// initial narrow pass's score was reviewed). `break` is what makes CI's
+// mutation-testing job fail when the score regresses below it.
+strykerMutate := Seq("src/main/scala/**/*.scala")
+strykerThresholdsHigh := 80
+strykerThresholdsLow := 60
+strykerThresholdsBreak := 50
