@@ -4,7 +4,7 @@
 package com.example.sparkadapter
 
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand
+import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.util.QueryExecutionListener
 
 /** A `QueryExecutionListener` that captures the translated IR for every
@@ -33,6 +33,16 @@ class SparkAdapterListener extends QueryExecutionListener {
   override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit =
     qe.analyzed match {
       case _: InsertIntoHadoopFsRelationCommand =>
+        _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
+      // Delta (and any other CreatableRelationProvider-based source
+      // written via `.save(...)`) analyzes to this command instead - see
+      // SparkPlanAdapter's SaveIntoDataSourceCommand case and
+      // docs/SPARK_ADAPTER.md's "Delta Lake support" section. This
+      // listener has its own independent "is this a write" check from
+      // SparkPlanAdapter's and ContractEnforcementRule's, confirmed the
+      // hard way when adding Delta support here required fixing all three
+      // separately, not just SparkPlanAdapter.translatePlan.
+      case _: SaveIntoDataSourceCommand =>
         _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
       case _ => // not a write; ignore (schema inference, count(), etc.)
     }

@@ -8,7 +8,7 @@ import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -83,8 +83,18 @@ object ContractEnforcementRule {
     translated.plan match {
       case _: com.example.ir.Write =>
         val inputSchemas = plan.collect { case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema }.toList
+        // Both branches use the underlying query's schema, not the command
+        // node's own: a Command's `.schema` is its own (typically empty)
+        // output, not the data it writes - using it directly for
+        // SaveIntoDataSourceCommand silently reported every declared field
+        // as missing regardless of what was actually written, confirmed
+        // the hard way by a real Delta write test failing PASS with a
+        // MISSING_OUTPUT_FIELD violation on a field that genuinely was
+        // present (see docs/SPARK_ADAPTER.md's "Delta Lake support"
+        // section).
         val outputSchema = plan match {
           case cmd: InsertIntoHadoopFsRelationCommand => cmd.query.schema
+          case cmd: SaveIntoDataSourceCommand          => cmd.query.schema
           case other                                   => other.schema
         }
         val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)

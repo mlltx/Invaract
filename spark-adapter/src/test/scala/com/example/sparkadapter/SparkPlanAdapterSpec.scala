@@ -21,7 +21,17 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
   private var outputDir: Path = _
 
   override def beforeAll(): Unit = {
-    spark = SparkSession.builder().master("local[*]").appName("SparkPlanAdapterSpec").getOrCreate()
+    spark = SparkSession
+      .builder()
+      .master("local[*]")
+      .appName("SparkPlanAdapterSpec")
+      // Delta's session extension/catalog only activate for `.format("delta")`
+      // usage - confirmed harmless to every other test in this suite by the
+      // full suite still passing with this enabled (see docs/SPARK_ADAPTER.md's
+      // "Delta Lake support" section for how this was investigated).
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
     outputDir = Files.createTempDirectory("invariant-spark-adapter-test")
@@ -428,6 +438,42 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     } finally {
       conn.close()
     }
+  }
+
+  // Investigated empirically against a real Delta-enabled session before
+  // writing this (see docs/SPARK_ADAPTER.md's "Delta Lake support"
+  // section): a `.format("delta").save(path)` write does NOT go through
+  // InsertIntoHadoopFsRelationCommand like Parquet/CSV/JSON above - it
+  // analyzes to SaveIntoDataSourceCommand instead, the same generic
+  // command any CreatableRelationProvider-based `.save(...)` write uses.
+  // Before the SaveIntoDataSourceCommand case was added, this fell
+  // through to Unsupported - which, per ContractEnforcementRule's "only
+  // ir.Write is checked" design, meant a Delta write passed through
+  // completely unverified. This test is the translation half of closing
+  // that gap; ContractEnforcementRuleSpec's Delta tests are the
+  // enforcement half.
+  test("translates a Delta write via SaveIntoDataSourceCommand, not falling through to Unsupported") {
+    val outputPath = outputDir.resolve("delta_write_test").toString
+    val df = readSample()
+
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df.write.format("delta").mode(SaveMode.Overwrite).save(outputPath)
+
+    val result = eventually(timeout(Span(5, Seconds))) {
+      listener.lastWrite.getOrElse(fail("listener has not captured the Delta write yet"))
+    }
+
+    result.plan match {
+      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+        assert(location.contains(outputPath), s"expected the Delta table path in the location, got '$location'")
+        assert(format.contains("delta"), s"expected format 'delta' via DataSourceRegister.shortName(), got $format")
+        assert(saveMode.contains("overwrite"))
+      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    // Confirms this is a real, precise translation, not a best-effort
+    // fallback that merely happens to produce a Write node.
+    assert(result.diagnostics.isEmpty, s"a Delta write with a 'path' option should not need a fallback diagnostic: ${result.diagnostics}")
   }
 
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {

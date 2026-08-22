@@ -33,6 +33,10 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       .builder()
       .master("local[*]")
       .appName("ContractEnforcementRuleSpec")
+      // See SparkPlanAdapterSpec's beforeAll for why this is safe to add
+      // to a session every other test in this suite also shares.
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
@@ -107,6 +111,56 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // Closes the enforcement half of the gap SparkPlanAdapterSpec's Delta
+  // translation test documents: before SparkPlanAdapter recognized
+  // SaveIntoDataSourceCommand, a Delta write translated to Unsupported,
+  // and ContractEnforcementRule only gates plans that translate to
+  // ir.Write — meaning a Delta write passed through completely
+  // unverified, silently, contract or no contract. These two tests are
+  // the same PASS/FAIL pair as the Parquet tests above, proving real
+  // enforcement now applies to a real Delta write end to end, not just
+  // that translation produces the right IR shape in isolation.
+  test("PASS: a Delta write satisfying its contract executes normally, output written") {
+    val outputPath = scratchDir.resolve("pass_delta").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.format("delta").mode("overwrite").save(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a Delta write violating its contract is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("fail_delta").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.format("delta").mode("overwrite").save(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the Delta write must be aborted, not merely reported as failed")
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
   }
 

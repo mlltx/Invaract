@@ -145,6 +145,7 @@ workaround bolted onto the adapter alone.
 | Spark construct | IR translation |
 |---|---|
 | `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
+| `SaveIntoDataSourceCommand` (Delta and other `CreatableRelationProvider`-based `.save(...)` writes) | `Write(DatasetRef(options("path")), ..., format, saveMode)` — `format` from the write's `dataSource` via `DataSourceRegister.shortName()`, the same mechanism as above, just for the other provider trait Spark routes non-`FileFormat` writes through (see "Delta Lake support" below) |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` |
 | `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
 | `SubqueryAlias` over a `Read` | `Read(..., alias = Some(name))` |
@@ -263,6 +264,91 @@ From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
   nested exactly where the untranslatable construct sits in the plan, plus
   a `Diagnostic`, rather than an exception.
 
+## Delta Lake support
+
+Delta writes are translated via `SaveIntoDataSourceCommand` (see
+"Translation coverage" above) — added after investigating what a real
+Delta write actually analyzes to, empirically, not assumed: a fresh
+Delta-enabled `SparkSession`
+(`spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension`,
+`spark.sql.catalog.spark_catalog=...DeltaCatalog`), a real
+`df.write.format("delta").save(path)`, and a `QueryExecutionListener`
+logging every analyzed plan Spark produced along the way. The write's
+final analyzed plan was `SaveIntoDataSourceCommand`, not a Delta-specific
+class at all — Spark's own generic command for any
+`CreatableRelationProvider`-based `.save(...)` write, the non-`FileFormat`
+counterpart to `InsertIntoHadoopFsRelationCommand`.
+
+**No Delta dependency, compile-time or runtime, is needed to translate
+this.** `SaveIntoDataSourceCommand` and `DataSourceRegister` are both
+plain, public `org.apache.spark.sql` classes already on this module's
+existing `provided` Spark dependency; Delta's `DeltaDataSource` was
+confirmed (same investigation) to implement `DataSourceRegister` with
+`shortName() == "delta"`, exactly the mechanism `formatOf` already used
+for built-in file formats — so `formatOf`'s parameter type was simply
+widened from `FileFormat` to `AnyRef` and reused as-is, rather than
+writing Delta-specific translation code. `delta-spark` appears only as a
+`% "test"` dependency (pinned to 3.2.0, not the latest 3.2.x: a confirmed
+real bug in 3.2.1 affects exactly this Scala 2.12 + Spark 3.5.1
+combination — see
+[delta-io/delta#3737](https://github.com/delta-io/delta/issues/3737)) —
+its only job is spinning up a real Delta session to test against, the
+same role `com.h2database` plays for the JDBC precedent, never something
+the main translation code imports or needs present at runtime for a
+non-Delta job to run.
+
+This is also why the single assembled `spark-adapter` jar (see
+CLAUDE.md's "What's the product, and what's the test harness" and
+ARCHITECTURE.md) needs no Delta-specific variant: nothing about Delta
+support depends on Delta being bundled in, or even present, unless a
+user's own job actually writes Delta — confirmed directly, not assumed,
+by inspecting the assembled jar after adding this support and finding
+zero Delta classes in it, same size as before.
+
+An initial attempt at this feature assumed Delta's own command classes
+would need recognizing directly, which would have required a real
+`delta-spark` compile dependency (`provided`, to keep it out of the
+assembled jar) and Delta-specific pattern-matching code — abandoned once
+the actual analyzed plan turned out to already be a generic Spark class,
+making that unnecessary entirely.
+
+Two real bugs surfaced fixing this, neither about translation itself:
+
+- **`ContractEnforcementRule.verifyOrThrow`'s output-schema derivation**
+  only special-cased `InsertIntoHadoopFsRelationCommand`; for any other
+  plan (including the new `SaveIntoDataSourceCommand` case) it fell back
+  to the command node's *own* `.schema` — empty, since `Command` nodes
+  don't produce rows — rather than the schema of the query being written.
+  A real Delta write, correctly matching every field its contract
+  declared, still failed with `MISSING_OUTPUT_FIELD` on every one of
+  them, because the schema being checked against was always empty
+  regardless of what was actually written. Fixed by adding the same
+  `cmd.query.schema` case `SaveIntoDataSourceCommand` needs.
+- **`SparkAdapterListener.onSuccess`** has its own independent "is this a
+  write" check, entirely separate from `SparkPlanAdapter.translatePlan`'s
+  and `ContractEnforcementRule.verifyOrThrow`'s — also hardcoded to only
+  `InsertIntoHadoopFsRelationCommand`. A Delta write correctly translated
+  and correctly enforced, yet the listener-based report
+  (`demo/output/report.json`'s `transformationIR` section) never
+  captured it. Fixed the same way, in a third, separate location — three
+  independent places recognizing "is this a write command" is itself
+  worth noting as a design smell (not fixed here; see CLAUDE.md's
+  reminder to revisit fail-open/fail-closed behavior for unrecognized
+  writes generally).
+
+Both were caught by a real, real-Spark integration test failing (the new
+Delta PASS/FAIL pair in `ContractEnforcementRuleSpec` and the translation
+test in `SparkPlanAdapterSpec`), not by inspection — consistent with this
+module's general testing philosophy.
+
+**Known limitation:** only `.save(path)`-style writes are recognized, the
+same scope `InsertIntoHadoopFsRelationCommand` handling already has for
+file formats. `.saveAsTable(...)` / DataFrameWriterV2 / SQL `MERGE INTO`
+against a Delta table go through Spark's DataSourceV2 catalog write path
+instead (a different plan shape entirely, `AppendData`/
+`OverwriteByExpression`/similar over a resolved catalog table) — not
+covered by this change, and not investigated yet.
+
 ## Known limitations
 
 - **No `SparkSessionExtensions`-based capture.** Only a `DataFrame`'s own
@@ -281,6 +367,11 @@ From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
   the fallback's location has no reliable relationship to what a contract
   would declare for a JDBC source — but now gets its own precise
   `url`/`table`-based location; see the Translation coverage table above.)
+- **Delta `saveAsTable`/DataFrameWriterV2/`MERGE INTO` writes are not
+  recognized** — only `.save(path)`-style Delta writes are (via
+  `SaveIntoDataSourceCommand`, see "Delta Lake support" above); catalog
+  writes use Spark's DataSourceV2 write path instead, a different plan
+  shape not investigated yet.
 - **JDK 17+ requires `--add-opens` flags for `sbt test` and for the
   non-`spark-submit` fallback in `dev/test`.** Spark reflectively accesses
   JDK-internal classes (`sun.nio.ch.DirectBuffer` via

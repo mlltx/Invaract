@@ -333,9 +333,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to a failure: fix an accidental break, or add a documented exclusion for
   a deliberate one), and docs/CONTRACT_MODEL.md, docs/TRANSFORMATION_IR.md,
   and docs/SPARK_ADAPTER.md each gained an "API compatibility" section.
+- **Delta Lake write support**: `SparkPlanAdapter` now recognizes
+  `SaveIntoDataSourceCommand`, the plan node Delta (and any other
+  `CreatableRelationProvider`-based `.save(...)` source) actually
+  analyzes to — confirmed empirically against a real Delta-enabled
+  `SparkSession`, not assumed. Previously such a write translated to
+  `ir.Unsupported`, so `ContractEnforcementRule` silently treated it as a
+  no-op and let it through completely unverified, contract or no
+  contract. `formatOf` was widened from `FileFormat` to `AnyRef` and
+  reused: Delta's `DeltaDataSource` implements `DataSourceRegister` the
+  same way every built-in format already does (`shortName() ==
+  "delta"`), so no Delta-specific type is needed at all. Net result:
+  **zero added runtime or compile-time dependency** for non-Delta users
+  — `delta-spark` (pinned to 3.2.0; 3.2.1 has a confirmed real bug on
+  Scala 2.12 + Spark 3.5.1, `delta-io/delta#3737`) is `% "test"` only, to
+  spin up a real Delta session to test against. Confirmed via `unzip -l`
+  that the assembled jar is unchanged in size and bundles zero Delta
+  classes. New Delta translation test in `SparkPlanAdapterSpec` and a
+  Delta PASS/FAIL enforcement pair in `ContractEnforcementRuleSpec`
+  (mirroring the existing Parquet pair). Mutation testing scoped to the
+  3 changed files scored 82.14% (bar: 70%), whole-module score unchanged
+  at 91.53%, `mimaReportBinaryIssues` clean. `.saveAsTable`/
+  DataFrameWriterV2/SQL `MERGE INTO` writes are a different,
+  DataSourceV2-based plan shape, not covered — documented as a known
+  limitation. Documented in docs/SPARK_ADAPTER.md's new "Delta Lake
+  support" section and ROADMAP.md's new "Delta Lake support" sub-phase.
 
 ### Fixed
 
+- Two real bugs found while adding Delta Lake write support, both caught
+  by genuinely failing tests rather than inspection:
+  - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
+    special-cased only `InsertIntoHadoopFsRelationCommand`
+    (`cmd.query.schema`), falling back to the write command node's own
+    `.schema` — empty for a `Command` — for everything else. A Delta
+    write's contract verification always reported every declared output
+    field as missing, regardless of what was actually written. Fixed by
+    adding the same `cmd.query.schema` handling for
+    `SaveIntoDataSourceCommand`.
+  - `SparkAdapterListener.onSuccess` had its own independent "is this a
+    write" filter, also hardcoded to `InsertIntoHadoopFsRelationCommand`
+    only, so it never captured a Delta write for `demo/output/report.json`
+    reporting even once translation and enforcement were fixed. Fixed the
+    same way.
 - `./dev/test` and CI only ever built `plugin` and `runner` directly, never
   `contract`, `ir`, or `spark-adapter`. This worked only because those three
   modules' jars happened to already exist on disk in every environment they

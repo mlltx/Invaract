@@ -46,7 +46,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Union,
   Window
 }
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
@@ -191,6 +191,38 @@ private[sparkadapter] object SparkPlanAdapter {
           saveModeOf(cmd.mode)
         )
 
+      // Delta Lake (and any other CreatableRelationProvider-based source
+      // written via `.save(...)` rather than Spark's FileFormat-based
+      // write path above) goes through this command instead of
+      // InsertIntoHadoopFsRelationCommand - confirmed empirically against
+      // a real Delta-enabled session, not assumed (see docs/SPARK_ADAPTER.md's
+      // "Delta Lake support" section): `df.write.format("delta").save(path)`
+      // analyzes to exactly this node, with Delta's own DeltaDataSource as
+      // `dataSource`. No Delta-specific code or dependency is needed to
+      // translate it: SaveIntoDataSourceCommand and DataSourceRegister are
+      // both plain, public spark-sql classes already on this module's
+      // existing Spark dependency, and Delta's DeltaDataSource implements
+      // DataSourceRegister (shortName "delta") the same way every built-in
+      // format already does - this is the exact mechanism `formatOf` above
+      // already used for FileFormat, just applied to the other provider
+      // trait Spark routes non-file writes through. `saveAsTable`/catalog
+      // writes (Delta or otherwise) are a different, DataSourceV2-based
+      // plan shape this doesn't cover - see "Known limitations".
+      case cmd: SaveIntoDataSourceCommand =>
+        val location = cmd.options.get("path").getOrElse {
+          report(
+            "SaveIntoDataSourceCommand",
+            s"No 'path' option on a ${cmd.dataSource.getClass.getSimpleName} write; using its options map as a best-effort location"
+          )
+          cmd.options.toString
+        }
+        ir.Write(
+          ir.DatasetRef(location),
+          translatePlan(cmd.query),
+          formatOf(cmd.dataSource),
+          saveModeOf(cmd.mode)
+        )
+
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
           case r: ir.Read => r.copy(alias = Some(sa.identifier.name))
@@ -282,17 +314,20 @@ private[sparkadapter] object SparkPlanAdapter {
       * rather than importing it directly: an internal class an adapter
       * targeting a different Spark version might not have.
       */
-    /** Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...) mix in
+    /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
+      * `FileFormat`) and non-file data sources written via `.save(...)`
+      * (Delta, JDBC, ..., `CreatableRelationProvider`) mix in
       * `DataSourceRegister`, whose `shortName()` is the same clean,
-      * stable identifier ("parquet", "csv", ...) used everywhere else in
-      * Spark (e.g. `df.write.format("parquet")`) — including, notably, in
-      * a contract's own declared `format` string, which is exactly what
-      * this needs to line up with for `StructuralVerifier`'s format check.
-      * A custom FileFormat that doesn't implement it has no comparably
-      * reliable name to fall back to, so it's left as `None` rather than
-      * guessing from `getClass.getSimpleName`.
+      * stable identifier ("parquet", "delta", ...) used everywhere else in
+      * Spark (e.g. `df.write.format("delta")`) — including, notably, in a
+      * contract's own declared `format` string, which is exactly what this
+      * needs to line up with for `StructuralVerifier`'s format check. Takes
+      * `AnyRef` rather than either specific provider trait since the check
+      * is purely on the runtime type either way; a provider that doesn't
+      * implement it has no comparably reliable name to fall back to, so
+      * it's left as `None` rather than guessing from `getClass.getSimpleName`.
       */
-    private def formatOf(fileFormat: FileFormat): Option[String] = fileFormat match {
+    private def formatOf(provider: AnyRef): Option[String] = provider match {
       case registered: DataSourceRegister => Some(registered.shortName())
       case _                                => None
     }

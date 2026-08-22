@@ -944,6 +944,80 @@ catch it.
       docs/TRANSFORMATION_IR.md, and docs/SPARK_ADAPTER.md's "API
       compatibility" sections.
 
+#### Sub-phase: Delta Lake support (done)
+
+Closed a real, previously-unknown correctness gap: a Delta Lake write
+(`df.write.format("delta").save(path)`) translated to `ir.Unsupported`,
+not `ir.Write` — meaning `ContractEnforcementRule` silently treated it as
+a no-op and let it through completely unverified, contract or no
+contract. Found while answering a user question about what a Delta user
+would need to add to their `spark-submit` to use Invariant.
+
+- [x] **`SparkPlanAdapter` recognizes `SaveIntoDataSourceCommand`**, the
+      plan node Delta (and any other `CreatableRelationProvider`-based
+      `.save(...)` source) actually analyzes to, confirmed empirically
+      against a real Delta-enabled `SparkSession` rather than assumed from
+      documentation.
+    - The originally-proposed approach (a `provided`-scope `delta-spark`
+      dependency plus Delta-specific typed pattern matching, justified by
+      an empirically-verified JVM lazy-classloading argument) turned out
+      to be unnecessary: `SaveIntoDataSourceCommand` and
+      `DataSourceRegister` are both plain, public `spark-sql` classes
+      already on this module's existing `provided` Spark dependency.
+      `formatOf` (previously typed to `FileFormat` for the
+      `InsertIntoHadoopFsRelationCommand` case) was widened to `AnyRef`
+      and reused for both cases — Delta's `DeltaDataSource` implements
+      `DataSourceRegister` the same way every built-in format already
+      does (`shortName() == "delta"`).
+    - Net result: **zero added runtime or compile-time dependency** for
+      non-Delta users. `delta-spark` (pinned to 3.2.0, not the latest 3.x
+      — a confirmed real bug, `delta-io/delta#3737`, affects 3.2.1 on
+      Scala 2.12 + Spark 3.5.1) is `% "test"` only, to spin up a real
+      Delta-enabled session to test against. Confirmed via `unzip -l` on
+      the assembled jar that it's unchanged in size and contains zero
+      Delta classes.
+    - `.saveAsTable`/DataFrameWriterV2/SQL `MERGE INTO` writes are a
+      different, DataSourceV2-based plan shape, not covered by this and
+      not yet investigated — documented as a known limitation.
+- [x] **Two real bugs found and fixed, both via genuinely failing tests,
+      not inspection:**
+    - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
+      special-cased only `InsertIntoHadoopFsRelationCommand`
+      (`cmd.query.schema`), falling back to the write command node's own
+      `.schema` for everything else — which is empty for a `Command`.
+      Caught by a Delta PASS test that instead threw
+      `MISSING_OUTPUT_FIELD` on fields that were genuinely present. Fixed
+      by adding the same `cmd.query.schema` handling for
+      `SaveIntoDataSourceCommand`.
+    - `SparkAdapterListener.onSuccess` had its own entirely independent
+      "is this a write" filter, also hardcoded to
+      `InsertIntoHadoopFsRelationCommand` only — meaning fixing
+      translation and enforcement alone was insufficient. Caught by a
+      test timeout (`eventually` never observed `listener.lastWrite`
+      populate for a real Delta write). Fixed the same way. Left as an
+      explicitly-documented design smell (three independent
+      "is this a write" checks scattered across the module) rather than
+      refactored now — tied to the still-outstanding fail-open-vs-closed
+      question for unrecognized writes generally (see "Scope (Future)"
+      below).
+- [x] **Verified end to end**, not just unit-tested in isolation: new
+      Delta translation test in `SparkPlanAdapterSpec` (via
+      `SparkAdapterListener`) and a Delta PASS/FAIL enforcement pair in
+      `ContractEnforcementRuleSpec` (mirroring the existing Parquet
+      pair), all against a real Delta-enabled `SparkSession`. Full suite
+      54/54 passing; mutation testing scoped to the 3 changed files
+      (`SparkPlanAdapter.scala`, `ContractEnforcementRule.scala`,
+      `SparkAdapterListener.scala`) scored 82.14%, clearing the 70% bar,
+      with all 5 survivors pre-existing/already-documented, none in the
+      new code; whole-module score unchanged at 91.53%; `mimaReportBinaryIssues`
+      clean (only new pattern-match arms were added, no public signature
+      changed); full local `./dev/build` + `./dev/test` + `./dev/regression`
+      all pass.
+    - Full detail, including the empirical investigation methodology
+      (throwaway `QueryExecutionListener`-based probes against a real
+      Delta session), in docs/SPARK_ADAPTER.md's "Delta Lake support"
+      section.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
