@@ -308,19 +308,37 @@ jobs:
       # specific file(s) a feature adds or changes to ir/spark-adapter -
       # previously a manual step, since Stryker4s has no native
       # incremental/diff mode (see docs/SPARK_ADAPTER.md). This automates
-      # it for PRs: diff against the PR's base commit, scope --mutate to
-      # just the changed .scala files (brace-expansion glob for multiple
-      # files - confirmed to work locally), and override the whole-module
-      # 50% break threshold with a stricter 70% via CLI flags only,
-      # leaving build.sbt's whole-module gate untouched. Runs only on
-      # pull_request events, where "changed relative to what" is
-      # unambiguous (the PR's base commit) - a bare push has no equivalent
-      # reference point.
+      # it for PRs: diff against a base commit, scope --mutate to just the
+      # changed .scala files (brace-expansion glob for multiple files -
+      # confirmed to work locally), and override the whole-module 50%
+      # break threshold with a stricter 70% via CLI flags only, leaving
+      # build.sbt's whole-module gate untouched. Runs only on pull_request
+      # events, where a base commit is available - a bare push has no
+      # equivalent reference point.
+      #
+      # The base commit is the PREVIOUS push's HEAD (github.event.before,
+      # populated on `synchronize` events - a new push to an open PR), not
+      # the PR's base branch: diffing against the PR's base captures the
+      # *entire* PR's accumulated history, which degenerates to "the whole
+      # module" for a long-lived, evolutionary PR (confirmed the hard way -
+      # this exact PR's spark-adapter diff against its base scored exactly
+      # 57.06%, identical to the whole-module score, because this PR *is*
+      # the introduction of that module). Diffing against the previous
+      # push instead makes "incremental" mean what it should: does *this*
+      # push's new work meet the bar, not "has the PR-to-date, cumulatively,
+      # always met a bar no individual earlier commit was checked against."
+      # Falls back to the PR's base commit on the PR's first run (`opened`/
+      # `reopened`), where `before` is absent or the all-zero SHA and
+      # there's no previous push to diff against yet.
       - name: Mutation test changed files (incremental, 70% bar)
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          BASE_SHA="${{ github.event.before }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          fi
+          echo "Diffing against base commit: $BASE_SHA"
 
           for module in ir spark-adapter; do
             CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "$module/src/main/scala/" | grep '\.scala$' | sed "s|^$module/||" || true)
