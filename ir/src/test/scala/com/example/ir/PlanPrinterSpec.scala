@@ -117,15 +117,23 @@ class PlanPrinterSpec extends AnyFunSuite {
     )
 
     val rendered = PlanPrinter.render(plan)
-    val expected =
-      """Join(Inner)
-        |├─ Union
-        |│  ├─ Read(raw.a)
-        |│  └─ Read(raw.b)
-        |└─ Union
-        |   ├─ Read(raw.c)
-        |   └─ Read(raw.d)
-        |""".stripMargin
+    // Built from explicit "\n"-joined lines, not a multi-line
+    // stripMargin literal: a stripMargin string's embedded newlines are
+    // real bytes in this source file, which a Windows checkout with
+    // core.autocrlf can convert to CRLF - silently breaking equality
+    // against PlanPrinter's own hardcoded "\n" (an escape sequence, not a
+    // literal newline byte, so it survives any line-ending conversion
+    // unchanged). Confirmed by a real CI failure on windows-latest.
+    val expected = List(
+      "Join(Inner)",
+      "├─ Union",
+      "│  ├─ Read(raw.a)",
+      "│  └─ Read(raw.b)",
+      "└─ Union",
+      "   ├─ Read(raw.c)",
+      "   └─ Read(raw.d)",
+      ""
+    ).mkString("\n")
 
     assert(rendered == expected)
   }

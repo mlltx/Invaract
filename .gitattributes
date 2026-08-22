@@ -1,0 +1,36 @@
+# Without this file, a Windows checkout (windows-latest CI runners, and
+# any contributor cloning on Windows with the common core.autocrlf=true
+# default) can silently convert LF line endings to CRLF in every text
+# file it checks out - including newlines embedded inside multi-line
+# string literals in source files, not just line separators between
+# statements. That broke a real test: PlanPrinterSpec's exact-string
+# rendering assertion used a multi-line stripMargin literal whose
+# embedded "\n" bytes got converted to "\r\n" on windows-latest, while
+# PlanPrinter's own output uses a hardcoded "\n" escape sequence (not a
+# literal newline byte in its source), which isn't affected by the
+# conversion - so the two sides silently stopped matching on Windows only.
+# Forcing LF everywhere removes the platform dependency entirely, for
+# this and any future test in the same shape.
+* text=auto eol=lf
+
+*.scala text eol=lf
+*.sbt text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.csv text eol=lf
+
+# dev/* scripts have no file extension; git can't select them by glob the
+# way it can *.sh, so they're named explicitly instead.
+dev/build text eol=lf
+dev/test text eol=lf
+dev/report text eol=lf
+dev/regression text eol=lf
+dev/regression-docker text eol=lf
+dev/lib.sh text eol=lf
+
+# Windows-native artifacts some contributor tooling may add - keep as-is.
+*.bat text eol=crlf
+*.cmd text eol=crlf
