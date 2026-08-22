@@ -759,10 +759,15 @@ coverage (see the sub-phase above for the first three).
 
 The first of several regression-testing guardrails identified when
 assessing what "market leading" regression coverage would need beyond the
-example-based suites above (property-based fuzzing, mutation testing,
-golden-file snapshots of `report.json`, a multi-Spark-version compatibility
-matrix, coverage gating, and API-compatibility checking — this sub-phase is
-the first; the rest remain future scope).
+example-based suites above: property-based fuzzing, mutation testing, and
+API-compatibility checking are done (this sub-phase, the one below it, and
+"API compatibility checking" further down); a multi-Spark-version
+compatibility matrix and coverage gating remain future scope. (An initial
+idea to add golden-file snapshots of `report.json` was reconsidered and
+redirected — that file is an internal test-harness artifact with no
+external consumers, not a public interface worth pinning; the JSON Schema
+for the *contract* format, under Phase 1a above, was the better-scoped
+version of the same underlying idea.)
 
 - [x] **`SparkPlanAdapterFuzzSpec`.** `SparkPlanAdapter`'s class doc
       promises it never throws on an unrecognized construct — a promise
@@ -865,6 +870,57 @@ survived (every test still passed despite the code now being wrong).
       even though the whole module clears 50% (its threshold at the time)
       — see docs/SPARK_ADAPTER.md's "Incremental checking in CI"
       subsection.
+
+#### Sub-phase: API compatibility checking, mandatory PR gate (done)
+
+The third regression-testing guardrail (see the two sub-phases above for
+the first two). Answers a different question than either: not "does the
+code work" but "does this change silently break everyone who already
+depends on the previous version's compiled jar" — a real risk for
+`contract`/`ir`/`spark-adapter` specifically, since those are the
+verification engine a real user would depend on, and Scala case classes
+(`Contract`, `Dataset`, `Field`, `Plan`, `Expr`, ...) make this easy to
+break by accident (a reordered constructor parameter, a field added
+mid-list) with no compile error anywhere in this repository itself to
+catch it.
+
+- [x] **Wired in via [MiMa](https://github.com/lightbend/mima)
+      (`sbt-mima-plugin` 1.1.4)** — the same tool Apache Spark and Akka
+      use for their own public API compatibility gating. Added to
+      `contract`, `ir`, and `spark-adapter` (`project/mima.sbt` in each);
+      `plugin`/`runner` excluded, consistent with every other guardrail
+      here being scoped to the engine, not the example harness.
+    - `mimaPreviousArtifacts` in each module's `build.sbt` points at its
+      own `com.example %% <module> % 0.1.0` coordinate — there's no Maven
+      Central release yet to compare against, so CI's new
+      `api-compatibility` job (`.github/workflows/test.yml`) publishes
+      the PR's base branch to the runner's local Ivy cache under that
+      exact coordinate first (`sbt publishLocal`, after building
+      `contract`/`ir`'s assembly jars so `spark-adapter`'s
+      `unmanagedJars`-based compile succeeds in both checkouts), then runs
+      `sbt mimaReportBinaryIssues` against the PR's head — the PR's own
+      base branch stands in for "the previous release" the same way the
+      incremental mutation-testing check's previous-push comparison does,
+      for the same reason.
+    - Verified the detection actually works, not just that the task runs
+      cleanly: temporarily removed a public method
+      (`Contract.input`) locally, confirmed
+      `mimaReportBinaryIssues` failed with the exact symbol and a
+      ready-to-paste `ProblemFilters.exclude[...]` suggestion, then
+      reverted and confirmed a clean pass against the unmodified code.
+    - **Mandatory, automatic PR check**: the job runs on every
+      `pull_request` event (no manual trigger needed) and feeds into the
+      `summary` gate exactly like `test`/`docker-regression`/
+      `mutation-testing` — a real binary break fails the PR's overall
+      status, not just a standalone, ignorable check.
+    - CLAUDE.md's new "API Compatibility Requirement" section documents
+      the two legitimate responses to a failure (fix an accidental break,
+      or add a documented `ProblemFilters.exclude[...]` entry for a
+      deliberate one) and explicitly rules out the third (loosening
+      `mimaPreviousArtifacts` or disabling the check).
+    - Full detail in each module's doc: docs/CONTRACT_MODEL.md,
+      docs/TRANSFORMATION_IR.md, and docs/SPARK_ADAPTER.md's "API
+      compatibility" sections.
 
 #### Scope (Future)
 

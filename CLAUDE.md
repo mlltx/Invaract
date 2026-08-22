@@ -115,10 +115,56 @@ reruns `sbt stryker` scoped to just the changed files — see
 docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 
 This bar — and every other regression-testing guardrail in this repo
-(property-based fuzzing, mutation testing, and the still-outstanding
-compatibility matrix / coverage gating / API-compatibility checking) — is
-scoped to `contract`/`ir`/`spark-adapter`. It does not apply to `plugin`/
-`runner`, which are example/test code, not the engine.
+(property-based fuzzing, mutation testing, API-compatibility checking, and
+the still-outstanding compatibility matrix / coverage gating) — is scoped
+to `contract`/`ir`/`spark-adapter`. It does not apply to `plugin`/`runner`,
+which are example/test code, not the engine.
+
+## API Compatibility Requirement
+
+`contract`, `ir`, and `spark-adapter` are checked for binary compatibility
+with [MiMa](https://github.com/lightbend/mima) (`sbt-mima-plugin`) — the
+same tool Apache Spark and Akka use to gate their own public API
+compatibility release-to-release. It answers a different question than
+mutation testing or fuzzing: not "does my code work," but "does this
+change silently break everyone who already depends on the previous
+version's compiled jar" — a real risk for `contract`/`ir`/`spark-adapter`
+specifically, since those are what a real Invariant user would depend on,
+and Scala case classes (`Contract`, `Dataset`, `Field`, `Plan`, `Expr`,
+...) make this easy to break by accident (adding a field, reordering a
+constructor parameter) without it ever showing up as a compile error in
+this repository itself.
+
+There is no Maven Central release yet to compare against, so each
+module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
+`org.example %% <module> % 0.1.0` coordinate, and CI's
+`api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
+base branch to the runner's local Ivy cache under that exact coordinate
+before running `sbt mimaReportBinaryIssues` against the PR's head — "did
+this PR break compatibility with its own base branch," the same
+rolling-comparison approach the incremental mutation-testing job uses for
+the same reason (no formal prior release to anchor to yet). This job is
+part of the `summary` gate like every other CI job here, so a real binary
+break fails the PR's overall status — the same "mandatory, automatic"
+enforcement every other guardrail in this repo gets, not a separate
+opt-in check.
+
+When it fails, you have two honest options, not a third one where you
+just silence it:
+
+1. **The break was accidental** — restore the old signature, or find a
+   binary-compatible way to make the same change (e.g. a new overload
+   instead of changing an existing method's signature; a default
+   parameter added at the end of a case class, not the middle).
+2. **The break is deliberate** — add the exact `ProblemFilters.exclude[...]`
+   line MiMa's own failure output suggests to that module's
+   `mimaBinaryIssueFilters` setting, with a comment explaining why, and
+   treat it as a MAJOR version change per `ContractCompatibility`'s own
+   versioning semantics (docs/CONTRACT_MODEL.md's "Version Compatibility"
+   section) once this project starts tagging real releases.
+
+Never react to a MiMa failure by loosening `mimaPreviousArtifacts` or
+disabling the check — that defeats the entire point of running it.
 
 ## Repository Structure
 

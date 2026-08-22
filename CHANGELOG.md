@@ -307,6 +307,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Schema" section. Verified via a full local `./dev/build` + `./dev/test`
   + `./dev/regression` run (all pass) after adding the schema and the
   editor-hint comments.
+- **API-compatibility checking, mandatory PR gate** (MiMa /
+  `sbt-mima-plugin`): the third regression-testing guardrail, answering a
+  different question than fuzzing or mutation testing — not "does the
+  code work" but "does this change silently break everyone who already
+  depends on the previous version's compiled jar." Wired into `contract`,
+  `ir`, and `spark-adapter` only (`plugin`/`runner` excluded, same scoping
+  as every other guardrail here). No Maven Central release exists yet to
+  compare against, so `mimaPreviousArtifacts` in each module's `build.sbt`
+  points at its own `0.1.0` coordinate, and a new CI job
+  (`api-compatibility` in `.github/workflows/test.yml`) publishes the PR's
+  base branch to the runner's local Ivy cache under that coordinate first,
+  then runs `sbt mimaReportBinaryIssues` against the PR's head — the same
+  rolling, base-branch-relative comparison the incremental mutation-testing
+  check already uses, for the same reason. Runs on every `pull_request`
+  event automatically and feeds into the `summary` gate like every other
+  job, making it a mandatory check, not an opt-in one. Verified detection
+  actually works, not just that the task runs: temporarily removed
+  `Contract.input` locally, confirmed `mimaReportBinaryIssues` failed with
+  the exact symbol and a ready-to-use `ProblemFilters.exclude[...]`
+  suggestion, then reverted and confirmed a clean pass. CLAUDE.md gained
+  an "API Compatibility Requirement" section (the two legitimate responses
+  to a failure: fix an accidental break, or add a documented exclusion for
+  a deliberate one), and docs/CONTRACT_MODEL.md, docs/TRANSFORMATION_IR.md,
+  and docs/SPARK_ADAPTER.md each gained an "API compatibility" section.
 
 ### Fixed
 

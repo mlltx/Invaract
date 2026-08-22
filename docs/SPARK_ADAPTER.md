@@ -697,6 +697,20 @@ section, not a built-in capability. It only runs on `pull_request` events
 — a bare `push` has no unambiguous "changed relative to what" to diff
 against.
 
+### API compatibility
+
+`SparkPlanAdapter`, `StructuralVerifier`, `ContractEnforcementRule`, and
+`SparkAdapterListener`'s public signatures (plus `TranslationResult`,
+`Diagnostic`, `VerificationResult`, and the other result/error types this
+module exposes) are its binary API surface — checked by
+[MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
+CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
+for the full mechanism: no Maven Central release exists yet to compare
+against, so CI publishes the PR's base branch to the runner's local Ivy
+cache first and diffs the PR's head against that instead — the same
+rolling, base-branch-relative comparison the incremental mutation-testing
+check above uses, and for the same reason.
+
 To see the translation adapter running against the actual demo pipeline:
 
 ```bash

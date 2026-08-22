@@ -322,7 +322,19 @@ which is byte-for-byte the same value the correct `None` produces after
 `resolveExpr`'s `.getOrElse` — mathematically unobservable, not a real
 gap).
 
+### API compatibility
+
+`Plan`, `Expr`, and every case class in `Identifiers.scala` (`DatasetRef`,
+`ColumnRef`, ...), plus `Lineage.trace` and `PlanPrinter.render`'s
+signatures, are this module's binary API surface — the engine-independent
+algebra any future front-end (SQL, dbt) is meant to translate into, per
+this doc's "Critical principle" above, so keeping it stable release-to-
+release matters more here than almost anywhere else in the codebase.
+Checked by [MiMa](https://github.com/lightbend/mima) via
+`sbt mimaReportBinaryIssues`, CI-enforced on every PR — see CLAUDE.md's
+"API Compatibility Requirement" for the full mechanism.
+
 ---
 
-**Last Updated:** 2026-08-21
+**Last Updated:** 2026-08-22
 **Status:** Phase 2 — Transformation IR, initial implementation

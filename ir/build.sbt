@@ -26,3 +26,9 @@ strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerThresholdsHigh := 80
 strykerThresholdsLow := 60
 strykerThresholdsBreak := 50
+
+// API compatibility (MiMa) - see contract/build.sbt's comment for the full
+// rationale (no Maven Central release yet, so CI's `api-compatibility` job
+// compares against the PR's own base branch instead) and
+// docs/TRANSFORMATION_IR.md's "API compatibility" section.
+mimaPreviousArtifacts := Set("com.example" %% "invariant-ir" % "0.1.0")

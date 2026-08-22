@@ -90,3 +90,9 @@ strykerExcludedMutations := Seq("StringLiteral")
 strykerThresholdsHigh := 90
 strykerThresholdsLow := 80
 strykerThresholdsBreak := 70
+
+// API compatibility (MiMa) - see contract/build.sbt's comment for the full
+// rationale (no Maven Central release yet, so CI's `api-compatibility` job
+// compares against the PR's own base branch instead) and
+// docs/SPARK_ADAPTER.md's "API compatibility" section.
+mimaPreviousArtifacts := Set("com.example" %% "invariant-spark-adapter" % "0.1.0")
