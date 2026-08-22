@@ -316,19 +316,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as every other guardrail here). No Maven Central release exists yet to
   compare against, so `mimaPreviousArtifacts` in each module's `build.sbt`
   points at its own `0.1.0` coordinate, and a new CI job
-  (`api-compatibility` in `.github/workflows/test.yml`) publishes a recent
-  prior commit to the runner's local Ivy cache under that coordinate
-  first, then runs `sbt mimaReportBinaryIssues` against the PR's head —
-  the same rolling comparison the incremental mutation-testing check
-  already uses, for the same reason. That prior commit is the previous
-  push's HEAD (`github.event.before`), not the PR's base branch: fixed on
-  this job's first real CI run, which failed outright
-  (`base-ref/contract: No such file or directory`) diffing against the
-  PR's base commit — this repo's PR #1 has been open since before
-  `contract`/`ir`/`spark-adapter` existed, so its base commit predates
-  those modules entirely, the exact same root cause the incremental
-  mutation-testing check's base-diffing bug had, fixed the same way.
-  Runs on every `pull_request` event automatically and feeds into the
+  (`api-compatibility` in `.github/workflows/test.yml`) publishes the PR's
+  base branch to the runner's local Ivy cache under that coordinate
+  first, then runs `sbt mimaReportBinaryIssues` against the PR's head — a
+  module that doesn't exist yet at the base commit is skipped gracefully
+  (see the "Changed" entry below for why this landed on a fixed base
+  rather than a sliding one, after a detour through both). Runs on every
+  `pull_request` event automatically and feeds into the
   `summary` gate like every other job, making it a mandatory check, not
   an opt-in one. Verified detection
   actually works, not just that the task runs: temporarily removed
@@ -430,6 +424,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `spark-adapter`'s own test suite (51/51, package-private doesn't block
   same-package test access) and a full local `./dev/build` + `./dev/test`
   + `./dev/regression` run.
+- **Fixed a sliding-baseline soundness bug in both CI jobs that diff
+  against a base commit** (`api-compatibility` and the incremental
+  mutation-testing step) — caught by review before it caused real harm,
+  not discovered via a live failure. Both had been changed, earlier in
+  this branch's history, to diff against the *previous push's* HEAD
+  (`github.event.before`) instead of the PR's actual base commit, to work
+  around this repo's PR #1 predating `contract`/`ir`/`spark-adapter`
+  entirely. That fix traded a real problem for a worse one: a sliding
+  baseline can never durably catch a regression that's introduced and
+  then never fixed. Concretely, if push N breaks something and the check
+  correctly fails, push N+1 — even one that touches nothing relevant —
+  diffs against N, where the break already looks like the status quo, so
+  the check passes clean without anything having been fixed; the bar
+  silently stops being enforced the moment CI reports it met, whether or
+  not anything actually changed. Reverted both to diff against the PR's
+  actual base commit (`github.event.pull_request.base.sha`) instead — a
+  fixed anchor for the PR's lifetime, not a self-erasing one. For
+  `api-compatibility`, the original crash this was meant to fix
+  (`base-ref/contract: No such file or directory`) is now handled at its
+  actual source: a module that doesn't exist yet at the base commit is
+  skipped gracefully (nothing to compare, nothing can have broken) rather
+  than changing which commit counts as the base. For the incremental
+  mutation-testing step, reverting to the PR's base commit means it goes
+  back to being redundant with the whole-module check for this one
+  historical PR (as it was before that detour) — correct, if unhelpful,
+  for this specific long-lived PR; sound for every future PR opened
+  against an up-to-date base branch, which is what actually matters.
+  Verified the fixed logic locally: a dry run of `api-compatibility`'s
+  per-module skip loop against both a partial-existence scenario and PR
+  #1's real all-three-modules-absent scenario, confirming clean skips and
+  no crash either way.
 
 ### Deprecated
 

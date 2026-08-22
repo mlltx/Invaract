@@ -716,11 +716,11 @@ automatically via the installed extension.
 This surface is checked by [MiMa](https://github.com/lightbend/mima) via
 `sbt mimaReportBinaryIssues`, CI-enforced on every PR — see CLAUDE.md's
 "API Compatibility Requirement" for the full mechanism (no Maven Central
-release exists yet to compare against, so CI publishes a recent prior
-commit — the previous push's HEAD, not the PR's own base commit, since
-this PR predates `spark-adapter` itself — to the runner's local Ivy
-cache first and diffs the PR's head against that instead, the same
-rolling comparison the incremental mutation-testing check above uses).
+release exists yet to compare against, so CI publishes the PR's base
+branch to the runner's local Ivy cache first and diffs the PR's head
+against that instead; a module that doesn't exist yet at the base commit
+— true of all three, for this repo's own PR #1, whose base predates them
+entirely — is skipped gracefully rather than special-cased).
 
 One real limitation worth knowing, discovered while narrowing
 `SparkPlanAdapter`/`StructuralVerifier`: `private[sparkadapter]` is a

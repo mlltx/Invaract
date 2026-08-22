@@ -894,22 +894,36 @@ catch it.
       own `com.example %% <module> % 0.1.0` coordinate — there's no Maven
       Central release yet to compare against, so CI's new
       `api-compatibility` job (`.github/workflows/test.yml`) publishes
-      a recent prior commit to the runner's local Ivy cache under that
+      the PR's base branch to the runner's local Ivy cache under that
       exact coordinate first (`sbt publishLocal`, after building
       `contract`/`ir`'s assembly jars so `spark-adapter`'s
       `unmanagedJars`-based compile succeeds in both checkouts), then runs
-      `sbt mimaReportBinaryIssues` against the PR's head — that prior
-      commit stands in for "the previous release," the same way the
-      incremental mutation-testing check's previous-push comparison does.
-    - **Fixed on first real CI run**: initially diffed against
-      `github.event.pull_request.base.sha` (the PR's base branch), which
-      failed outright (`base-ref/contract: No such file or directory`) —
-      this repo's PR #1 has been open since before `contract`/`ir`/
-      `spark-adapter` existed, so its base commit predates those modules
-      entirely, the same root cause the incremental mutation-testing
-      check's base-diffing bug had. Same fix: diff against
-      `github.event.before` (the previous push's HEAD) instead, falling
-      back to the PR's base commit only on its first run.
+      `sbt mimaReportBinaryIssues` against the PR's head — that base
+      branch stands in for "the previous release."
+    - **Fixed twice on real CI runs, in opposite directions.** First run:
+      diffing against `github.event.pull_request.base.sha` (the PR's base
+      branch) failed outright (`base-ref/contract: No such file or
+      directory`) — this repo's PR #1 has been open since before
+      `contract`/`ir`/`spark-adapter` existed, so its base commit predates
+      those modules entirely, the same root cause the incremental
+      mutation-testing check's base-diffing bug had. First fix: diff
+      against `github.event.before` (the previous push's HEAD) instead,
+      matching that check's fix. Second run (after applying it to a real
+      source change): recognized that fix was unsound, not just imperfect
+      — a sliding baseline can never durably catch a regression that's
+      introduced and then never fixed (push N breaks something and fails
+      correctly; push N+1, even one that touches nothing relevant, diffs
+      against N, where the break already looks like the status quo, so it
+      passes clean without anything having been fixed). Second fix:
+      revert to the PR's base branch (a fixed anchor for the PR's
+      lifetime) as the primary comparison, and instead skip a module
+      gracefully when it doesn't exist yet at that base commit — the
+      actually-correct fix for the original crash, applied to the right
+      variable. Applied the identical reasoning to the incremental
+      mutation-testing check's `github.event.before` usage too, reverting
+      it to the PR's base branch for the same soundness reason (that
+      check's "diff shows nothing changed" failure mode is silent, not a
+      crash, but the same underlying bug).
     - Verified the detection actually works, not just that the task runs
       cleanly: temporarily removed a public method
       (`Contract.input`) locally, confirmed

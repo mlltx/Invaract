@@ -138,18 +138,22 @@ this repository itself.
 There is no Maven Central release yet to compare against, so each
 module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
 `com.example %% <module> % 0.1.0` coordinate, and CI's
-`api-compatibility` job (`.github/workflows/test.yml`) publishes a recent
-prior commit to the runner's local Ivy cache under that exact coordinate
+`api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
+base branch to the runner's local Ivy cache under that exact coordinate
 before running `sbt mimaReportBinaryIssues` against the PR's head — "did
-this push break compatibility with the previous one." That prior commit
-is the previous push's HEAD (`github.event.before`), not the PR's base
-branch — falling back to the PR's base commit only on its first run —
-the same rolling-comparison approach the incremental mutation-testing job
-uses, and for the same underlying reason: this repo's own PR #1 has been
-open since before `contract`/`ir`/`spark-adapter` existed, so its base
-commit predates those modules entirely and can't be diffed against
-directly (confirmed the hard way on this job's first real CI run). This
-job is
+this PR, as a whole, break compatibility with what existed before it."
+The base is the PR's actual base commit
+(`github.event.pull_request.base.sha`), a fixed anchor for the PR's
+lifetime, deliberately **not** the previous push's HEAD — a sliding
+baseline like that can never durably catch a regression that's
+introduced and then never fixed (push N breaks something and fails
+correctly; push N+1, even one that touches nothing relevant, diffs
+against N, where the break already looks like the status quo, so it
+passes clean without anything having been fixed). A module that doesn't
+exist yet at the base commit is skipped gracefully — normal for this
+repo's own PR #1, whose base predates `contract`/`ir`/`spark-adapter`
+entirely (introducing them *is* what that PR does) — rather than
+special-cased by changing which commit counts as the base. This job is
 part of the `summary` gate like every other CI job here, so a real binary
 break fails the PR's overall status — the same "mandatory, automatic"
 enforcement every other guardrail in this repo gets, not a separate

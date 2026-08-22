@@ -316,28 +316,34 @@ jobs:
       # events, where a base commit is available - a bare push has no
       # equivalent reference point.
       #
-      # The base commit is the PREVIOUS push's HEAD (github.event.before,
-      # populated on `synchronize` events - a new push to an open PR), not
-      # the PR's base branch: diffing against the PR's base captures the
-      # *entire* PR's accumulated history, which degenerates to "the whole
-      # module" for a long-lived, evolutionary PR (confirmed the hard way -
-      # this exact PR's spark-adapter diff against its base scored exactly
-      # 57.06%, identical to the whole-module score, because this PR *is*
-      # the introduction of that module). Diffing against the previous
-      # push instead makes "incremental" mean what it should: does *this*
-      # push's new work meet the bar, not "has the PR-to-date, cumulatively,
-      # always met a bar no individual earlier commit was checked against."
-      # Falls back to the PR's base commit on the PR's first run (`opened`/
-      # `reopened`), where `before` is absent or the all-zero SHA and
-      # there's no previous push to diff against yet.
+      # The base commit is the PR's base branch (github.event.pull_request.
+      # base.sha), not the previous push's HEAD. An earlier version of this
+      # step used the previous push instead, reasoning that diffing against
+      # the PR's base captures the *entire* PR's accumulated history, which
+      # degenerates to "the whole module" for a long-lived, evolutionary PR
+      # (confirmed the hard way - this exact PR's spark-adapter diff against
+      # its base scored exactly 57.06%, identical to the whole-module score,
+      # because this PR *is* the introduction of that module). That reasoning
+      # was correct but the fix was wrong: diffing against the *previous
+      # push* is a sliding baseline, and a sliding baseline can never durably
+      # catch a regression that's introduced and then never fixed. Concretely:
+      # if push N adds an undertested file and this check correctly fails,
+      # then push N+1 - even one that touches nothing in that file - diffs
+      # against N, where the same file already looks "unchanged" (nothing
+      # differs between N and N+1), so the check passes even though the file
+      # is exactly as undertested as when it failed. The bar silently stops
+      # being enforced the moment CI reports it as met, whether or not
+      # anything was actually fixed. A fixed base doesn't have this problem
+      # (it only moves if the base branch itself advances, which is a
+      # legitimate re-anchor, not a self-erasing one) - the "whole module"
+      # degeneration for this specific long-lived PR is real but harmless
+      # (redundant with the whole-module check above, not unsound), so it's
+      # the correct tradeoff.
       - name: Mutation test changed files (incremental, 70% bar)
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          BASE_SHA="${{ github.event.before }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          fi
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
           echo "Diffing against base commit: $BASE_SHA"
 
           for module in ir spark-adapter; do
@@ -388,33 +394,26 @@ jobs:
       - name: Checkout PR head
         uses: actions/checkout@v4
 
-      # The base commit is the PREVIOUS push's HEAD (github.event.before,
-      # populated on `synchronize` events), not the PR's base branch:
-      # this exact PR (#1) has been open since before contract/ir/
-      # spark-adapter existed at all, so its base commit predates those
-      # modules entirely - `github.event.pull_request.base.sha` resolved
-      # to the repo's literal first commit, and `base-ref/contract` simply
-      # didn't exist there ("No such file or directory", confirmed the
-      # hard way on this job's first real run). Same root cause the
-      # incremental mutation-testing step above already worked around,
-      # same fix: diff against the previous push instead, falling back to
-      # the PR's base commit only on its first run (`opened`/`reopened`,
-      # where `before` is absent or the all-zero SHA).
-      - name: Determine base commit to compare against
-        id: base-ref
-        shell: bash
-        run: |
-          BASE_SHA="${{ github.event.before }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          fi
-          echo "Diffing against base commit: $BASE_SHA"
-          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
-
+      # A fixed base (the PR's base branch), not a sliding one. An earlier
+      # version of this job diffed against the PREVIOUS PUSH's HEAD
+      # (github.event.before) instead, to work around this exact PR (#1)
+      # having been open since before contract/ir/spark-adapter existed at
+      # all - github.event.pull_request.base.sha resolves to the repo's
+      # literal first commit, and base-ref/contract simply didn't exist
+      # there ("No such file or directory", confirmed the hard way on this
+      # job's first real run). That fix traded one bug for a worse one: a
+      # sliding baseline can never durably catch a regression that's
+      # introduced and then never fixed - if push N breaks compatibility
+      # and this job correctly fails, push N+1 (even one that touches
+      # nothing relevant) diffs against N, where the break already looks
+      # like the status quo, so the check passes clean without anything
+      # having been fixed. The real fix for the original problem is below:
+      # skip a module gracefully if it didn't exist yet at the (fixed) base
+      # commit, rather than changing which commit counts as the base.
       - name: Checkout PR base ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.base-ref.outputs.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           path: base-ref
 
       - name: Set up JDK 21
@@ -427,54 +426,50 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # One module at a time, in dependency order (contract, ir, then
+      # spark-adapter, which needs both of theirs): if a module doesn't
+      # exist at the base commit, it has no prior public API to be
+      # compatible with, so it's skipped entirely rather than erroring
+      # (base-ref/$module wouldn't exist to build) or treating "brand new"
+      # as "broke everything" - the correct, honest answer either way is
+      # "nothing to compare, nothing can have broken." That's the normal
+      # case for PR #1 specifically (all three modules postdate its base
+      # commit - introducing them *is* what this PR does); for any normal
+      # future PR opened against an up-to-date base branch, every module
+      # will already exist there and this check runs for real.
+      #
       # spark-adapter's build.sbt reads ../ir and ../contract's jars
       # directly off disk (unmanagedJars - there's no aggregating root
-      # build), in both checkouts, so both need assembling before either
-      # copy of spark-adapter can even compile - MiMa's own comparison
-      # needs each module's plain `publishLocal` artifact instead, produced
-      # separately below.
-      - name: Build contract and ir assemblies (PR base ref)
+      # build), in both checkouts, so contract/ir's own iterations below
+      # assemble theirs before spark-adapter's iteration needs them.
+      - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          cd base-ref/contract && sbt assembly && cd ../..
-          cd base-ref/ir && sbt assembly
+          for module in contract ir spark-adapter; do
+            if [ ! -d "base-ref/$module" ]; then
+              echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
+              continue
+            fi
 
-      # No Maven Central release to anchor `mimaPreviousArtifacts` to yet
-      # (see above), so the PR base ref's own build becomes that anchor,
-      # published to this runner's local Ivy cache under the exact
-      # org/name/version each module's mimaPreviousArtifacts setting
-      # already names.
-      - name: Publish PR base ref to the local Ivy cache
-        shell: bash
-        run: |
-          cd base-ref/contract && sbt publishLocal && cd ../..
-          cd base-ref/ir && sbt publishLocal && cd ../..
-          cd base-ref/spark-adapter && sbt publishLocal
+            if [ "$module" != "spark-adapter" ]; then
+              echo "=== $module: building assembly jar in both checkouts (spark-adapter's unmanagedJars dependency) ==="
+              (cd "$module" && sbt assembly)
+              (cd "base-ref/$module" && sbt assembly)
+            fi
 
-      - name: Build contract and ir assemblies (PR head)
-        shell: bash
-        run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+            echo "=== $module: publishing base-ref build to the local Ivy cache ==="
+            (cd "base-ref/$module" && sbt publishLocal)
 
-      # Each compiles the PR head's current sources and diffs the result
-      # against the locally-published base-ref artifact from above. A real
-      # binary-incompatible change fails here with the exact offending
-      # symbol and a ready-to-paste ProblemFilters.exclude(...) line for a
-      # deliberate, documented exception - see CLAUDE.md's "API
-      # Compatibility Requirement" for when that's the right call versus a
-      # MAJOR version bump.
-      - name: Check contract for binary compatibility
-        shell: bash
-        run: cd contract && sbt mimaReportBinaryIssues
-
-      - name: Check ir for binary compatibility
-        shell: bash
-        run: cd ir && sbt mimaReportBinaryIssues
-
-      - name: Check spark-adapter for binary compatibility
-        shell: bash
-        run: cd spark-adapter && sbt mimaReportBinaryIssues
+            # Compiles the PR head's current sources and diffs the result
+            # against the locally-published base-ref artifact just above. A
+            # real binary-incompatible change fails here with the exact
+            # offending symbol and a ready-to-paste ProblemFilters.exclude(...)
+            # line for a deliberate, documented exception - see CLAUDE.md's
+            # "API Compatibility Requirement" for when that's the right call
+            # versus a MAJOR version bump.
+            echo "=== $module: checking PR head for binary compatibility ==="
+            (cd "$module" && sbt mimaReportBinaryIssues)
+          done
 
   summary:
     name: Test Summary
