@@ -29,7 +29,7 @@ is agnostic to which of these supplied the plan — it only needs a
 
 - **Tests** (`SparkPlanAdapterSpec`) call `df.queryExecution.analyzed`
   directly — simplest option when a `DataFrame` is already in hand.
-- **The `runner` integration** (`PluginRunner.scala`) registers
+- **The `runner` integration** (`DemoJobHarness.scala`) registers
   `SparkAdapterListener`, a thin `QueryExecutionListener`, once at
   `SparkSession` construction. This was chosen over
   `SparkSessionExtensions` because the requirement is only to *observe* a
@@ -205,7 +205,7 @@ translation.
 
 ## Integrated with the test Spark app
 
-`runner/src/main/scala/com/example/runner/PluginRunner.scala` registers
+`runner/src/main/scala/com/example/runner/DemoJobHarness.scala` registers
 `SparkAdapterListener` before running `InvariantPlugin`, and after the
 real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 
@@ -357,7 +357,7 @@ when both the contract's declared value (`format`/`saveMode`) and the
 corresponding actual value from `ir.Write` are known; either side being
 unset skips the check.
 
-`runner/PluginRunner.scala` runs this against the real demo pipeline on
+`runner/DemoJobHarness.scala` runs this against the real demo pipeline on
 every `./dev/test`, using `demo/contracts/invariant_output.yaml`. Kept in
 its own `contractVerification` report section and console block, separate
 from `ExecutionReport.status`: "did the Spark job execute" and "does its
@@ -475,7 +475,7 @@ pass its real contract, not this deliberately-broken one.
 **Two mechanisms, two moments.** `ContractEnforcementRule` doesn't replace
 `SparkAdapterListener` — a check rule can only approve or reject mid-call;
 it has no equivalent of "give me the finished result to report on
-afterward." `runner/PluginRunner.scala` uses both: the check rule decides
+afterward." `runner/DemoJobHarness.scala` uses both: the check rule decides
 whether a write happens at all, and the listener (still registered,
 still fed from a write that only proceeded because it already passed
 verification) supplies `demo/output/report.json`'s human-facing

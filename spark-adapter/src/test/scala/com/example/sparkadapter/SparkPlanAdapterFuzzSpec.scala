@@ -206,7 +206,7 @@ class SparkPlanAdapterFuzzSpec extends AnyFunSuite with BeforeAndAfterAll with S
         val result = SparkPlanAdapter.translateAsWrite(analyzed, DatasetRef("fuzz.output"))
         // Rendering and lineage tracing are the other two things every
         // translated plan is expected to survive unconditionally — both
-        // are exercised by the real reporting path in PluginRunner.
+        // are exercised by the real reporting path in DemoJobHarness.
         PlanPrinter.render(result.plan)
         Lineage.trace(result.plan)
         assertUnsupportedIsDiagnosed(result.plan, result.diagnostics)

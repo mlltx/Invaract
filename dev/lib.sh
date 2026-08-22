@@ -5,10 +5,13 @@
 PLUGIN_JAR="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
 RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
 
-# run_plugin_runner INPUT OUTPUT REPORT [CONTRACT]
+# run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT]
 #
-# Runs PluginRunner via spark-submit when it's on PATH, falling back to a
-# manually-flagged `java -cp` invocation otherwise.
+# Runs DemoJobHarness (the example Spark job / test harness — see its class
+# doc in runner/src/main/scala/com/example/runner/DemoJobHarness.scala; it
+# is not Invariant's verification engine, just the job that exercises it)
+# via spark-submit when it's on PATH, falling back to a manually-flagged
+# `java -cp` invocation otherwise.
 #
 # On Windows (git-bash/MSYS, $OSTYPE=msys), Spark's bin/spark-submit is a
 # bash script whose bin/spark-class internals call `ps -o`, which
@@ -18,20 +21,20 @@ RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
 # present. It needs SPARK_HOME as a real Windows path (D:\...), not
 # git-bash's POSIX form (/d/...), which is why cygpath -w wraps it here
 # but nowhere else in this repo's scripts.
-run_plugin_runner() {
+run_demo_job_harness() {
   local input="$1" output="$2" report="$3" contract="${4:-}"
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
       spark-submit.cmd \
-        --class com.example.runner.PluginRunner \
+        --class com.example.runner.DemoJobHarness \
         --master local[*] \
         --jars "$PLUGIN_JAR" \
         "$RUNNER_JAR" \
         "$input" "$output" "$report" $contract
   elif command -v spark-submit &> /dev/null; then
     spark-submit \
-      --class com.example.runner.PluginRunner \
+      --class com.example.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
       "$RUNNER_JAR" \
@@ -58,7 +61,7 @@ run_plugin_runner() {
       --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
-      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.PluginRunner \
+      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.DemoJobHarness \
       "$input" "$output" "$report" $contract
   fi
 }

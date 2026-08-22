@@ -2,7 +2,18 @@
 
 ## Overview
 
-Invariant is built as a modular system for verifying data transformations against machine-readable contracts. This document describes the current architecture, design decisions, and how components interact.
+Invariant is a framework for verifying data transformations against
+machine-readable data contracts. This document describes the current
+architecture: what's actually built, how the pieces interact, and the
+design decisions behind them.
+
+**The product is the verification engine — `contract`, `ir`, and
+`spark-adapter`.** Everything else in this repository (`plugin`, `runner`,
+`demo`, `web`) is an example integration and test harness built to prove
+the engine works against a real Spark job, not something a real Invariant
+user would import. See "Two halves of this repository" below before
+reading further — conflating the two is the most common way to misjudge
+where a change belongs.
 
 ## System Architecture
 
@@ -10,555 +21,393 @@ Invariant is built as a modular system for verifying data transformations agains
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Data Contracts (ODCS)                    │
+│                 Data Contract (contract/, ODCS-shaped)       │
 └──────────────────────────┬──────────────────────────────────┘
-                           │
+                           │ ContractParser / ContractValidator
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  Transformation Logic                        │
-│  (Spark SQL, dbt, SQL, etc. → Transformation IR)            │
+│         A Spark job's real Catalyst logical plan             │
 └──────────────────────────┬──────────────────────────────────┘
-                           │
+                           │ spark-adapter: SparkPlanAdapter.translate
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Invariant Verification Engine                   │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │ Contract Parser  │ Transformation Analyzer  │ Verifier   ││
-│  └─────────────────────────────────────────────────────────┘│
+│     Transformation IR (ir/) — engine-independent Plan/Expr   │
 └──────────────────────────┬──────────────────────────────────┘
                            │
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-   VERIFIED            REJECTED          UNDETERMINED
-   (with metadata)     (with reasons)    (needs analysis)
-        │                  │
-        ├──────────────────┴──────────────────┐
-        │                                     │
-        ▼                                     ▼
-   Verified Lineage                    Machine-Readable
-   (for downstream use)                 Error Report
+              ┌────────────┴────────────┐
+              ▼                         ▼
+   spark-adapter: StructuralVerifier   ir: Lineage.trace
+   (contract vs. IR, before write)     (column-level provenance)
+              │
+              ▼
+   spark-adapter: ContractEnforcementRule
+   (SparkSessionExtensions check rule —
+    aborts the write if verification fails)
+              │
+    ┌─────────┴─────────┐
+    ▼                    ▼
+ VERIFIED             REJECTED
+ (write proceeds)   (ContractViolationException,
+                      write never happens)
 ```
 
-## Component Breakdown
+This is a real, exercised path, not a design sketch: `ContractEnforcementRule`
+runs on the analyzed plan of every query a `SparkSession` executes once
+installed, and a violation throws before Spark writes anything. See
+[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) for the mechanism, and
+[docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md) /
+[docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md) for the two things
+that feed it.
 
-### 1. Plugin (Scala/Spark)
+## Two halves of this repository
 
-**Location:** `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala`
+### The verification engine (the product)
 
-**Purpose:** Implements data transformation logic that processes DataFrames.
+| Module | Package | Purpose |
+|---|---|---|
+| `contract/` | `com.example.contract` | Parses and validates ODCS-shaped YAML contracts; classifies compatibility between two contract versions. No Spark dependency — a contract is a plain data structure. |
+| `ir/` | `com.example.ir` | An engine-independent `Plan`/`Expr` algebra (`Read`, `Write`, `Project`, `Join`, `Aggregate`, ...), plus `Lineage.trace` (structural column-level provenance) and `PlanPrinter` (human-readable rendering). No Spark dependency, no dependency on `contract` — this is meant to be the thing any engine's plan gets translated *into*. |
+| `spark-adapter/` | `com.example.sparkadapter` | Translates a real Spark Catalyst `LogicalPlan` into the IR (`SparkPlanAdapter`), verifies it against a contract (`StructuralVerifier`), and enforces that verification inside Spark's own execution lifecycle (`ContractEnforcementRule`, a `SparkSessionExtensions` check rule) or observes it after the fact (`SparkAdapterListener`, a `QueryExecutionListener`). Depends on `ir` and `contract`, and on Spark (`provided`). |
 
-**Key Classes:**
-- `InvariantPlugin` (object): Entry point for plugin logic
-  - `validate(df: DataFrame): DataFrame` - Validates input schema
-  - `addComputedColumn(df: DataFrame): DataFrame` - Adds derived columns
-  - `process(df: DataFrame): DataFrame` - Orchestrates full transformation
-  - `logEvent(msg: String)` - Records execution events
-  - `getEvents(): List[String]` - Retrieves execution log
+This is where a feature request almost always belongs, and where the
+regression-testing guardrails (property-based fuzzing, mutation testing —
+see CLAUDE.md's "Mutation Testing Requirement" — and the ones still
+outstanding: a multi-Spark-version compatibility matrix, coverage gating,
+API-compatibility checking) are scoped: against these three modules, not
+against `plugin`/`runner`.
 
-**Responsibilities:**
-- Accept Spark DataFrames as input
-- Perform validation (schema, column existence)
-- Apply transformations (column addition, filtering, etc.)
-- Log events for diagnostic purposes
-- Return transformed DataFrame
+### The example integration & test harness
 
-**Design Decision:** Plugin logic is implemented as pure Spark SQL transformations, not as a Spark extension. This allows it to be tested independently and composed with other transformations.
+| Module | Package | Purpose |
+|---|---|---|
+| `plugin/` | `com.example.plugin` | `InvariantPlugin`: a small, illustrative Spark transformation (validate a schema, add a computed column) standing in for "some real job's transformation logic." Not part of the engine — it's what the engine is demonstrated against. |
+| `runner/` | `com.example.runner` | `DemoJobHarness`: an example Spark job, run as a test harness. It builds a real `SparkSession` with the verification engine installed exactly the way a real user's job would, drives `InvariantPlugin`'s transformation through it, and captures the outcome as `demo/output/report.json`. Despite the historical directory name `runner/`, this is not "the thing that runs the engine" — it's one example caller of it. |
+| `demo/` | — | Deterministic fixtures (`demo/input/sample.csv`), example contracts (`demo/contracts/*.yaml`, including a deliberately-broken one used to prove rejection works), and generated, gitignored output (`demo/output/`). |
+| `web/` | — | A Next.js viewer for `demo/output/report.json` — lets a human (on a phone, via forwarded Codespaces ports) see a harness run's PASS/FAIL status, schemas, and diagnostics without reading raw JSON. |
 
-### 2. Runner (Scala/Spark)
-
-**Location:** `runner/src/main/scala/com/example/runner/PluginRunner.scala`
-
-**Purpose:** Test harness that executes the plugin, captures results, and generates machine-readable reports.
-
-**Key Classes:**
-- `ExecutionReport` (case class): Structured representation of execution results
-  - `status`: PASS or FAIL
-  - `timestamp`: ISO 8601 instant
-  - `pluginVersion`, `sparkVersion`, `scalaVersion`, `javaVersion`: Environment info
-  - `durationMs`: Execution time
-  - `buildInfo`: Build metadata
-  - `tests`: Unit/integration test counts
-  - `input`: Input DataFrame metadata (row count, schema, sample)
-  - `output`: Output DataFrame metadata (row count, schema, sample)
-  - `plugin`: Plugin-specific metrics (events, diagnostics)
-  - `error`: Error message if execution failed
-
-- `PluginRunner` (object): Main entry point
-  - `main(args: Array[String])`: Orchestrates test execution
-  - `reportToJson(report: ExecutionReport): String`: Serializes report
-
-**Responsibilities:**
-- Accept CLI arguments (input path, output path, report path)
-- Load input data from CSV
-- Execute plugin via `InvariantPlugin.process()`
-- Capture output to Parquet
-- Generate structured JSON report
-- Return exit code (0 for success, 1 for failure)
-
-**Design Decision:** Runner is separate from plugin to maintain clean separation of concerns. Plugin handles transformation; runner handles testing infrastructure. This pattern scales to multiple runners (CI/CD, local dev, cloud execution).
-
-### 3. Web UI (Next.js/React)
-
-**Location:** `web/`
-
-**Purpose:** Mobile-responsive results viewer for execution reports.
-
-**Key Components:**
-- `web/app/page.tsx`: Main React component
-  - Fetches JSON from `/api/report` endpoint
-  - Renders status badge (✓ PASS or ✕ FAIL)
-  - Displays build info, test results, schema, sample data
-  - Shows plugin events timeline
-  - Auto-refreshes every 2 seconds
-
-- `web/app/api/report/route.ts`: API endpoint
-  - Reads `demo/output/report.json` from filesystem
-  - Returns parsed JSON to client
-
-- `web/app/page.module.css`: Styling
-  - Mobile-first responsive design
-  - CSS custom properties for light/dark modes
-  - Works on screens 375px–1440px+
-
-**Responsibilities:**
-- Fetch and parse execution report
-- Display results in human-readable format
-- Handle light/dark mode preferences
-- Provide mobile-responsive layout
-- Show diagnostic information for troubleshooting
-
-**Design Decision:** Next.js provides serverless functions (API routes) and React components with built-in SSR, eliminating need for separate backend. CSS modules keep styling scoped to components. Mobile-first design ensures usability on phones.
+`./dev/test` running this harness end-to-end via real `spark-submit` (not
+mocked Spark) is the project's actual source of truth that the engine
+works — see CLAUDE.md's "Critical Requirement." A change to `spark-adapter`
+is not done until this harness proves it against a real Spark execution,
+even though the harness itself is not the thing being changed.
 
 ## Data Flow
 
-### Execution Flow (./dev/test)
+### Execution flow (`./dev/test`)
 
 ```
-1. Clean & Compile Plugin
-   └─> plugin/src/**/*.scala → plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar
+1. Build contract, ir, plugin (independent — built concurrently)
+   └─> each module's target/scala-2.12/*.jar
 
-2. Verify Plugin JAR
-   └─> Check file exists and has expected size
+2. Build spark-adapter (needs contract + ir)
+   └─> spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar
 
-3. Build Runner
-   └─> runner/src/**/*.scala → runner/target/scala-2.12/invariant-spark-runner.jar
+3. Build runner (needs contract, ir, plugin, spark-adapter)
+   └─> runner/target/scala-2.12/invariant-spark-runner.jar
 
-4. Verify Spark Environment
+4. Verify Spark environment
    └─> spark-submit --version (must succeed)
 
-5. Prepare Output Directory
-   └─> mkdir -p demo/output
+5. Run the demo job (DemoJobHarness, via spark-submit)
+   ├─> ContractParser loads demo/contracts/invariant_output.yaml
+   ├─> SparkSession built with ContractEnforcementRule installed
+   │   (from the same contract) and SparkAdapterListener registered
+   ├─> Load demo/input/sample.csv into a DataFrame
+   ├─> InvariantPlugin.process(inputDf) — the example transformation
+   ├─> outputDf.write(...) — ContractEnforcementRule verifies the
+   │   real Catalyst plan here, before any bytes are written; a
+   │   violation raises ContractViolationException and no output
+   │   file is created
+   ├─> SparkAdapterListener's translation is rendered (PlanPrinter)
+   │   and traced (Lineage) for the report
+   └─> Capture schema, sample rows, duration, contract verification
+       outcome, and Transformation IR into an ExecutionReport
 
-6. Execute Spark Job
-   ├─> Load demo/input/sample.csv into DataFrame
-   ├─> Call InvariantPlugin.process(inputDf)
-   ├─> Write output to demo/output/result.parquet
-   ├─> Capture schema, sample rows, duration
-   └─> Generate ExecutionReport
-
-7. Validate Report
+6. Validate the report
    ├─> Check report.json exists
-   ├─> Parse JSON
-   ├─> Verify status == "PASS"
+   ├─> Parse JSON, verify status == "PASS"
    └─> Return exit code 0 (success) or 1 (failure)
 ```
 
-### Report Generation Flow
+`./dev/regression` runs the same harness twice more against
+`demo/contracts/` — once against a passing contract, once against
+`invariant_output_broken_example.yaml` — asserting the write *succeeds* in
+the first case and is *aborted* in the second. That pass/fail pair, not
+just a single green run, is what actually demonstrates
+`ContractEnforcementRule` enforces anything. See "Contract regression
+pack" in [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md).
+
+### Report generation flow
 
 ```
-ExecutionReport (Scala case class)
+ExecutionReport (Scala case class, runner/DemoJobHarness.scala)
     │
-    ├─> status: "PASS"
-    ├─> timestamp: "2026-08-20T16:56:47Z"
-    ├─> pluginVersion: "0.1.0"
-    ├─> tests: {unit: {passed: 4, failed: 0}, ...}
-    ├─> input: {rowCount: 10, schema: [...], sample: [...]}
-    ├─> output: {rowCount: 10, schema: [...], sample: [...]}
-    └─> plugin: {events: [...], diagnostics: [...]}
+    ├─> status, timestamp, versions, durationMs
+    ├─> input / output: {rowCount, schema, sample}
+    ├─> plugin: {events, diagnostics}
+    ├─> transformationIR: {renderedPlan, lineage, diagnostics}
+    │       (from spark-adapter's translation + ir's PlanPrinter/Lineage)
+    └─> contractVerification: {status, contract, violations}
             │
             ▼
-        reportToJson()
+        reportToJson() — hand-rolled serializer, no JSON library dep
             │
             ▼
-        JSON string (demo/output/report.json)
+        demo/output/report.json
             │
             ▼
-        java.nio.file.Files.write()
-            │
-            ▼
-        Filesystem (demo/output/report.json)
-            │
-            ▼
-        Web UI fetches via /api/report
-            │
-            ▼
-        React component renders results
-```
-
-### Results Viewing Flow
-
-```
-./dev/report
-    │
-    ▼
-Next.js dev server starts on :3000
-    │
-    ├─> App component mounts
-    │   └─> useEffect() called
-    │
-    ▼
-fetch("/api/report")
-    │
-    ▼
-API route reads demo/output/report.json
-    │
-    ▼
-parse JSON & return to client
-    │
-    ▼
-React re-renders with results
-    │
-    ├─> Status badge (✓ PASS)
-    ├─> Build info section
-    ├─> Tests section
-    ├─> Input section (schema, sample)
-    ├─> Output section (schema, sample)
-    └─> Plugin events timeline
+        Web UI fetches via GET /api/report, renders it
 ```
 
 ## Architectural Decisions
 
-### ADR-001: Separation of Plugin and Runner
+### ADR-001: The verification engine is Spark-specific by adapter, not by design
 
-**Decision:** Keep plugin and runner as separate JARs.
-
-**Rationale:**
-- Plugin is a reusable transformation library
-- Runner is a testing harness (could be replaced with other test frameworks)
-- Follows Unix philosophy: do one thing well
-- Allows plugin to be consumed by other test harnesses (CI/CD, cloud platforms, etc.)
-- Makes versioning and dependency management clearer
-
-**Alternative considered:** Single JAR with embedded plugin and runner
-- **Rejected:** Harder to reuse plugin independently, couples business logic to test infrastructure
-
-### ADR-002: Real Spark Execution vs. Unit Test Mocking
-
-**Decision:** Test harness uses real `spark-submit` with local master, not mocked Spark.
+**Decision:** `contract` and `ir` have zero Spark dependency; only
+`spark-adapter` does.
 
 **Rationale:**
-- Verifies real classloading and serialization behavior
-- Tests actual Spark API usage (not mocking quirks)
-- Captures realistic performance characteristics
-- Builds confidence that code works in production
-- Deterministic with local[*] master (no network issues)
+- `ir`'s `Plan`/`Expr` algebra deliberately does not mirror Catalyst's
+  expression class hierarchy (one `FunctionCall` node covers every scalar
+  operator) — see docs/TRANSFORMATION_IR.md's "Critical principle:
+  semantics, not syntax."
+- This is what makes Phase 2 (a SQL or dbt adapter, per ROADMAP.md)
+  additive rather than a rewrite: `contract` and `ir` don't change, only a
+  new adapter module translating into the same IR.
 
-**Alternative considered:** Mock Spark in unit tests
-- **Rejected:** Doesn't verify real Spark behavior; false confidence in passing tests
+**Alternative considered:** Build the IR as a thin Catalyst wrapper.
+**Rejected:** Ties lineage/verification logic to one engine's optimizer
+internals, defeating the point of having an IR at all.
 
-### ADR-003: Scala/Spark for Plugin Implementation
+### ADR-002: Enforcement via `SparkSessionExtensions` check rule, observation via `QueryExecutionListener`
 
-**Decision:** Use Scala 2.12 and Apache Spark 3.5.1
-
-**Rationale:**
-- Spark is idiomatic in Scala (DataFrame API designed for Scala)
-- Scala's type system catches errors at compile time
-- Scala collections integrate seamlessly with Spark
-- Spark 3.5.1 is latest stable with long-term support
-- Scala 2.12 is standard binary for Spark 3.5
-
-**Alternative considered:** Java or Python
-- **Rejected:** Java less idiomatic for Spark; Python harder to deploy with Spark on CI/CD
-
-### ADR-004: Next.js for Web UI
-
-**Decision:** Use Next.js 14 with TypeScript for results viewer.
+**Decision:** `spark-adapter` uses two different Spark extension points for
+two different jobs, not one mechanism for both.
 
 **Rationale:**
-- Built-in API routes eliminate separate backend
-- React component model scales with complexity
-- Server-side rendering improves mobile performance
-- CSS modules keep styles scoped and maintainable
-- Vercel deployment (optional future step) is straightforward
-- TypeScript catches UI bugs at build time
+- A `QueryExecutionListener` callback fires only *after* Spark has already
+  executed a query — sufficient to observe and report a plan, useless to
+  stop a bad write.
+- A `SparkSessionExtensions` check rule runs on the analyzed plan *before*
+  execution and can throw to abort it — the only mechanism of the two
+  capable of actually gating a write.
+- Both are genuinely needed: `DemoJobHarness` registers a listener purely
+  for reporting (`SparkAdapterListener`) and installs the check rule
+  purely for enforcement (`ContractEnforcementRule`) — see
+  docs/SPARK_ADAPTER.md's "Integration point" for the empirical comparison
+  of all three mechanisms Spark exposes, including why `.analyzed` rather
+  than `.optimizedPlan` was chosen as the plan to translate.
 
-**Alternative considered:** Plain React + Express.js
-- **Rejected:** More infrastructure to manage; Next.js does both better out-of-box
+### ADR-003: Never throw — degrade to `Unsupported`/`Diagnostic`
 
-### ADR-005: JSON for Machine-Readable Reports
+**Decision:** `SparkPlanAdapter.translate` always returns a `Plan`, never
+an exception, even for a Catalyst construct it doesn't recognize.
 
-**Decision:** Use JSON (not XML, YAML, or binary) for execution reports.
+**Rationale:** A verification engine that crashes on an unrecognized plan
+node is less useful than one that verifies what it can and flags what it
+can't. Every degradation carries a `Diagnostic`; property-based fuzzing
+(`SparkPlanAdapterFuzzSpec`) exists specifically to keep this promise
+honest across combinations the hand-written suite doesn't reach. See
+docs/SPARK_ADAPTER.md's "Never throws" section.
+
+### ADR-004: Separation of the example plugin and the example harness
+
+**Decision:** Keep `plugin` and `runner` as separate modules/JARs.
 
 **Rationale:**
-- Language-agnostic and widely supported
-- Human-readable (can inspect in browser)
-- Efficient parsing in JavaScript (Web UI native)
-- Good for version control (Git diffs are clean)
-- Integrates with any downstream system (CI/CD, data platforms)
-- No custom parsing logic needed
+- `plugin` stands in for "a user's real transformation"; `runner` stands
+  in for "the job wiring that installs Invariant and drives that
+  transformation." Keeping them separate keeps the harness honest — a real
+  user's job looks like `runner`'s shape wrapped around their own
+  transformation, not like `plugin` plus something engine-specific baked
+  in.
+- Lets the demo pipeline exercise the *installation* pattern (build a
+  `SparkSession` with `ContractEnforcementRule` injected, register
+  `SparkAdapterListener`) independently of the transformation itself.
 
-**Alternative considered:** Protocol Buffers or Avro
-- **Rejected:** Adds complexity; JSON is sufficient for structured reports
+**Alternative considered:** A single combined demo JAR.
+**Rejected:** Would blur exactly the "user code vs. engine installation"
+boundary a real integration needs to get right.
 
-### ADR-006: Local Spark Master for Determinism
+### ADR-005: Real Spark execution vs. unit test mocking
 
-**Decision:** Use `spark.master("local[*]")` for all test execution.
+**Decision:** The harness (`./dev/test`) runs a real `spark-submit` against
+a local master, not mocked Spark, and this is treated as the actual source
+of truth — see CLAUDE.md's "Critical Requirement."
 
 **Rationale:**
-- Deterministic results (no network, no other jobs interfering)
-- Fast (uses all available cores on single machine)
-- Works offline in Codespaces
-- Sufficient for unit/integration testing on demo data
-- Easy to upgrade to cluster later (just change master URL)
+- Verifies real classloading, serialization, and `SparkSessionExtensions`/
+  `QueryExecutionListener` registration behavior — none of which a mock
+  reproduces faithfully.
+- `contract`/`ir` are pure Scala and unit-tested directly; `spark-adapter`
+  has its own real-Spark unit suite (`SparkPlanAdapterSpec`, a real H2
+  JDBC read, etc.) *and* is proven against `local[*]` end-to-end through
+  the harness — passing unit tests alone were explicitly judged
+  insufficient for either.
 
-**Alternative considered:** YARN or Kubernetes cluster
-- **Rejected for Phase 0:** Adds infrastructure complexity; local master is adequate for development
+### ADR-006: JSON for the harness's execution report
+
+**Decision:** `demo/output/report.json` is plain JSON, hand-serialized
+(no library dependency).
+
+**Rationale:** Human-readable for local debugging, trivial for the web UI
+to consume, clean in Git-tracked golden fixtures if/when golden-file
+regression testing is added (ROADMAP.md, future scope). This format is
+specific to the demo harness — it is not a public API of the verification
+engine, and nothing outside this repository is expected to parse it.
+
+### ADR-007: Local Spark master for determinism
+
+**Decision:** `DemoJobHarness` always uses `spark.master("local[*]")`.
+
+**Rationale:** Deterministic, fast, no external infrastructure, adequate
+for proving the engine's behavior against known input. Swapping to a real
+cluster later needs only a `.master(...)` change — see ROADMAP.md's
+"Future Extensibility" notes.
 
 ## Module Dependencies
 
-### Plugin Dependencies
-
 ```
-plugin/
-├─ org.apache.spark:spark-sql_2.12:3.5.1 (provided)
-└─ org.scalatest:scalatest_2.12:3.2.18 (test)
-```
-
-All Spark dependencies marked as "provided" (not bundled) so plugin can run with any Spark 3.5.x runtime.
-
-### Runner Dependencies
-
-```
-runner/
-├─ org.apache.spark:spark-sql_2.12:3.5.1 (compile)
-├─ com.example:invariant-spark-plugin:0.1.0 (unmanaged JAR)
-└─ org.scala-lang:scala-library:2.12.18 (transitive)
+contract/        no internal deps; org.scalatest (test)
+ir/               no internal deps; org.scalatest (test)
+spark-adapter/    depends on: contract, ir
+                  org.apache.spark:spark-sql (provided)
+                  org.scalatestplus:scalacheck (test, property-based fuzzing)
+plugin/           org.apache.spark:spark-sql (provided)
+runner/           depends on: contract, ir, plugin, spark-adapter
+                  org.apache.spark:spark-sql/spark-core (compile — needed
+                  for spark-submit execution, not just provided)
+web/              next, react, typescript — independent of every Scala module
 ```
 
-Runner pulls in full Spark dependencies for `spark-submit` execution.
-
-### Web UI Dependencies
-
-```
-web/
-├─ next:14.1.0
-├─ react:18.2.0
-├─ typescript:5.3.3
-└─ eslint:8.55.0 (dev)
-```
-
-Lightweight dependencies; no heavy state management needed for report viewing.
+Cross-module references go through `unmanagedJars` pointing at a sibling
+module's assembled jar (no aggregating root `build.sbt`), so
+`dev/build`'s build order — `contract`/`ir`/`plugin` concurrently, then
+`spark-adapter`, then `runner` — is load-bearing, not incidental. See
+`dev/build`'s own comments for the exact dependency graph.
 
 ## API Contracts
 
-### CLI Arguments (PluginRunner)
+### CLI arguments (`DemoJobHarness`)
 
 ```bash
 spark-submit \
-  --class com.example.runner.PluginRunner \
+  --class com.example.runner.DemoJobHarness \
   --master local[*] \
   --jars plugin.jar \
   runner.jar \
-  [input_path] [output_path] [report_path]
+  [input_path] [output_path] [report_path] [contract_path]
 ```
 
-- `input_path` (optional): Path to input CSV (default: `demo/input/sample.csv`)
-- `output_path` (optional): Path to output Parquet (default: `demo/output/result.parquet`)
-- `report_path` (optional): Path to output JSON report (default: `demo/output/report.json`)
+- `input_path` (optional): input CSV — default `demo/input/sample.csv`
+- `output_path` (optional): output Parquet — default `demo/output/result.parquet`
+- `report_path` (optional): output JSON report — default `demo/output/report.json`
+- `contract_path` (optional): contract YAML to enforce — default
+  `demo/contracts/invariant_output.yaml`
 
-### ExecutionReport JSON Schema
+### `ExecutionReport` shape (harness report, not an engine API)
 
 ```json
 {
   "status": "PASS" | "FAIL",
-  "timestamp": "2026-08-20T16:56:47.025820609Z",
+  "timestamp": "2026-08-22T16:00:00Z",
   "pluginVersion": "0.1.0",
   "sparkVersion": "3.5.1",
   "scalaVersion": "2.12.18",
   "javaVersion": "21.0.10",
   "durationMs": 7879,
-  "buildInfo": {
-    "pluginName": "invariant-spark-plugin",
-    "pluginVersion": "0.1.0"
-  },
-  "tests": {
-    "unit": {"passed": 4, "failed": 0},
-    "integration": {"passed": 1, "failed": 0}
-  },
-  "input": {
-    "rowCount": 10,
-    "schema": [
-      {"name": "id", "type": "integer"},
-      {"name": "value", "type": "integer"}
-    ],
-    "sample": [...]
-  },
-  "output": {
-    "rowCount": 10,
-    "schema": [...],
-    "sample": [...]
-  },
-  "plugin": {
-    "events": ["[timestamp] message", ...],
-    "diagnostics": [...]
-  },
+  "buildInfo": { "pluginName": "invariant-spark-plugin", "pluginVersion": "0.1.0" },
+  "tests": { "unit": {"passed": 4, "failed": 0}, "integration": {"passed": 1, "failed": 0} },
+  "input": { "rowCount": 10, "schema": [{"name": "id", "type": "integer"}, ...], "sample": [...] },
+  "output": { "rowCount": 10, "schema": [...], "sample": [...] },
+  "plugin": { "events": ["...", ...], "diagnostics": [...] },
+  "transformationIR": { "captured": true, "renderedPlan": "...", "lineage": [...], "diagnostics": [...] },
+  "contractVerification": { "status": "PASSED", "contract": "invariant_demo_output@1.0.0", "violations": [] },
   "error": null
 }
 ```
 
-### Web API Endpoint
+### Web API endpoint
 
 ```
-GET /api/report
-200 OK
-Content-Type: application/json
-
-{ ExecutionReport JSON }
-```
-
-Or:
-
-```
-404 Not Found
-{ "error": "Report not found" }
+GET /api/report          200 OK  { ExecutionReport JSON }
+                          404 Not Found  { "error": "Report not found" }
 ```
 
 ## Testing Strategy
 
-### Unit Tests
+Full detail lives in each module's own docs
+([docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
+[docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
+[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)) and CLAUDE.md's "Mutation
+Testing Requirement." Summary:
 
-Located in `plugin/src/test/scala/com/example/plugin/InvariantPluginTest.scala`
+- **`contract`/`ir`**: pure Scala unit tests (`sbt test` in each module),
+  plus whole-module mutation testing (Stryker4s) blocking CI.
+- **`spark-adapter`**: unit tests against real Spark (`local[*]`,
+  including a real H2 JDBC read — no Spark behavior is mocked), a
+  property-based fuzz suite (`SparkPlanAdapterFuzzSpec`, random chains of
+  operations asserting the adapter never throws), and whole-module
+  mutation testing.
+- **The harness (`plugin`/`runner`) via `./dev/test`**: real end-to-end
+  `spark-submit`, exercising the whole engine as installed, per ADR-005.
+- **`./dev/regression` (Docker, CI's `docker-regression` job)**: the
+  pass/fail pair proving `ContractEnforcementRule` actually enforces
+  something, not just that a harness run completes.
 
-- Test individual methods in isolation
-- Run via `sbt test` in plugin directory
-- Use local Spark session with `master("local[*]")`
-- Currently: 4 tests (all passing)
-
-### Integration Tests
-
-Executed via `./dev/test` (steps 6-7)
-
-- Full end-to-end Spark job execution
-- Real JAR compilation and `spark-submit`
-- Real CSV input and Parquet output
-- Report generation and validation
-- Exit code determines success/failure
-
-### Test Data
-
-**Location:** `demo/input/sample.csv`
-
-```csv
-id,value
-1,10
-2,20
-...
-10,100
-```
-
-- 10 rows, 2 columns (id: Int, value: Int)
-- Deterministic (committed to Git)
-- Small enough for fast execution (~100ms processing)
-- Representative of real pipeline inputs
+Guardrails still outstanding (ROADMAP.md, scoped to `contract`/`ir`/
+`spark-adapter`): a multi-Spark-version compatibility matrix, coverage
+gating, and API-compatibility checking.
 
 ## Performance Characteristics
 
-| Component | Timing | Notes |
-|-----------|--------|-------|
-| Plugin compilation | 5-10s | First build cold cache |
-| Plugin compilation | 2-3s | Subsequent builds (incremental) |
-| Runner compilation | 10-15s | Includes Spark dependency resolution |
-| Spark job execution | 3-5s | Local master, demo data |
+| Step | Timing | Notes |
+|---|---|---|
+| `contract`/`ir`/`plugin` build | ~15-30s | Concurrent, incremental after first build |
+| `spark-adapter` build | ~10-20s | Depends on contract+ir jars existing |
+| `runner` build | ~10-15s | Depends on all four other modules |
+| Demo job execution | ~5-10s | Local master, 10-row demo data |
 | Report generation | <100ms | JSON serialization |
-| Report parsing (UI) | <50ms | JSON.parse in browser |
-| **Total ./dev/test** | **30-60s** | After first build |
+| **Total `./dev/test`** | **~30-60s** | After first (cold-cache) build |
+| Mutation testing (`ir` + `spark-adapter`, CI) | ~1-5 min | Separate CI job, not part of `./dev/test` |
 
 ## Future Architecture Directions
 
-### Phase 1: Verification Engine
+See [ROADMAP.md](ROADMAP.md) for the authoritative, maintained plan —
+Phase 1 (this document's "verification engine" above) is done; the
+sections below are Phase 2+ at a glance.
 
-Add a contract analyzer that:
-- Parses ODCS contract definitions
-- Analyzes Spark logical plans
-- Verifies transformation conforms to contract
-- Produces verified lineage metadata
+### Phase 2: Multi-engine support
 
 ```
-Contract (ODCS YAML)
-    │
-    ▼
-┌────────────────────────────┐
-│ Contract Parser & Analyzer │
-└──────────┬─────────────────┘
-           │
-           ├─> Identifies inputs/outputs
-           ├─> Validates data types
-           ├─> Checks required fields
-           └─> Extracts constraints
-           │
-           ▼
-    Transformation IR
-    (abstraction over Spark logical plan)
-           │
-           ▼
-    Verification Engine
-           │
-    ┌──────┴──────┐
-    ▼             ▼
- VERIFIED     REJECTED
- (with proof) (with reasons)
+Spark → Spark adapter (done)
+dbt   → dbt adapter (future)   → same Transformation IR → same Verifier
+SQL   → SQL adapter (future)
 ```
 
-### Phase 2: Multi-Engine Support
+The IR's engine-independence (ADR-001) is what makes this additive rather
+than a rewrite.
 
-Extend to support multiple transformation engines:
+### Phase 3: Contract registry & governance
 
-```
-Spark → Spark IR
-dbt   → SQL IR     → Generic Transformation IR → Verifier
-SQL   → SQL IR
-```
+Version contracts as Git/registry artifacts (`contract`'s
+`ContractCompatibility` already classifies MAJOR/MINOR/PATCH changes
+between two contract *versions* — the registry is what would host and
+diff them at scale).
 
-Abstract IR allows same verification logic across engines.
+### Phase 4: AI & platform integration
 
-### Phase 3: Contract Registry
-
-Version contracts as Git artifacts:
-
-```
-Git/Registry
-    │
-    ├─ customer_orders@1.0.yaml
-    ├─ customer_orders@2.0.yaml (breaking change)
-    └─ payments@1.0.yaml
-         │
-         ▼
-    Implementations (Spark, dbt, SQL)
-         │
-         ▼
-    Verified
-```
-
-### Phase 4: AI Integration
-
-Expose machine-readable queries for AI agents:
-
-```python
-# Python API
-from invariant import Verifier, Lineage
-
-lineage = Verifier.verify(contract, transformation)
-# Returns: Verified Lineage with column-level provenance
-
-# AI agent use cases:
-# - Find implementations of a contract
-# - Assess pipeline impact of contract change
-# - Compose transformations that satisfy contracts
-# - Recommend schema migrations
-```
+Expose the engine's machine-readable output (`VerificationResult`, IR
+lineage) for programmatic / agent use — e.g. "find every implementation of
+this contract," "assess the blast radius of a contract change,"
+"recommend a compatible schema migration."
 
 ## References
 
+- [ROADMAP.md](ROADMAP.md) — authoritative phase-by-phase plan and status
+- [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
+- [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
+- [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)
 - [Apache Spark Documentation](https://spark.apache.org/docs/3.5.1/)
 - [Scala Language Documentation](https://docs.scala-lang.org/2.12/)
 - [sbt Documentation](https://www.scala-sbt.org/)
@@ -568,5 +417,6 @@ lineage = Verifier.verify(contract, transformation)
 
 ---
 
-**Last Updated:** 2024-08-20
-**Architecture Version:** 0.1.0
+**Last Updated:** 2026-08-22
+**Architecture Version:** 0.2.0 — reflects Phase 1 (contract/ir/spark-adapter)
+as built, not as planned.

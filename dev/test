@@ -88,7 +88,7 @@ echo "  Input: demo/input/sample.csv"
 echo "  Output: demo/output/result.parquet"
 echo "  Report: $REPORT_FILE"
 
-run_plugin_runner "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE"
+run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE"
 SPARK_EXIT=$?
 
 # Step 7: Validate Report
@@ -101,7 +101,7 @@ if [ ! -f "$REPORT_FILE" ]; then
 fi
 
 # Parse report. `head -1` takes the first match only: report.json's
-# top-level fields are written first (see PluginRunner.reportToJson), but
+# top-level fields are written first (see DemoJobHarness.reportToJson), but
 # nested sections (contractVerification.status, buildInfo.pluginVersion)
 # can carry same-named keys, and a naive grep matches all of them.
 STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | head -1 | cut -d'"' -f4)

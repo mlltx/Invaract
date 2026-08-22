@@ -1,25 +1,68 @@
-# Invariant Spark Plugin - Development Guide
+# Invariant — Development Guide
 
-This repository provides a complete, mobile-first development environment for building and testing Apache Spark plugins using Claude Code.
+This repository builds a framework for verifying data transformations
+against machine-readable data contracts, with a mobile-first Codespace
+development environment for exercising it against a real Spark job.
 
-## Overview
+## What's the product, and what's the test harness
 
-The **Invariant Spark Plugin** is a demonstration Spark plugin designed to run entirely in a GitHub Codespace, accessible and testable from a mobile device.
+**The product is the verification engine: `contract/`, `ir/`, and
+`spark-adapter/`.** Together they parse a data contract, translate a real
+Spark job's Catalyst logical plan into an engine-independent IR, verify it
+against the contract, and — via a `SparkSessionExtensions` check rule
+installed in the `SparkSession` — abort the write if it fails. This is
+what a real user of Invariant would depend on.
+
+**`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
+test harness, not the product.** `plugin/` is a small illustrative Spark
+transformation (`InvariantPlugin`) standing in for "some real job's
+logic." `runner/` is `DemoJobHarness` — an example Spark job that installs
+the verification engine and drives `InvariantPlugin` through it, exactly
+the way a real user's job would install it, then captures the outcome as
+`demo/output/report.json`. `web/` is a mobile-friendly viewer for that
+report. None of `InvariantPlugin`, `DemoJobHarness`, or `report.json` is
+something a real Invariant user imports or depends on — they exist so
+`./dev/test` can prove the engine works against a real Spark execution,
+not just unit tests.
+
+Full architecture, component breakdown, and data flow:
+[ARCHITECTURE.md](ARCHITECTURE.md). Phase-by-phase status:
+[ROADMAP.md](ROADMAP.md). Module-level design docs:
+[docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
+[docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
+[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md).
+
+Keep this distinction in mind before proposing a testing or tooling
+addition: something that protects the engine's real behavior (fuzzing,
+mutation testing, a compatibility matrix) belongs against `contract`/`ir`/
+`spark-adapter`. Something that only formalizes the *demo harness's own
+output shape* (e.g. a schema for `report.json`) is protecting a
+CI-internal artifact, not a public API — right-size it accordingly, and
+don't present it as something external consumers would bind to.
 
 ### Quick Summary
 
-- **Plugin Type**: Apache Spark data processing plugin (Scala)
-- **Plugin Version**: 0.1.0
+- **Verification engine**: `contract` (parser/validator/compatibility),
+  `ir` (engine-independent transformation IR + lineage), `spark-adapter`
+  (Spark → IR translation, contract enforcement)
+- **Example harness**: `plugin` (demo transformation), `runner` (demo job
+  — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
+  viewer)
 - **Spark Version**: 3.5.1
 - **Scala Version**: 2.12.18
-- **Java Version**: 21
-- **Build System**: sbt
+- **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`; sbt
+  1.11.7 for `ir`/`spark-adapter`, required by Stryker4s — see "Mutation
+  Testing Requirement")
+- **Build System**: sbt (5 independent modules, no aggregating root
+  `build.sbt` — see `dev/build`'s comments for the cross-module dependency
+  graph)
 - **Test Execution**: Local Spark master (`local[*]`)
 - **Results Viewer**: Next.js web UI, mobile-responsive
 
 ## Critical Requirement
 
-**NEVER** consider a plugin change complete solely because compilation or unit tests succeed.
+**NEVER** consider a change to the verification engine — or to the demo
+harness — complete solely because compilation or unit tests succeed.
 
 You MUST:
 
@@ -30,7 +73,12 @@ You MUST:
 5. Confirm the **Status** field is **PASS**
 6. Visually inspect input/output data and schema
 
-Real Spark execution is the source of truth. Unit test passing ≠ plugin working.
+Real Spark execution is the source of truth. Unit tests passing ≠ the
+engine actually verifying anything inside a real Spark job. If your change
+is meant to affect *enforcement* specifically (does a bad write actually
+get blocked, not just reported), also run `./dev/regression` — it's the
+only thing that proves `ContractEnforcementRule` rejects a violation, as
+opposed to a harness run merely completing.
 
 ## Mutation Testing Requirement
 
@@ -60,7 +108,17 @@ call it done. Before considering such a feature complete, you MUST:
    for what's already been judged not worth chasing).
 
 This is a manual, PR-scoped check — Stryker4s has no incremental/diff
-mode, so CI cannot enforce "the new code specifically" on its own.
+mode, so CI cannot enforce "the new code specifically" on its own. (It
+*is* automated for PRs: see `.github/workflows/test.yml`'s
+`mutation-testing` job, which diffs each PR against its previous push and
+reruns `sbt stryker` scoped to just the changed files — see
+docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
+
+This bar — and every other regression-testing guardrail in this repo
+(property-based fuzzing, mutation testing, and the still-outstanding
+compatibility matrix / coverage gating / API-compatibility checking) — is
+scoped to `contract`/`ir`/`spark-adapter`. It does not apply to `plugin`/
+`runner`, which are example/test code, not the engine.
 
 ## Repository Structure
 
@@ -70,28 +128,52 @@ mode, so CI cannot enforce "the new code specifically" on its own.
 │   ├── devcontainer.json        # Dev Container configuration
 │   └── post-create.sh           # Setup script (JDK, sbt, Spark)
 │
-├── plugin/                       # Spark plugin source code
+├── contract/                     # Verification engine: contract model
+│   ├── src/main/scala/com/example/contract/
+│   │   ├── ContractModel.scala
+│   │   ├── ContractParser.scala       # YAML → object model
+│   │   ├── ContractValidator.scala    # structural validation
+│   │   └── ContractCompatibility.scala # version-diff classification
+│   └── src/test/scala/com/example/contract/
+│
+├── ir/                            # Verification engine: transformation IR
+│   ├── src/main/scala/com/example/ir/
+│   │   ├── Expr.scala, Plan.scala, Identifiers.scala  # engine-independent algebra
+│   │   ├── Lineage.scala              # column-level provenance tracing
+│   │   └── PlanPrinter.scala          # human-readable rendering
+│   └── src/test/scala/com/example/ir/
+│
+├── spark-adapter/                 # Verification engine: Spark integration
+│   ├── src/main/scala/com/example/sparkadapter/
+│   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
+│   │   ├── StructuralVerifier.scala   # IR vs. contract verification
+│   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
+│   │   └── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
+│   └── src/test/scala/com/example/sparkadapter/
+│
+├── plugin/                       # Example harness: demo transformation
 │   ├── src/
 │   │   ├── main/scala/com/example/plugin/
 │   │   │   └── InvariantPlugin.scala
 │   │   └── test/scala/com/example/plugin/
 │   │       └── InvariantPluginTest.scala
-│   ├── build.sbt                # Plugin build configuration
-│   └── project/assembly.sbt     # sbt-assembly plugin
+│   ├── build.sbt
+│   └── project/assembly.sbt
 │
-├── demo/
+├── demo/                          # Example harness: fixtures + output
 │   ├── input/sample.csv         # Deterministic test data
+│   ├── contracts/               # Example contracts (incl. a deliberately-broken one)
 │   └── output/                  # Generated results (not in git)
 │       ├── report.json
 │       └── result.parquet
 │
-├── runner/                       # Spark job executor
+├── runner/                       # Example harness: demo job
 │   ├── src/main/scala/com/example/runner/
-│   │   └── PluginRunner.scala   # Executes plugin, generates report
+│   │   └── DemoJobHarness.scala # Runs InvariantPlugin through the engine, generates report
 │   ├── build.sbt
 │   └── project/assembly.sbt
 │
-├── web/                          # Mobile-friendly results UI
+├── web/                          # Example harness: mobile-friendly results UI
 │   ├── app/
 │   │   ├── layout.tsx
 │   │   ├── page.tsx             # Main report viewer component
@@ -104,19 +186,48 @@ mode, so CI cannot enforce "the new code specifically" on its own.
 │   └── .eslintrc.json
 │
 ├── dev/                          # Development scripts
-│   ├── test                     # Main test harness (7-step verification)
+│   ├── build                    # Builds all 5 modules in dependency order
+│   ├── test                     # End-to-end harness run (7-step verification)
+│   ├── regression                # Docker-based pass/fail enforcement proof
 │   └── report                   # Launch web UI
 │
-├── .github/workflows/
-│   └── test.yml                 # CI/CD pipeline (mirrors local test)
+├── docs/                         # Module-level design docs
+│   ├── CONTRACT_MODEL.md
+│   ├── TRANSFORMATION_IR.md
+│   └── SPARK_ADAPTER.md
 │
+├── .github/workflows/
+│   └── test.yml                 # CI: OS/JDK test matrix, docker-regression,
+│                                 # mutation-testing, summary gate
+│
+├── ARCHITECTURE.md               # Full architecture, ADRs, data flow
+├── ROADMAP.md                    # Phase-by-phase plan and status
+├── CHANGELOG.md
 ├── CLAUDE.md                     # This file
 └── README.md
 ```
 
 ## Development Workflow
 
-### 1. Initial Setup
+### Working on the verification engine (`contract`/`ir`/`spark-adapter`)
+
+1. Edit source under the relevant module's `src/main/scala/...`
+2. Add/update tests under that module's `src/test/scala/...` (for
+   `spark-adapter`, prefer a real `local[*]` `SparkSession` over mocking —
+   see ARCHITECTURE.md's ADR-005)
+3. `cd <module> && sbt test`
+4. If you touched `ir` or `spark-adapter`: run mutation testing per the
+   "Mutation Testing Requirement" above before calling it done
+5. Run `./dev/test` (and `./dev/regression` if the change affects
+   enforcement) to prove it against a real Spark job — per "Critical
+   Requirement," this is not optional
+
+### Working on the example harness (`plugin`/`runner`/`demo`/`web`)
+
+Useful for demonstrating new engine behavior, adding fixtures, or
+improving the results viewer — not for engine logic itself.
+
+#### 1. Initial Setup
 
 When opening the repository in GitHub Codespaces:
 
@@ -131,13 +242,13 @@ When opening the repository in GitHub Codespaces:
 # After container is ready, nothing else is needed
 ```
 
-### 2. Make Plugin Changes
+#### 2. Make Harness Changes
 
-Edit files under `plugin/src/main/scala/com/example/plugin/`.
+Edit files under `plugin/src/main/scala/com/example/plugin/` (the demo
+transformation) or `runner/src/main/scala/com/example/runner/` (the demo
+job / `DemoJobHarness`).
 
-Example: Add a new transformation to `InvariantPlugin.scala`.
-
-### 3. Test the Plugin
+#### 3. Test the Harness
 
 Run the comprehensive test harness:
 
@@ -147,42 +258,25 @@ Run the comprehensive test harness:
 
 This single command:
 
-1. ✓ Cleans and compiles the plugin
-2. ✓ Runs unit tests
-3. ✓ Packages plugin into JAR: `plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar`
-4. ✓ Builds the runner application
-5. ✓ Verifies Spark environment
-6. ✓ Prepares demo data (loads `demo/input/sample.csv`)
-7. ✓ Executes real Spark job with packaged JAR via `spark-submit`
-8. ✓ Captures execution results to `demo/output/result.parquet`
-9. ✓ Captures schema and diagnostics
-10. ✓ Generates machine-readable report: `demo/output/report.json`
-11. ✓ Validates report status
-12. ✓ Returns exit code `0` on success, non-zero on failure
+1. ✓ Builds all 5 modules (`contract`, `ir`, `plugin` concurrently, then
+   `spark-adapter`, then `runner`) via `./dev/build`
+2. ✓ Verifies the plugin JAR
+3. ✓ Verifies the Spark environment
+4. ✓ Prepares the demo output directory
+5. ✓ Runs the demo job (`DemoJobHarness`) via real `spark-submit`,
+   installing the verification engine and driving `InvariantPlugin`
+   through it
+6. ✓ Captures results to `demo/output/result.parquet`
+7. ✓ Generates `demo/output/report.json`
+8. ✓ Validates report status
+9. ✓ Returns exit code `0` on success, non-zero on failure
 
 **Example output:**
 
 ```
 ======================================
-Invariant Spark Plugin Test Suite
+Invariant Test Suite
 ======================================
-
-Step 1/7: Building plugin...
-✓ Plugin built successfully
-
-Step 2/7: Verifying plugin JAR...
-  JAR size: 45M
-  Main classes:
-    com/example/plugin/InvariantPlugin.class
-    com/example/plugin/InvariantPlugin$
-
-Step 3/7: Building runner...
-✓ Runner built successfully
-
-Step 4/7: Verifying Spark environment...
-  Spark: version 3.5.1
-
-Step 5/7: Preparing output directory...
 
 Step 6/7: Executing Spark integration test...
   Input: demo/input/sample.csv
@@ -196,14 +290,13 @@ Step 7/7: Validating execution report...
   Duration: 2345ms
 
 ✓ All validation passed
-✓ Plugin JAR is ready: plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar
 ✓ Execution report: demo/output/report.json
 
 To view results in web UI:
   ./dev/report
 ```
 
-### 4. View Results
+#### 4. View Results
 
 Start the mobile-friendly web UI:
 
@@ -216,83 +309,64 @@ The UI will start on `http://localhost:3000` and show:
 - **Status Badge**: ✓ PASS or ✕ FAIL (large, mobile-visible)
 - **Build Information**: Plugin/Spark/Java versions, duration
 - **Test Results**: Unit and integration test pass/fail counts
-- **Input Data**: Row count, schema, sample rows
-- **Output Data**: Row count, schema, sample rows
+- **Input/Output Data**: Row count, schema, sample rows
+- **Transformation IR**: The translated plan, rendered
+- **Contract Verification**: PASSED/FAILED, with violation detail
 - **Plugin Events**: Execution timeline and diagnostics
 - **Errors**: Full error messages if execution failed
 
-Forward the Codespaces port to your phone and open the URL in a mobile browser. The UI is fully responsive for screens as narrow as 375px.
+Forward the Codespaces port to your phone and open the URL in a mobile
+browser. The UI is fully responsive for screens as narrow as 375px.
 
-### 5. Iterate
+#### 5. Iterate
 
 If `./dev/test` fails:
 
 1. Examine the error output
 2. Check `demo/output/report.json` for diagnostics
-3. Review plugin events in the web UI
-4. Fix the plugin code
+3. Review plugin events and contract verification detail in the web UI
+4. Fix the code (engine or harness, depending on where the failure is)
 5. Run `./dev/test` again
 6. Repeat until exit code is `0`
 
 ## Build Artifacts and Outputs
 
-### Plugin JAR
+### Engine and plugin JARs
 
-- **Location**: `plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar`
-- **Size**: ~45 MB (includes Spark dependencies)
-- **Purpose**: Packaged plugin for submission to Spark
-- **Created by**: `sbt assembly` (in step 1 of `./dev/test`)
-- **Used by**: Spark via `spark-submit --jars <JAR>`
+- `plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar`
+- `contract/target/scala-2.12/invariant-contract-0.1.0.jar`
+- `ir/target/scala-2.12/invariant-ir-0.1.0.jar`
+- `spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar`
+- `runner/target/scala-2.12/invariant-spark-runner.jar` — the demo job,
+  bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
 
-### Execution Report
+All created by `sbt assembly` (via `./dev/build`); used by Spark through
+`spark-submit --jars <plugin jar> <runner jar>`.
+
+### Execution Report (harness artifact, not an engine API)
 
 - **Location**: `demo/output/report.json`
-- **Format**: Structured JSON
-- **Schema**:
-  ```json
-  {
-    "status": "PASS" | "FAIL",
-    "timestamp": "ISO8601",
-    "pluginVersion": "0.1.0",
-    "sparkVersion": "3.5.1",
-    "scalaVersion": "...",
-    "javaVersion": "...",
-    "durationMs": 1234,
-    "buildInfo": { ... },
-    "tests": {
-      "unit": { "passed": 42, "failed": 0 },
-      "integration": { "passed": 1, "failed": 0 }
-    },
-    "input": {
-      "rowCount": 10,
-      "schema": [ { "name": "id", "type": "integer" }, ... ],
-      "sample": [ ... ]
-    },
-    "output": {
-      "rowCount": 10,
-      "schema": [ ... ],
-      "sample": [ ... ]
-    },
-    "plugin": {
-      "events": [ "...", "..." ],
-      "diagnostics": [ ... ]
-    },
-    "error": null
-  }
-  ```
+- **Format**: Structured JSON — full shape in ARCHITECTURE.md's "API
+  Contracts" section
+- **Generated by**: `DemoJobHarness.reportToJson` (`runner/`) — a
+  hand-rolled serializer, no JSON library dependency
+- This format is internal to the demo harness. It is not published or
+  versioned as something external tooling binds to — if you need a
+  machine-readable output *from the engine itself*, that's
+  `VerificationResult`/`Diagnostic` (see `spark-adapter`), not this file.
 
 ### Demo Output Data
 
 - **Location**: `demo/output/result.parquet`
 - **Format**: Apache Parquet
-- **Content**: Output of plugin processing on `demo/input/sample.csv`
+- **Content**: Output of `InvariantPlugin` processing `demo/input/sample.csv`
 - **Lifecycle**: Regenerated on each `./dev/test`
 
 ## Execution Model
 
 ### Local Spark Master
 
-All plugin execution uses a **local Spark master**:
+The demo job always uses a **local Spark master**:
 
 ```scala
 spark.builder()
@@ -309,11 +383,12 @@ This provides:
 
 ### JAR Submission
 
-The plugin is executed **via real Spark submission**, not unit test mocking:
+The demo job runs **via real Spark submission**, not unit test mocking
+(see ARCHITECTURE.md's ADR-005):
 
 ```bash
 spark-submit \
-  --class com.example.runner.PluginRunner \
+  --class com.example.runner.DemoJobHarness \
   --master local[*] \
   --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
   runner/target/scala-2.12/invariant-spark-runner.jar \
@@ -325,9 +400,10 @@ spark-submit \
 This ensures:
 
 - ✓ Real classloading behavior
-- ✓ Spark serialization/deserialization of plugin objects
+- ✓ Real `SparkSessionExtensions`/`QueryExecutionListener` registration
+  (the actual mechanisms the verification engine hooks into)
 - ✓ Accurate performance characteristics
-- ✓ True integration testing
+- ✓ True integration testing of the engine, not a mock of it
 
 ## Test Data
 
@@ -344,19 +420,19 @@ id,value
 - **Size**: 10 rows
 - **Format**: CSV
 - **Deterministic**: Yes (committed to Git)
-- **Purpose**: Exercise plugin transformation
+- **Purpose**: Exercise the demo transformation and the engine translating it
 - **Processing Time**: <1 second
 
-## Plugin Implementation
+## Example Plugin (demo transformation, not the engine)
 
-The example plugin (InvariantPlugin.scala) demonstrates:
+`InvariantPlugin.scala` illustrates:
 
 1. **Schema Validation**: Checks for required columns
 2. **Transformation**: Adds a computed column (`value_squared`)
 3. **Event Logging**: Records execution steps
 4. **Error Handling**: Validates input before processing
 
-To modify the plugin:
+To modify it:
 
 1. Edit `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala`
 2. Add or update tests in `plugin/src/test/scala/com/example/plugin/InvariantPluginTest.scala`
@@ -370,13 +446,13 @@ To modify the plugin:
 | JDK       | 21      | Latest LTS, Spark 3.5 compatible |
 | Scala     | 2.12.18 | Spark 3.5.1 standard binary |
 | Spark     | 3.5.1   | Latest stable, well-supported |
-| sbt       | Latest  | Via Coursier (no manual install needed) |
+| sbt       | 1.9.8 (`contract`/`plugin`/`runner`), 1.11.7 (`ir`/`spark-adapter`) | Stryker4s 1.1.1 needs sbt ≥ 1.11.2; the other three modules stayed on the older, more broadly-tested version |
 | Next.js   | 14.1.0  | Latest stable, Vercel-maintained |
 | Node.js   | 20      | LTS, stable |
 
 ### Java Compatibility
 
-- Plugin code targets JVM 1.8 (via `-target:jvm-1.8` scalacOption)
+- All modules target JVM 1.8 bytecode (via `-target:jvm-1.8` scalacOption)
 - Runtime JDK 21 fully supports 1.8 bytecode
 - Forward compatible to future JDK versions
 
@@ -384,15 +460,16 @@ To modify the plugin:
 
 GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 
-1. Checkout code
-2. Setup JDK 21
-3. Build plugin (compile, test, assembly)
-4. Build runner
-5. Setup Spark 3.5.1
-6. Run Spark integration test
-7. Validate report
-8. Upload test report artifact
-9. Fail job if tests fail
+- **`test`**: OS × Java matrix (ubuntu/macos/windows × 11/17/21, with
+  exclusions) — builds all 5 modules and runs `./dev/test`
+- **`docker-regression`**: runs `./dev/regression`, proving
+  `ContractEnforcementRule` actually blocks a bad write, not just that a
+  harness run completes
+- **`mutation-testing`**: whole-module Stryker4s for `ir`/`spark-adapter`
+  (blocking at each module's `break` threshold), plus the incremental
+  changed-files check on PRs (70% bar) — see "Mutation Testing
+  Requirement" above
+- **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.
 
@@ -415,6 +492,8 @@ cat demo/output/report.json | jq .
 
 Look for:
 - `"status"` field (should be `"PASS"`)
+- `"contractVerification"` (status, violations — is this an engine
+  rejection, or something else?)
 - `"error"` field (contains error message)
 - `"plugin.events"` array (execution timeline)
 
@@ -422,7 +501,7 @@ Look for:
 
 ```bash
 ./dev/report
-# Open in browser and inspect Plugin Events section
+# Open in browser and inspect the Contract Verification and Plugin Events sections
 ```
 
 ### 4. Check Spark logs
@@ -430,73 +509,70 @@ Look for:
 If the report indicates Spark execution failed:
 
 ```bash
-# Look for Spark logs in runner output
+# Look for Spark logs in the demo job's output
 # Check that input CSV is readable
 file demo/input/sample.csv
 head -5 demo/input/sample.csv
 ```
 
-### 5. Review plugin code
+### 5. Narrow down where the problem is
 
-Check `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala` for:
-- Null pointer exceptions
-- Schema assumptions
-- Column name case sensitivity
-- Type mismatches
+- Engine translation/verification issue → check `spark-adapter`'s own
+  unit tests (`cd spark-adapter && sbt test`) before assuming it's the
+  demo harness
+- Demo transformation issue → check
+  `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala` for
+  null pointer exceptions, schema assumptions, case sensitivity, type
+  mismatches
+- Report/harness wiring issue → check `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`
 
 ### 6. Run unit tests in isolation
 
 ```bash
-cd plugin
+cd spark-adapter   # or contract, ir, plugin
 sbt test
 cd ..
 ```
 
-This helps isolate whether the problem is in:
-- Plugin code itself
-- Plugin/Spark integration
-- Test data
-- Report generation
+This helps isolate whether the problem is in the engine itself, the demo
+transformation, test data, or report generation.
 
 ## Future Extensibility
 
+See [ROADMAP.md](ROADMAP.md) for the maintained, authoritative plan. A few
+harness-specific notes:
+
 ### Adding a Real Spark Cluster
 
-The current architecture uses `local[*]` Spark master. To use a real cluster later:
+The harness uses `local[*]` Spark master (see ARCHITECTURE.md's ADR-007).
+To use a real cluster later:
 
-1. Modify `runner/src/main/scala/com/example/runner/PluginRunner.scala`
+1. Modify `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`
 2. Change `.master("local[*]")` to `.master("spark://cluster:7077")` or YARN/Kubernetes
-3. Update `.github/workflows/test.yml` to provision cluster
+3. Update `.github/workflows/test.yml` to provision the cluster
 4. Report format remains unchanged
 
 ### Extending the Report Format
 
-The report JSON structure is extensible. To add new fields:
+`demo/output/report.json` is extensible (it's a harness artifact, not a
+versioned API — see "Build Artifacts and Outputs" above). To add fields:
 
-1. Update `ExecutionReport` case class in `PluginRunner.scala`
+1. Update `ExecutionReport` case class in `DemoJobHarness.scala`
 2. Add corresponding fields to `reportToJson` serialization
 3. Update `web/app/page.tsx` to display new fields
 4. Update `web/app/page.module.css` for styling
 
-Example additions:
-- SQL/DataFrame API calls executed by plugin
-- Spark stages and task execution timings
-- Memory usage and garbage collection stats
-- Plugin-specific metrics
-- Before/after schema comparison
-
 ### Supporting Multiple Spark Versions
 
-Currently pinned to Spark 3.5.1. To support multiple versions:
-
-1. Create matrix in `.github/workflows/test.yml` (e.g., Spark 3.4, 3.5, 3.6)
-2. Update `.devcontainer/post-create.sh` to accept version parameter
-3. Pin compatible Scala/Java versions per Spark version
-4. Report should include Spark version in output (already does)
+Currently pinned to Spark 3.5.1, only in `spark-adapter` (and thus the
+harness). This is one of the outstanding regression-testing guardrails
+(ROADMAP.md) — a matrix run of `spark-adapter`'s suite against several
+Spark versions would catch Catalyst plan-shape drift the adapter would
+otherwise silently mistranslate.
 
 ## Common Development Tasks
 
-### Add a new column transformation
+### Add a new column transformation (demo harness)
 
 ```scala
 // In InvariantPlugin.scala
@@ -521,20 +597,20 @@ Run `./dev/test` to verify.
 
 ### Change demo data
 
-Edit `demo/input/sample.csv` and run `./dev/test`. The plugin will process new data.
+Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ### Update plugin version
 
 1. Edit version in `plugin/build.sbt` (e.g., `version := "0.2.0"`)
 2. Update JAR name in `plugin/build.sbt` assembly config
-3. Update runner's `pluginVersion` in `PluginRunner.scala`
+3. Update the harness's `pluginVersion` in `DemoJobHarness.scala`
 4. Run `./dev/test`
 
 ### Troubleshoot Spark locally
 
 ```bash
-# Start Spark shell with plugin JAR
-spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar
+# Start Spark shell with the engine + plugin JARs
+spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar,spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)
@@ -557,12 +633,12 @@ spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar
 git clone https://github.com/mlltx/Invariant.git
 # Wait for post-create.sh to finish (~5 min first time)
 
-# 2. Make a change to the plugin
-edit plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala
+# 2. Make a change — engine (contract/ir/spark-adapter) or harness (plugin/runner)
+edit spark-adapter/src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala
 
 # 3. Test
 ./dev/test
-# Wait for result (~10-20 seconds)
+# Wait for result (~30-60s)
 
 # 4. View results on phone
 ./dev/report
@@ -570,12 +646,13 @@ edit plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala
 
 # 5. Iterate
 # Make more changes, run ./dev/test, check results
+# If you touched ir/ or spark-adapter/, also run mutation testing (see above)
 
 # 6. When satisfied
 git add .
-git commit -m "Add feature X to plugin"
+git commit -m "Add feature X"
 git push
-# CI/CD runs the same ./dev/test suite
+# CI runs the same checks: test matrix, docker-regression, mutation-testing
 ```
 
 ## Support and Debugging
@@ -584,29 +661,35 @@ For issues:
 
 1. Check that `./dev/test` produces non-zero exit code
 2. Review `demo/output/report.json` for error details
-3. Examine `plugin/src/test/scala/...` tests
-4. Check plugin event logs in web UI
+3. Examine each module's `src/test/scala/...` tests
+4. Check plugin events and contract verification detail in the web UI
 5. Verify Spark is running: `spark-submit --version`
 
 ## Performance Expectations
 
-- First build (cold sbt cache): ~2 minutes
-- Subsequent builds: ~15-30 seconds
-- Spark job execution: ~5-10 seconds
-- Report generation: ~1 second
-- **Total ./dev/test time**: ~30-60 seconds (after first build)
+See ARCHITECTURE.md's "Performance Characteristics" for the full
+per-module build breakdown. Headline numbers:
 
-On mobile network, UI may be slower due to data volume (~100KB report).
+- First build (cold sbt cache): ~2 minutes
+- Subsequent builds: ~15-30s per module (incremental)
+- **Total `./dev/test`**: ~30-60s (after first build)
+- Mutation testing (`ir`/`spark-adapter`, CI-only, not part of `./dev/test`): ~1-5 min
+
+On mobile network, the web UI may be slower due to data volume (~100KB report).
 
 ## References
 
+- [ARCHITECTURE.md](ARCHITECTURE.md) — full architecture, ADRs, data flow
+- [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
 - [Apache Spark](https://spark.apache.org/)
 - [Scala 2.12](https://docs.scala-lang.org/2.12/)
 - [sbt](https://www.scala-sbt.org/)
 - [Next.js](https://nextjs.org/)
 - [GitHub Codespaces](https://github.com/features/codespaces)
+- [ODCS Specification](https://github.com/opendatadiscovery/open-data-contracts-standard)
 
 ---
 
-**Last Updated**: 2024-08-20
-**Status**: Ready for development
+**Last Updated**: 2026-08-22
+**Status**: Phase 1 (verification engine) complete; example harness and
+web UI stable. See ROADMAP.md for what's next.

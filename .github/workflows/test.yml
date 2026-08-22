@@ -159,7 +159,7 @@ jobs:
 
       # spark-submit (bash script) calls `ps -o`, unsupported by git-bash's
       # ps on windows-latest — use Spark's native .cmd launcher there
-      # instead (see dev/lib.sh's run_plugin_runner for the same check).
+      # instead (see dev/lib.sh's run_demo_job_harness for the same check).
       - name: Verify Spark installation
         shell: bash
         run: |

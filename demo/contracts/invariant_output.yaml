@@ -6,7 +6,7 @@ description:
   purpose: >
     Contract for the output of the demo InvariantPlugin pipeline
     (plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala),
-    written by runner/PluginRunner.scala to demo/output/result.parquet.
+    written by runner/DemoJobHarness.scala to demo/output/result.parquet.
 
 inputs:
   - name: orders

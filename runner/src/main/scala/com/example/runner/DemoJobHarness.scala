@@ -31,7 +31,16 @@ case class ExecutionReport(
   error: Option[String]
 )
 
-object PluginRunner {
+/** An example Spark job, run as a test harness: it drives `InvariantPlugin`
+  * (a stand-in for a real transformation) through a real `SparkSession` with
+  * Invariant's verification engine (`contract`/`ir`/`spark-adapter`)
+  * installed as an extension, then captures the outcome as `report.json`.
+  * This class is not part of that engine and is not what a real Invariant
+  * user would depend on — it exists to prove the engine works end-to-end
+  * against an actual Spark job, the same way any user's own job would use
+  * it. See ARCHITECTURE.md's "Example Integration & Test Harness" section.
+  */
+object DemoJobHarness {
   def main(args: Array[String]): Unit = {
     val inputPath = args.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = args.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
@@ -58,7 +67,7 @@ object PluginRunner {
 
       val spark = SparkSession
         .builder()
-        .appName("InvariantPluginRunner")
+        .appName("InvariantDemoJobHarness")
         .master("local[*]")
         .config("spark.sql.shuffle.partitions", "1")
         // Moves verification into the Spark execution lifecycle (ROADMAP.md

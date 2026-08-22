@@ -519,7 +519,7 @@ assumption) that shaped the design.
 - [x] **Plan extraction examples** — see docs/SPARK_ADAPTER.md
 - [x] **Unsupported-operation diagnostics** — `Diagnostic`/`TranslationResult`;
       translation always produces a best-effort IR, never an exception
-- [x] **Integrated with the test Spark app** — `runner/PluginRunner.scala`
+- [x] **Integrated with the test Spark app** — `runner/DemoJobHarness.scala`
       registers `SparkAdapterListener`, captures the real write's
       translated IR and `Lineage.trace` output, prints the rendered plan to
       the console, and adds a `transformationIR` section to
@@ -566,7 +566,7 @@ nullability compatibility).
 - [x] Nullability checked directionally, not by equality: a contract
       requiring non-null violated by an actual nullable column is a real
       violation; the reverse (actual guarantees more than required) isn't
-- [x] Wired into `runner/PluginRunner.scala`: verifies the real plan's
+- [x] Wired into `runner/DemoJobHarness.scala`: verifies the real plan's
       actual inputs/output against `demo/contracts/invariant_output.yaml`
       on every `./dev/test` run, adding a `contractVerification` section
       to `demo/output/report.json` and console output. Kept separate from
@@ -630,13 +630,13 @@ Spark application → Logical plan → Invariant → PASS → execute
       `remediation` field, added to `Violation` in `StructuralVerifier`).
       Proven deterministic by test: the same violation produces a
       byte-identical explanation across repeated runs.
-- [x] Wired into `runner/PluginRunner.scala`: the contract is loaded and
+- [x] Wired into `runner/DemoJobHarness.scala`: the contract is loaded and
       the check rule installed *before* the `SparkSession` is built (a
       check rule can't be added to an already-built session); the real
       write is now the verification gate itself, not a separate step
       after it.
 - [x] Live-demonstrated against the real pipeline, not just unit tests:
-      running `PluginRunner` with a deliberately-broken contract
+      running `DemoJobHarness` with a deliberately-broken contract
       (`demo/contracts/invariant_output_broken_example.yaml`, requiring a
       `customer_name` column the real plugin never produces) via
       `spark-submit` exits 1, the target parquet path is never created,
@@ -740,7 +740,7 @@ coverage (see the sub-phase above for the first three).
       output now shows `Write(location, format=parquet,
       saveMode=overwrite)`, and the real demo contract
       (`demo/contracts/invariant_output.yaml`) declares `saveMode:
-      overwrite` to match `PluginRunner.scala`'s actual
+      overwrite` to match `DemoJobHarness.scala`'s actual
       `.write.mode("overwrite")` call.
 - [x] **JDBC location fidelity.** `SparkPlanAdapter.locationOf` previously
       sent every non-`HadoopFsRelation` relation — including `JDBCRelation`

@@ -318,7 +318,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- (None yet)
+- **Renamed `runner`'s `PluginRunner` to `DemoJobHarness`**, and
+  `dev/lib.sh`'s `run_plugin_runner` helper to `run_demo_job_harness`.
+  `PluginRunner` read as if it might be part of Invariant's own Spark
+  extension machinery (Spark has a real, unrelated `SparkPlugin`
+  interface/`spark.plugins` config, making the collision worse); the new
+  name states what the class actually is — an example Spark job used as a
+  test harness — and is not the verification engine. Updated every
+  `--class com.example.runner.PluginRunner` spark-submit invocation,
+  `demo/contracts/invariant_output.yaml`'s comment, and all doc references
+  (ARCHITECTURE.md, ROADMAP.md, docs/SPARK_ADAPTER.md). Verified via a
+  full local `./dev/build` + `./dev/test` + `./dev/regression` run after
+  the rename (all pass; the enforcement pass/fail pair still behaves
+  correctly).
+- **Rewrote ARCHITECTURE.md and CLAUDE.md** to reflect the actual current
+  system rather than the pre-Phase-1 scaffold they still described (three
+  components — `plugin`/`runner`/`web` — with the contract-verification
+  engine listed under "Future Architecture Directions" as unbuilt, even
+  though `contract`/`ir`/`spark-adapter` have been built, fuzzed, and
+  mutation-tested for some time). Both docs now lead with an explicit
+  "product vs. test harness" distinction — `contract`/`ir`/`spark-adapter`
+  are the verification engine a real user would depend on;
+  `plugin`/`runner`/`demo`/`web` are an example integration proving the
+  engine works against a real Spark job via `./dev/test`, not something
+  a user imports. ARCHITECTURE.md gained real component/data-flow/ADR
+  content for the engine (translation → verification → enforcement, the
+  check-rule-vs-listener split, why the IR doesn't mirror Catalyst) in
+  place of the stale Phase 1 sketch. This distinction matters going
+  forward: it's what scopes every regression-testing guardrail (fuzzing,
+  mutation testing, and the still-outstanding compatibility matrix /
+  coverage gating / API-compatibility checking) to `contract`/`ir`/
+  `spark-adapter`, not to the demo harness.
 
 ### Deprecated
 

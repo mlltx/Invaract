@@ -79,7 +79,7 @@ PASS_OUTPUT="demo/output/result.parquet"
 PASS_REPORT="demo/output/regression_pass_report.json"
 rm -rf "$PASS_OUTPUT" "$PASS_REPORT"
 
-run_plugin_runner "demo/input/sample.csv" "$PASS_OUTPUT" "$PASS_REPORT" \
+run_demo_job_harness "demo/input/sample.csv" "$PASS_OUTPUT" "$PASS_REPORT" \
   "demo/contracts/invariant_output.yaml"
 PASS_EXIT=$?
 
@@ -103,7 +103,7 @@ FAIL_OUTPUT="demo/output/result_broken_example.parquet"
 FAIL_REPORT="demo/output/regression_fail_report.json"
 rm -rf "$FAIL_OUTPUT" "$FAIL_REPORT"
 
-run_plugin_runner "demo/input/sample.csv" "$FAIL_OUTPUT" "$FAIL_REPORT" \
+run_demo_job_harness "demo/input/sample.csv" "$FAIL_OUTPUT" "$FAIL_REPORT" \
   "demo/contracts/invariant_output_broken_example.yaml"
 FAIL_EXIT=$?
 
