@@ -27,6 +27,7 @@ outputs:
   - name: result
     location: demo/output/result.parquet
     format: parquet
+    saveMode: overwrite
     schema:
       fields:
         - name: id

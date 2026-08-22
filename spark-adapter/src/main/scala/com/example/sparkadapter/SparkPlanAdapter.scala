@@ -5,6 +5,7 @@ package com.example.sparkadapter
 
 import com.example.ir
 
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.expressions.{
   Alias,
   Ascending,
@@ -46,7 +47,8 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Window
 }
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation}
-import org.apache.spark.sql.sources.DataSourceRegister
+import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
+import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -134,8 +136,26 @@ object SparkPlanAdapter {
     */
   def locationOf(lr: LogicalRelation): String = lr.relation match {
     case h: HadoopFsRelation => h.location.rootPaths.headOption.map(_.toString).getOrElse(lr.relation.toString)
-    case _                    => lr.catalogTable.map(_.identifier.toString).getOrElse(lr.relation.toString)
+    case other                =>
+      jdbcLocationOf(other).getOrElse(lr.catalogTable.map(_.identifier.toString).getOrElse(lr.relation.toString))
   }
+
+  /** `JDBCRelation` is `private[sql]` in Spark, so it can't be named as a
+    * pattern-match type outside `org.apache.spark.sql` — but the
+    * `JDBCOptions` it carries (and returns from its public `jdbcOptions()`
+    * accessor) is a fully public class. Identifying the relation by its
+    * simple class name and fetching that accessor reflectively sidesteps
+    * the visibility restriction without needing Spark's own package, and
+    * gives a precise `url`/`table` location instead of the generic
+    * `catalogTable`/`toString` fallback every other non-file relation gets.
+    */
+  private def jdbcLocationOf(relation: BaseRelation): Option[String] =
+    if (relation.getClass.getSimpleName == "JDBCRelation") {
+      scala.util.Try {
+        val opts = relation.getClass.getMethod("jdbcOptions").invoke(relation).asInstanceOf[JDBCOptions]
+        s"jdbc:${opts.url}/${opts.tableOrQuery}"
+      }.toOption
+    } else None
 
   private class Translator {
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
@@ -149,7 +169,12 @@ object SparkPlanAdapter {
     def translatePlan(plan: LogicalPlan): ir.Plan = plan match {
       case cmd: InsertIntoHadoopFsRelationCommand =>
         val query = unwrapWriteWrapper(cmd.query)
-        ir.Write(ir.DatasetRef(cmd.outputPath.toString), translatePlan(query), formatOf(cmd.fileFormat))
+        ir.Write(
+          ir.DatasetRef(cmd.outputPath.toString),
+          translatePlan(query),
+          formatOf(cmd.fileFormat),
+          saveModeOf(cmd.mode)
+        )
 
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
@@ -166,6 +191,7 @@ object SparkPlanAdapter {
       case lr: LogicalRelation =>
         val usedFallback = lr.relation match {
           case h: HadoopFsRelation => h.location.rootPaths.isEmpty
+          case other if other.getClass.getSimpleName == "JDBCRelation" => false
           case _                    => lr.catalogTable.isEmpty
         }
         if (usedFallback)
@@ -254,6 +280,18 @@ object SparkPlanAdapter {
     private def formatOf(fileFormat: FileFormat): Option[String] = fileFormat match {
       case registered: DataSourceRegister => Some(registered.shortName())
       case _                                => None
+    }
+
+    /** Normalizes Spark's `SaveMode` enum to the same lowercase string
+      * vocabulary a contract's `saveMode` field uses ("append", "overwrite",
+      * "ignore", "error") — mirroring `formatOf`'s convention of matching
+      * whatever a contract author would naturally write.
+      */
+    private def saveModeOf(mode: SaveMode): Option[String] = mode match {
+      case SaveMode.Append        => Some("append")
+      case SaveMode.Overwrite     => Some("overwrite")
+      case SaveMode.ErrorIfExists => Some("error")
+      case SaveMode.Ignore        => Some("ignore")
     }
 
     private def unwrapWriteWrapper(plan: LogicalPlan): LogicalPlan =

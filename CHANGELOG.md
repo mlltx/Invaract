@@ -166,7 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as transparent pass-throughs — plus a test reading the same data via
   CSV, JSON, and Parquet to prove translation is genuinely format-agnostic
   (works at the `HadoopFsRelation` level, not per-format).
-  - This surfaced three real gaps, all now fixed (not just documented):
+  - This surfaced five real gaps, all now fixed (not just documented):
     - **Output format was never verified.** `ir.Write` gained a `format:
       Option[String]` field, populated via Spark's own
       `DataSourceRegister.shortName()`; `StructuralVerifier` gained
@@ -180,9 +180,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       transparent pass-through (doesn't change columns, only row count).
     - **`Repartition`/`Coalesce`/`RepartitionByExpression`** had the same
       problem and the same fix.
-  - Remaining gaps not yet fixed — `SaveMode` isn't captured by `ir.Write`
-    at all, and JDBC/non-file sources get a lower-fidelity location string
-    than file-based reads — tracked in ROADMAP.md Phase 1c "Scope (Future)".
+    - **`SaveMode` wasn't captured at all.** `ir.Write` gained a
+      `saveMode: Option[String]` field, populated from
+      `InsertIntoHadoopFsRelationCommand.mode`; the contract model gained
+      a matching `Dataset.saveMode`, and `StructuralVerifier` gained
+      `OUTPUT_SAVE_MODE_MISMATCH` — the same both-sides-known convention
+      as the format check. Proven end-to-end: `dev/regression`'s rendered
+      plan now shows `saveMode=overwrite`, matching the real demo
+      contract's declared `saveMode: overwrite`.
+    - **JDBC/non-file sources got a lower-fidelity location.**
+      `JDBCRelation` fell through `SparkPlanAdapter.locationOf`'s generic
+      `catalogTable`/`.toString` fallback (and was flagged with a fallback
+      `Diagnostic` on every JDBC read). Since `JDBCRelation` is
+      `private[sql]` in Spark and can't be named as a pattern-match type
+      here, it's now identified by class name with its public
+      `jdbcOptions()` accessor fetched reflectively, giving a precise
+      `"jdbc:<url>/<table>"` location and no diagnostic. Proven with a
+      real H2 in-memory-database read, not a mock.
 
 ### Fixed
 

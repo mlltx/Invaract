@@ -723,6 +723,37 @@ now replaced by tests proving the real behavior).
       column shape — all three are now transparent pass-throughs rather
       than falling to `Unsupported`.
 
+#### Sub-phase: SaveMode capture, JDBC location fidelity (done)
+
+The last two gaps found while extending `SparkPlanAdapterSpec`'s translation
+coverage (see the sub-phase above for the first three).
+
+- [x] **SaveMode capture and verification.** `ir.Write` gained a `saveMode:
+      Option[String]` field; `SparkPlanAdapter` populates it from
+      `InsertIntoHadoopFsRelationCommand.mode` (Spark's own `SaveMode` enum,
+      normalized to `"append"`/`"overwrite"`/`"error"`/`"ignore"`). The
+      contract model (`Dataset.saveMode`, parsed the same way as `format`)
+      and `StructuralVerifier` (`OUTPUT_SAVE_MODE_MISMATCH`, same
+      both-sides-known convention as the format check) followed the exact
+      pattern the format fix established. Proven end-to-end against a real
+      `spark-submit`-style write — `dev/regression`'s own rendered plan
+      output now shows `Write(location, format=parquet,
+      saveMode=overwrite)`, and the real demo contract
+      (`demo/contracts/invariant_output.yaml`) declares `saveMode:
+      overwrite` to match `PluginRunner.scala`'s actual
+      `.write.mode("overwrite")` call.
+- [x] **JDBC location fidelity.** `SparkPlanAdapter.locationOf` previously
+      sent every non-`HadoopFsRelation` relation — including `JDBCRelation`
+      — through the generic `catalogTable`/`.toString` fallback, and flagged
+      it with a fallback `Diagnostic`. `JDBCRelation` is `private[sql]` in
+      Spark, so it can't be named as a pattern-match type from this module;
+      it's now identified by simple class name and its public
+      `jdbcOptions()` accessor (returning the fully-public `JDBCOptions`)
+      is fetched reflectively, giving a precise `"jdbc:<url>/<table>"`
+      location with no fallback diagnostic. Proven with a real H2
+      in-memory-database read (`SparkPlanAdapterSpec`'s `"translates a JDBC
+      read..."` test), not a mock.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -745,16 +776,6 @@ now replaced by tests proving the real behavior).
       writes (matching `SparkPlanAdapter`'s translation coverage); other
       write command types (JDBC sinks, streaming writes, `saveAsTable`)
       are unexercised
-- [ ] Other real feature gaps found while extending translation-coverage
-      tests (`SparkPlanAdapterSpec`), not yet fixed:
-      - `SaveMode` (append/overwrite/ignore/error) is not captured by
-        `ir.Write` at all — a contract currently cannot express or verify
-        "this output must be overwritten, not appended to."
-      - Non-file-based sources (`JDBCRelation` and similar) fall back to
-        `SparkPlanAdapter.locationOf`'s `catalogTable`/`.toString` path,
-        which is a lower-fidelity location than the `HadoopFsRelation` path
-        file-based reads get — untested, and likely to produce a location
-        string a contract can't reliably match against.
 
 #### Dependencies
 

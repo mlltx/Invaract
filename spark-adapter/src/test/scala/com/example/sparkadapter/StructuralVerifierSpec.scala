@@ -426,4 +426,80 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
     assert(resultB.passed, s"an unknown actual format shouldn't be treated as a mismatch: ${resultB.violations}")
   }
+
+  // Previously a KNOWN GAP (see ROADMAP.md Phase 1c): SaveMode
+  // (append/overwrite/ignore/error) wasn't captured by `ir.Write` at all —
+  // a contract couldn't express or verify "this output must be
+  // overwritten, not appended to." SparkPlanAdapter now populates it (via
+  // InsertIntoHadoopFsRelationCommand.mode) and StructuralVerifier checks
+  // it, mirroring the format check above exactly.
+
+  test("OUTPUT_SAVE_MODE_MISMATCH: contract declares one save mode but the plan writes with another") {
+    val contract = realDemoContract()
+    assert(contract.outputs.head.saveMode.contains("overwrite"), "sanity check: the real demo contract does declare a saveMode")
+
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val bareWrite = realDemoPlan(outputDf)
+    val plan = bareWrite.asInstanceOf[com.example.ir.Write].copy(saveMode = Some("append"))
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputSaveModeMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_SAVE_MODE_MISMATCH violation, got: ${result.violations}"))
+    assert(violation.expected.contains("overwrite"))
+    assert(violation.actual.contains("append"))
+  }
+
+  test("save mode matches (case-insensitively): no violation when contract and actual save mode agree") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val bareWrite = realDemoPlan(outputDf)
+    val plan = bareWrite.asInstanceOf[com.example.ir.Write].copy(saveMode = Some("OVERWRITE"))
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+
+    assert(result.passed, s"expected matching save modes to pass: ${result.violations}")
+  }
+
+  test("save mode is not checked when the contract doesn't declare one, or the actual save mode is unknown") {
+    val inputDf = realDemoInput()
+    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val bareWrite = realDemoPlan(outputDf)
+
+    // Contract declares no saveMode at all.
+    val contractNoSaveMode = realDemoContract().copy(
+      outputs = realDemoContract().outputs.map(_.copy(saveMode = None))
+    )
+    val planWithSaveMode = bareWrite.asInstanceOf[com.example.ir.Write].copy(saveMode = Some("append"))
+    val resultA = StructuralVerifier.verify(
+      contractNoSaveMode,
+      planWithSaveMode,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+    assert(resultA.passed, s"a contract with no declared saveMode shouldn't check it at all: ${resultA.violations}")
+
+    // Contract declares a saveMode, but the adapter couldn't determine the
+    // actual one (saveMode = None, same as realDemoPlan's default synthetic wrap).
+    val resultB = StructuralVerifier.verify(
+      realDemoContract(),
+      bareWrite,
+      inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
+      outputSchema = outputDf.schema
+    )
+    assert(resultB.passed, s"an unknown actual saveMode shouldn't be treated as a mismatch: ${resultB.violations}")
+  }
 }

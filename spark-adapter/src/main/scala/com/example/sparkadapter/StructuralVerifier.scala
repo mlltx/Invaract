@@ -50,6 +50,7 @@ object ViolationType {
   val MissingOutput = "MISSING_OUTPUT"
   val OutputLocationMismatch = "OUTPUT_LOCATION_MISMATCH"
   val OutputFormatMismatch = "OUTPUT_FORMAT_MISMATCH"
+  val OutputSaveModeMismatch = "OUTPUT_SAVE_MODE_MISMATCH"
   val MissingOutputField = "MISSING_OUTPUT_FIELD"
   val UndeclaredOutputColumn = "UNDECLARED_OUTPUT_COLUMN"
   val OutputFieldTypeMismatch = "OUTPUT_FIELD_TYPE_MISMATCH"
@@ -175,7 +176,7 @@ object StructuralVerifier {
 
     val expectedOutput = contract.outputs.head
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
-      case Write(dataset, _, actualFormat) =>
+      case Write(dataset, _, actualFormat, actualSaveMode) =>
         val locationViolation =
           if (locationsMatch(expectedOutput.location, dataset.location)) Nil
           else
@@ -209,7 +210,22 @@ object StructuralVerifier {
             )
           case _ => Nil
         }
-        (locationViolation ++ formatViolation, checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields))
+        // Same both-sides-known convention as formatViolation above.
+        val saveModeViolation = (expectedOutput.saveMode, actualSaveMode) match {
+          case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
+            List(
+              Violation(
+                ViolationType.OutputSaveModeMismatch,
+                s"contract declares output save mode '$expected' but the plan writes with save mode '$actual'",
+                remediation =
+                  s"Write with save mode '$expected' instead, or update the contract's declared saveMode to '$actual' if this change is intentional.",
+                expected = Some(expected),
+                actual = Some(actual)
+              )
+            )
+          case _ => Nil
+        }
+        (locationViolation ++ formatViolation ++ saveModeViolation, checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields))
       case _ =>
         val violation = Violation(
           ViolationType.MissingOutput,

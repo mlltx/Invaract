@@ -144,8 +144,9 @@ workaround bolted onto the adapter alone.
 
 | Spark construct | IR translation |
 |---|---|
-| `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()`, `None` if it doesn't implement that trait |
+| `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` |
+| `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
 | `SubqueryAlias` over a `Read` | `Read(..., alias = Some(name))` |
 | `SubqueryAlias` over anything else | pass-through + `Diagnostic` (no generic aliased-subplan node in the IR) |
 | `Project` | `Project(input, columns)` |
@@ -276,6 +277,10 @@ From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
   case (this environment has no Hive metastore to verify against); it
   falls through to the generic `LogicalRelation` handling's
   `catalogTable`-based fallback, unverified against a real Hive session.
+  (`JDBCRelation` previously shared this fallback too — a real gap, since
+  the fallback's location has no reliable relationship to what a contract
+  would declare for a JDBC source — but now gets its own precise
+  `url`/`table`-based location; see the Translation coverage table above.)
 - **JDK 17+ requires `--add-opens` flags for `sbt test` and for the
   non-`spark-submit` fallback in `dev/test`.** Spark reflectively accesses
   JDK-internal classes (`sun.nio.ch.DirectBuffer` via
@@ -339,17 +344,18 @@ The result matches the spec's exact shape:
 }
 ```
 
-Thirteen violation types, covering inputs and outputs symmetrically:
+Fourteen violation types, covering inputs and outputs symmetrically:
 `MISSING_INPUT`, `UNDECLARED_INPUT`, `MISSING_INPUT_FIELD`,
 `UNDECLARED_INPUT_COLUMN`, `INPUT_FIELD_TYPE_MISMATCH`,
 `INPUT_FIELD_NULLABILITY_MISMATCH`, and the `OUTPUT_*` equivalents
 (`MISSING_OUTPUT`/`OUTPUT_LOCATION_MISMATCH` replace `MISSING_INPUT`'s role
 on the output side, since there's exactly one actual `Write` to compare
 against the contract's declared output, rather than a set of `Read`s to
-match by location). `OUTPUT_FORMAT_MISMATCH` is the one asymmetric
-addition — checked only for outputs, and only when both the contract's
-declared `format` and the actual write's format (from `ir.Write.format`)
-are known; either side being unset skips the check.
+match by location). `OUTPUT_FORMAT_MISMATCH` and `OUTPUT_SAVE_MODE_MISMATCH`
+are the two asymmetric additions — checked only for outputs, and each only
+when both the contract's declared value (`format`/`saveMode`) and the
+corresponding actual value from `ir.Write` are known; either side being
+unset skips the check.
 
 `runner/PluginRunner.scala` runs this against the real demo pipeline on
 every `./dev/test`, using `demo/contracts/invariant_output.yaml`. Kept in
@@ -482,20 +488,25 @@ cd spark-adapter
 sbt test
 ```
 
-29 tests against a real `local[*]` `SparkSession` (no mocked plans):
+46 tests against a real `local[*]` `SparkSession` (no mocked plans):
 
-- **`SparkPlanAdapterSpec`** (9) — a bare read, the worked example,
+- **`SparkPlanAdapterSpec`** (20) — a bare read, the worked example,
   filter+cast, self-join alias disambiguation, union, window, a UDF, an
-  unsupported construct, and a full write captured end-to-end through
-  `SparkAdapterListener`.
-- **`StructuralVerifierSpec`** (13) — the real demo pipeline passing its
+  unsupported construct, `Sort`, every `JoinType`, a multi-way join chain,
+  `COUNT`/`AVG`/`MIN`/`MAX`/`COUNT(DISTINCT ...)`, a multi-argument
+  aggregate, `CASE WHEN`/`IS NULL`, `.limit(n)`, `.distinct()`,
+  `.repartition()`/`.coalesce()`, format-agnosticism across CSV/JSON/
+  Parquet, a real H2 JDBC read, and a full write (format + save mode)
+  captured end-to-end through `SparkAdapterListener`.
+- **`StructuralVerifierSpec`** (19) — the real demo pipeline passing its
   own contract; every violation type (`MISSING_INPUT`, `UNDECLARED_INPUT`,
   `MISSING_OUTPUT`, `OUTPUT_LOCATION_MISMATCH`, `MISSING_OUTPUT_FIELD`,
   `UNDECLARED_OUTPUT_COLUMN`, `OUTPUT_FIELD_TYPE_MISMATCH`,
-  `OUTPUT_FIELD_NULLABILITY_MISMATCH`, and the input-side equivalents)
-  firing correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"`
-  example; and the relative-vs-absolute location matching, checked against
-  Spark's real reported paths.
+  `OUTPUT_FIELD_NULLABILITY_MISMATCH`, `OUTPUT_FORMAT_MISMATCH`,
+  `OUTPUT_SAVE_MODE_MISMATCH`, and the input-side equivalents) firing
+  correctly; the golden `UNDECLARED_OUTPUT_COLUMN`/`"country"` example; and
+  the relative-vs-absolute location matching, checked against Spark's real
+  reported paths.
 - **`ContractEnforcementRuleSpec`** (7) — PASS executes and creates
   output; FAIL aborts before any data is written; the explanation contains
   all four required sections; the same violation produces byte-identical

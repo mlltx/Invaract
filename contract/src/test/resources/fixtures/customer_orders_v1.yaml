@@ -25,6 +25,7 @@ outputs:
   - name: customer_orders
     location: gold.customer_orders
     format: table
+    saveMode: overwrite
     schema:
       fields:
         - name: customer_id

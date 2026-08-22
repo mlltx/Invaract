@@ -60,6 +60,7 @@ outputs:
   - name: customer_orders
     location: gold.customer_orders
     format: table
+    saveMode: overwrite
     schema:
       fields:
         - name: customer_id
@@ -102,6 +103,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `name` | yes | Logical name, referenced by `Contract.input(name)` / `.output(name)`. |
 | `location` | yes | Physical location (table name, path, topic). |
 | `format` | no | Storage/serialization format. |
+| `saveMode` | no | Expected write behavior toward existing data at `location` (`append`/`overwrite`/`ignore`/`error`). Meaningful for outputs only; checked against the plan's actual write mode. |
 | `schema.fields` | yes | List of fields (at least one). |
 
 Each field has:
@@ -134,7 +136,8 @@ Dataset
 ├── name: String
 ├── location: String
 ├── format: Option[String]
-└── schema: Schema(fields: List[Field])
+├── schema: Schema(fields: List[Field])
+└── saveMode: Option[String]
 
 Field
 ├── name: String

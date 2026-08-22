@@ -79,12 +79,13 @@ object ContractParser {
     val name = requireString(raw, "name", context)
     val location = requireString(raw, "location", context)
     val format = optString(raw, "format")
+    val saveMode = optString(raw, "saveMode")
     val schemaRaw = raw.getOrElse(
       "schema",
       throw new ContractParseException(s"Missing 'schema' in $context")
     )
     val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
-    Dataset(name, location, format, schema)
+    Dataset(name, location, format, schema, saveMode)
   }
 
   private def parseSchema(raw: Map[String, Any], context: String): Schema = {

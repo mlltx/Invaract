@@ -44,8 +44,12 @@ case class Read(dataset: DatasetRef, alias: Option[String] = None) extends Plan 
   *   translator couldn't identify it (e.g. a write path this IR doesn't
   *   yet model precisely). A contract's declared format can only be
   *   verified against this when it's populated.
+  * @param saveMode how this write behaves toward data already at `dataset`
+  *   ("append", "overwrite", "ignore", "error"), normalized from the
+  *   engine's own mode enum, when determinable — same "`None` means
+  *   unknown, not unset" convention as `format`.
   */
-case class Write(dataset: DatasetRef, input: Plan, format: Option[String] = None) extends Plan {
+case class Write(dataset: DatasetRef, input: Plan, format: Option[String] = None, saveMode: Option[String] = None) extends Plan {
   def children: List[Plan] = List(input)
 }
 

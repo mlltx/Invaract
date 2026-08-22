@@ -66,11 +66,13 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(lifetimeValue.sources.exists(_.name == "value"))
 
     result.plan match {
-      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None), List(ColumnReference(_)), aggregates), format) =>
+      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None), List(ColumnReference(_)), aggregates), format, saveMode) =>
         assert(aggregates.map(_.name) == List("id", "lifetime_value"))
         // translateAsWrite wraps a bare (never actually written) plan as a
-        // Write for convenience — there's no real format to report.
+        // Write for convenience — there's no real format or save mode to
+        // report.
         assert(format.isEmpty)
+        assert(saveMode.isEmpty)
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
   }
@@ -389,6 +391,45 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(parquetLocation.contains("sample_read_format_test.parquet"))
   }
 
+  // Previously a KNOWN GAP (see ROADMAP.md Phase 1c): a JDBCRelation fell
+  // through to locationOf's generic catalogTable/.toString fallback (the
+  // same lower-fidelity path a HadoopFsRelation only takes when it can't
+  // determine a root path), and translatePlan's LogicalRelation case
+  // treated that fallback as diagnostic-worthy for every JDBC read, even
+  // though JDBCRelation always carries a precise url/table identity of its
+  // own. locationOf now special-cases JDBCRelation directly.
+  test("translates a JDBC read with a precise location, not the generic relation fallback") {
+    val jdbcUrl = s"jdbc:h2:mem:invariant_test_${System.nanoTime()};DB_CLOSE_DELAY=-1"
+    val conn = java.sql.DriverManager.getConnection(jdbcUrl)
+    try {
+      val stmt = conn.createStatement()
+      stmt.execute("CREATE TABLE orders(id INT, amount INT)")
+      stmt.execute("INSERT INTO orders VALUES (1, 10), (2, 20)")
+      stmt.close()
+
+      val df = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", "orders")
+        .option("driver", "org.h2.Driver")
+        .load()
+
+      val result = SparkPlanAdapter.translate(df.queryExecution.analyzed)
+
+      result.plan match {
+        case Read(DatasetRef(location), None) =>
+          assert(location.contains(jdbcUrl), s"expected the JDBC url in the location, got '$location'")
+          assert(location.contains("ORDERS") || location.contains("orders"), s"expected the table name in the location, got '$location'")
+        case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+      }
+      // The whole point of the fix: a JDBC read is precise enough that it
+      // shouldn't be flagged as having used the generic fallback.
+      assert(result.diagnostics.isEmpty, s"a JDBC read should not need a fallback diagnostic: ${result.diagnostics}")
+    } finally {
+      conn.close()
+    }
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)
@@ -405,13 +446,15 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
         listener.lastWrite.getOrElse(fail("listener has not captured a write yet"))
       }
       result.plan match {
-        case Write(DatasetRef(location), Aggregate(Read(_, None), _, aggregates), format) =>
+        case Write(DatasetRef(location), Aggregate(Read(_, None), _, aggregates), format, saveMode) =>
           assert(location.contains("customer_orders.parquet"))
           assert(aggregates.map(_.name) == List("id", "lifetime_value"))
           // A real write via spark-submit-style DataFrame.write.parquet(...)
-          // — proves format capture works on the actual end-to-end path,
-          // not just a hand-built InsertIntoHadoopFsRelationCommand.
+          // — proves format and save mode capture both work on the actual
+          // end-to-end path, not just a hand-built
+          // InsertIntoHadoopFsRelationCommand.
           assert(format.contains("parquet"))
+          assert(saveMode.contains("overwrite"))
         case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
       }
 

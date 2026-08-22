@@ -29,7 +29,15 @@ class ContractParserTest extends AnyFunSuite {
 
     val output = contract.output("customer_orders").get
     assert(output.location == "gold.customer_orders")
+    assert(output.saveMode.contains("overwrite"))
     assert(output.schema.field("total_orders").exists(_.fieldType == "integer"))
+  }
+
+  test("parseFile should treat saveMode as optional, defaulting to None when absent") {
+    val contract = ContractParser.parseFile(fixture("customer_orders_v1.yaml"))
+    val orders = contract.input("orders").get
+
+    assert(orders.saveMode.isEmpty)
   }
 
   test("parseFile should capture field nullability and required flags") {

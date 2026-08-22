@@ -65,12 +65,17 @@ case class Schema(fields: List[Field]) {
   *
   * @param location physical location of the dataset (table name, path, topic, etc.)
   * @param format   optional storage/serialization format (e.g. "table", "parquet", "delta")
+  * @param saveMode optional expected write behavior for an output dataset
+  *   toward data already present at `location` (e.g. "append", "overwrite",
+  *   "ignore", "error"). Meaningless for an input dataset; only checked by
+  *   `StructuralVerifier` against a plan's `Write` node.
   */
 case class Dataset(
   name: String,
   location: String,
   format: Option[String],
-  schema: Schema
+  schema: Schema,
+  saveMode: Option[String] = None
 )
 
 /** A declarative rule attached to the contract (e.g. compatibility mode,

@@ -10,7 +10,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+  "com.h2database" % "h2" % "2.2.224" % "test"
 )
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invariant-ir-0.1.0.jar")
