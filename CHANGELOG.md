@@ -282,6 +282,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the pinned Spark 3.5.1) — left in place with their rationale
   rather than chased further. Verified via a real `sbt stryker` run before
   and after (57.06% → 91.53%), not estimated.
+- **JSON Schema for the contract format**
+  (`contract/schema/invariant-contract.schema.json`, Draft 2020-12): the
+  actual public, language-agnostic interface for authoring or generating
+  an Invariant contract outside Scala — distinct from (and a better fit
+  than) an earlier idea to publish a schema for `demo/output/report.json`,
+  which turned out to be solving a problem the demo harness's own output
+  format doesn't have (nothing external consumes it; see CLAUDE.md's
+  "What's the product, and what's the test harness"). The schema mirrors
+  `ContractParser`'s hard parse failures (id/version shape, dataset/field
+  required keys) plus `ContractValidator`'s Error-level checks where a
+  bare parse-only schema would accept a document validation immediately
+  rejects anyway (non-empty `outputs`, non-empty `fields`); it
+  deliberately does not attempt duplicate-name detection or other
+  cross-field business rules, and does not restrict `field.type` to an
+  enum, since an unrecognized type is only a `ContractValidator` Warning,
+  not a rejection. New `ContractSchemaSpec` (6 tests) validates the schema
+  against the same real fixtures used elsewhere in the module, both ways
+  — every valid fixture (including one with real validator *warnings*)
+  conforms, both invalid fixtures are rejected — so the schema can't
+  silently drift from the parser/validator it documents. `demo/contracts/
+  *.yaml` gained a `yaml-language-server` `$schema` comment for live
+  editor validation. Documented in docs/CONTRACT_MODEL.md's new "JSON
+  Schema" section. Verified via a full local `./dev/build` + `./dev/test`
+  + `./dev/regression` run (all pass) after adding the schema and the
+  editor-hint comments.
 
 ### Fixed
 

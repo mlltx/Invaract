@@ -257,6 +257,58 @@ the test suite:
 | `invalid_no_outputs.yaml` | Parses fine, but validator errors on zero outputs. |
 | `warnings_field_issues.yaml` | Parses fine, but validator reports duplicate field name, required+nullable contradiction, and an unrecognized type. |
 
+## JSON Schema
+
+`contract/schema/invariant-contract.schema.json` (Draft 2020-12) is a
+standalone, language-agnostic description of the same document shape
+`ContractParser`/`ContractValidator` accept — the actual public interface
+for anyone authoring or generating an Invariant contract in a language
+other than Scala (or wanting IDE validation/autocomplete while writing
+one by hand). This is a genuinely different concern from
+`demo/output/report.json`: the contract format is something external
+authors and tooling bind to; `report.json` is an internal artifact of the
+demo test harness that nothing outside this repository consumes (see
+CLAUDE.md's "What's the product, and what's the test harness").
+
+The schema is deliberately not a 1:1 mirror of every rule the Scala
+implementation enforces — it sits between two layers:
+
+- **Mirrors `ContractParser`'s hard failures** (`ContractParseException`):
+  `id`/`version` presence and shape, a dataset's `name`/`location`/
+  `schema`, a field's `name`/`type`, a schema's `fields` key.
+- **Mirrors `ContractValidator`'s Error-level checks**, not just the bare
+  parser, in two places: `outputs` is required and non-empty, and a
+  schema's `fields` array must be non-empty — a document that merely
+  parses but is immediately rejected by validation isn't a useful
+  "valid contract" for this schema's purpose either.
+- **Does not attempt** duplicate-name detection (dataset names, field
+  names) or cross-field business rules (e.g. `required` and `nullable`
+  both `true` — a `ContractValidator` Warning, not an Error). JSON Schema
+  has no clean way to express "unique by nested key," and business-rule
+  checks like this are exactly what stay engine-only, not
+  structural-shape concerns.
+- **Does not restrict `field.type` to an enum**, even though
+  `ContractValidator.KnownTypes` lists the recognized set — an
+  unrecognized type is only a Warning there, so a contract using a type
+  this version of Invariant doesn't yet know about still validates
+  against the schema, matching what the real parser actually accepts.
+
+`ContractSchemaSpec` (`contract/src/test/scala/com/example/contract/`)
+validates the schema against the same fixtures above, both ways: every
+valid fixture (including `warnings_field_issues.yaml`, which has real
+`ContractValidator` warnings but is still schema-conformant) must
+validate cleanly, and both `invalid_*.yaml` fixtures must be rejected.
+This is what keeps the schema from silently drifting out of sync with
+the Scala implementation it documents as that implementation evolves —
+nothing in the contract module's own runtime consults the schema file,
+so there's no compiler to catch drift otherwise.
+
+`demo/contracts/*.yaml` (the real contracts the demo harness runs
+against) each carry a `# yaml-language-server: $schema=...` comment
+pointing at the schema, so an editor with the
+[YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
+extension validates and autocompletes them live while editing.
+
 ## What Phase 1 Does *Not* Do Yet
 
 This is the contract **model**, not the verification **engine**. Out of
@@ -275,14 +327,14 @@ cd contract
 sbt test
 ```
 
-31 tests across `ContractParserTest`, `ContractValidatorTest`, and
-`ContractCompatibilityTest` — parsing success and failure paths, every
-validator rule, and every compatibility classification, all run against real
-fixture files (not just in-memory case classes) plus targeted case-class
-constructions for edge cases fixtures can't easily express (e.g. contradictory
-flags).
+38 tests across `ContractParserTest`, `ContractValidatorTest`,
+`ContractCompatibilityTest`, and `ContractSchemaSpec` — parsing success and
+failure paths, every validator rule, every compatibility classification, and
+the JSON Schema's conformance both ways, all run against real fixture files
+(not just in-memory case classes) plus targeted case-class constructions for
+edge cases fixtures can't easily express (e.g. contradictory flags).
 
 ---
 
-**Last Updated:** 2024-08-20
+**Last Updated:** 2026-08-22
 **Status:** Phase 1 — Contract Model, initial implementation

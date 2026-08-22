@@ -5,7 +5,13 @@ organization := "com.example"
 
 libraryDependencies ++= Seq(
   "org.yaml" % "snakeyaml" % "2.2",
-  "org.scalatest" %% "scalatest" % "3.2.18" % "test"
+  "org.scalatest" %% "scalatest" % "3.2.18" % "test",
+  // Validates contract/schema/invariant-contract.schema.json against real
+  // fixtures (ContractSchemaSpec) - test-scoped only. The schema is a
+  // static artifact for external tooling to bind to; nothing in the
+  // contract module's own runtime parses YAML against it (ContractParser/
+  // ContractValidator remain the authoritative implementation).
+  "com.networknt" % "json-schema-validator" % "1.4.1" % "test"
 )
 
 scalacOptions ++= Seq(

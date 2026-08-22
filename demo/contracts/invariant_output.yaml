@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
 id: invariant_demo_output
 version: "1.0.0"
 status: active
