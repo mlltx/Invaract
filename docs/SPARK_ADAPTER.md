@@ -706,9 +706,11 @@ module exposes) are its binary API surface — checked by
 [MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
 CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
 for the full mechanism: no Maven Central release exists yet to compare
-against, so CI publishes the PR's base branch to the runner's local Ivy
-cache first and diffs the PR's head against that instead — the same
-rolling, base-branch-relative comparison the incremental mutation-testing
+against, so CI publishes a recent prior commit (the previous push's
+HEAD, not the PR's own base commit - this PR predates `spark-adapter`
+itself, so its base commit doesn't even have this module) to the
+runner's local Ivy cache first and diffs the PR's head against that
+instead — the same rolling comparison the incremental mutation-testing
 check above uses, and for the same reason.
 
 To see the translation adapter running against the actual demo pipeline:

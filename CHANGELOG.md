@@ -316,13 +316,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as every other guardrail here). No Maven Central release exists yet to
   compare against, so `mimaPreviousArtifacts` in each module's `build.sbt`
   points at its own `0.1.0` coordinate, and a new CI job
-  (`api-compatibility` in `.github/workflows/test.yml`) publishes the PR's
-  base branch to the runner's local Ivy cache under that coordinate first,
-  then runs `sbt mimaReportBinaryIssues` against the PR's head — the same
-  rolling, base-branch-relative comparison the incremental mutation-testing
-  check already uses, for the same reason. Runs on every `pull_request`
-  event automatically and feeds into the `summary` gate like every other
-  job, making it a mandatory check, not an opt-in one. Verified detection
+  (`api-compatibility` in `.github/workflows/test.yml`) publishes a recent
+  prior commit to the runner's local Ivy cache under that coordinate
+  first, then runs `sbt mimaReportBinaryIssues` against the PR's head —
+  the same rolling comparison the incremental mutation-testing check
+  already uses, for the same reason. That prior commit is the previous
+  push's HEAD (`github.event.before`), not the PR's base branch: fixed on
+  this job's first real CI run, which failed outright
+  (`base-ref/contract: No such file or directory`) diffing against the
+  PR's base commit — this repo's PR #1 has been open since before
+  `contract`/`ir`/`spark-adapter` existed, so its base commit predates
+  those modules entirely, the exact same root cause the incremental
+  mutation-testing check's base-diffing bug had, fixed the same way.
+  Runs on every `pull_request` event automatically and feeds into the
+  `summary` gate like every other job, making it a mandatory check, not
+  an opt-in one. Verified detection
   actually works, not just that the task runs: temporarily removed
   `Contract.input` locally, confirmed `mimaReportBinaryIssues` failed with
   the exact symbol and a ready-to-use `ProblemFilters.exclude[...]`

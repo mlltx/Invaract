@@ -318,8 +318,8 @@ this module's binary API surface — checked by
 [MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
 CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
 for the full mechanism (why there's no Maven Central release to compare
-against yet, how CI substitutes the PR's own base branch, and what to do
-when it fails). The case classes here are exactly the shape most likely to
+against yet, how CI substitutes a recent prior commit instead, and what
+to do when it fails). The case classes here are exactly the shape most likely to
 break by accident: adding a field to `Field` or `Dataset` without putting
 it last, or reordering `Contract`'s constructor parameters, breaks every
 already-compiled caller even though nothing in this repository's own

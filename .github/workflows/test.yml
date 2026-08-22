@@ -376,24 +376,45 @@ jobs:
     # MiMa (sbt-mima-plugin) needs a previously *published* artifact to
     # diff the current build against, and there's no Maven Central release
     # of contract/ir/spark-adapter yet to compare to. Rather than skip the
-    # check entirely until a real release exists, this job publishes the
-    # PR's own base branch to the local Ivy cache first (each module's
+    # check entirely until a real release exists, this job publishes a
+    # recent prior commit to the local Ivy cache first (each module's
     # build.sbt already declares `mimaPreviousArtifacts` under the same
     # org/name/version its own `publishLocal` produces), then runs
-    # `sbt mimaReportBinaryIssues` against the PR's head - "did this PR
-    # break binary compatibility with its own base branch," the same
-    # rolling-comparison approach the incremental mutation-testing job
-    # above already uses for the same reason. Only meaningful with a base
-    # to diff against, so PR-only, like that job's incremental step.
+    # `sbt mimaReportBinaryIssues` against the PR's head - "did this push
+    # break binary compatibility with the previous one." Only meaningful
+    # with a base to diff against, so PR-only.
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
 
+      # The base commit is the PREVIOUS push's HEAD (github.event.before,
+      # populated on `synchronize` events), not the PR's base branch:
+      # this exact PR (#1) has been open since before contract/ir/
+      # spark-adapter existed at all, so its base commit predates those
+      # modules entirely - `github.event.pull_request.base.sha` resolved
+      # to the repo's literal first commit, and `base-ref/contract` simply
+      # didn't exist there ("No such file or directory", confirmed the
+      # hard way on this job's first real run). Same root cause the
+      # incremental mutation-testing step above already worked around,
+      # same fix: diff against the previous push instead, falling back to
+      # the PR's base commit only on its first run (`opened`/`reopened`,
+      # where `before` is absent or the all-zero SHA).
+      - name: Determine base commit to compare against
+        id: base-ref
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.before }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          fi
+          echo "Diffing against base commit: $BASE_SHA"
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
       - name: Checkout PR base ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.base-ref.outputs.sha }}
           path: base-ref
 
       - name: Set up JDK 21

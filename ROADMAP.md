@@ -894,14 +894,22 @@ catch it.
       own `com.example %% <module> % 0.1.0` coordinate — there's no Maven
       Central release yet to compare against, so CI's new
       `api-compatibility` job (`.github/workflows/test.yml`) publishes
-      the PR's base branch to the runner's local Ivy cache under that
+      a recent prior commit to the runner's local Ivy cache under that
       exact coordinate first (`sbt publishLocal`, after building
       `contract`/`ir`'s assembly jars so `spark-adapter`'s
       `unmanagedJars`-based compile succeeds in both checkouts), then runs
-      `sbt mimaReportBinaryIssues` against the PR's head — the PR's own
-      base branch stands in for "the previous release" the same way the
-      incremental mutation-testing check's previous-push comparison does,
-      for the same reason.
+      `sbt mimaReportBinaryIssues` against the PR's head — that prior
+      commit stands in for "the previous release," the same way the
+      incremental mutation-testing check's previous-push comparison does.
+    - **Fixed on first real CI run**: initially diffed against
+      `github.event.pull_request.base.sha` (the PR's base branch), which
+      failed outright (`base-ref/contract: No such file or directory`) —
+      this repo's PR #1 has been open since before `contract`/`ir`/
+      `spark-adapter` existed, so its base commit predates those modules
+      entirely, the same root cause the incremental mutation-testing
+      check's base-diffing bug had. Same fix: diff against
+      `github.event.before` (the previous push's HEAD) instead, falling
+      back to the PR's base commit only on its first run.
     - Verified the detection actually works, not just that the task runs
       cleanly: temporarily removed a public method
       (`Contract.input`) locally, confirmed

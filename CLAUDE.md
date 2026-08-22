@@ -137,13 +137,19 @@ this repository itself.
 
 There is no Maven Central release yet to compare against, so each
 module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
-`org.example %% <module> % 0.1.0` coordinate, and CI's
-`api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
-base branch to the runner's local Ivy cache under that exact coordinate
+`com.example %% <module> % 0.1.0` coordinate, and CI's
+`api-compatibility` job (`.github/workflows/test.yml`) publishes a recent
+prior commit to the runner's local Ivy cache under that exact coordinate
 before running `sbt mimaReportBinaryIssues` against the PR's head — "did
-this PR break compatibility with its own base branch," the same
-rolling-comparison approach the incremental mutation-testing job uses for
-the same reason (no formal prior release to anchor to yet). This job is
+this push break compatibility with the previous one." That prior commit
+is the previous push's HEAD (`github.event.before`), not the PR's base
+branch — falling back to the PR's base commit only on its first run —
+the same rolling-comparison approach the incremental mutation-testing job
+uses, and for the same underlying reason: this repo's own PR #1 has been
+open since before `contract`/`ir`/`spark-adapter` existed, so its base
+commit predates those modules entirely and can't be diffed against
+directly (confirmed the hard way on this job's first real CI run). This
+job is
 part of the `summary` gate like every other CI job here, so a real binary
 break fails the PR's overall status — the same "mandatory, automatic"
 enforcement every other guardrail in this repo gets, not a separate
