@@ -488,7 +488,7 @@ cd spark-adapter
 sbt test
 ```
 
-46 tests against a real `local[*]` `SparkSession` (no mocked plans):
+47 tests against a real `local[*]` `SparkSession` (no mocked plans):
 
 - **`SparkPlanAdapterSpec`** (20) — a bare read, the worked example,
   filter+cast, self-join alias disambiguation, union, window, a UDF, an
@@ -514,6 +514,53 @@ sbt test
   trigger verification even under an always-failing contract;
   `VerificationOptions` thread through the enforcement path;
   `forContract`'s public entry point works directly.
+- **`SparkPlanAdapterFuzzSpec`** (1 property, ~200 generated cases per run)
+  — random chains of the operations `SparkPlanAdapterSpec` tests
+  individually (filter, recomputed columns, sort, aggregate, self-join,
+  union, distinct, limit, repartition/coalesce, CASE WHEN), composed in
+  random order and depth, asserting `translate`/`render`/`trace` never
+  throw and any `Unsupported` node carries a `Diagnostic`. See *Property-
+  based fuzzing* below.
+
+### Property-based fuzzing
+
+`SparkPlanAdapterFuzzSpec` (`spark-adapter/src/test/scala/.../SparkPlanAdapterFuzzSpec.scala`)
+exists because example-based tests only prove the adapter handles the
+examples someone thought to write. The class doc's "never throws" promise
+is a claim about *every* plan the adapter might ever see, not just the ~20
+hand-picked ones in `SparkPlanAdapterSpec` — and those only ever exercise
+one construct at a time, never combinations or nesting.
+
+The spec defines a small `Step` ADT (`FilterStep`, `RecomputeValueStep`,
+`SortStep`, `AggregateStep`, `SelfJoinStep`, `UnionSelfStep`,
+`DistinctStep`, `LimitStep`, `RepartitionStep`, `CaseWhenStep`) and a
+ScalaCheck generator that produces random chains of 1-6 steps. Every step
+is designed to preserve a fixed canonical schema
+(`id: Int, value: Int, name: String, active: Boolean`) — including
+`AggregateStep` (which groups by `id` and re-selects the aggregate back
+into `value`) and `SelfJoinStep` (which joins the frame against itself and
+re-projects the left side back down to the four canonical columns). That
+means the generator never has to track a live schema to decide what's
+valid at each step — any sequence of steps composes into a real, resolvable
+Spark query — so the randomness lands entirely on plan *shape and depth*,
+which is exactly what the hand-written spec doesn't cover.
+
+Each generated case builds the chain against a real `local[*]` session,
+takes `.queryExecution.analyzed` (cheap — analysis only, no job ever
+executes), and asserts `SparkPlanAdapter.translate`/`PlanPrinter.render`/
+`Lineage.trace` all complete without throwing, and that any `Unsupported`
+node in the result is paired with a `Diagnostic` (the pairing the class
+doc promises). ~200 cases run in a few seconds inside the existing forked
+test JVM.
+
+This is validated to actually catch bugs, not just pass by construction:
+during development, `translateJoinType`'s `Inner` case was temporarily
+changed to throw, and the fuzz spec failed on its very first generated
+case — a single-step `List(SelfJoinStep)` chain — with the full analyzed
+Catalyst plan and exception in the failure message, enough to reproduce
+and fix without needing ScalaCheck's shrinking (which isn't used here,
+since `forAll` is called with an explicit `Gen` rather than an `Arbitrary`
+instance).
 
 To see it running against the actual demo pipeline:
 

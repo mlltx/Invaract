@@ -197,6 +197,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       `jdbcOptions()` accessor fetched reflectively, giving a precise
       `"jdbc:<url>/<table>"` location and no diagnostic. Proven with a
       real H2 in-memory-database read, not a mock.
+- **Property-based fuzzing of `SparkPlanAdapter`** (`SparkPlanAdapterFuzzSpec`,
+  `scalatestplus-scalacheck-1-17`): the first of several "market leading
+  regression testing" guardrails identified for this project (others —
+  mutation testing, `report.json` golden-file snapshots, a multi-Spark-
+  version compatibility matrix, coverage gating, API-compatibility
+  checking — remain future scope, tracked in ROADMAP.md Phase 1c).
+  Generates random chains (1-6 steps, ~200 cases/run) of the same
+  operations `SparkPlanAdapterSpec` tests individually — filter, recomputed
+  columns, sort, aggregate, self-join, union, distinct, limit, repartition/
+  coalesce, `CASE WHEN` — composed in random order and depth against a
+  real `local[*]` session, asserting `translate`/`render`/`trace` never
+  throw and any `Unsupported` node carries a `Diagnostic`, directly testing
+  the adapter's own "never throws" design promise across combinations the
+  hand-written suite doesn't reach. Validated to actually catch
+  regressions (not just pass by construction): a join-type translation was
+  temporarily broken to throw, the fuzz spec failed on its very first
+  case with the full analyzed plan and exception in the failure message,
+  then the break was reverted.
 
 ### Fixed
 

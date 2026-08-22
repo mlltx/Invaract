@@ -754,6 +754,38 @@ coverage (see the sub-phase above for the first three).
       in-memory-database read (`SparkPlanAdapterSpec`'s `"translates a JDBC
       read..."` test), not a mock.
 
+#### Sub-phase: Property-based fuzzing of the Spark adapter (done)
+
+The first of several regression-testing guardrails identified when
+assessing what "market leading" regression coverage would need beyond the
+example-based suites above (property-based fuzzing, mutation testing,
+golden-file snapshots of `report.json`, a multi-Spark-version compatibility
+matrix, coverage gating, and API-compatibility checking — this sub-phase is
+the first; the rest remain future scope).
+
+- [x] **`SparkPlanAdapterFuzzSpec`.** `SparkPlanAdapter`'s class doc
+      promises it never throws on an unrecognized construct — a promise
+      only as trustworthy as what's been thrown at it. The hand-written
+      `SparkPlanAdapterSpec` exercises each translated construct once, in
+      isolation; it never tests combinations or nesting depth. This spec
+      (ScalaCheck via `scalatestplus-scalacheck-1-17`) generates random
+      chains (1-6 steps, ~200 cases/run) of the same operations —
+      `Filter`, recomputed columns, `Sort`, `Aggregate`, a self-`Join`,
+      `Union`, `Distinct`, `Limit`, `Repartition`/`Coalesce`, `CASE WHEN`
+      — composed in random order against a real `local[*]` session, and
+      asserts `translate`/`PlanPrinter.render`/`Lineage.trace` never throw,
+      and that any `Unsupported` node is paired with a `Diagnostic` as
+      documented. Every step preserves a fixed canonical schema (including
+      through `Aggregate` and the self-`Join`, both of which re-project
+      back down to it), so the generator never needs to track a live
+      schema — the randomness is in plan *shape*, not in producing
+      intentionally-invalid SQL.
+    - Validated to actually catch regressions, not just pass by
+      construction: a join-type translation was temporarily broken to
+      throw, confirmed the fuzz spec failed immediately (1 case, shrunk to
+      a single-step `SelfJoinStep` chain, with the full analyzed plan and
+      exception in the failure message), then reverted.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
