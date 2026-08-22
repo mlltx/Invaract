@@ -786,6 +786,47 @@ the first; the rest remain future scope).
       a single-step `SelfJoinStep` chain, with the full analyzed plan and
       exception in the failure message), then reverted.
 
+#### Sub-phase: Mutation testing of Lineage and StructuralVerifier (done)
+
+The second regression-testing guardrail (see the sub-phase above for the
+first). [Stryker4s](https://github.com/stryker-mutator/stryker4s) answers
+a question coverage percentage can't: not "does a test execute this line"
+but "does a test actually verify this line's *behavior*" — it mutates a
+source file (flip `==`/`!=`, `&&`/`||`, `exists`/`forall`, delete a string
+literal, ...), reruns the real suite per mutant, and reports which mutants
+survived (every test still passed despite the code now being wrong).
+
+- [x] **Wired in, scoped to the two files where a wrong answer is worse
+      than an incomplete one**: `Lineage.scala` (`ir`) and
+      `StructuralVerifier.scala` (`spark-adapter`), via each module's
+      `stryker4s.conf` + `build.sbt`'s `strykerMutate` setting (the
+      `mutate` key in `stryker4s.conf` itself was observed not to take
+      effect with this sbt/plugin combination — documented in both
+      files). Required bumping `sbt.version` from `1.9.8` to `1.11.7` in
+      just these two modules' `project/build.properties` (Stryker4s 1.1.1
+      requires sbt ≥ 1.11.2); the full existing test suites for both
+      modules were rerun and confirmed unaffected by the bump before
+      proceeding.
+    - `ir`: 44.4% mutation score (8/18 mutants, 80% of covered code).
+      Real survivors: `Join`'s ambiguous-both-sides `aggregated`
+      propagation (`||` could silently become `&&`), and `Project`'s
+      `resolveInScope` column-name matching (covered, but no assertion
+      distinguishes "the right column" from "some column that happened
+      to satisfy the test").
+    - `spark-adapter`: 50.0% mutation score (36/86 mutants). Most
+      survivors are low-priority `StringLiteral` mutants on
+      human-readable message/remediation text. Real survivors: the
+      `exists`/`forall` swaps in the `MISSING_INPUT`/`UNDECLARED_INPUT`
+      matching predicates, and `field.required` forced to always `true`
+      in `checkSchema` (no test proves an absent *optional* field is
+      correctly *not* flagged).
+    - Full details, caveats (coverage-based test selection can produce a
+      "Survived" that the full suite would actually catch), and the
+      published HTML reports: see docs/SPARK_ADAPTER.md's "Mutation
+      testing" section and docs/TRANSFORMATION_IR.md's equivalent.
+    - Deliberately narrow first pass: not yet wired into CI as a gate,
+      and `mutate` not yet widened beyond these two files.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

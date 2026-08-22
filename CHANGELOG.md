@@ -215,6 +215,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporarily broken to throw, the fuzz spec failed on its very first
   case with the full analyzed plan and exception in the failure message,
   then the break was reverted.
+- **Mutation testing of `Lineage` and `StructuralVerifier`** (Stryker4s):
+  the second regression-testing guardrail (remaining scope — golden-file
+  `report.json` snapshots, a multi-Spark-version compatibility matrix,
+  coverage gating, API-compatibility checking — tracked in ROADMAP.md
+  Phase 1c). Mutates a source file (flip `==`/`!=`, `&&`/`||`,
+  `exists`/`forall`, delete a string literal, ...) and reruns the real
+  test suite per mutant, answering "does a passing test actually verify
+  this line's behavior" rather than just "does it execute the line" —
+  something line coverage can't distinguish. Scoped to `ir/Lineage.scala`
+  and `spark-adapter/StructuralVerifier.scala`, the two files where a
+  wrong answer is worse than an incomplete one. Required bumping
+  `sbt.version` to `1.11.7` in just those two modules (Stryker4s 1.1.1
+  needs sbt ≥ 1.11.2); both modules' full test suites confirmed unaffected
+  by the bump. Initial mutation scores: `ir` 44.4% (8/18, 80% of covered
+  code), `spark-adapter` 50.0% (36/86) — with real, actionable survivors
+  found in both (`Join`'s ambiguous-aggregation propagation and
+  `Project`'s column-name matching in `Lineage`; the `exists`/`forall`
+  input-matching predicates and `field.required` handling in
+  `StructuralVerifier`), documented with file/line references in
+  docs/SPARK_ADAPTER.md and docs/TRANSFORMATION_IR.md. Not yet wired into
+  CI as a gate; `mutate` not yet widened beyond these two files.
 
 ### Fixed
 

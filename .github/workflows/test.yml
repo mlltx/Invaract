@@ -49,8 +49,10 @@ jobs:
 
       # Run from inside a module directory, not the repo root: the sbt
       # launcher picks its actual sbt version from project/build.properties
-      # in the current directory (every module pins sbt.version=1.9.8), and
-      # the repo root has no project/ dir of its own (no aggregating root
+      # in the current directory (each module pins its own sbt.version --
+      # 1.9.8 for contract/plugin/runner, 1.11.7 for ir/spark-adapter, the
+      # latter bumped for Stryker4s's minimum sbt requirement), and the
+      # repo root has no project/ dir of its own (no aggregating root
       # build). Run at the repo root, it falls back to the newest sbt
       # release (2.x), which refuses to run on JDK <17 and broke this step
       # on every Java-11 leg.

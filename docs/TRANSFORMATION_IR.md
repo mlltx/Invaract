@@ -257,6 +257,40 @@ ambiguous — `Window` pass-through-plus-new-columns, and `Union`), and
 `PlanPrinterSpec` (rendering of each node kind). All run against real
 constructed plans, not mocks.
 
+### Mutation testing
+
+[Stryker4s](https://github.com/stryker-mutator/stryker4s) checks whether
+`LineageSpec`'s passing tests actually verify `Lineage`'s resolution logic,
+not just execute it — see docs/SPARK_ADAPTER.md's "Mutation testing"
+section for the full explanation of what this catches that coverage
+can't. `ir/stryker4s.conf` and `build.sbt`'s `strykerMutate` setting scope
+this to `Lineage.scala` (the file responsible for column-level provenance
+correctness). Run it with:
+
+```bash
+cd ir
+sbt stryker
+# HTML report: target/stryker4s-report/<timestamp>/index.html
+```
+
+An initial run scored **44.4%** (8/18 mutants, 80% of the mutants in
+actually-covered code). Two survivors are worth knowing about:
+
+- **`l.aggregated || r.aggregated` → `&&`** (`Lineage.scala:120`, `Join`'s
+  ambiguous-both-sides resolution) — no test constructs an unqualified
+  column name that resolves on both join sides with *different*
+  aggregation status, so the `||` could silently become `&&` (or vice
+  versa) without any test noticing.
+- **`columns.find(_.name == ref.name)` → `!=`** (`Lineage.scala:97`,
+  `Project`'s name-matching in `resolveInScope`) — covered by some test,
+  but nothing in that test's assertions distinguishes "resolved to the
+  correctly-named column" from "resolved to some other column that
+  happened to satisfy the assertion anyway."
+
+This is a first pass, scoped deliberately narrow (see `ROADMAP.md` Phase
+1c) — `sbt stryker` is not yet wired into CI as a gate, and `mutate` is
+not yet widened to the rest of the module.
+
 ---
 
 **Last Updated:** 2026-08-21

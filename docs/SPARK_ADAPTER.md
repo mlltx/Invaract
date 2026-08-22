@@ -562,7 +562,58 @@ and fix without needing ScalaCheck's shrinking (which isn't used here,
 since `forAll` is called with an explicit `Gen` rather than an `Arbitrary`
 instance).
 
-To see it running against the actual demo pipeline:
+### Mutation testing
+
+Property-based fuzzing (above) answers "does the adapter ever throw?" — a
+different, complementary question is "do the tests that pass actually
+verify correct behavior, or just execute the code?" [Stryker4s](https://github.com/stryker-mutator/stryker4s)
+answers that: it generates small deliberate bugs ("mutants") in a source
+file — flip a `==` to `!=`, an `&&` to `||`, `.exists` to `.forall`, delete
+a string literal — recompiles, and reruns the real test suite against each
+one. A test failing means the mutant is *killed* (good — something
+verifies that logic); every test still passing means it *survived*, which
+100% line coverage cannot detect.
+
+`spark-adapter/stryker4s.conf` and `build.sbt`'s `strykerMutate` setting
+scope this to `StructuralVerifier.scala` — the file this project's whole
+value proposition rests on, where a false negative (a real contract
+violation nothing reports) is a far worse failure mode than incomplete
+coverage elsewhere. Run it with:
+
+```bash
+cd spark-adapter
+sbt stryker
+# HTML report: target/stryker4s-report/<timestamp>/index.html
+```
+
+An initial run scored **50.0%** (36/86 mutants killed). Most survivors are
+`StringLiteral` mutants on human-readable `message`/`remediation` text —
+a low-priority, commonly-excluded category, since pinning exact error
+wording makes tests brittle for little benefit. Two categories of survivor
+are real, worth knowing about:
+
+- **`exists`/`forall` swaps in the input-matching predicates**
+  (`StructuralVerifier.scala:143` and `:157`, the `MISSING_INPUT` and
+  `UNDECLARED_INPUT` checks) — no test distinguishes "declared but never
+  read" from "read but never declared" precisely enough to catch the
+  predicate being inverted.
+- **`field.required` forced to always `true`** (`:296`, inside
+  `checkSchema`) — no test proves a genuinely *optional* field that's
+  absent from the actual schema does **not** produce a violation; only
+  the required-and-missing case is exercised.
+
+Note also that Stryker4s's per-mutant reruns use coverage-based test
+selection (only tests observed to execute a mutated line are rerun for
+that mutant) — a handful of survivors here (e.g. the `contextPrefix ==
+"INPUT"` branch selection) may reflect that narrower coverage mapping
+rather than a genuine gap the full suite would also miss; treat "Survived"
+as a strong lead to investigate, not an automatic verdict.
+
+This is a first pass, scoped deliberately narrow (see `ROADMAP.md` Phase
+1c) — `sbt stryker` is not yet wired into CI as a gate, and `mutate` is
+not yet widened to the rest of the module.
+
+To see the translation adapter running against the actual demo pipeline:
 
 ```bash
 ./dev/test
