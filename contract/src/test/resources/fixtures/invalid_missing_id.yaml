@@ -1,0 +1,12 @@
+version: "1.0.0"
+status: active
+
+outputs:
+  - name: customer_orders
+    location: gold.customer_orders
+    schema:
+      fields:
+        - name: customer_id
+          type: string
+          required: true
+          nullable: false

@@ -1,0 +1,39 @@
+{
+  "name": "Spark Plugin Development",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21",
+      "installMaven": false,
+      "installGradle": false
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "scala-lang.scala",
+        "scalameta.metals",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "metals.showInferredType": true,
+        "metals.superMethodLensesEnabled": true
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [3000, 4040],
+  "portsAttributes": {
+    "3000": {
+      "label": "Results UI",
+      "onAutoForward": "notify"
+    },
+    "4040": {
+      "label": "Spark UI",
+      "onAutoForward": "notify"
+    }
+  }
+}

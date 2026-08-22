@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mlltx/Invariant/main/contract/schema/invariant-contract.schema.json",
+  "title": "Invariant Data Contract",
+  "description": "Structural shape of a contract document Invariant's `contract` module (com.example.contract.ContractParser/ContractValidator) accepts, modeled after the Open Data Contract Standard (ODCS) - see docs/CONTRACT_MODEL.md. This schema is deliberately permissive at every level (`additionalProperties: true`) to match the parser's own design: an unrecognized key is preserved verbatim rather than rejected, so a contract authored for other ODCS-based tooling stays valid input here too. It also intentionally sits between two layers of the real Scala implementation: some constraints here (id, version, dataset name/location/schema, field name/type) mirror ContractParser's hard parse failures; others (outputs being present and non-empty, a schema's fields being non-empty) mirror ContractValidator's Error-level checks rather than the parser alone, because a document that merely parses but fails validation isn't a useful contract either. Two things this schema does NOT and cannot enforce, both still Scala-side responsibilities: duplicate-name detection (dataset names, field names) and cross-field business rules (e.g. ContractValidator's required-and-nullable warning) - see docs/CONTRACT_MODEL.md's \"JSON Schema\" section for the full list of what's schema-level versus what stays engine-only.",
+  "type": "object",
+  "required": ["id", "version", "outputs"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Contract identity. Must be non-empty (ContractParser hard failure otherwise). ContractValidator additionally warns (not an error) if it doesn't start with a letter and contain only alphanumerics, '.', '_', '-' - not enforced here since the parser still accepts other values."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+      "description": "MAJOR.MINOR[.PATCH], e.g. \"1.0.0\" or \"1.0\" (PATCH defaults to 0). Any other shape is a ContractParser hard failure (ContractVersion.parse)."
+    },
+    "status": {
+      "type": "string",
+      "description": "Free-form; Invariant does not constrain or interpret this value. Defaults to \"active\" if the key is omitted."
+    },
+    "inputs": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/dataset" },
+      "description": "Datasets this transformation reads from. Optional - omitted or empty means no declared inputs."
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dataset" },
+      "description": "Datasets this transformation writes to. Required and non-empty: a contract with no outputs parses but fails ContractValidator with an Error (\"Contract must declare at least one output dataset\"), so this schema requires it up front rather than accepting a document ContractValidator would immediately reject."
+    },
+    "rules": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/rule" },
+      "description": "Declarative rules attached to the contract (e.g. compatibility mode). Invariant records these in Phase 1 but does not yet verify a transformation against their semantics - see ROADMAP.md."
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Explicit bucket for metadata Invariant doesn't interpret (owners, SLAs, quality rules, ...). Any top-level key not listed in this schema's `properties` is preserved here too by ContractParser, whether or not it's nested under this explicit `extensions` map."
+    }
+  },
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "required": ["name", "location", "schema"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical name used to look up this dataset (Contract.input/output). Must be unique within inputs and within outputs - not enforced by this schema, only by ContractValidator."
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Physical location: table name, file path, topic, etc."
+        },
+        "format": {
+          "type": "string",
+          "description": "Optional storage/serialization format, e.g. \"table\", \"parquet\", \"delta\". Not a closed set - any value is accepted."
+        },
+        "saveMode": {
+          "type": "string",
+          "description": "Optional expected write behavior for an output dataset, e.g. \"append\", \"overwrite\", \"ignore\", \"error\". Meaningless for an input dataset; only checked by StructuralVerifier against a plan's Write node. Not a closed set."
+        },
+        "schema": { "$ref": "#/$defs/schema" }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": true,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/field" },
+          "description": "The 'fields' key itself is a ContractParser hard requirement; a dataset schema with zero fields parses but fails ContractValidator with an Error (\"Schema must declare at least one field\"), so this schema requires at least one up front."
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Field name. Must be unique among sibling fields (within the same schema, or the same struct's properties) - not enforced by this schema, only by ContractValidator."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Field type. Recognized values (ContractValidator.KnownTypes): string, integer, long, short, byte, double, float, decimal, boolean, date, timestamp, binary, struct, array, map. An unrecognized value is only a ContractValidator Warning, not a parse or validation Error, so it is not enforced here as an enum - a contract using a type this version of Invariant doesn't yet know about still parses and still matches this schema. A field with a non-empty `properties` array is treated as a struct regardless of this value."
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the field must be present. Defaults to false if omitted."
+        },
+        "nullable": {
+          "type": "boolean",
+          "description": "Whether the field's value may be null when present. Defaults to the opposite of `required` if omitted (i.e. a required field defaults to non-nullable). ContractValidator warns, but does not error, if both `required` and `nullable` are explicitly true together."
+        },
+        "properties": {
+          "type": "array",
+          "default": [],
+          "items": { "$ref": "#/$defs/field" },
+          "description": "Nested fields, for a struct/record type. A field with a non-empty `properties` list is treated as a struct regardless of its declared `type`."
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Rule kind, e.g. \"compatibility\". Every other key on a rule object is rule-specific and captured verbatim (ContractRule.properties) - Invariant does not yet interpret rule semantics (see ROADMAP.md)."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,487 @@
+name: Test and Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }} / Java ${{ matrix.java-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        java-version: ['11', '17', '21']
+        exclude:
+          # Reduce matrix size: test all Java versions on Linux, others on default
+          - os: macos-latest
+            java-version: '11'
+          - os: windows-latest
+            java-version: '11'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      # actions/setup-java's cache: 'sbt' only caches sbt's own cache
+      # directories — it doesn't install sbt itself. windows-latest ships
+      # sbt preinstalled, which is why this gap wasn't obvious from that
+      # leg alone; ubuntu-latest and macos-latest do not.
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Run from inside a module directory, not the repo root: the sbt
+      # launcher picks its actual sbt version from project/build.properties
+      # in the current directory (each module pins its own sbt.version --
+      # 1.9.8 for contract/plugin/runner, 1.11.7 for ir/spark-adapter, the
+      # latter bumped for Stryker4s's minimum sbt requirement), and the
+      # repo root has no project/ dir of its own (no aggregating root
+      # build). Run at the repo root, it falls back to the newest sbt
+      # release (2.x), which refuses to run on JDK <17 and broke this step
+      # on every Java-11 leg.
+      - name: Verify sbt installation
+        run: cd plugin && sbt --version
+
+      # Runner-provided $RUNNER_TEMP is writable without elevation on every
+      # matrix OS, unlike /opt (root-owned on Linux/macOS, and `sudo`
+      # doesn't exist at all on windows-latest's git-bash). Every job here
+      # runs on a fresh runner, so the "already installed" branch this
+      # replaced never actually took in practice.
+      # Downloading + extracting Spark from archive.apache.org took over two
+      # minutes per job (the single biggest cost in the whole matrix) and
+      # ran fresh on every job of every run. Caching the extracted
+      # directory across runs, keyed on OS + Spark version, turns that into
+      # a cache restore (a few seconds) on every run after the first.
+      - name: Cache Spark distribution
+        id: cache-spark
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spark
+          key: spark-${{ runner.os }}-3.5.1-hadoop3
+
+      - name: Download Spark 3.5.1
+        if: steps.cache-spark.outputs.cache-hit != 'true'
+        shell: bash
+        # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
+        # git-bash's tar misparses the backslash-drive-letter form as an
+        # old-style "host:path" remote archive spec ("tar (child): Cannot
+        # connect to D: resolve failed") instead of a local path. Route it
+        # through cygpath -u (bundled with Git for Windows) to get a POSIX
+        # path everywhere; it's a no-op passthrough on Linux/macOS where
+        # cygpath doesn't exist.
+        run: |
+          SPARK_VERSION="3.5.1"
+          SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
+          SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+
+          if command -v cygpath &> /dev/null; then
+            RUNNER_TEMP_POSIX="$(cygpath -u "$RUNNER_TEMP")"
+          else
+            RUNNER_TEMP_POSIX="$RUNNER_TEMP"
+          fi
+          SPARK_DIR="${RUNNER_TEMP_POSIX}/spark"
+
+          echo "Installing Apache Spark 3.5.1..."
+          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP_POSIX}/spark.tgz"
+          mkdir -p "$SPARK_DIR"
+          tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
+          rm -f "${RUNNER_TEMP_POSIX}/spark.tgz"
+
+      - name: Configure Spark environment
+        shell: bash
+        # Runs regardless of cache hit/miss — SPARK_HOME/PATH need to be set
+        # either way, and the extraction target is the same path the cache
+        # step restores into.
+        run: |
+          if command -v cygpath &> /dev/null; then
+            SPARK_DIR="$(cygpath -u "$RUNNER_TEMP")/spark"
+          else
+            SPARK_DIR="${RUNNER_TEMP}/spark"
+          fi
+          echo "SPARK_HOME=$SPARK_DIR" >> "$GITHUB_ENV"
+          echo "$SPARK_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Set up winutils.exe (Windows local-write support)
+        if: runner.os == 'Windows'
+        shell: bash
+        # Hadoop's RawLocalFileSystem needs winutils.exe on Windows for any
+        # local-disk write at all (it shells out to it for chmod-equivalent
+        # permission calls) — Apache doesn't ship one. Pinned to a specific
+        # commit of a long-maintained community mirror (cdarlint/winutils),
+        # with checksums verified against what was downloaded and inspected
+        # when this was added.
+        #
+        # Uses the 3.3.6 build, not 3.3.4-matching 3.3.5: 3.3.5's
+        # winutils.exe links MSVCR100.dll (the VC++ 2010 runtime), which
+        # GitHub's windows-latest images no longer ship, so it failed to
+        # even start (Shell$ExitCodeException with no output — the process
+        # never launched). 3.3.6 links the modern VCRUNTIME140.dll /
+        # Universal CRT, which the runner images do carry.
+        run: |
+          set -e
+          WINUTILS_REF="4c12f4040b8bb5ccc4b83938ce520602aea6c884"
+          WINUTILS_BASE="https://raw.githubusercontent.com/cdarlint/winutils/$WINUTILS_REF/hadoop-3.3.6/bin"
+
+          RUNNER_TEMP_POSIX="$(cygpath -u "$RUNNER_TEMP")"
+          HADOOP_BIN="${RUNNER_TEMP_POSIX}/hadoop/bin"
+          mkdir -p "$HADOOP_BIN"
+
+          curl -fsSL "$WINUTILS_BASE/winutils.exe" -o "$HADOOP_BIN/winutils.exe"
+          curl -fsSL "$WINUTILS_BASE/hadoop.dll" -o "$HADOOP_BIN/hadoop.dll"
+
+          echo "496a591eb1e67df2a620f710d529ba6ddfe1c19149e6647cc4e320bb0efd8553  $HADOOP_BIN/winutils.exe" | sha256sum -c -
+          echo "d7ab36a68518748cef142be2da5069b4c763c2cd764c1d2e6ac48c7200405be3  $HADOOP_BIN/hadoop.dll" | sha256sum -c -
+
+          # HADOOP_HOME is read by Hadoop's own Java code (Shell.java)
+          # directly, not just shell tooling, so — unlike PATH entries — it
+          # needs to be a real Windows path: the JVM's File APIs don't
+          # understand git-bash's POSIX form (/d/...) the way bash/tar/
+          # cygpath-aware tools do.
+          echo "HADOOP_HOME=$(cygpath -w "${RUNNER_TEMP_POSIX}/hadoop")" >> "$GITHUB_ENV"
+          echo "$HADOOP_BIN" >> "$GITHUB_PATH"
+
+      # spark-submit (bash script) calls `ps -o`, unsupported by git-bash's
+      # ps on windows-latest — use Spark's native .cmd launcher there
+      # instead (see dev/lib.sh's run_demo_job_harness for the same check).
+      - name: Verify Spark installation
+        shell: bash
+        run: |
+          if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
+            SPARK_HOME="$(cygpath -w "$SPARK_HOME")" spark-submit.cmd --version
+          else
+            spark-submit --version
+          fi
+
+      - name: Build all modules
+        # dev/build compiles+tests+assembles contract, ir, plugin and
+        # spark-adapter before runner, in that dependency order (runner's
+        # build.sbt pulls each of their jars in via unmanagedJars — there's
+        # no aggregating root build.sbt). Building only plugin+runner here
+        # previously worked only by accident when their jars happened to
+        # already exist; on a clean checkout it fails runner's compile.
+        run: ./dev/build
+        shell: bash
+
+      - name: Run contract regression pack
+        # Exercises both the PASS case (a transformation that satisfies its
+        # contract executes and writes its output) and the FAIL case (a
+        # transformation that violates its contract is aborted by
+        # ContractEnforcementRule before any output is written) against a
+        # real spark-submit run — see dev/regression and
+        # docs/SPARK_ADAPTER.md. SKIP_BUILD=1 because the previous step
+        # already built every module's jar.
+        run: SKIP_BUILD=1 ./dev/regression
+        shell: bash
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.os }}-java${{ matrix.java-version }}
+          path: demo/output/*.json
+
+  docker-regression:
+    name: Contract regression pack (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Validates the same path a contributor with only Docker installed
+      # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
+      # sbt, Spark 3.5.1, every module built at image-build time) and run
+      # it. docker run's exit code is dev/regression's — non-zero fails
+      # this step, and therefore the job, exactly as a local run would.
+      #
+      # cache-from/to: type=gha caches Docker layers in GitHub's Actions
+      # cache. The base image, apt-get, sbt-download, and Spark-download
+      # layers all come before COPY . . in the Dockerfile, so they don't
+      # depend on repo content at all — those (the network-bound layers)
+      # get reused across virtually every build regardless of what
+      # changed, even though the final `RUN ./dev/build` layer still
+      # re-runs on any source change (it comes after COPY . .).
+      - name: Build regression image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          tags: invariant-regression
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run contract regression pack in Docker
+        run: docker run --rm invariant-regression
+
+  mutation-testing:
+    name: Mutation testing (ir, spark-adapter)
+    runs-on: ubuntu-latest
+    # One Linux/JDK-21 leg is enough: mutation testing measures test-suite
+    # quality, not OS/JDK compatibility (that's what the `test` matrix is
+    # for), so it doesn't need the full matrix. `sbt stryker` exits
+    # non-zero when a module's score falls below its configured `break`
+    # threshold (see ir/build.sbt, spark-adapter/build.sbt) — that failure
+    # fails this job, which `summary` below folds into the overall status.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Cache Spark distribution
+        id: cache-spark
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spark
+          key: spark-${{ runner.os }}-3.5.1-hadoop3
+
+      - name: Download Spark 3.5.1
+        if: steps.cache-spark.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          SPARK_VERSION="3.5.1"
+          SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
+          SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+          SPARK_DIR="${RUNNER_TEMP}/spark"
+          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP}/spark.tgz"
+          mkdir -p "$SPARK_DIR"
+          tar -xzf "${RUNNER_TEMP}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
+          rm -f "${RUNNER_TEMP}/spark.tgz"
+
+      - name: Configure Spark environment
+        shell: bash
+        run: |
+          echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
+          echo "${RUNNER_TEMP}/spark/bin" >> "$GITHUB_PATH"
+
+      # spark-adapter's build.sbt reads ../ir and ../contract's jars
+      # directly off disk (unmanagedJars — there's no aggregating root
+      # build), so both need to be assembled before `sbt stryker` can even
+      # compile spark-adapter's sources, let alone mutate them.
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
+
+      - name: Mutation test ir
+        shell: bash
+        run: cd ir && sbt stryker
+
+      - name: Mutation test spark-adapter
+        shell: bash
+        run: cd spark-adapter && sbt stryker
+
+      # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
+      # specific file(s) a feature adds or changes to ir/spark-adapter -
+      # previously a manual step, since Stryker4s has no native
+      # incremental/diff mode (see docs/SPARK_ADAPTER.md). This automates
+      # it for PRs: diff against a base commit, scope --mutate to just the
+      # changed .scala files (brace-expansion glob for multiple files -
+      # confirmed to work locally), and override the whole-module 50%
+      # break threshold with a stricter 70% via CLI flags only, leaving
+      # build.sbt's whole-module gate untouched. Runs only on pull_request
+      # events, where a base commit is available - a bare push has no
+      # equivalent reference point.
+      #
+      # The base commit is the PR's base branch (github.event.pull_request.
+      # base.sha), not the previous push's HEAD. An earlier version of this
+      # step used the previous push instead, reasoning that diffing against
+      # the PR's base captures the *entire* PR's accumulated history, which
+      # degenerates to "the whole module" for a long-lived, evolutionary PR
+      # (confirmed the hard way - this exact PR's spark-adapter diff against
+      # its base scored exactly 57.06%, identical to the whole-module score,
+      # because this PR *is* the introduction of that module). That reasoning
+      # was correct but the fix was wrong: diffing against the *previous
+      # push* is a sliding baseline, and a sliding baseline can never durably
+      # catch a regression that's introduced and then never fixed. Concretely:
+      # if push N adds an undertested file and this check correctly fails,
+      # then push N+1 - even one that touches nothing in that file - diffs
+      # against N, where the same file already looks "unchanged" (nothing
+      # differs between N and N+1), so the check passes even though the file
+      # is exactly as undertested as when it failed. The bar silently stops
+      # being enforced the moment CI reports it as met, whether or not
+      # anything was actually fixed. A fixed base doesn't have this problem
+      # (it only moves if the base branch itself advances, which is a
+      # legitimate re-anchor, not a self-erasing one) - the "whole module"
+      # degeneration for this specific long-lived PR is real but harmless
+      # (redundant with the whole-module check above, not unsound), so it's
+      # the correct tradeoff.
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "Diffing against base commit: $BASE_SHA"
+
+          for module in ir spark-adapter; do
+            CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "$module/src/main/scala/" | grep '\.scala$' | sed "s|^$module/||" || true)
+
+            if [ -z "$CHANGED" ]; then
+              echo "=== $module: no changed files under src/main/scala, skipping ==="
+              continue
+            fi
+
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== $module: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd "$module" && sbt "stryker --mutate \"$MUTATE_GLOB\" --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          done
+
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-reports
+          path: |
+            ir/target/stryker4s-report/**
+            spark-adapter/target/stryker4s-report/**
+          if-no-files-found: warn
+
+  api-compatibility:
+    name: API compatibility (contract, ir, spark-adapter)
+    runs-on: ubuntu-latest
+    # MiMa (sbt-mima-plugin) needs a previously *published* artifact to
+    # diff the current build against, and there's no Maven Central release
+    # of contract/ir/spark-adapter yet to compare to. Rather than skip the
+    # check entirely until a real release exists, this job publishes a
+    # recent prior commit to the local Ivy cache first (each module's
+    # build.sbt already declares `mimaPreviousArtifacts` under the same
+    # org/name/version its own `publishLocal` produces), then runs
+    # `sbt mimaReportBinaryIssues` against the PR's head - "did this push
+    # break binary compatibility with the previous one." Only meaningful
+    # with a base to diff against, so PR-only.
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+
+      # A fixed base (the PR's base branch), not a sliding one. An earlier
+      # version of this job diffed against the PREVIOUS PUSH's HEAD
+      # (github.event.before) instead, to work around this exact PR (#1)
+      # having been open since before contract/ir/spark-adapter existed at
+      # all - github.event.pull_request.base.sha resolves to the repo's
+      # literal first commit, and base-ref/contract simply didn't exist
+      # there ("No such file or directory", confirmed the hard way on this
+      # job's first real run). That fix traded one bug for a worse one: a
+      # sliding baseline can never durably catch a regression that's
+      # introduced and then never fixed - if push N breaks compatibility
+      # and this job correctly fails, push N+1 (even one that touches
+      # nothing relevant) diffs against N, where the break already looks
+      # like the status quo, so the check passes clean without anything
+      # having been fixed. The real fix for the original problem is below:
+      # skip a module gracefully if it didn't exist yet at the (fixed) base
+      # commit, rather than changing which commit counts as the base.
+      - name: Checkout PR base ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-ref
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # One module at a time, in dependency order (contract, ir, then
+      # spark-adapter, which needs both of theirs): if a module doesn't
+      # exist at the base commit, it has no prior public API to be
+      # compatible with, so it's skipped entirely rather than erroring
+      # (base-ref/$module wouldn't exist to build) or treating "brand new"
+      # as "broke everything" - the correct, honest answer either way is
+      # "nothing to compare, nothing can have broken." That's the normal
+      # case for PR #1 specifically (all three modules postdate its base
+      # commit - introducing them *is* what this PR does); for any normal
+      # future PR opened against an up-to-date base branch, every module
+      # will already exist there and this check runs for real.
+      #
+      # spark-adapter's build.sbt reads ../ir and ../contract's jars
+      # directly off disk (unmanagedJars - there's no aggregating root
+      # build), in both checkouts, so contract/ir's own iterations below
+      # assemble theirs before spark-adapter's iteration needs them.
+      - name: Check API compatibility for each module that existed at the base commit
+        shell: bash
+        run: |
+          for module in contract ir spark-adapter; do
+            if [ ! -d "base-ref/$module" ]; then
+              echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
+              continue
+            fi
+
+            if [ "$module" != "spark-adapter" ]; then
+              echo "=== $module: building assembly jar in both checkouts (spark-adapter's unmanagedJars dependency) ==="
+              (cd "$module" && sbt assembly)
+              (cd "base-ref/$module" && sbt assembly)
+            fi
+
+            echo "=== $module: publishing base-ref build to the local Ivy cache ==="
+            (cd "base-ref/$module" && sbt publishLocal)
+
+            # Compiles the PR head's current sources and diffs the result
+            # against the locally-published base-ref artifact just above. A
+            # real binary-incompatible change fails here with the exact
+            # offending symbol and a ready-to-paste ProblemFilters.exclude(...)
+            # line for a deliberate, documented exception - see CLAUDE.md's
+            # "API Compatibility Requirement" for when that's the right call
+            # versus a MAJOR version bump.
+            echo "=== $module: checking PR head for binary compatibility ==="
+            (cd "$module" && sbt mimaReportBinaryIssues)
+          done
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test, docker-regression, mutation-testing, api-compatibility]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ]; then
+            echo "❌ Tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi

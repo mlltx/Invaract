@@ -1,0 +1,13 @@
+id: orphaned_contract
+version: "1.0.0"
+status: active
+
+inputs:
+  - name: orders
+    location: raw.orders
+    schema:
+      fields:
+        - name: order_id
+          type: string
+          required: true
+          nullable: false

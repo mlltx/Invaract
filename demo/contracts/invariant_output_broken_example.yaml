@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
+id: invariant_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A deliberately-broken variant of demo/contracts/invariant_output.yaml,
+    kept for reference/demonstration of ContractEnforcementRule's abort
+    behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired
+    into ./dev/test — the real demo pipeline is expected to pass its real
+    contract, not this one.
+    Declares a 'customer_name' output field the real InvariantPlugin
+    pipeline never produces, so verification fails deterministically.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_broken_example.parquet
+    format: parquet
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: customer_name
+          type: string
+          required: true
+          nullable: false
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invariant-demo

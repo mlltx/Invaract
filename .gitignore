@@ -1,6 +1,43 @@
+## Scala/Java
 *.class
 *.tasty
 *.log
-
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+.bsp/
+target/
+
+## sbt
+.sbt/
+project/target/
+dist/*
+target/
+lib_managed/
+src_managed/
+project/boot/
+
+## IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Node/npm/Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+web/dist/
+
+## Build outputs (except tracked demo/input)
+demo/output/
+demo/output/**/*.parquet
+demo/output/**/*.json
+
+## Local development
+.env.local
+.env.*.local
