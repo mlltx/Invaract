@@ -799,6 +799,27 @@ verification) supplies `demo/output/report.json`'s human-facing
 
 ## Testing
 
+**Cross-platform assertions — a real CI failure, not a hypothetical.**
+CI's OS matrix includes `windows-latest`, and this module's development
+environment is Linux-only, so a Windows-specific bug in a new test is
+invisible locally no matter how thoroughly it's rerun — it can only be
+caught by actually reading a failed Windows CI run. Two real patterns
+have caused this:
+
+- **Never assert `location.contains(nativePath)`** where `nativePath`
+  came from `java.nio.file.Path.toString()`. On Windows that's
+  backslash-separated (`C:\Users\...\x`), but Spark always normalizes a
+  resolved storage location into a forward-slash `file:` URI regardless
+  of platform — the assertion can never match. Assert on the filename
+  only (`location.contains("sample.csv")`), the convention every
+  location assertion in `SparkPlanAdapterSpec` follows.
+- **Never interpolate a native path directly into a SQL string literal**
+  (`s"...LOCATION '$path'"`). A Windows path's backslashes collide with
+  SQL string-literal escaping and can silently mangle the path into
+  something Hadoop then rejects. Normalize with `path.replace('\\', '/')`
+  first — Spark/Hadoop accept forward-slash paths on Windows too, so
+  this is always safe, not a Windows-only branch.
+
 ```bash
 cd spark-adapter
 sbt test
