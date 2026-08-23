@@ -446,7 +446,7 @@ is future work, unless stated otherwise.
 | `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Analyzes to `AppendData`, now a real `WriteCommandSupport` entry. Location prefers the resolved `DataSourceV2Relation`'s `Table.properties()["location"]` (the physical warehouse path, confirmed empirically) over its qualified identifier. Verified via a PASS/FAIL pair. |
 | `.insertInto(...)` | ✅ **Covered — closed this pass** | Same `AppendData` shape, same `WriteCommandSupport` entry, same test. |
 | `.writeTo(...)` (DataFrameWriterV2), all sub-ops | ✅ **Covered — closed this pass** | `.append()` → `AppendData`; `.overwrite(cond)` → `OverwriteByExpression`, mapped to the contract's `saveMode: overwrite` uniformly (the delete predicate itself isn't modeled — `StructuralVerifier`'s save-mode check doesn't need it, so no IR extension was needed, contrary to what was first assumed); `.createOrReplace()` → `ReplaceTableAsSelect`, same entry as the new-table `.saveAsTable()` row above. All verified via the same PASS/FAIL pairs. |
-| Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | 🚫 Fails closed | `MERGE INTO` confirmed via an existing FAIL-CLOSED test (`MergeIntoCommand`, real Spark analysis — see "Fail-closed on unverifiable writes" below). `UPDATE`/`DELETE` not individually re-probed this pass; both are explicitly named as deliberately-excluded, `Command`-shaped classes in `FailClosedCommands.scala`'s header comment, so they follow the same default-reject path by construction. **Next step:** genuinely the hardest row here to close — `ir.Write` models "replace/append the output of a query," not "apply a row-level predicate-conditioned mutation," so covering this for real needs an IR extension (something like `ir.Merge`/`ir.RowMutation`) before a `WriteCommandSupport` case is even meaningful, not just a new case against the existing shape. Left as a known, larger limitation rather than a near-term "add one case" item. |
+| Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally, deliberately not semantically** | All three (`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand`) confirmed empirically to be Delta-internal classes, matched by reflection (public `target()`/`catalogTable()`/`source()` methods, no compile-time Delta dependency) and recognized as real `WriteCommandSupport` entries. **What this checks:** the operation's *target* against the contract's declared output location and current schema (catching the wrong-table mistake and schema drift) — MERGE's `source` is additionally checked as a contract input. **What this deliberately does not check, and cannot yet:** the actual row-level logic — the merge condition, which columns an `UPDATE` touches, whether a `DELETE` is unconditional. There is no contract vocabulary for that (see docs/CONTRACT_MODEL.md's `rules` field — recorded, not interpreted). Verified through real enforcement: PASS/FAIL pairs for all three, including a FAIL proving the target-schema check and a separate FAIL proving the source-as-input check (which needed a real fix along the way — see below). Full semantic verification (a real `ir.Merge`/`ir.RowMutation` IR node plus contract rules to check it against) is tracked as deliberate future work in ROADMAP.md's "Full semantic DML verification" item, not attempted here — see docs/ADDING_A_SPARK_CONNECTOR.md's "What 'fails closed' means" for why building the IR node without the rules to consume it would be premature. |
 | Streaming write | ✅ **Covered — closed this pass** | Previously the most serious gap found: `WriteToStream` (the streaming write's top-level plan) isn't `Command`-shaped, so `ContractEnforcementRule`'s fail-closed policy — which only gates `Command`-shaped plans — never saw it at all. Confirmed empirically (not assumed): a probe found zero of the plans `injectCheckRule` saw during a real streaming Delta write were `Command`-shaped, and `javap` on Spark's catalyst jar confirmed `WriteToStream` doesn't implement `Command`. This was categorically worse than every other row here: not "fails closed but unverified," but genuinely unenforced — a streaming write committed silently, with no contract check at all. **Closed by adding `WriteToStream` as a real `WriteCommandSupport` entry** (see "Write command recognition: a single registry" below) rather than special-casing it in the fail-closed check: `WriteToStream.inputQuery` gives the schema being written; location comes from a resolved `catalogTable` (`.toTable(...)`, confirmed to carry `storage.locationUri`/`provider`), or from the sink's `name()` when that doesn't throw (a genuine V2 sink), or — since Delta's `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()` unconditionally throw, confirmed empirically — a reflective call to its public `path()` accessor, the same reflection-over-a-class-this-module-has-no-compile-time-dependency-on technique `jdbcLocationOf` already uses for `JDBCRelation`. Verified through real enforcement: a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)` (the `catalogTable`-populated path), and a test confirming a streaming write to a location unrelated to the active contract is correctly rejected (`OUTPUT_LOCATION_MISMATCH`) — the same behavior batch writes have always had, not special-cased for streaming. All in `ContractEnforcementRuleSpec`. |
 | Maintenance operations that touch data (`OPTIMIZE`/`VACUUM`/`RESTORE`/`CLONE`/`CONVERT TO DELTA`) | ✅ Covered by policy classification | `FailClosedCommands.scala`'s `knownSafe` set already includes `VacuumTableCommand`/`OptimizeTableCommand` (rewrites/removes files, doesn't change a table's committed row content) and deliberately excludes `RestoreTableCommand`/`CloneTableCommand`/`ConvertToDeltaCommand` (row-content-changing) — built from a class-by-class enumeration of all 164 `Command` subclasses across Spark 3.5.1 + Delta 3.2.0, reasoned and documented in that file's header comment. Not re-probed individually this pass (the classification predates it); if any one of these is ever doubted, a targeted probe test is cheap to add. |
 
@@ -481,19 +481,44 @@ coincidence. Any future connector adding a `WriteCommandSupport` case
 for a command that can appear nested inside another (anything using
 Spark's staging-catalog protocol) should check for this same trap.
 
+### A second shared pitfall: `plan.collect` doesn't reach a leaf command's own fields
+
+Closing the row-level DML row surfaced a second, distinct trap, just as
+worth documenting: `ContractEnforcementRule.verifyOrThrow`'s input-schema
+collection (`plan.collect { case lr: LogicalRelation => ... }`) walks the
+analyzed plan's `children` — which works for every other write shape here
+because their `query`/`target` are genuine children in the tree. Delta's
+row-level DML commands are not: `MergeIntoCommand`/`UpdateCommand`/
+`DeleteCommand` are effectively leaf nodes in the tree-traversal sense —
+`source`/`target` are ordinary case-class fields, never exposed via
+`children` — so `plan.collect` on the command itself finds nothing inside
+it, confirmed empirically by a real FAIL test never throwing (asserted
+`intercept[ContractViolationException]`, got none) rather than assumed to
+"just work" the way it does everywhere else. Fixed by having
+`ContractEnforcementRule.verifyOrThrow` also walk `WriteCommandSupport`'s
+already-extracted `query` field (MERGE's `source`) in addition to the raw
+plan — a real, independently traversable `LogicalPlan` unlike the outer
+command. Any future connector whose write command hides its "real" query
+behind a similarly leaf-shaped node should check for this same trap.
+
 **Net assessment:** Delta is not "100% supported" and no single pass makes
 it so — but the gap is now fully enumerated instead of implicit, and every
-remaining 🚫 row states what would actually close it, not just that it's
-currently rejected. Two rows that were genuine, unenforced holes
+row that isn't ✅ Covered states exactly what would close it, not just
+that it's currently rejected — and today, every row *is* ✅ Covered.
+Two rows that were genuine, unenforced holes
 (streaming writes, and streaming reads as a declared input — the
 difference between "fails closed" and "silently unchecked"/"falsely
 rejected" is exactly the distinction this ledger exists to keep visible)
 are now ✅ Covered, alongside every V2 catalog write shape
-(`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`). What
-remains at 🚫 is exactly one row: row-level DML (`MERGE`/`UPDATE`/
-`DELETE`), which needs a real IR extension before it's even attemptable —
-not a "not supported, and that's fine" resting state, a deliberately
-scoped-out piece of larger future work.
+(`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`) and
+row-level DML (`MERGE`/`UPDATE`/`DELETE`) — the last of these
+*structurally* rather than semantically, deliberately: verifying the
+actual merge condition/update columns/delete predicate needs both a real
+IR extension and contract rules to check it against, neither of which
+exist yet, and building the IR half alone would be speculative API
+surface nothing could consume. That's real, scoped future work, tracked
+explicitly in ROADMAP.md's "Full semantic DML verification" item, not a
+silent gap.
 
 ## Fail-closed on unverifiable writes
 

@@ -1441,6 +1441,84 @@ ledger could actually state a concrete next step for.
       passing (76/76); `mimaReportBinaryIssues` clean;
       `./dev/build`/`./dev/test`/`./dev/regression` all pass.
 
+#### Sub-phase: Row-level DML — structural verification, the last
+#### coverage-ledger row closed (done)
+
+Closes the final 🚫 row in the Delta operation-surface ledger. Scoped
+deliberately after discussion: the fuller version (verifying the actual
+merge condition/update columns/delete predicate) needs both a new IR node
+and contract `rules` interpretation, neither of which exist — see the
+"Full semantic DML verification" item in "Scope (Future)" below for that
+larger, explicitly-deferred design, kept there specifically so it isn't
+lost. This sub-phase does the achievable, honest subset: structural
+verification only.
+
+- [x] **`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` recognized as
+      real `WriteCommandSupport` entries**, matched by reflection (all
+      three are Delta-internal classes, confirmed empirically via
+      `injectCheckRule` — not generic Spark API the way `AppendData`/
+      `OverwriteByExpression`/`ReplaceTableAsSelect` are), using their
+      public `target()`/`catalogTable()`/`source()` methods (confirmed
+      via `javap`, no `setAccessible` needed). Wrapped in `Try` (via
+      `Function.unlift`), unlike the stable-API write cases: reflecting
+      into undocumented, no-cross-version-guarantee Delta internals
+      needs to degrade to the pre-existing fail-closed default if a
+      future Delta version renames a method, not crash a real Spark job
+      with a raw `ReflectiveOperationException`.
+- [x] **What's checked, and what deliberately isn't, stated explicitly
+      in code and docs, not left implicit.** Checked: the operation's
+      *target* against the contract's declared output location and
+      current schema (a `MERGE`/`UPDATE`/`DELETE`'s own `output` is a
+      row-count summary, not data, confirmed empirically — there's no
+      "new schema" to check the usual way, but the target's *existing*
+      schema is still worth confirming still matches). Not checked, and
+      not yet checkable: the merge condition, which columns an `UPDATE`
+      touches, whether a `DELETE` is unconditional — no contract
+      vocabulary exists for that (see the "Full semantic DML
+      verification" item below).
+- [x] **MERGE's `source` recognized as a contract input — found and fixed
+      a real second correctness trap along the way.** Initially assumed
+      (documented as such, before verifying) that
+      `ContractEnforcementRule.verifyOrThrow`'s existing `plan.collect`
+      input-schema collection would reach MERGE's source automatically,
+      the same way it does for every other write shape. A real FAIL test
+      (asserting `intercept[ContractViolationException]`) proved that
+      assumption wrong: `plan.collect` walks `children`, and Delta's DML
+      commands are effectively leaf nodes in the tree-traversal sense —
+      `source`/`target` are ordinary case-class fields, never exposed as
+      children — so a plain `plan.collect` on the command finds nothing
+      inside it. Fixed by having `verifyOrThrow` also walk
+      `WriteCommandSupport`'s already-extracted `query` field (MERGE's
+      `source`) in addition to the raw plan. Documented in
+      docs/SPARK_ADAPTER.md's new second "shared pitfall" subsection.
+- [x] Verified through real enforcement, not translation in isolation: a
+      PASS/FAIL pair for MERGE (rows genuinely merged on PASS; aborted,
+      target genuinely untouched on FAIL, both for a target-schema
+      violation and, separately, a MERGE-source-input violation), plus a
+      PASS test each for `UPDATE`/`DELETE` (rows genuinely mutated), all
+      in `ContractEnforcementRuleSpec`. A dedicated direct-inspection
+      test also covers a path-based DML operation with no catalog table
+      at all (`UPDATE delta.\`path\``, confirmed empirically to leave
+      `catalogTable` as `None`, not just missing a location) — the
+      fallback branch every other DML test's catalog-backed target
+      doesn't reach.
+- [x] Mutation testing scoped to `WriteCommandSupport.scala`/
+      `ContractEnforcementRule.scala`: 85.71% overall (86.84%–89.19% of
+      covered code across runs). Two mutants remain in new code, both in
+      `deltaRowLevelDml`'s fallback-diagnostic-message branch
+      (`catalogTable.isDefined`, deciding which of two message strings to
+      use — the actual `location`/`format` computation doesn't re-branch
+      there, it's already been computed above) — the same category of
+      accepted mutant as this module's other message-wording-only cases
+      (formally equivalent in spirit to the already-excluded
+      `StringLiteral` mutator category). Full suite passing (81/81);
+      `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+- [x] **Every row of the Delta operation-surface ledger is now ✅
+      Covered** — 5 read rows, 8 write rows, all 13. Full ledger in
+      docs/SPARK_ADAPTER.md's "Delta Lake operation-surface coverage
+      ledger" section.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1458,15 +1536,41 @@ ledger could actually state a concrete next step for.
       categories above as they're implemented — its `{status, contract,
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
-- [ ] Interpreting `rules` from the contract model
-- [ ] Delta's row-level `MERGE`/`DELETE`/`UPDATE` fail closed but have no
-      translation — the one row remaining in the "Delta Lake
-      operation-surface coverage ledger" below: `ir.Write` models
-      "replace/append the output of a query," not a
-      predicate-conditioned row mutation, so this needs an IR extension
-      (something like `ir.Merge`/`ir.RowMutation`) before a
-      `WriteCommandSupport` case is even meaningful, not just a new case
-      against the existing shape.
+- [ ] Interpreting `rules` from the contract model — see the item
+      immediately below for the concrete feature this unblocks first
+- [ ] **Full semantic DML verification** (row-level `MERGE`/`UPDATE`/
+      `DELETE`). Structural verification of these three (target location/
+      schema, MERGE's source as an input) is done — see the "Delta Lake
+      operation-surface coverage ledger" sub-phase below. What's still
+      unverified, deliberately: the operation's actual row-level logic -
+      the merge condition, which columns an `UPDATE` touches, whether a
+      `DELETE` is unconditional. This needs **two** things together, not
+      one:
+      1. An IR extension modeling the operation itself (`ir.Write` only
+         models "replace/append the output of a query" - something like
+         `ir.Merge`/`ir.RowMutation` capturing condition/matched-clauses/
+         not-matched-clauses would be needed).
+      2. Interpreting contract `rules` (the item above) - without this,
+         an `ir.Merge` node would hold structure nothing could check,
+         since `StructuralVerifier` only compares schema/format/location/
+         save-mode, and a contract has no vocabulary yet for constraining
+         a merge condition or which columns an update may touch.
+      Concrete example of the rule vocabulary this would need (not
+      hypothetical - discussed and explicitly deferred, not forgotten):
+      ```yaml
+      rules:
+        - type: merge_condition
+          on: [customer_id]
+        - type: forbid_unconditional_delete
+        - type: allowed_update_columns
+          columns: [status, updated_at]
+      ```
+      Building the IR node before the rule vocabulary exists to consume
+      it would be speculative API surface in a MiMa-checked module - the
+      two should be designed together, not the IR first. Not started;
+      deliberately scoped out of the structural-DML pass below, per an
+      explicit user decision to keep this session's DML work structural-
+      only and document the fuller version here instead of losing it.
 
 #### Dependencies
 

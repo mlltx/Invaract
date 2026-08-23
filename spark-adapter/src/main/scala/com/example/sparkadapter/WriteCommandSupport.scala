@@ -4,6 +4,7 @@
 package com.example.sparkadapter
 
 import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable => SparkCatalogTable}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, ReplaceTableAsSelect}
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
@@ -372,6 +373,88 @@ private[sparkadapter] object WriteCommandSupport {
         (table.name, None, Some(Diagnostic("V2Write", msg)))
     }
 
+  // Delta's row-level DML - MERGE INTO / UPDATE / DELETE - all analyze to
+  // Delta-internal command classes (org.apache.spark.sql.delta.commands.*),
+  // confirmed empirically via injectCheckRule, not assumed. Matched by
+  // fully-qualified class name (a Set[String], not `case cmd: X`) and
+  // read via plain public-method reflection (`target()`/`catalogTable()`/
+  // `source()` are all public, confirmed via javap - no `setAccessible`
+  // needed) - the same convention `jdbcLocationOf`/`unwrapWriteWrapper`
+  // use, for the same reason: this module has no compile-time dependency
+  // on Delta, and these three classes are Delta-internal (undocumented,
+  // no cross-version API guarantee), unlike AppendData/
+  // OverwriteByExpression/ReplaceTableAsSelect above, which are stable
+  // public Spark classes. Wrapped in Try, unlike those: if a future Delta
+  // version renames one of these methods, this must degrade to the
+  // existing fail-closed default (safe, if unverified) rather than let a
+  // raw ReflectiveOperationException escape into a real Spark job -
+  // `Function.unlift` turns "guard matched but extraction failed" into
+  // "this case isn't defined after all," not a thrown exception.
+  //
+  // What this verifies, and - just as importantly - what it deliberately
+  // doesn't: row-level DML has no "new output" the way every other write
+  // shape does (a MERGE/UPDATE/DELETE's own `output` is a row-count
+  // summary, not data - confirmed empirically), so there's no committed
+  // schema to check a contract's declared fields against the usual way.
+  // What's genuinely checkable, and what this checks: that the operation
+  // actually targets the contract's declared output location (catching a
+  // real mistake - operating on the wrong table) and that the target's
+  // *current* schema still satisfies the contract (catching schema
+  // drift). The operation's actual row-level logic - the merge condition,
+  // which columns an UPDATE touches, whether a DELETE is unconditional -
+  // is NOT verified: there is no contract vocabulary for that yet (see
+  // docs/CONTRACT_MODEL.md's `rules` field - recorded, not interpreted -
+  // and ROADMAP.md's "Full semantic DML verification" item, which this
+  // deliberately does not attempt). MERGE's `source` (this case's `query`
+  // for MergeIntoCommand) is recognized as a contract input -
+  // `ContractEnforcementRule.verifyOrThrow`'s input-schema collection
+  // explicitly walks this case's `query` in addition to the raw analyzed
+  // plan, specifically *because* Delta's DML commands are leaf nodes in
+  // the tree-traversal sense (`source`/`target` are ordinary case-class
+  // fields, not exposed as `children`), so a plain `plan.collect` never
+  // reaches them on its own the way it does for every other write shape
+  // here - confirmed the hard way by a real FAIL test never throwing
+  // before that collection was fixed, not assumed to "just work."
+  private val deltaRowLevelDml: PartialFunction[LogicalPlan, WriteCommandInfo] =
+    Function.unlift { (plan: LogicalPlan) =>
+      if (!deltaDmlClassNames.contains(plan.getClass.getName)) None
+      else
+        scala.util.Try {
+          val target = plan.getClass.getMethod("target").invoke(plan).asInstanceOf[LogicalPlan]
+          val catalogTable =
+            plan.getClass.getMethod("catalogTable").invoke(plan).asInstanceOf[Option[SparkCatalogTable]]
+          val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString) match {
+            case Some(loc) => (loc, None)
+            case None =>
+              val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.toString)
+              val msg = s"No catalog storage location for ${plan.getClass.getSimpleName}'s target; " +
+                s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's toString"} as a best-effort location"
+              (fallback, Some(Diagnostic(plan.getClass.getSimpleName, msg)))
+          }
+          // Only MergeIntoCommand has a separate `source` - UPDATE/DELETE
+          // mutate `target` in place based on `condition` alone, so
+          // `target` doubles as the only sensible "query" to render.
+          val query =
+            if (plan.getClass.getSimpleName == "MergeIntoCommand")
+              plan.getClass.getMethod("source").invoke(plan).asInstanceOf[LogicalPlan]
+            else target
+          WriteCommandInfo(
+            location = location,
+            query = query,
+            format = Some("delta"),
+            saveMode = None, // in-place mutation isn't append/overwrite/ignore/error
+            outputSchema = target.schema,
+            diagnostic = diagnostic
+          )
+        }.toOption
+    }
+
+  private val deltaDmlClassNames: Set[String] = Set(
+    "org.apache.spark.sql.delta.commands.MergeIntoCommand",
+    "org.apache.spark.sql.delta.commands.UpdateCommand",
+    "org.apache.spark.sql.delta.commands.DeleteCommand"
+  )
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -384,7 +467,7 @@ private[sparkadapter] object WriteCommandSupport {
     */
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
     insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
-      appendData orElse overwriteByExpression orElse replaceTableAsSelect
+      appendData orElse overwriteByExpression orElse replaceTableAsSelect orElse deltaRowLevelDml
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

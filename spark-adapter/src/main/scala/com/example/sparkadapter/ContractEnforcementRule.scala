@@ -97,11 +97,30 @@ object ContractEnforcementRule {
         // shapes is reused here rather than re-derived, so the two sites
         // can't drift the way write recognition once did (see
         // WriteCommandSupport's class doc).
-        val inputSchemas = plan.collect {
-          case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
-          case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
-          case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
-        }.toList
+        //
+        // `plan.collect` walks `children`, which is empty for Delta's row-
+        // level DML commands (MergeIntoCommand/UpdateCommand/DeleteCommand
+        // are effectively leaf nodes in the tree-traversal sense - their
+        // `source`/`target` are ordinary case-class fields, not exposed as
+        // children) - confirmed empirically by a real FAIL test never
+        // throwing, not assumed to "just work" the way it does for every
+        // other write shape. So this also walks `query` - the same field
+        // `WriteCommandSupport` already extracted (MERGE's `source` for
+        // DML, the same plan `plan.collect` would already reach on its own
+        // for every other shape) - which is a real, independently
+        // traversable `LogicalPlan`, unlike the outer command.
+        val inputSchemas = (
+          plan.collect {
+            case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+            case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+            case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+          } ++
+            WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect {
+              case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+              case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+              case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+            })
+        ).distinct.toList
         // WriteCommandSupport.combined is the same lookup translation used
         // to reach this ir.Write in the first place, so this can never
         // drift out of sync with it the way three independent matches

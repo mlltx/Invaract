@@ -419,27 +419,71 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
   }
 
-  // The fail-closed policy itself: a Spark command that's Command-shaped
-  // (so it might write or otherwise mutate data) but that SparkPlanAdapter
-  // has no translation for, and that isn't on FailClosedCommands' known-safe
-  // list, is rejected outright rather than silently let through. Delta's
-  // MERGE INTO is a real, concrete example — confirmed empirically to
-  // analyze to org.apache.spark.sql.delta.commands.MergeIntoCommand, which
-  // is neither a recognized write nor on the known-safe list (it's a real
-  // data mutation Invariant genuinely can't verify yet — see
-  // docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable writes" section).
-  test("FAIL-CLOSED: an unrecognized write-shaped command (Delta MERGE INTO) is rejected, not silently passed") {
-    val tablePath = scratchDir.resolve("merge_target").toString
-    val tableName = "merge_fail_closed_tbl"
-    // Seed the table with no active contract — only the MERGE itself should
-    // be gated.
+  // Delta's row-level DML - MERGE INTO / UPDATE / DELETE - used to be a
+  // real, concrete example of the fail-closed policy itself: MERGE INTO
+  // analyzes to org.apache.spark.sql.delta.commands.MergeIntoCommand,
+  // previously neither a recognized write nor on the known-safe list, so
+  // it was rejected outright (safely, but unverified). Now
+  // WriteCommandSupport's deltaRowLevelDml case recognizes all three
+  // Delta-internal DML commands by reflection, checking the operation's
+  // *target* against the contract's declared output location and current
+  // schema - not the row-level merge/update/delete logic itself, which
+  // there is no contract vocabulary to check yet (see that case's own doc
+  // comment, and ROADMAP.md's "Full semantic DML verification" item).
+  // This PASS/FAIL trio proves that structural check through real
+  // enforcement: a satisfying MERGE actually executes (rows genuinely
+  // merged, not just "didn't throw"), a schema-violating one is aborted
+  // before touching the table, and - proving the "source is a contract
+  // input" claim through enforcement, not just code reading - a MERGE
+  // whose *source* doesn't satisfy a declared input schema is also
+  // aborted, with no special-casing needed for that in this case at all
+  // (ContractEnforcementRule's input-schema collection already walks the
+  // whole analyzed plan, target and source alike).
+  test("PASS: a MERGE INTO satisfying its contract's declared output executes normally, rows genuinely merged") {
+    val tablePath = scratchDir.resolve("merge_pass_target").toString
+    val tableName = "merge_pass_tbl"
     spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
-    // Forward slashes only: on Windows, tablePath's native backslashes
-    // collide with SQL string-literal escaping when interpolated directly
-    // into a LOCATION clause, mangling the path (confirmed by a real CI
-    // failure: "Can not create a Path from an empty string"). Spark/Hadoop
-    // accept forward-slash paths on Windows too, so normalizing here is
-    // always safe, not just a Windows-only branch.
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    // required: false throughout - Delta reports every column nullable on
+    // read-back regardless of what was written (see the existing Delta
+    // input-read PASS test above for the same, already-documented
+    // behavior) - this case's outputSchema comes from the *target's*
+    // read-back schema (target.schema), not a freshly-written query's
+    // pre-write schema the way every other write shape's does, so it hits
+    // this quirk where those don't.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as id, 198L as doubled) s
+           |ON t.id = s.id
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin).collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
+  test("FAIL: a MERGE INTO whose target violates its contract's declared output schema is aborted before touching the table") {
+    val tablePath = scratchDir.resolve("merge_fail_target").toString
+    val tableName = "merge_fail_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
     spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
     val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
 
@@ -454,8 +498,8 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
          |        - name: id
          |          type: long
          |          required: true
-         |        - name: doubled
-         |          type: long
+         |        - name: customer_name
+         |          type: string
          |          required: true
          |""".stripMargin
 
@@ -470,9 +514,154 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
 
-    assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
     val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
     assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  test("FAIL: a MERGE INTO whose source violates a contract's declared input schema is aborted before touching the table") {
+    val tablePath = scratchDir.resolve("merge_fail_input_target").toString
+    val tableName = "merge_fail_input_tbl"
+    val sourcePath = scratchDir.resolve("merge_fail_input_source").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    // A real file-backed source, not a temp view over an in-memory
+    // DataFrame - a temp view resolves to whatever underlying plan it
+    // wraps (here, not a LogicalRelation at all), so it would never be
+    // recognized as a read to begin with, reporting MISSING_INPUT (the
+    // declared input was never read) rather than the MISSING_INPUT_FIELD
+    // this test is actually about (recognized as read, but missing a
+    // required field) - confirmed the hard way by a real test failure.
+    spark.createDataFrame(Seq((99L, 198L))).toDF("id", "doubled").write.mode("overwrite").parquet(sourcePath)
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: merge_source
+         |    location: $sourcePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING parquet.`${sourcePath.replace('\\', '/')}` s
+             |ON t.id = s.id
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.MissingInputField && v.column.contains("customer_name")),
+      s"expected a MISSING_INPUT_FIELD violation naming 'customer_name', got ${ex.result.violations}"
+    )
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  test("PASS: an UPDATE satisfying its contract's declared output executes normally") {
+    val tablePath = scratchDir.resolve("update_pass_target").toString
+    val tableName = "update_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    // required: false - see the MERGE PASS test above for why (Delta
+    // reports every column nullable on read-back, and this case's
+    // outputSchema comes from the target's read-back schema).
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 5, "the UPDATE must actually have run against all 5 original rows")
+  }
+
+  test("PASS: a DELETE satisfying its contract's declared output executes normally") {
+    val tablePath = scratchDir.resolve("delete_pass_target").toString
+    val tableName = "delete_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    // required: false - see the MERGE PASS test above for why.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  // Every DML PASS/FAIL pair above targets a catalog table, where
+  // catalogTable is always populated - real, but not the only shape.
+  // `UPDATE delta.\`path\`` operates directly on a path with no catalog
+  // entry at all (confirmed empirically: catalogTable is None, not just
+  // missing a location), exercising deltaRowLevelDml's fallback branch -
+  // no active contract needed, direct inspection instead, the same
+  // pattern as the streaming format-detection test above.
+  test("WriteCommandSupport falls back to the target plan's toString for a path-based DML op with no catalog table") {
+    val tablePath = scratchDir.resolve("path_dml_target").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    capturedPlans.clear()
+
+    spark.sql(s"UPDATE delta.`${tablePath.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
+
+    val upd = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
+      .getOrElse(fail("no UpdateCommand plan observed"))
+    val info = WriteCommandSupport.combined.lift(upd).getOrElse(fail("path-based UpdateCommand should still be recognized"))
+    assert(info.format.contains("delta"))
+    assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
   }
 
   // Closes the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's

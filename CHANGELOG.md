@@ -563,6 +563,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing shape. Full details in docs/SPARK_ADAPTER.md's Delta ledger,
   including a new "A shared pitfall" subsection documenting the staged-
   table trap for future connector work.
+- **Row-level DML (`MERGE INTO`/`UPDATE`/`DELETE`): structural
+  verification, closing the last row in the Delta operation-surface
+  ledger.** `MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` (all
+  Delta-internal classes) are now real `WriteCommandSupport` entries,
+  matched by reflection via their public `target()`/`catalogTable()`/
+  `source()` methods and wrapped in `Try` so a future Delta API rename
+  degrades to the pre-existing fail-closed default rather than crashing a
+  real job. Checks the operation's target against the contract's declared
+  output location and current schema, and recognizes MERGE's source as a
+  contract input — deliberately does not check the actual row-level logic
+  (the merge condition, which columns an `UPDATE` touches, whether a
+  `DELETE` is unconditional), since there's no contract vocabulary for
+  that yet. Full semantic verification is scoped out on purpose and
+  documented in ROADMAP.md's new "Full semantic DML verification" item
+  (with a concrete example of the `rules` vocabulary it would need) so
+  it isn't lost, per an explicit decision to keep this pass structural-
+  only. Found and fixed a second correctness trap along the way: MERGE's
+  source was assumed to already be recognized as a contract input the
+  same way every other write's read-side is, but a real FAIL test proved
+  that wrong — Delta's DML commands are leaf nodes in the tree-traversal
+  sense (`source`/`target` are case-class fields, not `children`), so
+  `ContractEnforcementRule`'s existing `plan.collect` never reached them.
+  Fixed by also walking `WriteCommandSupport`'s extracted `query` field.
+  New PASS/FAIL pairs for all three DML operations, plus a direct-
+  inspection test for a path-based operation with no catalog table at
+  all. Mutation testing scoped to the two changed files: 85.71% overall.
+  All 13 rows of the Delta operation-surface ledger are now ✅ Covered.
 
 ### Fixed
 

@@ -199,14 +199,21 @@ private[sparkadapter] object FailClosedCommands {
     // /Partition), DropTable(Command)/DropDatabaseCommand (can delete a
     // managed table's/database's data), DropPartitions/
     // AlterTableDropPartitionCommand (deletes the partition's data),
-    // ReplaceTable (drops+recreates), Delta's DeleteCommand/UpdateCommand/
-    // MergeIntoCommand/WriteIntoDelta/CloneTableCommand/
-    // ConvertToDeltaCommand/CreateDeltaTableCommand/
+    // ReplaceTable (drops+recreates), Delta's WriteIntoDelta/
+    // CloneTableCommand/ConvertToDeltaCommand/CreateDeltaTableCommand/
     // DeltaReorgTable(Command)/DeltaGenerateCommand/RestoreTableCommand,
     // InsertIntoDataSourceCommand/InsertIntoDataSourceDirCommand (real
     // writes, just not yet translated), and ExternalCommandExecutor
     // (arbitrary passthrough to an external system - can't be classified
     // either way). See docs/SPARK_ADAPTER.md's "Fail-closed on
     // unverifiable writes" section for the per-class reasoning.
+    //
+    // Delta's DeleteCommand/UpdateCommand/MergeIntoCommand are no longer
+    // in that "not yet translated" bucket - WriteCommandSupport's
+    // deltaRowLevelDml case recognizes all three by reflection, so they
+    // never reach this class's check at all now (that's why they're not
+    // in the exclusion list above either - they're neither known-safe
+    // nor unhandled). See that case's own doc for exactly what it does
+    // and, just as importantly, doesn't verify about them.
   )
 }
