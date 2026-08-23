@@ -46,8 +46,11 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Union,
   Window
 }
+import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
+import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -164,6 +167,53 @@ private[sparkadapter] object SparkPlanAdapter {
     * gives a precise `url`/`table` location instead of the generic
     * `catalogTable`/`toString` fallback every other non-file relation gets.
     */
+  /** The physical location and format a resolved DataSourceV2 `Table`
+    * reports about itself, if any — shared by `WriteCommandSupport`'s
+    * `AppendData`/`OverwriteByExpression` cases (whose `NamedRelation`
+    * target resolves to a `DataSourceV2Relation` wrapping one of these)
+    * and this class's own `StreamingRelationV2` read case, since both are
+    * "a `Table` handle for an already-registered catalog table" — the
+    * exact same fact, needed on both the read and write side. Confirmed
+    * empirically (not assumed) that Delta's `DataSourceV2Relation.table`
+    * (a `DeltaTableV2`) reports `properties()` including both
+    * `"location"` (the physical warehouse path) and `"provider"`
+    * (`"delta"`) — a plain, public `java.util.Map<String, String>` on the
+    * public `connector.catalog.Table` interface, needing no reflection or
+    * connector-specific dependency, unlike `WriteToStream`'s legacy V1
+    * `Sink` wrapper (see that case's own doc for why that one *does* need
+    * reflection).
+    */
+  private[sparkadapter] def tableLocationAndFormat(table: V2Table): (Option[String], Option[String]) = {
+    val props = table.properties()
+    (Option(props.get("location")), Option(props.get("provider")))
+  }
+
+  /** The physical location a legacy V1 `StreamingRelation` (Delta's
+    * streaming read included — confirmed empirically the same way its
+    * legacy V1 `DeltaSink` was on the write side, see `WriteCommandSupport`)
+    * should be identified by. `dataSource.options` is Spark's own
+    * normalized options map for the source, carrying the same `"path"`
+    * key `SaveIntoDataSourceCommand`'s options map does on the write
+    * side; `StreamingRelation`/`DataSource` are both plain public
+    * spark-sql classes, no reflection needed here (unlike
+    * `WriteToStream`'s sink). Falls back to the source's own name (e.g.
+    * `"kafka"`) for a non-path-based source.
+    */
+  private[sparkadapter] def streamingRelationLocationOf(sr: StreamingRelation): String =
+    sr.dataSource.options.getOrElse("path", sr.sourceName)
+
+  /** The physical location and format a `StreamingRelationV2` node
+    * reports, reusing `tableLocationAndFormat` on its resolved `table` —
+    * the modern DataSourceV2 counterpart to `streamingRelationLocationOf`
+    * above, for a source whose provider implements `TableProvider`
+    * directly (Kafka, the built-in `rate`/`socket` sources, ...) rather
+    * than the legacy V1 `Source` trait. Falls back to `sourceName` when
+    * the table reports no `"location"` property (e.g. `rate`, which has
+    * no physical location at all).
+    */
+  private[sparkadapter] def streamingRelationV2LocationOf(sr: StreamingRelationV2): String =
+    tableLocationAndFormat(sr.table)._1.getOrElse(sr.sourceName)
+
   private def jdbcLocationOf(relation: BaseRelation): Option[String] =
     if (relation.getClass.getSimpleName == "JDBCRelation") {
       scala.util.Try {
@@ -252,6 +302,37 @@ private[sparkadapter] object SparkPlanAdapter {
             s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
           )
         ir.Read(ir.DatasetRef(SparkPlanAdapter.locationOf(lr)))
+
+      // A streaming source's top-level plan - confirmed empirically (not
+      // assumed) to be one of two shapes depending on whether the
+      // provider is a legacy V1 `Source` (Delta's included - `.readStream
+      // .format("delta").load(path)` analyzes to this, not
+      // StreamingRelationV2) or a modern DataSourceV2 `TableProvider`
+      // (the built-in `rate` source used elsewhere in this module's own
+      // streaming tests, Kafka, ...). Neither was previously recognized
+      // here at all - not a translation gap that silently passed
+      // (streaming writes cover that risk; see WriteCommandSupport's
+      // WriteToStream case), but a real one all the same: a contract
+      // declaring a streaming source as a required `input` would report
+      // MISSING_INPUT even though data genuinely is being read, since
+      // ContractEnforcementRule.verifyOrThrow's own input-schema
+      // collection needs the same two cases (added there too - see
+      // docs/SPARK_ADAPTER.md's "Streaming reads as a contract input").
+      case sr: StreamingRelation =>
+        if (!sr.dataSource.options.contains("path"))
+          report(
+            "StreamingRelation",
+            s"No 'path' option on a '${sr.sourceName}' streaming source; using its source name as a best-effort location"
+          )
+        ir.Read(ir.DatasetRef(SparkPlanAdapter.streamingRelationLocationOf(sr)))
+
+      case sr2: StreamingRelationV2 =>
+        if (SparkPlanAdapter.tableLocationAndFormat(sr2.table)._1.isEmpty)
+          report(
+            "StreamingRelationV2",
+            s"No 'location' property on a '${sr2.sourceName}' streaming source's table; using its source name as a best-effort location"
+          )
+        ir.Read(ir.DatasetRef(SparkPlanAdapter.streamingRelationV2LocationOf(sr2)))
 
       case p: Project =>
         ir.Project(translatePlan(p.child), p.projectList.map(translateNamed).toList)

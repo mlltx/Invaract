@@ -1360,6 +1360,87 @@ the point of fail-closed, was it?"
       `ReplaceTableAsSelect`, row-level DML) now states concretely what
       would close it, not just that it's currently rejected.
 
+#### Sub-phase: Remaining Delta write-side gaps closed; streaming reads
+#### recognized as contract inputs (done)
+
+Follow-up to the sub-phase above, closing every 🚫 row the corrected
+ledger could actually state a concrete next step for.
+
+- [x] **`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`: all
+      three now real `WriteCommandSupport` entries.** `AppendData` covers
+      `.saveAsTable()` append, `.insertInto()`, and `.writeTo().append()`
+      in one entry; `OverwriteByExpression` covers `.writeTo().overwrite(cond)`,
+      mapped to the contract's `saveMode: overwrite` uniformly (the
+      predicate itself needed no IR extension after all — contrary to
+      what the previous sub-phase assumed, `StructuralVerifier`'s
+      save-mode check never needed it); `ReplaceTableAsSelect` covers
+      `.format("delta").saveAsTable()` on a new table and
+      `.writeTo().createOrReplace()`. Location resolution for
+      `AppendData`/`OverwriteByExpression` prefers a resolved
+      `DataSourceV2Relation`'s `Table.properties()["location"]` (the
+      physical warehouse path, confirmed empirically), shared via a new
+      `SparkPlanAdapter.tableLocationAndFormat` helper. Verified via
+      PASS/FAIL pairs in `ContractEnforcementRuleSpec` for both the new-
+      and existing-table cases.
+- [x] **Found and fixed a real correctness trap along the way: atomic
+      CTAS/RTAS issues a second, nested write.** A single
+      `.saveAsTable()` on a *new* table produces two write-shaped plans
+      through `injectCheckRule` — the top-level `ReplaceTableAsSelect`
+      and an internal `AppendData` against a `StagedTable` (Spark's own
+      public 2-phase-commit protocol for atomic CTAS/RTAS) — both
+      genuinely visible to `ContractEnforcementRule.verifyOrThrow`. A
+      `StagedTable`'s `properties()` has no `"location"` yet, so the
+      naive translation gave the two plans two *different* location
+      strings for the same destination — a real PASS test failure, not
+      caught by inspection. Fixed via a shared `qualifiedIdentifier`
+      helper: `DataSourceV2Relation`'s own `catalog`/`identifier` fields
+      (confirmed populated even for a staged table) now produce the exact
+      same qualified form `ReplaceTableAsSelect`'s `ResolvedIdentifier`
+      case does, so the two agree by construction. Documented in
+      docs/SPARK_ADAPTER.md's new "A shared pitfall" subsection for
+      whichever connector hits this next.
+- [x] **Streaming reads recognized as contract inputs, closing a real
+      false-positive.** Neither `StreamingRelation` (the legacy V1 path
+      Delta's own streaming read uses, confirmed empirically — not
+      `StreamingRelationV2`) nor `StreamingRelationV2` (the modern
+      DataSourceV2 path — `rate`, Kafka, ...) was a `LogicalRelation`, so
+      a contract declaring a streaming source as a required `input`
+      always reported `MISSING_INPUT` even though data was genuinely
+      being read. Closed in both `SparkPlanAdapter`'s translation and
+      `ContractEnforcementRule`'s input-schema collection via two new
+      shared helpers (`streamingRelationLocationOf`/
+      `streamingRelationV2LocationOf`) rather than two independent
+      matches — the exact duplication risk the write side already
+      learned from. `StreamingRelation.dataSource.options`/`sourceName`
+      need no reflection (plain public spark-sql classes, unlike
+      `WriteToStream`'s sink); `StreamingRelationV2` reuses the same
+      `Table.properties()` lookup as the write-side V2 cases above.
+      Verified via a PASS/FAIL pair proving a contract's declared input
+      schema is genuinely checked against a real streaming Delta source.
+- [x] **Mutation testing scoped to all three changed files
+      (`WriteCommandSupport.scala`/`SparkPlanAdapter.scala`/
+      `ContractEnforcementRule.scala`): 88.57% overall (89.86% of covered
+      code)**, up from 84.29%/85.51% on the first run — two direct
+      translation-level tests added (asserting both location *and*
+      diagnostics, mirroring this file's existing Delta-read-translation
+      test) to kill mutants in the new `StreamingRelation`/
+      `StreamingRelationV2` fallback-diagnostic conditions. Two mutants
+      remain in new code, both in those same fallback-diagnostic
+      conditions (whether a *diagnostic message* gets attached, not
+      whether the translated location itself is correct — both directions
+      of that are already asserted correct by the new tests): killing
+      them fully would need a legacy V1 `StreamingRelation` source with no
+      path option, which isn't realistically constructible from the
+      sources available in this test environment (every built-in
+      no-physical-location source, `rate` included, is natively V2).
+      Left as an accepted mutant, the same category CLAUDE.md's own
+      "Mutation Testing Requirement" already carves out (a StringLiteral
+      mutant on human-readable message text) — this is a
+      ConditionalExpression mutant on whether that same kind of message
+      gets attached at all, not a correctness difference. Full suite
+      passing (76/76); `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1378,38 +1459,14 @@ the point of fail-closed, was it?"
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
 - [ ] Interpreting `rules` from the contract model
-- [ ] **DataSourceV2 catalog writes** (`AppendData`/
-      `OverwriteByExpression`/`ReplaceTableAsSelect` — `.saveAsTable`
-      against an *existing* Delta table, `.insertInto`, `.writeTo(...)`,
-      and `.format("delta").saveAsTable(...)` against a *new* table) still
-      have no real translation, but *do* fail closed (confirmed
-      empirically — see the "Delta Lake operation-surface coverage
-      ledger" sub-phase below) rather than passing unverified. This is a
-      safety net, not a verdict — see docs/ADDING_A_SPARK_CONNECTOR.md's
-      "What 'fails closed' means" — and each of these has a concrete next
-      step in that sub-phase's ledger: one `WriteCommandSupport` entry for
-      `AppendData` (covers `.saveAsTable` append, `.insertInto`, and
-      `.writeTo(...).append()` at once), one for `OverwriteByExpression`
-      (needs `ir.Write` extended with an overwrite-condition field first),
-      one for `ReplaceTableAsSelect` (covers new-table `.saveAsTable` and
-      `.writeTo(...).createOrReplace()`).
-- [ ] Delta's row-level `MERGE`/`DELETE`/`UPDATE` also fail closed but
-      have no translation — the hardest row in the ledger below to close:
-      `ir.Write` models "replace/append the output of a query," not a
+- [ ] Delta's row-level `MERGE`/`DELETE`/`UPDATE` fail closed but have no
+      translation — the one row remaining in the "Delta Lake
+      operation-surface coverage ledger" below: `ir.Write` models
+      "replace/append the output of a query," not a
       predicate-conditioned row mutation, so this needs an IR extension
       (something like `ir.Merge`/`ir.RowMutation`) before a
       `WriteCommandSupport` case is even meaningful, not just a new case
       against the existing shape.
-- [ ] **Streaming reads, as a contract-declared *input*, aren't linked
-      into input verification.** `StreamingRelationV2` isn't a
-      `LogicalRelation`, so `ContractEnforcementRule.verifyOrThrow`'s
-      input-schema collection doesn't see it — a contract requiring a
-      streaming source as a declared `input` would wrongly report
-      `MISSING_INPUT`. Next step: teach that collection to also recognize
-      `StreamingRelationV2`/`StreamingRelation`. Smaller in practice than
-      the streaming-write gap below was, since a contract that only
-      declares an `output` (the common shape for a streaming job) is
-      unaffected.
 
 #### Dependencies
 

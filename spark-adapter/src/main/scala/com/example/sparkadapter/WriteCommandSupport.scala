@@ -3,9 +3,11 @@
 
 package com.example.sparkadapter
 
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, ReplaceTableAsSelect}
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.types.StructType
 
@@ -219,6 +221,157 @@ private[sparkadapter] object WriteCommandSupport {
   private def reflectiveSinkPath(sink: AnyRef): Option[String] =
     scala.util.Try(sink.getClass.getMethod("path").invoke(sink).toString).toOption
 
+  // DataSourceV2 catalog writes against an *existing* table -
+  // `.saveAsTable(...)` append, `.insertInto(...)`, and
+  // `.writeTo(...).append()` all confirmed empirically (via injectCheckRule
+  // against a real Delta-enabled session, not assumed) to analyze to this
+  // single command, none of them InsertIntoHadoopFsRelationCommand/
+  // SaveIntoDataSourceCommand - those are V1 shapes; a DSv2 catalog
+  // (Delta's included) always resolves an existing-table write through
+  // this V2 command instead. Confirmed previously (see the "Delta Lake
+  // operation-surface coverage ledger" in docs/SPARK_ADAPTER.md) to
+  // correctly fail closed; this closes it for real.
+  private val appendData: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: AppendData =>
+      val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = format,
+        saveMode = Some("append"),
+        outputSchema = cmd.query.schema,
+        diagnostic = diagnostic
+      )
+  }
+
+  // `.writeTo(...).overwrite(condition)` - confirmed empirically to
+  // analyze to this command, carrying the same NamedRelation target shape
+  // as AppendData above plus a `deleteExpr` (the overwrite predicate -
+  // `true` for a full overwrite, an arbitrary expression for a
+  // conditional/dynamic-partition one). `ir.Write` has no field for that
+  // predicate - not needed for what StructuralVerifier actually checks
+  // (schema/format/location/save mode), so this maps to the contract's
+  // coarse-grained "overwrite" saveMode uniformly rather than needing an
+  // IR extension, unlike what was first assumed (see ROADMAP.md).
+  private val overwriteByExpression: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: OverwriteByExpression =>
+      val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = format,
+        saveMode = Some("overwrite"),
+        outputSchema = cmd.query.schema,
+        diagnostic = diagnostic
+      )
+  }
+
+  // `.format("delta").saveAsTable(...)` on a *new* table, and
+  // `.writeTo(...).createOrReplace()` - confirmed empirically to both
+  // analyze to this V2 command (not CreateDataSourceTableAsSelectCommand,
+  // which only V1 sources use for a new-table saveAsTable). `name`
+  // resolves to a ResolvedIdentifier, not yet a full CatalogTable with a
+  // storage location, since the table doesn't exist yet at analysis time
+  // - so unlike createDataSourceTableAsSelect above, there is no physical
+  // path to prefer; the qualified catalog identifier is the best
+  // available location. `tableSpec.provider` gives format directly, the
+  // V2 counterpart of `cmd.table.provider` above.
+  private val replaceTableAsSelect: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: ReplaceTableAsSelect =>
+      val (location, diagnostic) = cmd.name match {
+        case ri: ResolvedIdentifier =>
+          val qualified = qualifiedIdentifier(ri.catalog, ri.identifier)
+          val msg = s"No physical location resolved yet for new/replaced table '$qualified' " +
+            "(ReplaceTableAsSelect names a table that doesn't exist until this write runs); " +
+            "using its qualified catalog identifier as the location"
+          (qualified, Some(Diagnostic("ReplaceTableAsSelect", msg)))
+        case other =>
+          val msg = s"Could not resolve a table identifier from ReplaceTableAsSelect's unresolved " +
+            s"name (${other.getClass.getSimpleName}); using its toString as a best-effort location"
+          (other.toString, Some(Diagnostic("ReplaceTableAsSelect", msg)))
+      }
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = cmd.tableSpec.provider,
+        // A REPLACE (with or without OR CREATE) always replaces the
+        // table's entire prior content wholesale - unlike
+        // OverwriteByExpression above, there's no partial/conditional
+        // case to blur, so "overwrite" is exact here, not an
+        // approximation.
+        saveMode = Some("overwrite"),
+        outputSchema = cmd.query.schema,
+        diagnostic = diagnostic
+      )
+  }
+
+  /** Shared by `appendData`/`overwriteByExpression` above and
+    * `replaceTableAsSelect`'s `ResolvedIdentifier` case: the exact same
+    * `catalogName.namespace.tableName` format both need, kept in one
+    * place so the two can never drift into two subtly different qualified
+    * forms for what's actually the same underlying table (see this
+    * method's use in `namedRelationLocationAndFormat` below for why that
+    * matters here specifically, not just as a style preference).
+    */
+  private def qualifiedIdentifier(catalog: org.apache.spark.sql.connector.catalog.CatalogPlugin, identifier: org.apache.spark.sql.connector.catalog.Identifier): String =
+    s"${catalog.name}.${identifier.namespace.mkString(".")}.${identifier.name}"
+
+  /** Shared by `appendData`/`overwriteByExpression` above: both commands'
+    * `table: NamedRelation` resolves, for any DataSourceV2 catalog
+    * (Delta's included), to a `DataSourceV2Relation` wrapping a `Table`
+    * handle — the same handle `SparkPlanAdapter.tableLocationAndFormat`
+    * already reads `properties()` from for the analogous
+    * `StreamingRelationV2` read case.
+    *
+    * Three tiers, not two — confirmed necessary empirically, not assumed:
+    * `.saveAsTable(...)`/`.writeTo(...).createOrReplace()` on a *new*
+    * table produces both a top-level `ReplaceTableAsSelect` (handled by
+    * `replaceTableAsSelect` above) *and* an internal, nested `AppendData`
+    * against a `StagedTable` (Spark's own public 2-phase-commit protocol
+    * for atomic CTAS/RTAS — Delta's `StagedDeltaTableV2` implements it) —
+    * both visible to `injectCheckRule` for the same one `.saveAsTable()`
+    * call. A `StagedTable`'s `properties()` has no `"location"` yet (the
+    * table doesn't physically exist until commit), so without this middle
+    * tier the two writes would resolve to two different, mismatched
+    * locations for what's really one destination — the outer command's
+    * qualified identifier, and the inner one's bare, unqualified
+    * `Table.name()` — and whichever one a contract's declared location
+    * matched, the other would fail with `OUTPUT_LOCATION_MISMATCH`,
+    * aborting a genuinely contract-satisfying write. `DataSourceV2Relation`'s
+    * own `catalog`/`identifier` fields (confirmed populated even for a
+    * staged table, unlike its `Table.properties()`) give the same
+    * qualified form `qualifiedIdentifier` above computes from
+    * `ReplaceTableAsSelect`'s `ResolvedIdentifier` — the two now always
+    * agree for the same table by construction, not by coincidence.
+    *
+    * Falls back to the relation's own `name()` only when neither a
+    * physical location nor `catalog`+`identifier` are available.
+    */
+  private def namedRelationLocationAndFormat(table: NamedRelation): (String, Option[String], Option[Diagnostic]) =
+    table match {
+      case v2: DataSourceV2Relation =>
+        val (location, format) = SparkPlanAdapter.tableLocationAndFormat(v2.table)
+        location match {
+          case Some(loc) => (loc, format, None)
+          case None =>
+            (v2.catalog, v2.identifier) match {
+              case (Some(catalog), Some(identifier)) =>
+                val qualified = qualifiedIdentifier(catalog, identifier)
+                val msg = s"No 'location' property on write target '$qualified' (likely a staged table pending " +
+                  "an atomic CREATE/REPLACE commit); using its qualified catalog identifier as the location"
+                (qualified, format, Some(Diagnostic("V2Write", msg)))
+              case _ =>
+                val msg = s"No 'location' property and no catalog/identifier on write target '${table.name}'; " +
+                  "using its name() as a best-effort location"
+                (table.name, format, Some(Diagnostic("V2Write", msg)))
+            }
+        }
+      case _ =>
+        val msg = s"Write target ${table.getClass.getSimpleName} is not a DataSourceV2Relation; " +
+          "using its name() as a best-effort location"
+        (table.name, None, Some(Diagnostic("V2Write", msg)))
+    }
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -230,7 +383,8 @@ private[sparkadapter] object WriteCommandSupport {
     * needs to change.
     */
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
-    insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream
+    insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
+      appendData orElse overwriteByExpression orElse replaceTableAsSelect
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

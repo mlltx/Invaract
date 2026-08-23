@@ -8,7 +8,9 @@ import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
+import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.streaming.StreamingRelation
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -82,7 +84,24 @@ object ContractEnforcementRule {
     val translated = SparkPlanAdapter.translate(plan)
     translated.plan match {
       case _: com.example.ir.Write =>
-        val inputSchemas = plan.collect { case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema }.toList
+        // Collects every recognized *read* shape found anywhere in the
+        // plan - LogicalRelation for batch reads, and (see
+        // docs/SPARK_ADAPTER.md's "Streaming reads as a contract input")
+        // StreamingRelation/StreamingRelationV2 for a legacy-V1 or
+        // DataSourceV2 streaming source respectively. A contract
+        // declaring a streaming source as a required `input` used to
+        // always report MISSING_INPUT, even though data was genuinely
+        // being read, because this collection only recognized
+        // LogicalRelation - the same location-extraction logic
+        // SparkPlanAdapter's own translation now uses for those two
+        // shapes is reused here rather than re-derived, so the two sites
+        // can't drift the way write recognition once did (see
+        // WriteCommandSupport's class doc).
+        val inputSchemas = plan.collect {
+          case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+          case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+          case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+        }.toList
         // WriteCommandSupport.combined is the same lookup translation used
         // to reach this ir.Write in the first place, so this can never
         // drift out of sync with it the way three independent matches

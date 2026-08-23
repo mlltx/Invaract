@@ -553,6 +553,43 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(catalogResult.diagnostics.isEmpty, s"a catalog table reference should resolve via the same HadoopFsRelation branch, no fallback: ${catalogResult.diagnostics}")
   }
 
+  // Closes the streaming-read-as-input coverage-ledger gap: neither
+  // StreamingRelation (the legacy V1 path Delta itself uses) nor
+  // StreamingRelationV2 (the modern DataSourceV2 path - rate, Kafka, ...)
+  // was previously a recognized read shape, so a contract declaring a
+  // streaming source as a required input always reported MISSING_INPUT.
+  // A path-based Delta streaming source and a path-less rate one exercise
+  // both branches of each case's fallback-diagnostic condition - neither
+  // was reachable through this suite's other Delta streaming tests
+  // (which chain a `rate` source into a Delta *sink*, wrapped in typed
+  // encoding nodes this translator doesn't descend through), confirmed
+  // by a real mutation-testing run finding both conditions uncovered.
+  test("translates a streaming Delta read (.readStream.format(\"delta\").load(path)) with a precise location, no fallback needed") {
+    val path = outputDir.resolve("streaming_read_translation_test").toString
+    readSample().write.format("delta").mode(SaveMode.Overwrite).save(path)
+
+    val result = SparkPlanAdapter.translate(spark.readStream.format("delta").load(path).queryExecution.analyzed)
+    result.plan match {
+      case Read(DatasetRef(location), None) =>
+        assert(location.contains("streaming_read_translation_test"), s"expected the Delta source's physical path in the location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, s"a path-based streaming Delta read shouldn't need a fallback diagnostic: ${result.diagnostics}")
+  }
+
+  test("translates a streaming rate read (no path option) via the fallback branch, with a diagnostic naming the source") {
+    val result = SparkPlanAdapter.translate(spark.readStream.format("rate").load().queryExecution.analyzed)
+    result.plan match {
+      case Read(DatasetRef(location), None) =>
+        assert(location == "rate", s"expected the source name as a best-effort location for a source with no physical location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(
+      result.diagnostics.exists(_.nodeType == "StreamingRelationV2"),
+      s"a source with no resolvable location should report a fallback diagnostic: ${result.diagnostics}"
+    )
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)

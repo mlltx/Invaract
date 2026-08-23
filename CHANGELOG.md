@@ -532,6 +532,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   require every 🚫 row to carry a next step (the translation work that
   would close it, or, rarely, a specific reason it never will); the
   Delta ledger in docs/SPARK_ADAPTER.md was rewritten to match.
+- **Every remaining Delta write-side 🚫 row closed, plus the
+  streaming-read-as-input gap.** `AppendData` (`.saveAsTable()` append,
+  `.insertInto()`, `.writeTo().append()`), `OverwriteByExpression`
+  (`.writeTo().overwrite(cond)`), and `ReplaceTableAsSelect`
+  (`.format("delta").saveAsTable()` on a new table,
+  `.writeTo().createOrReplace()`) are all now real `WriteCommandSupport`
+  entries, genuinely translated and verified rather than merely rejected.
+  `OverwriteByExpression` needed no `ir.Write` extension after all — its
+  delete predicate maps to the contract's existing coarse-grained
+  `saveMode: overwrite`, since `StructuralVerifier` never needed the
+  predicate itself. Separately, `StreamingRelation`/`StreamingRelationV2`
+  are now recognized as read shapes (in both `SparkPlanAdapter`'s
+  translation and `ContractEnforcementRule`'s input-schema collection, via
+  shared helpers so the two can't drift), closing a real false-positive:
+  a contract declaring a streaming source as a required `input` used to
+  always report `MISSING_INPUT` even though data was genuinely being
+  read. New PASS/FAIL pairs for all four in `ContractEnforcementRuleSpec`.
+  Found and fixed a genuine correctness trap along the way: a single
+  `.saveAsTable()` on a *new* table produces two write-shaped plans
+  through `injectCheckRule` — the top-level `ReplaceTableAsSelect` and an
+  internal, nested `AppendData` against a `StagedTable` (Spark's public
+  2-phase-commit protocol for atomic CTAS/RTAS) — which would otherwise
+  resolve to two different, mismatched locations for the same
+  destination and spuriously abort a contract-satisfying write; fixed via
+  a shared `qualifiedIdentifier` helper so both agree by construction. Of
+  the 13-row ledger, only row-level DML (`MERGE`/`UPDATE`/`DELETE`)
+  remains 🚫, deliberately: it needs a real IR extension
+  (`ir.Merge`/`ir.RowMutation`), not a new case against `ir.Write`'s
+  existing shape. Full details in docs/SPARK_ADAPTER.md's Delta ledger,
+  including a new "A shared pitfall" subsection documenting the staged-
+  table trap for future connector work.
 
 ### Fixed
 

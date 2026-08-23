@@ -319,6 +319,106 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
   }
 
+  // Closes the last coverage-ledger gap: a streaming source is not a
+  // LogicalRelation, so a contract declaring it as a required `input`
+  // used to always report MISSING_INPUT even though data was genuinely
+  // being read - not a silent-pass risk (a MISSING_INPUT rejection is
+  // safe, just wrong), but a real false-positive gap. This PASS/FAIL pair
+  // proves it through real enforcement of a real streaming Delta source,
+  // not just that the false MISSING_INPUT stops firing.
+  test("PASS: a contract declaring a streaming Delta source as its input is genuinely recognized") {
+    val sourcePath = scratchDir.resolve("stream_input_pass_source").toString
+    val sinkPath = scratchDir.resolve("stream_input_pass_sink").toString
+    val checkpointPath = scratchDir.resolve("stream_input_pass_checkpoint").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(sourcePath)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: source
+         |    location: $sourcePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |outputs:
+         |  - name: out
+         |    location: $sinkPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val streamDf = spark.readStream.format("delta").load(sourcePath)
+      val query = streamDf.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+        .start(sinkPath) // must not throw MISSING_INPUT
+      query.awaitTermination()
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(sinkPath)))
+  }
+
+  test("FAIL: a contract requiring an input field genuinely absent from a real streaming Delta source is rejected") {
+    val sourcePath = scratchDir.resolve("stream_input_fail_source").toString
+    val sinkPath = scratchDir.resolve("stream_input_fail_sink").toString
+    val checkpointPath = scratchDir.resolve("stream_input_fail_checkpoint").toString
+    // Only id/doubled actually exist in this Delta table.
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(sourcePath)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: source
+         |    location: $sourcePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |outputs:
+         |  - name: out
+         |    location: $sinkPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val streamDf = spark.readStream.format("delta").load(sourcePath).select("id")
+      intercept[ContractViolationException] {
+        val query = streamDf.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointPath)
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .start(sinkPath)
+        query.awaitTermination()
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(sinkPath)), "the streaming write must be aborted before the query ever starts, not merely reported as failed")
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.MissingInputField && v.column.contains("customer_name")),
+      s"expected a MISSING_INPUT_FIELD violation naming 'customer_name', got ${ex.result.violations}"
+    )
+  }
+
   // The fail-closed policy itself: a Spark command that's Command-shaped
   // (so it might write or otherwise mutate data) but that SparkPlanAdapter
   // has no translation for, and that isn't on FailClosedCommands' known-safe
@@ -375,75 +475,149 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
   }
 
-  // Closing the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
-  // coverage ledger flagged: .format("delta").saveAsTable() on a NEW table,
-  // .saveAsTable()/.insertInto() appending to an EXISTING table, and
-  // DataFrameWriterV2 (.writeTo()) all analyze to V2 write commands
+  // Closes the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
+  // coverage ledger flagged: .format("delta").saveAsTable() on a NEW
+  // table, .saveAsTable()/.insertInto() appending to an EXISTING table,
+  // and DataFrameWriterV2 (.writeTo()) all analyze to V2 write commands
   // (ReplaceTableAsSelect/AppendData/OverwriteByExpression) - confirmed
-  // empirically via injectCheckRule, not assumed - which are none of them
-  // SparkPlanAdapter/WriteCommandSupport's three recognized shapes, and
-  // none of them are on FailClosedCommands' safe list (they're real V2
-  // write commands, not metadata). This proves the fail-closed policy
-  // already protects these specific, concrete operations rather than
-  // leaving them as a silent, unverified gap - they're rejected, not
-  // translated, but "rejected" is what "not yet supported" should mean
-  // here, never "silently allowed."
-  test("FAIL-CLOSED: .format(\"delta\").saveAsTable() on a new table is rejected, not silently passed") {
+  // empirically via injectCheckRule, not assumed. These used to only
+  // fail closed (safely rejected, but never actually checked against a
+  // contract) - now WriteCommandSupport recognizes all three, so they're
+  // genuinely verified, the same as every other write shape. Location
+  // differs between the two, confirmed empirically: ReplaceTableAsSelect
+  // (a table that doesn't exist yet) has no physical path to resolve, so
+  // it uses the qualified catalog identifier ("spark_catalog.default.
+  // <table>"); AppendData/OverwriteByExpression target an *existing*
+  // table, whose resolved DataSourceV2 Table reports a physical
+  // warehouse path via properties() - the same "prefer a real path,
+  // fall back to the identifier" asymmetry createDataSourceTableAsSelect
+  // already has for V1 new-table writes.
+  test("PASS: .format(\"delta\").saveAsTable() on a new table, satisfying its contract, executes normally") {
+    val tableName = "pass_rtas_new_tbl"
+    val expectedLocation = s"spark_catalog.default.$tableName"
     val yaml =
-      """id: would_always_fail
-        |version: "1.0.0"
-        |outputs:
-        |  - name: out
-        |    location: nonexistent/location
-        |    schema:
-        |      fields:
-        |        - name: impossible_field
-        |          type: string
-        |          required: true
-        |""".stripMargin
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    format: delta
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: doubled
+         |          type: long
+         |          required: true
+         |""".stripMargin
 
     withContract(yaml) {
       val df = spark.range(5).withColumn("doubled", col("id") * 2)
-      val ex = intercept[ContractViolationException] {
-        df.write.format("delta").mode("overwrite").saveAsTable("fail_closed_new_delta_tbl")
-      }
-      assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      df.write.format("delta").mode("overwrite").saveAsTable(tableName) // must not throw
     }
+
+    assert(spark.catalog.tableExists(tableName))
   }
 
-  test("FAIL-CLOSED: appending to an existing Delta table via .saveAsTable()/.insertInto()/.writeTo() is rejected") {
-    val tableName = "fail_closed_append_tbl"
-    // Seed with no active contract.
+  test("FAIL: .format(\"delta\").saveAsTable() on a new table, violating its contract, is aborted before any table is created") {
+    val tableName = "fail_rtas_new_tbl"
+    val expectedLocation = s"spark_catalog.default.$tableName"
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.format("delta").mode("overwrite").saveAsTable(tableName)
+      }
+    }
+
+    assert(!spark.catalog.tableExists(tableName), "the new table must never be created, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  test("PASS: appending to an existing Delta table via .saveAsTable()/.insertInto()/.writeTo(), satisfying its contract, executes normally") {
+    val tableName = "pass_append_tbl"
+    val expectedLocation = scratchDir.resolve("warehouse").resolve(tableName).toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").saveAsTable(tableName)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: doubled
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5, 6).withColumn("doubled", col("id") * 2)
+      df.write.format("delta").mode("append").saveAsTable(tableName) // must not throw
+      df.write.insertInto(tableName) // must not throw
+      df.writeTo(tableName).append() // must not throw
+      df.writeTo(tableName).overwrite(org.apache.spark.sql.functions.lit(true)) // must not throw
+    }
+
+    assert(spark.table(tableName).count() > 0)
+  }
+
+  test("FAIL: appending to an existing Delta table via .saveAsTable()/.insertInto()/.writeTo(), violating its contract, is aborted before anything is written") {
+    val tableName = "fail_append_tbl"
+    val expectedLocation = scratchDir.resolve("warehouse").resolve(tableName).toString
     spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").saveAsTable(tableName)
     val beforeRows = spark.table(tableName).collect().toSet
 
     val yaml =
-      """id: would_always_fail
-        |version: "1.0.0"
-        |outputs:
-        |  - name: out
-        |    location: nonexistent/location
-        |    schema:
-        |      fields:
-        |        - name: impossible_field
-        |          type: string
-        |          required: true
-        |""".stripMargin
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
 
     withContract(yaml) {
       val df = spark.range(5, 6).withColumn("doubled", col("id") * 2)
 
       val exSaveAsTable = intercept[ContractViolationException](df.write.format("delta").mode("append").saveAsTable(tableName))
-      assert(exSaveAsTable.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      assert(exSaveAsTable.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
 
       val exInsertInto = intercept[ContractViolationException](df.write.insertInto(tableName))
-      assert(exInsertInto.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      assert(exInsertInto.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
 
       val exWriteToAppend = intercept[ContractViolationException](df.writeTo(tableName).append())
-      assert(exWriteToAppend.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      assert(exWriteToAppend.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
 
       val exWriteToOverwrite = intercept[ContractViolationException](df.writeTo(tableName).overwrite(org.apache.spark.sql.functions.lit(true)))
-      assert(exWriteToOverwrite.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+      assert(exWriteToOverwrite.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
     }
 
     val afterRows = spark.table(tableName).collect().toSet

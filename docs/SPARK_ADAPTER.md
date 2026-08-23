@@ -434,7 +434,7 @@ is future work, unless stated otherwise.
 | `.read.format("delta").load(path)` | ✅ Covered | `LogicalRelation` wraps `DeltaLog$$anon$2`, an anonymous `HadoopFsRelation` subclass matched by ordinary subtyping — see "Delta Lake reads" above. `SparkPlanAdapterSpec`, `ContractEnforcementRuleSpec` PASS/FAIL pair. |
 | Catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`) | ✅ Covered | Same relation shape as above, confirmed for both forms — see "Delta Lake reads" above. |
 | Time travel / snapshot reads (`versionAsOf`/`timestampAsOf`) | ✅ Covered | Probed empirically: produces the identical `LogicalRelation(relation=HadoopFsRelation)` shape as a plain read. Zero new code needed. |
-| Streaming read (as a contract-declared *input*) | 🚫 Fails closed for input verification, but no longer blocks anything | A streaming source (`StreamingRelationV2`) isn't a `LogicalRelation`, so `ContractEnforcementRule.verifyOrThrow`'s `plan.collect { case lr: LogicalRelation => ... }` input-schema collection doesn't see it — a contract declaring this source as a required `input` would report `MISSING_INPUT` even though data genuinely is being read. **Next step:** teach that collection (or a parallel one) to also recognize `StreamingRelationV2`/`StreamingRelation` and extract a location/schema from them, mirroring what `WriteCommandSupport` now does for `WriteToStream` on the write side. Not attempted this pass — the write side (the row that had zero enforcement, not just an input-declaration gap) was the priority; this is a real but strictly smaller gap, since a contract that only declares an `output` (the common shape for a streaming job) is unaffected by it. |
+| Streaming read (as a contract-declared *input*) | ✅ **Covered — closed this pass** | Previously a real false-positive gap: neither `StreamingRelation` (the legacy V1 path Delta itself uses — `.readStream.format("delta").load(path)` analyzes to this, not `StreamingRelationV2`) nor `StreamingRelationV2` (the modern DataSourceV2 path, used by `rate`/Kafka/similar) is a `LogicalRelation`, so `ContractEnforcementRule.verifyOrThrow`'s input-schema collection never saw either, and a contract declaring a streaming source as a required `input` always reported `MISSING_INPUT` even though data was genuinely being read. Closed by teaching both `SparkPlanAdapter`'s translation and `ContractEnforcementRule`'s input-schema collection to recognize both shapes, via two shared, non-duplicated helpers (`streamingRelationLocationOf`/`streamingRelationV2LocationOf`) rather than two independent matches — the exact duplication risk this module's write side already learned from. `StreamingRelation.dataSource.options("path")` and `sourceName` give location/format with no reflection needed (both are plain public spark-sql classes, unlike `WriteToStream`'s sink); `StreamingRelationV2.table` reuses the same `Table.properties()` lookup `AppendData`/`OverwriteByExpression` use below. Verified through real enforcement: a PASS/FAIL pair in `ContractEnforcementRuleSpec` proving a contract's declared input schema is genuinely checked against a real streaming Delta source. |
 | Change-data-feed / incremental read (`readChangeFeed`) | ✅ Covered (with a precision caveat) | Probed empirically: produces `LogicalRelation(relation=CDCReader$$DeltaCDFRelation)`, a class distinct from `HadoopFsRelation` — but `translatePlan`'s generic `LogicalRelation` case (not the `HadoopFsRelation`-specific branch) already handles any relation type, producing a correct `ir.Read`. Because this relation has no populated `catalogTable` for a path-based read, it takes the existing "fallback" branch and reports a location diagnostic — the location string is the relation's `toString()`, not a clean physical path. Schema verification is unaffected; only location precision is reduced. **Next step:** none required for correctness; a future enhancement could special-case `DeltaCDFRelation` for a cleaner location string. |
 
 ### Write
@@ -442,25 +442,58 @@ is future work, unless stated otherwise.
 | Operation | Status | Evidence / next step |
 |---|---|---|
 | `.save(path)`, all save modes | ✅ Covered | `SaveIntoDataSourceCommand` — see "Delta Lake support" above. |
-| `.saveAsTable(...)`, new table | ✅ Covered for non-Delta V1 sources; 🚫 Fails closed for Delta specifically | Non-Delta: `CreateDataSourceTableAsSelectCommand`, translated (see "Translation coverage" above). Delta: probed empirically — `.format("delta").saveAsTable(...)` on a *new* table analyzes to the V2 `ReplaceTableAsSelect`, not the V1 command above. Confirmed via a `ContractEnforcementRuleSpec` FAIL-CLOSED test to be correctly rejected (`UnverifiableWrite`), writing zero rows. **Next step:** add a `WriteCommandSupport` case for `ReplaceTableAsSelect` (and `CreateTableAsSelect`, its V2 non-replace sibling) to move from "safely rejected" to "actually verified" — tracked in ROADMAP.md's "Scope (Future)". |
-| `.saveAsTable(...)`, existing table (append) | 🚫 Fails closed | Analyzes to `AppendData`. Confirmed via `ContractEnforcementRuleSpec` FAIL-CLOSED test: rejected, zero rows written (asserted by comparing table contents before/after). **Next step:** add a `WriteCommandSupport` case for `AppendData`, extracting location from its target `NamedRelation`/`DataSourceV2Relation` and output schema from its query — same registry pattern `WriteToStream` now follows below; tracked in ROADMAP.md's "Scope (Future)". |
-| `.insertInto(...)` | 🚫 Fails closed | Same `AppendData` shape, same test. **Next step:** closed by the same `AppendData` translation work as the row above — one entry covers both call sites. |
-| `.writeTo(...)` (DataFrameWriterV2), all sub-ops | 🚫 Fails closed | `.append()` → `AppendData`; `.overwrite(cond)` → `OverwriteByExpression` (both confirmed via the same FAIL-CLOSED test); `.createOrReplace()` → `ReplaceTableAsSelect` (probed empirically, same class as the new-table `.saveAsTable()` row above, same disposition). **Next step:** `.append()` closed by the `AppendData` work above; `.createOrReplace()` by the `ReplaceTableAsSelect` work above; `.overwrite(cond)` needs its own `WriteCommandSupport` case for `OverwriteByExpression`, additionally capturing the overwrite condition (`ir.Write` has no field for it today — a smaller IR extension, not just a translation case). All tracked in ROADMAP.md's "Scope (Future)". |
+| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass** | Non-Delta: `CreateDataSourceTableAsSelectCommand`, translated (see "Translation coverage" above). Delta: `.format("delta").saveAsTable(...)` on a *new* table analyzes to the V2 `ReplaceTableAsSelect`, now a real `WriteCommandSupport` entry. `tableSpec.provider` gives format directly; location is the target's qualified catalog identifier (`"spark_catalog.default.<table>"`), since a not-yet-existing table has no physical path to resolve at analysis time. Verified via a PASS/FAIL pair in `ContractEnforcementRuleSpec`. |
+| `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Analyzes to `AppendData`, now a real `WriteCommandSupport` entry. Location prefers the resolved `DataSourceV2Relation`'s `Table.properties()["location"]` (the physical warehouse path, confirmed empirically) over its qualified identifier. Verified via a PASS/FAIL pair. |
+| `.insertInto(...)` | ✅ **Covered — closed this pass** | Same `AppendData` shape, same `WriteCommandSupport` entry, same test. |
+| `.writeTo(...)` (DataFrameWriterV2), all sub-ops | ✅ **Covered — closed this pass** | `.append()` → `AppendData`; `.overwrite(cond)` → `OverwriteByExpression`, mapped to the contract's `saveMode: overwrite` uniformly (the delete predicate itself isn't modeled — `StructuralVerifier`'s save-mode check doesn't need it, so no IR extension was needed, contrary to what was first assumed); `.createOrReplace()` → `ReplaceTableAsSelect`, same entry as the new-table `.saveAsTable()` row above. All verified via the same PASS/FAIL pairs. |
 | Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | 🚫 Fails closed | `MERGE INTO` confirmed via an existing FAIL-CLOSED test (`MergeIntoCommand`, real Spark analysis — see "Fail-closed on unverifiable writes" below). `UPDATE`/`DELETE` not individually re-probed this pass; both are explicitly named as deliberately-excluded, `Command`-shaped classes in `FailClosedCommands.scala`'s header comment, so they follow the same default-reject path by construction. **Next step:** genuinely the hardest row here to close — `ir.Write` models "replace/append the output of a query," not "apply a row-level predicate-conditioned mutation," so covering this for real needs an IR extension (something like `ir.Merge`/`ir.RowMutation`) before a `WriteCommandSupport` case is even meaningful, not just a new case against the existing shape. Left as a known, larger limitation rather than a near-term "add one case" item. |
 | Streaming write | ✅ **Covered — closed this pass** | Previously the most serious gap found: `WriteToStream` (the streaming write's top-level plan) isn't `Command`-shaped, so `ContractEnforcementRule`'s fail-closed policy — which only gates `Command`-shaped plans — never saw it at all. Confirmed empirically (not assumed): a probe found zero of the plans `injectCheckRule` saw during a real streaming Delta write were `Command`-shaped, and `javap` on Spark's catalyst jar confirmed `WriteToStream` doesn't implement `Command`. This was categorically worse than every other row here: not "fails closed but unverified," but genuinely unenforced — a streaming write committed silently, with no contract check at all. **Closed by adding `WriteToStream` as a real `WriteCommandSupport` entry** (see "Write command recognition: a single registry" below) rather than special-casing it in the fail-closed check: `WriteToStream.inputQuery` gives the schema being written; location comes from a resolved `catalogTable` (`.toTable(...)`, confirmed to carry `storage.locationUri`/`provider`), or from the sink's `name()` when that doesn't throw (a genuine V2 sink), or — since Delta's `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()` unconditionally throw, confirmed empirically — a reflective call to its public `path()` accessor, the same reflection-over-a-class-this-module-has-no-compile-time-dependency-on technique `jdbcLocationOf` already uses for `JDBCRelation`. Verified through real enforcement: a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)` (the `catalogTable`-populated path), and a test confirming a streaming write to a location unrelated to the active contract is correctly rejected (`OUTPUT_LOCATION_MISMATCH`) — the same behavior batch writes have always had, not special-cased for streaming. All in `ContractEnforcementRuleSpec`. |
 | Maintenance operations that touch data (`OPTIMIZE`/`VACUUM`/`RESTORE`/`CLONE`/`CONVERT TO DELTA`) | ✅ Covered by policy classification | `FailClosedCommands.scala`'s `knownSafe` set already includes `VacuumTableCommand`/`OptimizeTableCommand` (rewrites/removes files, doesn't change a table's committed row content) and deliberately excludes `RestoreTableCommand`/`CloneTableCommand`/`ConvertToDeltaCommand` (row-content-changing) — built from a class-by-class enumeration of all 164 `Command` subclasses across Spark 3.5.1 + Delta 3.2.0, reasoned and documented in that file's header comment. Not re-probed individually this pass (the classification predates it); if any one of these is ever doubted, a targeted probe test is cheap to add. |
 
+### A shared pitfall: atomic CTAS/RTAS issues a second, nested write
+
+Closing the `ReplaceTableAsSelect`/`AppendData` rows above surfaced a real
+correctness trap, worth documenting for whichever row a future connector
+adds next: a *single* `.saveAsTable(...)` call on a brand-new table
+produces **two** separate write-shaped plans through `injectCheckRule`,
+confirmed empirically — the top-level `ReplaceTableAsSelect` the user's
+code actually wrote, *and* an internal, nested `AppendData` against a
+`StagedTable` (Spark's own public 2-phase-commit protocol for atomic
+CTAS/RTAS — Delta's `StagedDeltaTableV2` implements it). Both are
+genuinely visible to `ContractEnforcementRule.verifyOrThrow`, meaning it
+runs *twice* for what's one logical write.
+
+The trap: a `StagedTable`'s `Table.properties()` has no `"location"` yet
+(the table doesn't physically exist until commit), so a naive
+`AppendData` translation would fall back to the table's bare, unqualified
+`name()` — a *different* string than `ReplaceTableAsSelect`'s qualified
+catalog identifier for the exact same destination. Whichever one a
+contract's declared location happened to match, the other invocation
+would report `OUTPUT_LOCATION_MISMATCH` and abort an otherwise
+contract-satisfying write — caught by a real test failure, not by
+inspection. Fixed by having `WriteCommandSupport`'s `AppendData`/
+`OverwriteByExpression` case fall back to `DataSourceV2Relation`'s own
+`catalog`/`identifier` fields (confirmed populated even for a staged
+table) and compute the *same* qualified-identifier string
+`ReplaceTableAsSelect`'s case does, via one shared helper
+(`qualifiedIdentifier`) — the two now agree by construction, not by
+coincidence. Any future connector adding a `WriteCommandSupport` case
+for a command that can appear nested inside another (anything using
+Spark's staging-catalog protocol) should check for this same trap.
+
 **Net assessment:** Delta is not "100% supported" and no single pass makes
 it so — but the gap is now fully enumerated instead of implicit, and every
-🚫 row above states what would actually close it, not just that it's
-currently rejected. The one row that was a genuine, unenforced hole
-(streaming writes — the difference between "fails closed" and "silently
-unchecked" is exactly the distinction this ledger exists to keep
-visible) is now ✅ Covered. What remains at 🚫 is real, scoped future
-work — V2 catalog writes need `WriteCommandSupport` entries the same
-shape `WriteToStream` just got; row-level DML needs an IR extension
-before that's even possible — not a "not supported, and that's fine"
-resting state.
+remaining 🚫 row states what would actually close it, not just that it's
+currently rejected. Two rows that were genuine, unenforced holes
+(streaming writes, and streaming reads as a declared input — the
+difference between "fails closed" and "silently unchecked"/"falsely
+rejected" is exactly the distinction this ledger exists to keep visible)
+are now ✅ Covered, alongside every V2 catalog write shape
+(`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`). What
+remains at 🚫 is exactly one row: row-level DML (`MERGE`/`UPDATE`/
+`DELETE`), which needs a real IR extension before it's even attemptable —
+not a "not supported, and that's fine" resting state, a deliberately
+scoped-out piece of larger future work.
 
 ## Fail-closed on unverifiable writes
 
