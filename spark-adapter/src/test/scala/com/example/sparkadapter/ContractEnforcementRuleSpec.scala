@@ -26,6 +26,15 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   @volatile private var activeContract: Option[com.example.contract.Contract] = None
   @volatile private var activeOptions: VerificationOptions = VerificationOptions()
 
+  // Not read by any enforcement test above — a raw capture of every
+  // analyzed plan the session produces, so a test can inspect
+  // WriteCommandSupport's translation directly (e.g. its format
+  // detection) without going through StructuralVerifier, which only
+  // checks format when the contract *also* declares one and both sides
+  // are known, and so wouldn't surface a wrong-format bug as a test
+  // failure on its own.
+  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
+
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invariant-enforcement-test")
 
@@ -40,6 +49,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
+          capturedPlans += plan
           activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
         }
       }
@@ -440,40 +450,200 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "none of the rejected attempts may have actually written anything")
   }
 
-  // A real, important question the fail-closed policy raises but doesn't
-  // answer by construction: does starting a streaming query at all get
-  // blocked while ANY contract is active in the session, even one that
-  // has nothing to do with the streaming query's own source/sink? The
-  // check rule fires on every analyzed plan the session produces, and a
-  // streaming query's own bookkeeping plan (WriteToStream) is
-  // Command-shaped and untranslated - if it isn't on the safe list, this
-  // would be a real over-rejection bug (blocking unrelated legitimate
-  // work), not a "streaming not supported" gap. Verified directly rather
-  // than assumed from FailClosedCommands' contents.
-  test("starting a streaming query unrelated to the active contract is not blocked by the fail-closed policy") {
+  // Closes the most significant coverage-ledger gap found investigating
+  // Delta support: a streaming write's top-level plan (WriteToStream)
+  // isn't Command-shaped, so it was invisible to the fail-closed policy
+  // entirely - not "fails closed, unverified" like the V2 write commands
+  // above, but genuinely unenforced (confirmed via a real probe: zero of
+  // the plans injectCheckRule saw during a real streaming Delta write were
+  // Command-shaped, and via javap confirming WriteToStream doesn't
+  // implement Command - see docs/SPARK_ADAPTER.md's "Streaming writes"
+  // section). Recognizing WriteToStream in WriteCommandSupport - the same
+  // registry every other write shape goes through, rather than a
+  // special-cased check here - means it's genuinely verified, not merely
+  // allowed or blocked wholesale. This PASS/FAIL pair proves that through
+  // real enforcement of a real streaming Delta write, not just translation
+  // in isolation.
+  test("PASS: a streaming Delta write satisfying its contract starts and writes normally") {
+    val sinkPath = scratchDir.resolve("pass_stream").toString
+    val checkpointPath = scratchDir.resolve("pass_stream_checkpoint").toString
     val yaml =
-      """id: would_always_fail
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $sinkPath
+         |    schema:
+         |      fields:
+         |        - name: timestamp
+         |          type: timestamp
+         |          required: false
+         |        - name: value
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 5).load()
+      val query = streamDf.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+        .start(sinkPath) // must not throw
+      query.awaitTermination()
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(sinkPath)))
+  }
+
+  test("FAIL: a streaming Delta write violating its contract is aborted before the query starts, nothing written") {
+    val sinkPath = scratchDir.resolve("fail_stream").toString
+    val checkpointPath = scratchDir.resolve("fail_stream_checkpoint").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $sinkPath
+         |    schema:
+         |      fields:
+         |        - name: timestamp
+         |          type: timestamp
+         |          required: false
+         |        - name: value
+         |          type: long
+         |          required: false
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 5).load()
+      intercept[ContractViolationException] {
+        streamDf.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointPath)
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .start(sinkPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(sinkPath)), "the streaming write must be rejected before the query ever starts, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // A second, distinct WriteToStream shape: `.toTable(...)` resolves a
+  // real `catalogTable` (confirmed empirically - unlike the path-based
+  // `.start(path)` pair above, where it's None and the sink's own
+  // reflectively-read `path()` is used instead). Exercises the other half
+  // of `streamSinkLocationAndFormat`'s branching, the same way
+  // `createDataSourceTableAsSelect`'s catalog-table path is exercised
+  // separately from `saveIntoDataSource`'s options-map path above.
+  test("PASS: a streaming Delta .toTable() write satisfying its contract starts and writes normally") {
+    val tableName = "pass_stream_to_table_tbl"
+    val checkpointPath = scratchDir.resolve("pass_stream_to_table_checkpoint").toString
+    val expectedLocation = scratchDir.resolve("warehouse").resolve(tableName).toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: timestamp
+         |          type: timestamp
+         |          required: false
+         |        - name: value
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 5).load()
+      val query = streamDf.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+        .toTable(tableName) // must not throw
+      query.awaitTermination()
+    }
+
+    assert(spark.catalog.tableExists(tableName))
+  }
+
+  // The PASS/FAIL pair above proves end-to-end enforcement, but never
+  // directly inspects the format WriteCommandSupport detected for a
+  // streaming Delta write - StructuralVerifier only compares format when
+  // the contract also declares one and both sides are known, so a bug in
+  // `streamSinkFormatOf` (returning the wrong format, or "delta" for a
+  // non-Delta sink) wouldn't necessarily surface as a PASS/FAIL test
+  // failure on its own. Inspects WriteCommandInfo directly instead, no
+  // active contract needed - the write completes normally either way.
+  test("WriteCommandSupport detects format \"delta\" for a real streaming Delta write") {
+    val sinkPath = scratchDir.resolve("format_detection_stream").toString
+    val checkpointPath = scratchDir.resolve("format_detection_stream_checkpoint").toString
+    capturedPlans.clear()
+
+    val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 5).load()
+    val query = streamDf.writeStream
+      .format("delta")
+      .option("checkpointLocation", checkpointPath)
+      .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+      .start(sinkPath)
+    query.awaitTermination()
+
+    val ws = capturedPlans.collectFirst { case w: org.apache.spark.sql.catalyst.streaming.WriteToStream => w }
+      .getOrElse(fail("no WriteToStream plan observed"))
+    val info = WriteCommandSupport.combined.lift(ws).getOrElse(fail("WriteToStream should be recognized by WriteCommandSupport"))
+    assert(info.format.contains("delta"), s"expected format 'delta' for a real Delta streaming sink, got ${info.format}")
+    assert(info.location.contains("format_detection_stream"))
+  }
+
+  // Before WriteCommandSupport recognized WriteToStream, this test
+  // documented the accidental consequence of streaming being entirely
+  // invisible to enforcement: starting ANY streaming query while a
+  // mismatched contract was active never threw, because WriteToStream fell
+  // into the untranslated-and-not-Command-shaped silent no-op. Now that a
+  // streaming write is a real, recognized write, it's checked against
+  // whatever contract is active the same way every batch write always has
+  // been - `forContract`'s own doc says "verifies any write this session
+  // performs against contract", not "any write whose location happens to
+  // match". A streaming write to an unrelated location under an active,
+  // unrelated contract is therefore correctly rejected
+  // (OUTPUT_LOCATION_MISMATCH), consistent with batch writes, not silently
+  // allowed through the way it used to be. Uses the "memory" sink
+  // (a genuine V2 Table, unlike Delta's legacy-wrapped one - confirmed via
+  // javap) to exercise the other branch of location resolution:
+  // `sink.name()` succeeding directly, no reflection needed.
+  test("a streaming write to a location unrelated to the active contract is rejected, consistent with batch writes") {
+    val yaml =
+      """id: enforcement_demo
         |version: "1.0.0"
         |outputs:
         |  - name: out
-        |    location: nonexistent/location
+        |    location: some/other/contract/output
         |    schema:
         |      fields:
-        |        - name: impossible_field
-        |          type: string
+        |        - name: id
+        |          type: long
         |          required: true
         |""".stripMargin
 
-    withContract(yaml) {
+    val ex = withContract(yaml) {
       val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 1).load()
-      val query = streamDf.writeStream
-        .format("memory")
-        .queryName("unrelated_stream_q")
-        .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
-        .start() // must not throw
-      query.awaitTermination()
+      intercept[ContractViolationException] {
+        val query = streamDf.writeStream
+          .format("memory")
+          .queryName("unrelated_stream_q")
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .start()
+        query.awaitTermination()
+      }
     }
-    succeed
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.OutputLocationMismatch))
   }
 
   // Regression guard for the fail-closed policy's biggest risk: it must

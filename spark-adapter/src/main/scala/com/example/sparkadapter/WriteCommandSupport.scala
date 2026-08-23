@@ -4,6 +4,7 @@
 package com.example.sparkadapter
 
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.types.StructType
@@ -128,6 +129,96 @@ private[sparkadapter] object WriteCommandSupport {
       )
   }
 
+  // Streaming writes (`.writeStream.start(...)`/`.toTable(...)`) analyze to
+  // a single WriteToStream node, emitted once per query - not once per
+  // micro-batch (confirmed empirically: a real streaming Delta write under
+  // Trigger.AvailableNow() produced exactly one WriteToStream instance
+  // through injectCheckRule, alongside several per-micro-batch plans) -
+  // carrying the query being written (`inputQuery`) and the resolved
+  // sink/table. Before this case existed, WriteToStream wasn't
+  // Command-shaped, so ContractEnforcementRule's fail-closed policy (which
+  // only gates Command-shaped plans) never even saw it: not "fails closed,
+  // unverified" like every other gap this module tracks, but genuinely
+  // unenforced - a streaming write committed with no contract check at
+  // all, confirmed by a probe showing zero of the plans injectCheckRule
+  // saw during a real streaming Delta write were Command-shaped, and by
+  // `javap` confirming WriteToStream doesn't implement Command. Adding it
+  // to this registry - the same one every other write shape goes through -
+  // means ContractEnforcementRule.verifyOrThrow verifies it the normal
+  // way, no special-casing needed there: see docs/SPARK_ADAPTER.md's
+  // "Streaming writes" section.
+  private val writeToStream: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case ws: WriteToStream =>
+      val (location, format, diagnostic) = streamSinkLocationAndFormat(ws)
+      WriteCommandInfo(
+        location = location,
+        query = ws.inputQuery,
+        format = format,
+        // Streaming's OutputMode (Append/Update/Complete) is a different
+        // concept from batch SaveMode (append/overwrite/ignore/error) - not
+        // modeled here. StructuralVerifier already skips the save-mode
+        // check when the actual side is unknown (None), same as every
+        // other format-detection miss elsewhere in this module.
+        saveMode = None,
+        outputSchema = ws.inputQuery.schema,
+        diagnostic = diagnostic
+      )
+  }
+
+  /** `WriteToStream.sink` is typed as a generic V2 `Table`, but Delta's
+    * `DeltaSink` (and several of Spark's own built-in streaming sinks) is
+    * actually a *legacy* V1 `execution.streaming.Sink` wrapped to look like
+    * one - and that wrapper's `name()`/`schema()` unconditionally throw
+    * `IllegalStateException("should not be called")` (confirmed
+    * empirically - `Sink`'s own default implementation). So this can't just
+    * call `sink.name()` the way a real V2 `Table` would allow.
+    *
+    * Tries, in order, each confirmed empirically against a real
+    * Delta-enabled session: (1) a populated `catalogTable` - `.toTable(...)`
+    * resolves one with `storage.locationUri` and `provider` already filled
+    * in, the same fields `createDataSourceTableAsSelect` above uses; (2)
+    * `sink.name()`, guarded, for a genuine V2 sink where it doesn't throw;
+    * (3) a reflective call to a public `path()` accessor - confirmed
+    * present on `DeltaSink` via `javap` and returning the exact physical
+    * sink path for a path-based `.start(path)` write - the same
+    * reflection-over-a-class-this-module-has-no-compile-time-dependency-on
+    * technique `jdbcLocationOf` uses for `JDBCRelation`. If none of those
+    * resolve, falls back to the sink's own `toString`, exactly like every
+    * other unresolvable-location case elsewhere in this module, with a
+    * diagnostic explaining why.
+    */
+  private def streamSinkLocationAndFormat(ws: WriteToStream): (String, Option[String], Option[Diagnostic]) =
+    ws.catalogTable match {
+      case Some(table) =>
+        val location = table.storage.locationUri.map(_.toString).getOrElse(table.identifier.unquotedString)
+        (location, table.provider, None)
+      case None =>
+        scala.util.Try(Option(ws.sink.name())).toOption.flatten match {
+          case Some(name) => (name, streamSinkFormatOf(ws.sink), None)
+          case _ =>
+            reflectiveSinkPath(ws.sink) match {
+              case Some(path) => (path, streamSinkFormatOf(ws.sink), None)
+              case None =>
+                val msg = s"Could not determine a precise location for streaming sink " +
+                  s"${ws.sink.getClass.getSimpleName}; using its toString as a best-effort location"
+                (ws.sink.toString, streamSinkFormatOf(ws.sink), Some(Diagnostic("WriteToStream", msg)))
+            }
+        }
+    }
+
+  /** `sink` is a `Table` instance, not a `TableProvider`/`RelationProvider`
+    * - it doesn't implement `DataSourceRegister` the way the format-source
+    * objects `formatOf` matches on do (confirmed for Delta's `DeltaSink` via
+    * `javap`), so that mechanism doesn't apply here. Matched by simple class
+    * name instead, the same reflection-friendly convention as
+    * `jdbcLocationOf`/`unwrapWriteWrapper`.
+    */
+  private def streamSinkFormatOf(sink: AnyRef): Option[String] =
+    if (sink.getClass.getSimpleName == "DeltaSink") Some("delta") else None
+
+  private def reflectiveSinkPath(sink: AnyRef): Option[String] =
+    scala.util.Try(sink.getClass.getMethod("path").invoke(sink).toString).toOption
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -139,7 +230,7 @@ private[sparkadapter] object WriteCommandSupport {
     * needs to change.
     */
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
-    insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect
+    insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

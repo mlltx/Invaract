@@ -1261,21 +1261,20 @@ Delta specifically to close it.
       diagnostic (uses the relation's `toString()` rather than a clean
       physical path) — a precision gap, not a correctness one; schema
       verification is unaffected.
-- [x] **Streaming — read and write alike — found to have zero enforcement
-      touchpoint, a genuinely different and more serious gap than
-      everything else on this list.** A real streaming write to Delta
-      produces 9 distinct plans through `injectCheckRule`; confirmed via
-      the probe's own `Command`-shaped filter that zero of them are
-      `Command`-shaped. `WriteToStream`, the top-level plan, was
-      separately confirmed via `javap` on Spark's catalyst jar to
-      implement `LogicalPlan`/`UnaryNode` but not `Command` — so
-      `ContractEnforcementRule`'s fail-closed policy, which only gates
-      `Command`-shaped plans, cannot structurally ever see it. Unlike
-      every other row here, this is not "fails closed but unverified" —
-      it is unenforced, full stop. A separate test confirms the fail-closed
-      policy does not *wrongly* block an unrelated streaming query, ruling
-      out the opposite bug. See the corrected "Scope (Future)" bullet
-      above.
+- [x] **Streaming write found to have zero enforcement touchpoint — since
+      closed (see the sub-phase immediately below).** At the time of this
+      investigation, a real streaming write to Delta produced 9 distinct
+      plans through `injectCheckRule`; confirmed via the probe's own
+      `Command`-shaped filter that zero of them were `Command`-shaped.
+      `WriteToStream`, the top-level plan, was separately confirmed via
+      `javap` on Spark's catalyst jar to implement `LogicalPlan`/
+      `UnaryNode` but not `Command` — so `ContractEnforcementRule`'s
+      fail-closed policy, which only gates `Command`-shaped plans, could
+      not structurally ever see it. Unlike every other row in this
+      ledger, this was not "fails closed but unverified" — it was
+      unenforced, full stop. A separate test confirmed the fail-closed
+      policy did not *wrongly* block an unrelated streaming query, ruling
+      out the opposite bug.
 - [x] **Maintenance operations already have a reasoned classification**,
       not a gap: `FailClosedCommands.scala`'s `knownSafe` set already
       includes Delta's `VacuumTableCommand`/`OptimizeTableCommand`
@@ -1297,6 +1296,70 @@ Delta specifically to close it.
       all pass; `mimaReportBinaryIssues` clean (no production API surface
       changed — only `ROADMAP.md`/`docs/SPARK_ADAPTER.md`/test files).
 
+#### Sub-phase: Streaming writes closed; fail-closed reframed as a
+#### stopgap, not a verdict (done)
+
+Two changes, prompted by a single user question after the ledger above
+shipped: "any way to close the streaming gap, and — the ledger's 🚫 rows
+read like 'not supported' is an acceptable resting state; that was never
+the point of fail-closed, was it?"
+
+- [x] **Streaming writes: closed, not just documented.** `WriteToStream`
+      reaches `injectCheckRule` (confirmed by the coverage-ledger pass
+      above — it just isn't `Command`-shaped). Rather than special-casing
+      it in `ContractEnforcementRule`'s fail-closed check, it was added as
+      a real `WriteCommandSupport` entry — the same registry every other
+      write shape goes through — so it's genuinely translated and
+      verified, not merely gated. `inputQuery.schema` gives the output
+      schema; location comes from a resolved `catalogTable`
+      (`.toTable(...)`, confirmed to carry `storage.locationUri`/
+      `provider`) or, for a path-based `.start(path)` write, from the
+      sink's `name()` when that doesn't throw, or — since Delta's
+      `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()`
+      unconditionally throw `IllegalStateException("should not be
+      called")`, confirmed empirically via a real probe — a reflective
+      call to its public `path()` accessor, the same
+      no-compile-time-dependency reflection technique `jdbcLocationOf`
+      already uses for `JDBCRelation`. Verified through real enforcement:
+      a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)`
+      (the `catalogTable`-populated path), a direct-inspection test
+      confirming format is detected as `"delta"` (StructuralVerifier only
+      checks format when the contract also declares one, so this
+      wouldn't otherwise surface as a PASS/FAIL failure), and a test
+      confirming a streaming write to a location unrelated to the active
+      contract is now correctly rejected (`OUTPUT_LOCATION_MISMATCH`) —
+      the same behavior batch writes have always had, no longer
+      special-cased by omission. Mutation testing scoped to
+      `WriteCommandSupport.scala`: first run found two survived mutants in
+      code added this pass (both in `streamSinkFormatOf`'s class-name
+      string match — `StructuralVerifier` only compares format when the
+      contract also declares one, so a wrong-format bug there wasn't
+      guaranteed to surface through the PASS/FAIL pair alone); killed by
+      adding the direct-inspection test above, confirmed by a second run:
+      90.77% overall (92.19% of covered code) — the remaining survived/
+      uncovered mutants are all in `unwrapWriteWrapper`/`SparkPlanAdapter`
+      code this pass didn't touch. Full suite passing;
+      `mimaReportBinaryIssues` clean; `./dev/build`/`./dev/test`/
+      `./dev/regression` all pass.
+- [x] **`add-spark-connector`'s "fails closed" framing corrected.** The
+      coverage ledger's 🚫 disposition was written (and, in the Delta
+      ledger above, applied) as if "not yet translated, verified to
+      abort" were a complete, acceptable answer on its own — no different
+      in spirit from ✅ Covered, just a different flavor of done. That's
+      backwards: fail-closed exists to catch operations Invariant *hasn't
+      gotten around to translating yet*, not to bless them as
+      out-of-scope forever. Fixed at the process level:
+      docs/ADDING_A_SPARK_CONNECTOR.md gained a "What 'fails closed'
+      means (and doesn't)" section, and both it and
+      `.claude/skills/add-spark-connector/SKILL.md` now require every 🚫
+      ledger row to carry a next step — either the real translation work
+      that would close it (the default assumption), or, rarely, a
+      specific documented reason it should never be translated. The
+      Delta ledger in docs/SPARK_ADAPTER.md was rewritten to match: every
+      remaining 🚫 row (`AppendData`, `OverwriteByExpression`,
+      `ReplaceTableAsSelect`, row-level DML) now states concretely what
+      would close it, not just that it's currently rejected.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1315,36 +1378,38 @@ Delta specifically to close it.
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
 - [ ] Interpreting `rules` from the contract model
-- [ ] Enforcement now gates every recognized write shape
-      (`InsertIntoHadoopFsRelationCommand`/`SaveIntoDataSourceCommand`
-      (Delta, JDBC, ...)/`CreateDataSourceTableAsSelectCommand`
-      (`.saveAsTable(...)`)) and fails closed on any other Command-shaped
-      plan not on `FailClosedCommands`' known-safe list — see the
-      "Fail-closed on unverifiable writes" sub-phase below. DataSourceV2
-      catalog writes (`AppendData`/`OverwriteByExpression`/
-      `ReplaceTableAsSelect` — `.saveAsTable` against an *existing* Delta
-      table, `.insertInto`, `.writeTo(...)`, and `.format("delta")
-      .saveAsTable(...)` against a *new* table) and Delta's row-level
-      `MERGE`/`DELETE`/`UPDATE` still have no real translation, but *do*
-      fail closed (confirmed empirically — see the "Delta Lake
-      operation-surface coverage ledger" sub-phase below) rather than
-      passing unverified.
-- [ ] **Streaming writes are a different, more serious gap: confirmed
-      *not* to fail closed at all.** `WriteToStream` — the top-level plan
-      for every streaming write — does not implement
-      `org.apache.spark.sql.catalyst.plans.logical.Command` (confirmed via
-      `javap` on Spark's own catalyst jar), so `ContractEnforcementRule`'s
-      entire fail-closed mechanism, which only gates `Command`-shaped
-      plans, structurally cannot ever see it. A streaming write to Delta
-      commits with no contract check at all, silently — not rejected, not
-      logged as unverifiable, just unenforced. See the "Delta Lake
-      operation-surface coverage ledger" sub-phase below for the empirical
-      probe that found this (zero of 9 plans seen by `injectCheckRule`
-      during a real streaming Delta write were `Command`-shaped). Needs a
-      genuinely different enforcement mechanism than `injectCheckRule`
-      (most plausibly a `StreamingQueryListener` checking each
-      micro-batch's committed schema, or gating query start) — not
-      attempted yet
+- [ ] **DataSourceV2 catalog writes** (`AppendData`/
+      `OverwriteByExpression`/`ReplaceTableAsSelect` — `.saveAsTable`
+      against an *existing* Delta table, `.insertInto`, `.writeTo(...)`,
+      and `.format("delta").saveAsTable(...)` against a *new* table) still
+      have no real translation, but *do* fail closed (confirmed
+      empirically — see the "Delta Lake operation-surface coverage
+      ledger" sub-phase below) rather than passing unverified. This is a
+      safety net, not a verdict — see docs/ADDING_A_SPARK_CONNECTOR.md's
+      "What 'fails closed' means" — and each of these has a concrete next
+      step in that sub-phase's ledger: one `WriteCommandSupport` entry for
+      `AppendData` (covers `.saveAsTable` append, `.insertInto`, and
+      `.writeTo(...).append()` at once), one for `OverwriteByExpression`
+      (needs `ir.Write` extended with an overwrite-condition field first),
+      one for `ReplaceTableAsSelect` (covers new-table `.saveAsTable` and
+      `.writeTo(...).createOrReplace()`).
+- [ ] Delta's row-level `MERGE`/`DELETE`/`UPDATE` also fail closed but
+      have no translation — the hardest row in the ledger below to close:
+      `ir.Write` models "replace/append the output of a query," not a
+      predicate-conditioned row mutation, so this needs an IR extension
+      (something like `ir.Merge`/`ir.RowMutation`) before a
+      `WriteCommandSupport` case is even meaningful, not just a new case
+      against the existing shape.
+- [ ] **Streaming reads, as a contract-declared *input*, aren't linked
+      into input verification.** `StreamingRelationV2` isn't a
+      `LogicalRelation`, so `ContractEnforcementRule.verifyOrThrow`'s
+      input-schema collection doesn't see it — a contract requiring a
+      streaming source as a declared `input` would wrongly report
+      `MISSING_INPUT`. Next step: teach that collection to also recognize
+      `StreamingRelationV2`/`StreamingRelation`. Smaller in practice than
+      the streaming-write gap below was, since a contract that only
+      declares an `output` (the common shape for a streaming job) is
+      unaffected.
 
 #### Dependencies
 

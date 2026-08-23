@@ -28,11 +28,21 @@ nothing forced stating what a given pass *didn't* cover. If you're
 invoked for a narrow question ("does this connector need X", "let's just
 add reads"), say so explicitly at the start, and still close with the
 full ledger — every operation surface row gets ✅ Covered / 🚫 Fails
-closed / ❓ Not investigated (with a reason and a next step), never
-silence. A user reading only your final message must be able to tell,
-per operation, whether it works, is safely rejected, or was never
+closed / ❓ Not investigated, **each with a reason and a next step**,
+never silence. A user reading only your final message must be able to
+tell, per operation, whether it works, is safely rejected, or was never
 checked — not infer "probably fine" from the parts you happened to
 mention.
+
+**🚫 Fails closed is not a synonym for "not supported, and that's fine."**
+It exists to catch operations Invariant hasn't translated *yet* — a
+safety net, not a verdict. Every 🚫 row needs a next step the same way
+every ❓ row does: either what real translation work would close it (the
+default assumption — most 🚫 rows exist because a pass ran out of scope,
+not because the operation doesn't deserve support), or, rarely, a
+specific documented reason it should stay rejected forever. See
+docs/ADDING_A_SPARK_CONNECTOR.md's "What 'fails closed' means (and
+doesn't)" before writing any ledger row with this disposition.
 
 **A note on prior context**: if this session already did some of this
 connector's investigation earlier in the conversation, don't treat that
@@ -128,8 +138,11 @@ For each concrete `Command` class from Phase 2 + Phase 3, decide one of:
    this doesn't touch row content" reasoning every existing entry has.
 3. **Genuinely data-mutating but unmodeled** (row-level DML, destructive
    `DROP`/`REPLACE`, connector-specific maintenance with real data
-   effects) → leave off both. It fails closed automatically; note it for
-   the "Known limitations" writeup in Phase 9.
+   effects) → leave off both. It fails closed automatically — a safety
+   net for an unimplemented operation, not a verdict that it shouldn't be
+   implemented. Note it for the "Known limitations" writeup in Phase 9
+   *with a next step* (what translating it would take), not just "this
+   fails closed."
 
 If a connector class's semantics are genuinely unclear from its name/docs
 and you can't find primary-source confirmation, treat it as case 3, not
@@ -261,7 +274,12 @@ surface," every row filled in, none silently omitted:
 
 - **✅ Covered** — cite the translation test and the PASS/FAIL
   enforcement pair.
-- **🚫 Fails closed** — cite the fail-closed test proving rejection.
+- **🚫 Fails closed** — cite the fail-closed test proving rejection, and
+  state the next step: what real translation work would close it (the
+  default — a 🚫 row is future work, not a verdict), or, rarely, the
+  specific reason it should never be translated. A 🚫 row with no next
+  step is indistinguishable from "not supported, and that's fine" — see
+  docs/ADDING_A_SPARK_CONNECTOR.md's "What 'fails closed' means".
 - **❓ Not investigated** — state why (out of scope for this pass,
   genuinely deferred) and the next step (what a future pass needs to do
   — not just "TODO"). This is a legitimate, honest answer. An *absent*

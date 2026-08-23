@@ -504,6 +504,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed. Zero production code changed this pass (findings only); full
   suite passing, `mimaReportBinaryIssues` clean, full
   `./dev/build`/`./dev/test`/`./dev/regression` pass.
+- **Streaming writes to Delta: closed, superseding the "needs a
+  genuinely different enforcement mechanism" line above.** That framing
+  turned out to undersell it: `WriteToStream` already reaches
+  `injectCheckRule` (the coverage-ledger pass above established this —
+  it's just not `Command`-shaped), so no new Spark extension point was
+  needed. Added as a real `WriteCommandSupport` entry instead — the same
+  registry every other write shape goes through — using
+  `inputQuery.schema` for the output schema and, for location, a
+  resolved `catalogTable` (`.toTable(...)`) or a reflective call to
+  Delta's `DeltaSink.path()` (its `name()`/`schema()` unconditionally
+  throw, confirmed empirically — the same no-compile-time-dependency
+  reflection technique already used for `JDBCRelation`). A streaming
+  Delta write is now genuinely translated and verified before the query
+  starts, not merely gated. New `ContractEnforcementRuleSpec` tests: a
+  PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)`, a
+  direct format-detection check, and a test confirming a streaming write
+  to a location unrelated to the active contract is now correctly
+  rejected — consistent with how batch writes have always behaved, no
+  longer special-cased by omission.
+- **`add-spark-connector`'s fail-closed framing corrected: it's a
+  stopgap, not a verdict.** The ledger's 🚫 disposition — including the
+  Delta ledger above — read as if "not yet translated, verified to
+  abort" were a complete answer, no different in spirit from ✅ Covered.
+  That's backwards: fail-closed exists to catch what Invariant hasn't
+  translated *yet*. docs/ADDING_A_SPARK_CONNECTOR.md and the skill now
+  require every 🚫 row to carry a next step (the translation work that
+  would close it, or, rarely, a specific reason it never will); the
+  Delta ledger in docs/SPARK_ADAPTER.md was rewritten to match.
 
 ### Fixed
 

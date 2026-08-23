@@ -27,6 +27,26 @@ There is also a Claude Code skill (`add-spark-connector`) that walks
 through this process interactively — see its `SKILL.md` for the
 step-by-step version of what's described here.
 
+### What "fails closed" means (and doesn't)
+
+Easy to misread the coverage ledger below as: ✅ = done, 🚫 = also done
+(just a different flavor — "not supported, and that's fine"), ❓ =
+the only real gap. **That reading is wrong, and defeats the point of the
+policy.** Fail-closed exists to catch operations Invariant *hasn't gotten
+around to translating yet* — a deliberate safety net so an unrecognized
+write aborts loudly instead of silently passing an unverified contract.
+It was never meant to be a resting state equivalent to "we've decided not
+to support this." A 🚫 row is *always* implicitly future work: either
+real translation is worth adding later (the common case — most 🚫 rows
+exist because this pass ran out of scope, not because the operation is
+somehow unworthy of support), or there's a specific, rare, documented
+reason it should stay rejected forever (an operation whose semantics are
+genuinely ambiguous, or arbitrary passthrough to an external system that
+can't be classified either way). Silence on which of those two a 🚫 row
+is is exactly the gap this section exists to close — see "The coverage
+ledger" below, which requires a next step for 🚫 the same way it already
+does for ❓.
+
 ## The operation surface (canonical checklist)
 
 Every investigation, and the coverage ledger below, is scoped against
@@ -141,8 +161,13 @@ concrete to point at:
 
 - **✅ Covered** — translated and verified. Cite the translation test and
   the PASS/FAIL enforcement pair.
-- **🚫 Fails closed** — deliberately not translated, verified to abort
-  rather than silently pass. Cite the fail-closed test.
+- **🚫 Fails closed** — not yet translated, verified to abort rather than
+  silently pass. Cite the fail-closed test, **and** state the next step:
+  either what real translation work would close it (the default
+  assumption — see "What 'fails closed' means" above), or, in the rare
+  case it should never be translated, the specific reason why. A 🚫 row
+  with no next step reads as "not supported, and that's fine" — which is
+  precisely the framing this section exists to rule out.
 - **❓ Not investigated** — state *why* (out of scope for this pass, ran
   out of the checkpoint's approved scope, genuinely deferred) and the
   *next step* (what a future pass needs to do, not just "TODO").
@@ -262,12 +287,16 @@ For each concrete `Command` class found:
   config, storage maintenance like compaction) → add its fully-qualified
   class name to `FailClosedCommands`'s safe list, with the same one-line
   reasoning style every existing entry has.
-- **Genuinely changes data, but doesn't fit `ir.Write`'s shape, or isn't
-  worth translating yet** (row-level `MERGE`/`UPDATE`/`DELETE`, `LOAD
-  DATA`, `TRUNCATE`, catalog-destructive `DROP`/`REPLACE`, connector
-  maintenance ops with real data-mutating semantics) → leave it off both
-  the translation code and the safe list. It fails closed automatically;
-  document it as a known limitation, don't silently rely on the default.
+- **Genuinely changes data, but doesn't fit `ir.Write`'s shape, or this
+  pass doesn't have scope to translate it now** (row-level `MERGE`/
+  `UPDATE`/`DELETE`, `LOAD DATA`, `TRUNCATE`, catalog-destructive `DROP`/
+  `REPLACE`, connector maintenance ops with real data-mutating semantics)
+  → leave it off both the translation code and the safe list. It fails
+  closed automatically — but that's a safety net catching an
+  *unimplemented* operation, not a verdict that it doesn't deserve
+  support (see "What 'fails closed' means" above). Document it as a known
+  limitation *with a next step* (what translating it would take), not
+  just a bare mention that it's rejected.
 
 When genuinely uncertain whether a class mutates data, leave it off the
 safe list. `FailClosedCommands`'s own doc comment explains why this
