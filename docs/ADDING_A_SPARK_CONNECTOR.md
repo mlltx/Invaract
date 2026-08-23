@@ -1,0 +1,231 @@
+# Adding a Spark Connector
+
+This is the reusable process for giving `spark-adapter` full read/write
+support for a data source it doesn't yet understand — Delta Lake today
+(see docs/SPARK_ADAPTER.md's "Delta Lake support" and "Fail-closed on
+unverifiable writes" sections), Iceberg, ClickHouse, Avro, or anything
+else a future contributor wants to add.
+
+It exists because Delta support was built twice: once for `.save(...)`
+writes, then again — separately — for `.saveAsTable(...)` and the
+fail-closed policy, because the first pass didn't survey the connector's
+full operation surface before calling it done. Both gaps were real: a
+Delta write silently passing a broken contract, and `.saveAsTable(...)`
+falling through to the same silent no-op. This document is how the next
+connector gets that surveyed up front instead of discovered incident by
+incident.
+
+There is also a Claude Code skill (`add-spark-connector`) that walks
+through this process interactively — see its `SKILL.md` for the
+step-by-step version of what's described here.
+
+## Definition of done
+
+A connector is **not** done because compilation succeeds or because one
+`.save(...)` call round-trips. It's done when every item below is true —
+each with something to point at, not just an assertion:
+
+- [ ] **Every read path the connector supports is investigated**, not
+      assumed: `.read.format(x).load(path)`, and a catalog table
+      reference (`spark.table(...)`/`SELECT * FROM t`) if the connector
+      registers a catalog. For each one found to matter, `locationOf`
+      and `translatePlan`'s `LogicalRelation`/relation-specific handling
+      either translates it precisely, or there's a documented reason it
+      falls back to the generic `catalogTable`/`toString` fallback.
+- [ ] **Every write path is investigated**: `.save(path)` (all four save
+      modes if they change the plan shape), `.saveAsTable(...)` against
+      both a *new* and an *existing* table, `.insertInto(...)`,
+      DataFrameWriterV2 (`.writeTo(...)`), and any format-specific DML
+      (`MERGE`/`UPDATE`/`DELETE`/`UPSERT`) or streaming write the format
+      supports. For each, one of two things is true and documented:
+      it's translated to `ir.Write` and verified, or it's deliberately
+      left untranslated with a stated reason (most often: it doesn't fit
+      `ir.Write`'s "write a dataset to a location" shape — see
+      "Known limitations" below).
+- [ ] **A real reflective survey of the connector's own `Command`
+      classes was performed**, not skipped because "we tried the obvious
+      operations." This is what caught `CreateDataSourceTableAsSelectCommand`
+      and Delta's `MergeIntoCommand` — neither was the first thing anyone
+      tried. See "The investigation methodology" below for the exact
+      technique.
+- [ ] **Every reachable `Command`-shaped plan is classified**: translated
+      write, added to `FailClosedCommands`'s known-safe list (with the
+      same "does it change a table's committed row content?" reasoning
+      every existing entry has), or deliberately left off both — which
+      means it fails closed, not silently passes.
+- [ ] **Zero added runtime or compile-time dependency** for a user who
+      doesn't use this connector. The new connector's library is a
+      `% "test"` dependency only, unless a real investigation shows the
+      plan shapes genuinely require a type only that library defines
+      (uncommon — `SaveIntoDataSourceCommand`/`DataSourceRegister` covers
+      most "arbitrary external format" cases with zero connector-specific
+      code at all; see "Delta Lake support" for why).
+- [ ] **A translation test and a PASS/FAIL enforcement pair exist for
+      every write shape actually translated**, against a real
+      connector-enabled `SparkSession` — no mocking (see
+      ARCHITECTURE.md's ADR-005).
+- [ ] **A fail-closed test exists for at least one real, concrete
+      operation the connector supports that Invariant deliberately
+      doesn't translate** (if any exist), proving it's rejected — and
+      that nothing was written — rather than silently passed.
+- [ ] **A regression test proves the connector's own non-data
+      administrative commands aren't blocked** by the fail-closed policy,
+      under a contract that would reject anything it actually checked.
+- [ ] Mutation testing scoped to the changed/added files clears 70% (see
+      CLAUDE.md's "Mutation Testing Requirement"); `mimaReportBinaryIssues`
+      is clean.
+- [ ] `./dev/build`, `./dev/test`, and `./dev/regression` all pass against
+      real `spark-submit` (see CLAUDE.md's "Critical Requirement") —
+      including once with the new connector's dependency present and once
+      without, to prove the "zero added dependency for non-users" claim
+      isn't just asserted.
+- [ ] A "`<Connector>` support" section exists in docs/SPARK_ADAPTER.md
+      (mirroring "Delta Lake support"), a ROADMAP.md sub-phase, and a
+      CHANGELOG.md entry — each stating plainly what *is* and *isn't*
+      covered, the same way this document's own retrospective does for
+      Delta.
+
+If any box can't be checked, the connector isn't done — it's a partial
+read or partial write shape, and the honest thing to do is say so in
+"Known limitations," the same way Delta's row-level DML and streaming
+writes are called out today rather than implied to work.
+
+## The investigation methodology
+
+This is the part that's easy to shortcut and expensive to shortcut. Every
+step below was learned by getting it wrong first during the Delta work —
+follow them in order.
+
+### 1. Add the dependency as `% "test"` only
+
+Never `compile`/`provided` on the first attempt. Most connectors that
+implement Spark's public provider interfaces
+(`CreatableRelationProvider`, `RelationProvider`, `DataSourceRegister`)
+need **zero** connector-specific code to translate — the plan node Spark
+produces (`SaveIntoDataSourceCommand`, `LogicalRelation`) is already a
+plain `org.apache.spark.sql` class. Only reach for a compile-time
+dependency after a real investigation (steps 2–4 below) shows a plan
+shape that genuinely can't be represented without a type the connector's
+own library defines — and even then, prefer matching by
+`getClass.getName` string (see `SparkPlanAdapter.jdbcLocationOf`/
+`unwrapWriteWrapper`, `FailClosedCommands`) over a hard import, so a user
+who doesn't have that library on their runtime classpath never hits a
+`ClassNotFoundException`.
+
+Pin the version deliberately, not to "latest" — check the connector's own
+issue tracker for known bugs against this repo's pinned Scala/Spark
+combination first (Delta 3.2.1 had exactly this kind of bug against Scala
+2.12 + Spark 3.5.1 — see docs/SPARK_ADAPTER.md's citation).
+
+### 2. Probe with *both* Spark extension points, not one
+
+This module has two different ways of observing a plan, and **they see
+different things**:
+
+- `QueryExecutionListener.onSuccess` — execution-level, fires only after
+  a query's action (`.collect()`, `.save()`, ...) has already run.
+- `SparkSessionExtensions.injectCheckRule` — analysis-level, fires
+  earlier, on *every* analyzed plan a `Dataset` construction produces,
+  including ones a caller never acts on.
+
+`ContractEnforcementRule` uses the second one. A probe built only around
+the first can make a plan look absent when the check rule would actually
+see it (confirmed directly this way: a bare `CREATE TABLE ... (no data)`
+never fired `QueryExecutionListener.onSuccess` in testing, but did reach
+the check rule). Build a throwaway probe test using `injectCheckRule` (a
+function that just logs the plan's runtime class instead of throwing) —
+that's the mechanism whose output actually matters for the fail-closed
+policy.
+
+Exercise, at minimum, everything in "Every write path is investigated"
+above, plus: a plain read, a non-`AS SELECT` `CREATE TABLE`, `ANALYZE
+TABLE`, and `SHOW TABLES` — the last three are what prove the fail-closed
+policy won't have false positives once step 4 classifies them.
+
+### 3. Reflectively survey the connector's `Command` classes
+
+Don't rely on what step 2's probe happened to trigger — enumerate what
+*exists*. Open every relevant jar (the connector's own, plus
+`spark-sql`/`spark-catalyst` if the connector adds SQL commands that
+route through Spark's own command types) with `java.util.jar.JarFile`,
+`Class.forName` each `.class` entry, and keep the ones where
+`classOf[org.apache.spark.sql.catalyst.plans.logical.Command].isAssignableFrom(clazz)`
+and `!clazz.isInterface`. This is exactly the technique that found
+Delta's `MergeIntoCommand` and `CreateDataSourceTableAsSelectCommand` —
+neither showed up by just trying the operations someone thought to try.
+
+Expect Spark's own `Command` hierarchy to give **no reliable signal**
+about which of these write data — `SaveIntoDataSourceCommand` (writes
+data) and `CreateDataSourceTableCommand` (schema-only `CREATE TABLE`, no
+data) implement the exact same `LeafRunnableCommand` trait. Don't try to
+find a structural shortcut here; there isn't one. Classification (step 4)
+has to be done by reading each class's documented SQL semantics.
+
+### 4. Classify every class the survey found
+
+For each concrete `Command` class found:
+
+- **Translates to a real write this connector needs** → implement the
+  `translatePlan` case, following the existing three write cases in
+  `SparkPlanAdapter.scala` as templates (`InsertIntoHadoopFsRelationCommand`
+  for `FileFormat`-based writes, `SaveIntoDataSourceCommand` for
+  `CreatableRelationProvider`-based `.save(...)`,
+  `CreateDataSourceTableAsSelectCommand` for new-table `.saveAsTable(...)`).
+- **Confirmed not to change a table's committed row content** (schema/
+  namespace/function DDL, `SHOW`/`DESCRIBE`/`ANALYZE`/`CACHE`, session
+  config, storage maintenance like compaction) → add its fully-qualified
+  class name to `FailClosedCommands`'s safe list, with the same one-line
+  reasoning style every existing entry has.
+- **Genuinely changes data, but doesn't fit `ir.Write`'s shape, or isn't
+  worth translating yet** (row-level `MERGE`/`UPDATE`/`DELETE`, `LOAD
+  DATA`, `TRUNCATE`, catalog-destructive `DROP`/`REPLACE`, connector
+  maintenance ops with real data-mutating semantics) → leave it off both
+  the translation code and the safe list. It fails closed automatically;
+  document it as a known limitation, don't silently rely on the default.
+
+When genuinely uncertain whether a class mutates data, leave it off the
+safe list. `FailClosedCommands`'s own doc comment explains why this
+asymmetry is deliberate: a safe command missing from the list costs one
+loud, cheap-to-fix rejection; a data-mutating command wrongly added would
+silently defeat the entire feature.
+
+### 5. Verify, don't assert
+
+Every claim in the "Definition of done" checklist needs the same kind of
+evidence the Delta work produced: a real test against a real
+connector-enabled session (never a mock — see ARCHITECTURE.md's ADR-005),
+a real `unzip -l`/jar inspection to confirm the "zero added dependency"
+claim, a real mutation-testing run with the actual score cited (not
+"should be fine"), and a real `./dev/test`/`./dev/regression` run through
+real `spark-submit`. If something wasn't actually checked — the read
+side, streaming, a specific DML operation — say so explicitly rather than
+letting a reader assume "full support" covers it. "Do we now have 100%
+coverage?" should always be answerable precisely, operation by operation,
+not with a yes/no guess.
+
+## Known limitations (the general pattern, not connector-specific)
+
+Every connector added this way will likely share these gaps unless a
+future contributor specifically closes them:
+
+- **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) has no IR representation.**
+  `ir.Write` models "write a dataset to a location," not "conditionally
+  mutate existing rows." Translating these meaningfully is a `com.example.ir`
+  design question (a new IR node, or an explicit decision to never verify
+  row-level operations), not just a missing `SparkPlanAdapter` case —
+  don't treat it as a small addition.
+- **Streaming writes are unexplored.** Nothing in this repo's Delta work
+  investigated `writeStream`; the same investigation methodology applies,
+  but the plan shapes and timing (a streaming query's micro-batches each
+  produce their own analyzed plan) haven't been probed even once.
+- **DataSourceV2 catalog writes** (`AppendData`/`OverwriteByExpression`/
+  `OverwritePartitionsDynamic`/`ReplaceData`/`WriteDelta`, and
+  `CreateTableAsSelect`/`ReplaceTableAsSelect` for V2 CTAS) are real,
+  recurring write shapes across V2-catalog-backed connectors generally,
+  not just Delta — worth a dedicated investigation once a second
+  connector needs them, so the pattern gets solved once instead of
+  per-connector.
+
+---
+
+**Last Updated:** 2026-08-23

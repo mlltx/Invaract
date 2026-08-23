@@ -1089,6 +1089,43 @@ for any write shape, not just Delta specifically.
       writes" section, including the complete per-category reasoning for
       the safe list and what's deliberately left off it.
 
+#### Sub-phase: Reusable process for adding a Spark connector (done)
+
+Delta Lake support was built twice — once for `.save(...)` writes, again
+separately for `.saveAsTable(...)` and the fail-closed policy — because
+the first pass didn't survey the connector's full operation surface up
+front. Rather than let the next connector (Iceberg, ClickHouse, Avro, ...)
+repeat that, the investigation methodology that eventually got Delta
+right (probe with `injectCheckRule`, reflectively survey the connector's
+`Command` classes, classify every one found, verify rather than assert)
+is now written up as a repeatable process, with an interactive Claude
+Code skill that runs it.
+
+- [x] **docs/ADDING_A_SPARK_CONNECTOR.md**: the durable design doc — a
+      "Definition of done" checklist (every read/write path investigated,
+      not assumed; every `Command` class the connector's jar defines
+      classified, not guessed at; zero added dependency for non-users
+      verified by jar inspection, not asserted; mutation testing/MiMa/
+      `./dev/test`/`./dev/regression` all actually run), the exact
+      investigation methodology (dependency scoping, dual-extension-point
+      probing, reflective survey, classification rules), and a "Known
+      limitations" section naming what this pattern doesn't yet solve for
+      any connector (row-level DML has no IR representation yet;
+      streaming is unexplored; DataSourceV2 catalog writes are a
+      recurring gap worth solving once, not per-connector).
+- [x] **`add-spark-connector` Claude Code skill**
+      (`.claude/skills/add-spark-connector/SKILL.md`): the same process as
+      an interactive, ordered workflow — 10 phases from scoping the
+      connector through a final Definition-of-Done review, with explicit
+      checkpoints (⏸) requiring user sign-off before the fail-closed
+      classification is implemented and before the connector is called
+      done. Deliberately does not duplicate the doc's prose — points back
+      to the relevant section at each phase, per the progressive-
+      disclosure pattern Claude Code skills use.
+    - Cross-linked from CLAUDE.md's doc index and References section so
+      "add support for X" doesn't get a one-off `translatePlan` case
+      again instead of the full survey.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

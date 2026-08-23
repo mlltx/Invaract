@@ -393,6 +393,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new code introduced killed; `mimaReportBinaryIssues` clean. Documented
   in docs/SPARK_ADAPTER.md's new "Fail-closed on unverifiable writes"
   section and ROADMAP.md's matching sub-phase.
+- **Reusable process for adding a Spark connector**: Delta Lake support
+  was built twice — once for `.save(...)`, again separately for
+  `.saveAsTable(...)` and the fail-closed policy — because the first pass
+  didn't survey the connector's full operation surface up front. New
+  `docs/ADDING_A_SPARK_CONNECTOR.md` writes up the investigation
+  methodology that eventually got Delta right (test-scope-only
+  dependency, probing with `injectCheckRule` specifically since it sees
+  different plans than `QueryExecutionListener`, a reflective survey of
+  every `Command` class the connector's jar defines, and a three-way
+  classification: translatable write / confirmed-safe / fails closed) as
+  a "Definition of done" checklist for the next connector (Iceberg,
+  ClickHouse, Avro, ...), plus a new `add-spark-connector` Claude Code
+  skill (`.claude/skills/add-spark-connector/`) that runs the same
+  process as an interactive 10-phase workflow with explicit sign-off
+  checkpoints before the fail-closed classification is implemented and
+  before a connector is called done. Cross-linked from CLAUDE.md.
 
 ### Fixed
 
