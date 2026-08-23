@@ -1,6 +1,6 @@
 ---
 name: add-spark-connector
-description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invariant's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invariant work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every operation in its checklist has an explicit disposition, not assumed. Always ends by producing a coverage ledger (per-operation ✅ covered / 🚫 fails closed / ❓ not investigated) even for a narrowly-scoped ask — never lets a partial pass be silently mistaken for "done", which is exactly how the Delta Lake gaps happened, twice. Do not hand-roll a one-off translatePlan case without this skill.
+description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invariant's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invariant work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every operation *and* every format-specific feature (schema evolution, generated columns, constraints, and the like) has an explicit disposition backed by a real permanent test, not assumed from documentation or left standing on a deleted probe's output. Always ends by producing two coverage ledgers — operation surface (per-shape ✅ covered / 🚫 fails closed / ❓ not investigated) and feature surface (per-behavior ✅ confirmed / 🔧 found and fixed / ❓ not investigated) — even for a narrowly-scoped ask — never lets a partial pass be silently mistaken for "done", which is exactly how the Delta Lake gaps happened, more than once. Do not hand-roll a one-off translatePlan case without this skill.
 ---
 
 # Adding a Spark Connector
@@ -19,20 +19,26 @@ is safe" call silently defeats the entire fail-closed feature
 Getting Phase 5 wrong doesn't fail loudly; it fails invisibly, months
 later, on someone else's data. Slow down there specifically.
 
-**This skill does not end without producing the coverage ledger in Phase
-10 — full stop, no exceptions, including for a narrowly-scoped
-invocation.** This isn't a nice-to-have: Delta Lake's own onboarding
-shipped as "done" twice while most of "The operation surface" checklist
-in docs/ADDING_A_SPARK_CONNECTOR.md had never been touched, because
-nothing forced stating what a given pass *didn't* cover. If you're
-invoked for a narrow question ("does this connector need X", "let's just
-add reads"), say so explicitly at the start, and still close with the
-full ledger — every operation surface row gets ✅ Covered / 🚫 Fails
-closed / ❓ Not investigated, **each with a reason and a next step**,
-never silence. A user reading only your final message must be able to
-tell, per operation, whether it works, is safely rejected, or was never
-checked — not infer "probably fine" from the parts you happened to
-mention.
+**This skill does not end without producing both coverage ledgers in
+Phase 11 — operation surface and feature surface — full stop, no
+exceptions, including for a narrowly-scoped invocation.** This isn't a
+nice-to-have: Delta Lake's own onboarding shipped as "done" twice while
+most of "The operation surface" checklist in
+docs/ADDING_A_SPARK_CONNECTOR.md had never been touched, and even after
+that ledger was complete, two real bugs (schema evolution, generated
+columns) still shipped silently on rows already marked ✅ Covered, because
+nothing forced testing the format's own features once its command shapes
+were recognized — see Phase 8 and docs/ADDING_A_SPARK_CONNECTOR.md's "The
+feature surface" for why that's a second, separate axis, not a detail of
+the first. If you're invoked for a narrow question ("does this connector
+need X", "let's just add reads"), say so explicitly at the start, and
+still close with both full ledgers — every operation-surface row gets ✅
+Covered / 🚫 Fails closed / ❓ Not investigated, every feature-surface row
+gets ✅ Confirmed / 🔧 Found and fixed / ❓ Not investigated, **each with a
+reason and a next step**, never silence. A user reading only your final
+message must be able to tell, per operation and per feature, whether it
+works, is safely rejected, or was never checked — not infer "probably
+fine" from the parts you happened to mention.
 
 **🚫 Fails closed is not a synonym for "not supported, and that's fine."**
 It exists to catch operations Invariant hasn't translated *yet* — a
@@ -106,7 +112,7 @@ easy to under-scope as writes were the first time around), plus a
 non-`AS SELECT` `CREATE TABLE`, `ANALYZE TABLE`, and `SHOW TABLES` for
 later regression coverage. For a row that plainly doesn't apply to this
 connector (no catalog, no streaming support), note that now — it still
-needs a row in Phase 10's ledger, marked N/A with why, not skipped
+needs a row in Phase 11's ledger, marked N/A with why, not skipped
 silently. Record each operation's resulting plan class name(s) — you'll
 need this list for Phase 4.
 
@@ -140,7 +146,7 @@ For each concrete `Command` class from Phase 2 + Phase 3, decide one of:
    `DROP`/`REPLACE`, connector-specific maintenance with real data
    effects) → leave off both. It fails closed automatically — a safety
    net for an unimplemented operation, not a verdict that it shouldn't be
-   implemented. Note it for the "Known limitations" writeup in Phase 9
+   implemented. Note it for the "Known limitations" writeup in Phase 10
    *with a next step* (what translating it would take), not just "this
    fails closed."
 
@@ -226,7 +232,46 @@ ARCHITECTURE.md ADR-005):
   isn't blocked under a contract that would reject anything it actually
   checks.
 
-## Phase 8 — Verify, don't assert
+## Phase 8 — Test the feature surface
+
+This is a *different* axis from Phase 7, not a subset of it. Phase 7
+proves every write/read *shape* is recognized; this phase proves
+recognition stays correct once this format's own distinguishing
+*behaviors* are actually exercised. Both of Delta's real bugs (schema
+evolution silently using the pre-merge schema, a generated column never
+appearing in any DataFrame-facing schema) existed on operation-surface
+rows that were already ✅ Covered — Phase 7 passing does not imply this
+phase would.
+
+Read docs/ADDING_A_SPARK_CONNECTOR.md's "The feature surface
+(format-specific behaviors)" section first — unlike Phase 2's fixed
+operation-surface checklist, there is no connector-independent list here;
+spend real time with this connector's own docs/changelog identifying what
+actually makes it different from plain Parquet/CSV (schema-affecting
+writer-doesn't-control-it behaviors, storage/representation mechanisms,
+self-enforced constraints, versioning quirks — see that section for the
+full category breakdown and why each matters).
+
+For each feature found:
+
+1. Build a throwaway probe (same technique as Phase 2 — `injectCheckRule`,
+   disposable) against a real table with the feature turned on.
+2. Read what `WriteCommandSupport`/`StructuralVerifier` actually report.
+   "Should work based on the docs" is not evidence; the probe's real
+   output is.
+3. **Regardless of the answer** — a real bug (fix it, the same way the
+   schema-evolution/generated-columns fixes went into
+   `WriteCommandSupport.scala`), or already fine (no code change) —
+   convert the exact scenario into a permanent `PASS`-style test in the
+   connector's `*Spec.scala` file. "Already fine" is not a reason to skip
+   this step; it's the common case, and it's exactly the case most likely
+   to silently regress later with nothing to catch it.
+4. Delete the probe only after its finding lives in a real test. A
+   probe's output is memory of what was once true; a test in the suite is
+   a standing check that it still is. Never let a probe be the cited
+   evidence for a Phase 11 feature-surface ledger row.
+
+## Phase 9 — Verify, don't assert
 
 - `sbt stryker --mutate "..."` scoped to changed/added files — must clear
   70% (CLAUDE.md's "Mutation Testing Requirement"). Investigate every
@@ -241,18 +286,23 @@ ARCHITECTURE.md ADR-005):
   real `spark-submit` (per CLAUDE.md's "Critical Requirement"), not just
   `sbt test`.
 
-## Phase 9 — Document
+## Phase 10 — Document
 
 Three places, each stating **precisely** what is and isn't covered
 (read/write/DML/streaming/maintenance — operation by operation, the way
 `docs/SPARK_ADAPTER.md`'s "Delta Lake support" and "Fail-closed on
-unverifiable writes" sections do), never a blanket "full support" claim:
+unverifiable writes" sections do), never a blanket "full support" claim.
+Include the feature-surface findings from Phase 8, not just the
+operation-surface ones from Phase 7 — a fixed bug and a confirmed-
+transparent feature are both worth stating explicitly, the way
+docs/SPARK_ADAPTER.md's "Delta feature-by-feature confidence pass"
+subsection does:
 
 - A new "`<Connector>` support" section in `docs/SPARK_ADAPTER.md`.
 - A `ROADMAP.md` sub-phase under Phase 1c.
 - A `CHANGELOG.md` entry under `[Unreleased]`.
 
-## Phase 10 — Coverage ledger and close-out
+## Phase 11 — Coverage ledger and close-out
 
 Two things, in order. Neither is optional, and neither can be skipped by
 scope ("this was just about reads") — a narrow pass still produces both,
@@ -263,8 +313,10 @@ scoped honestly.
 something concrete to point at (a test, a real command's output, a cited
 mutation score) — not a restated assertion.
 
-**2. Produce the coverage ledger** — one row per item in "The operation
-surface," every row filled in, none silently omitted:
+**2. Produce two coverage ledgers — operation surface (Phase 7) and
+feature surface (Phase 8) — every row filled in, none silently omitted:**
+
+Operation surface, one row per item in "The operation surface":
 
 | Operation | Status | Evidence / reason + next step |
 |---|---|---|
@@ -285,15 +337,34 @@ surface," every row filled in, none silently omitted:
   — not just "TODO"). This is a legitimate, honest answer. An *absent*
   row is not — every row must appear.
 
-Post this table to the user as the closing message, however narrow the
-pass was — a session that only touched two rows still renders all of
-them, with the untouched ones marked ❓. Then write it into the same
-three documentation sites Phase 9 already touched
-(docs/SPARK_ADAPTER.md/ROADMAP.md/CHANGELOG.md), so the ledger is durable
-and the next session (or the next person) doesn't have to reconstruct it
-from conversation history.
+Feature surface, one row per format-specific behavior found in Phase 8
+(the list is connector-specific — there's no fixed template the way the
+operation surface has one):
 
-⏸ **Checkpoint**: walk the completed ledger with the user before calling
-any part of the connector done. "Are we at 100%?" must always be
-answerable directly from this table, never from a general impression of
+| Feature | Status | Evidence / reason + next step |
+|---|---|---|
+| e.g. schema evolution | ✅ / 🔧 / ❓ | ... |
+| e.g. generated columns | ✅ / 🔧 / ❓ | ... |
+| ... | | |
+
+- **✅ Confirmed** — tested against a real table with the feature on, no
+  fix needed; cite the permanent test (never a deleted probe's
+  remembered output — see Phase 8).
+- **🔧 Found and fixed** — a real bug existed; cite the fix and the test
+  proving it no longer reproduces.
+- **❓ Not investigated / not testable** — state why (out of scope, or
+  genuinely can't be exercised in this environment, like Delta's identity
+  columns) and the next step.
+
+Post both tables to the user as the closing message, however narrow the
+pass was — a session that only touched two rows of either still renders
+all of them, with the untouched ones marked ❓. Then write them into the
+same three documentation sites Phase 10 already touched
+(docs/SPARK_ADAPTER.md/ROADMAP.md/CHANGELOG.md), so both ledgers are
+durable and the next session (or the next person) doesn't have to
+reconstruct them from conversation history.
+
+⏸ **Checkpoint**: walk both completed ledgers with the user before
+calling any part of the connector done. "Are we at 100%?" must always be
+answerable directly from these tables, never from a general impression of
 how much work happened.

@@ -501,6 +501,106 @@ plan — a real, independently traversable `LogicalPlan` unlike the outer
 command. Any future connector whose write command hides its "real" query
 behind a similarly leaf-shaped node should check for this same trap.
 
+### Delta feature-by-feature confidence pass
+
+The row-level DML ledger row above says "✅ Covered," but covering the
+*write-command shape* isn't the same as having tried every Delta table
+*feature* against it — those are orthogonal axes (a MERGE is one write
+shape; whether its target has schema evolution, generated columns,
+deletion vectors, column mapping, liquid clustering, or CHECK constraints
+enabled is a property of the target, not the command). Before this pass,
+that gap was implicit: "expected to work, never actually tried." This
+pass tried each one against a real Delta table, not assumed from
+documentation — two were real, found-and-fixed false-rejection bugs; four
+are confirmed transparent with a permanent regression test; one is
+confirmed untestable in this environment, not silently skipped.
+
+- **Schema evolution (`MERGE` + `spark.databricks.delta.schema.autoMerge.enabled`)
+  — real bug, fixed.** `target.schema` at analysis time is the
+  *pre-merge* schema — confirmed empirically to not yet include columns
+  schema evolution is about to add. A contract requiring a field a
+  schema-evolving MERGE would legitimately add was previously rejected
+  with `MISSING_OUTPUT_FIELD` for a write that would have satisfied it.
+  `deltaRowLevelDml` now checks `MergeIntoCommand.schemaEvolutionEnabled()`
+  (public, confirmed via `javap`) and unions the source's new fields into
+  `target.schema` as a best-effort approximation — not a full simulation
+  of Delta's evolution rules (type widening, nested-struct merging,
+  column reordering aren't modeled), with a diagnostic making the
+  approximation visible. The same fix also had to distinguish "the
+  source legitimately has a field the commit will never write" from "the
+  source has an evolved field": confirmed empirically (not assumed) that
+  with `autoMerge` disabled, `INSERT *` silently drops a source column
+  the target doesn't have — the MERGE succeeds, the table's schema never
+  gains it — so `schemaEvolutionEnabled()` being false must keep
+  `outputSchema` at `target.schema` alone, not the source's schema.
+  `ContractEnforcementRuleSpec` has PASS tests for both directions: one
+  proving the evolving case is no longer falsely rejected, and one
+  proving a non-evolving MERGE with a source-only extra column doesn't
+  falsely *pass* a `rejectUndeclaredFields: true` contract (this second
+  test exists specifically because it's the one that kills the mutant a
+  naive `isMerge` check-only implementation would leave alive — see
+  "Mutation testing" below).
+
+- **Generated columns (`GENERATED ALWAYS AS (...)`) — real bug, fixed.**
+  The same class of false-rejection: a generated column is computed by
+  Delta at commit time, never supplied by the writer, so
+  `AppendData`/`OverwriteByExpression`'s `outputSchema` (previously always
+  `cmd.query.schema`) never included it. Confirmed empirically, the hard
+  way, that this can't be detected from any DataFrame-facing schema at
+  all — not `spark.read.format("delta").load(path).schema`, not
+  `spark.table(name).schema`, not even the DSv2 `Table` handle's own
+  `.schema()` (confirmed specifically for `DeltaTableV2.schema()`, the
+  exact handle these two write shapes resolve their target to) carries
+  `delta.generationExpression` metadata key Delta itself sets on a
+  generated column's `StructField`. Only Delta's internal
+  `Snapshot.schema()` does (reached via `DeltaTableV2.initialSnapshot()`,
+  itself reached via the write's own `DataSourceV2Relation.table`).
+  `outputSchemaWithGeneratedColumns`/`deltaGeneratedFields` read that
+  reflectively (same no-compile-time-dependency, `Try`-wrapped convention
+  as `deltaRowLevelDml`) and union the target's generated-only columns
+  into `outputSchema` — checking the metadata key directly rather than
+  reflecting into Delta's own `GeneratedColumn.isGeneratedColumn` helper,
+  since `StructField.metadata` is already a plain public Spark type on
+  this module's main classpath. Verified with a PASS test using the
+  `io.delta.tables.DeltaTable` builder API (raw `CREATE TABLE ...
+  GENERATED ALWAYS AS (...)` SQL DDL fails outright in this Spark 3.5.1 +
+  Delta 3.2.0 environment with `[UNSUPPORTED_FEATURE.TABLE_OPERATION]`,
+  confirmed empirically, even with explicit `TBLPROPERTIES` for
+  reader/writer version — the builder API was the only way found to
+  actually create one here) — a contract requiring the generated column
+  is satisfied by an append that never supplies it.
+
+- **Deletion vectors, column mapping mode (`'name'`), liquid clustering
+  (`CLUSTER BY`) — confirmed transparent, no fix needed.** Real writes
+  and DML against tables with each of these enabled are recognized by
+  `WriteCommandSupport` exactly as they would be without the feature —
+  correct location, correct schema, no diagnostics. `ContractEnforcementRuleSpec`
+  has a permanent PASS test for each, replacing what was previously only
+  throwaway probe evidence.
+
+- **CHECK constraints — confirmed orthogonal, no fix needed.** Delta
+  enforces these itself, independently, at commit time — Invariant has no
+  rule vocabulary for a row-level condition like `CHECK (id >= 0)` (see
+  docs/CONTRACT_MODEL.md's `rules` field). A write violating a CHECK
+  constraint is recognized by `WriteCommandSupport` identically to a
+  satisfying one (no diagnostic — Invariant's structural checks simply
+  don't apply here), and is then independently rejected by Delta's own
+  `DeltaInvariantViolationException` before commit — confirmed with a
+  permanent test asserting both halves: Invariant raises nothing, Delta
+  does.
+
+- **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
+  untestable in this environment, not investigated further.** Spark
+  3.5.1's own SQL parser rejects the syntax outright
+  (`[PARSE_SYNTAX_ERROR] ... extra input 'IDENTITY'`), confirmed via a
+  dedicated probe with no `try`/`catch` that could have masked a
+  different failure. This is very likely a Databricks Runtime-only SQL
+  extension not present in vanilla OSS Spark 3.5.1's grammar at all, not
+  a Delta or Invariant limitation — there is nothing for
+  `WriteCommandSupport` to translate because Spark itself never produces
+  an analyzed plan to see. Left as ❓ **Not investigated** rather than
+  claimed as covered.
+
 **Net assessment:** Delta is not "100% supported" and no single pass makes
 it so — but the gap is now fully enumerated instead of implicit, and every
 row that isn't ✅ Covered states exactly what would close it, not just
@@ -1125,6 +1225,37 @@ CLAUDE.md's "Mutation Testing Requirement" sets for new/changed code —
 the two are no longer at different levels, though the whole-module number
 stays the CI-blocking gate and the per-PR incremental check (below) stays
 the mechanism that actually enforces the new-code bar on every push.
+
+#### Delta feature-by-feature confidence pass
+
+Scoped `sbt stryker --mutate "src/main/scala/com/example/sparkadapter/WriteCommandSupport.scala"`
+(this sub-phase's only changed file) scored **73.08%** (19/26 non-excluded
+mutants killed) after the schema-evolution fix, generated-columns fix,
+and the `/simplify` pass that followed (extracting `unionNewFields` and
+replacing the `GeneratedColumn`/`Protocol` reflection chain with a direct
+`StructField.metadata` check — see "Delta feature-by-feature confidence
+pass" above). One of the two real survivors in the new generated-columns
+code was killed by adding a direct-inspection test
+(`WriteCommandSupport reports no diagnostic for AppendData into a Delta
+table with no generated columns`, mirroring the existing path-based-DML
+direct-inspection test) proving `outputSchemaWithGeneratedColumns`'s
+"nothing found" branch stays silent, not just that the resulting schema
+value happens to come out the same either way.
+
+The other new-code survivor — `deltaGeneratedFields`'s
+`table.getClass.getName != "...DeltaTableV2"` guard, forced to skip the
+check — is the same class of near-equivalent mutant already documented
+above for `SparkPlanAdapter`'s `JDBCRelation` guard: the surrounding
+`Try`/`getOrElse(Seq.empty)` absorbs either outcome for any table type
+this module could realistically encounter (a non-`DeltaTableV2` object
+simply doesn't have an `initialSnapshot()` method, so skipping the guard
+just trades one safe empty result for another reached via a caught
+`NoSuchMethodException`), so there's no test that could distinguish true
+behavioral divergence from equivalence without constructing an
+artificial object purpose-built to defeat the guard. The remaining five
+survivors (`catalogTable.isDefined` ×2, the `WriteFiles`-unwrap pair, and
+`DeltaSink`'s format check) predate this sub-phase and are already
+accounted for above/in ROADMAP.md.
 
 #### Incremental checking in CI
 

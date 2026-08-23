@@ -76,6 +76,69 @@ still listed and marked N/A with why, not silently dropped.
 8. Maintenance operations that touch data (compaction, vacuum, restore,
    clone, format conversion, or equivalent)
 
+## The feature surface (format-specific behaviors)
+
+The operation surface above is about plan *shapes* — is a `.saveAsTable()`
+recognized, does a `MERGE` get matched at all. It says nothing about
+whether a recognized write shape stays correct once the *format's own*
+distinguishing features are in play. Those are a second, orthogonal axis,
+and it's the one that produced two real, found-and-fixed bugs during
+Delta's own "the operation surface is fully covered" pass: `target.schema`
+silently being the pre-merge schema under schema evolution, and a
+generated column silently never appearing in any DataFrame-facing schema
+at all. Both bugs existed on operation-surface rows that were already
+marked ✅ Covered — closing every row of "The operation surface" is
+necessary, not sufficient.
+
+Unlike the operation surface, there is no fixed, connector-independent
+list here — each format has its own distinguishing behaviors. Spend real
+time (the connector's own docs, changelog, and "what makes this format
+different from plain Parquet/CSV" framing) enumerating this connector's
+actual list before writing any code, the same deliberateness Phase 0
+already asks for scoping the operation surface. Categories worth checking
+for, not a checklist to fill in blindly — most formats have some subset:
+
+- **Schema-affecting behaviors the writer doesn't fully control**: schema
+  evolution/merge-on-write, computed/generated columns, identity/auto-
+  increment columns, default values applied server-side. Anything where
+  the schema Invariant can read *before* a write differs from the schema
+  the write actually commits is a candidate for exactly the false-
+  rejection (or worse, false-pass) bug class Delta's schema evolution and
+  generated-columns fixes both were.
+- **Storage/representation mechanisms that shouldn't change verification
+  behavior, but might**: deletion vectors or other soft-delete
+  representations, column mapping / physical-vs-logical name
+  indirection, clustering or partitioning strategies, compaction/
+  optimization operations. The bar here is usually "confirm this doesn't
+  break anything," not "implement new handling" — but "usually" isn't
+  "always," and it isn't proven without a real write against a real table
+  with the feature turned on.
+- **Constraints or invariants the format enforces itself**: `CHECK`
+  constraints, `NOT NULL`, foreign-key-like relationships, uniqueness. The
+  question to answer for each is specifically the boundary: does
+  Invariant's own structural verification interact with the format's
+  enforcement at all (double-check, silently duplicate, silently
+  conflict), or are they genuinely orthogonal — confirm with a test that
+  exercises *both* a satisfying and a violating write, the way Delta's
+  `CHECK`-constraint test does (Invariant passes both; the format itself
+  then rejects the violating one).
+- **Versioning/time-travel semantics**, if not already covered by "The
+  operation surface"'s time-travel read row.
+
+For each item found: **write a real test against a real
+connector-enabled table with the feature turned on, and check what
+Invariant actually reports** — never reason from the format's
+documentation about what "should" happen. A throwaway probe is the right
+first move (same as the operation-surface investigation), but **a probe
+is not the deliverable and never stands in as the evidence for a coverage
+ledger row.** Every scenario a probe touches — including ones where the
+probe's answer was "this is already fine, no fix needed" — gets promoted
+into a permanent test in the connector's `*Spec.scala` file before the
+probe is deleted. "We tried it once and it worked" is not the same
+confidence level as "there is a test in the suite that will fail if this
+regresses," and this document exists specifically because "should work,
+never actually verified" was allowed to pass as done twice already.
+
 ## Definition of done
 
 A connector is **not** done because compilation succeeds or because one
@@ -129,6 +192,17 @@ coverage ledger this section ends with is complete.
 - [ ] **A regression test proves the connector's own non-data
       administrative commands aren't blocked** by the fail-closed policy,
       under a contract that would reject anything it actually checked.
+- [ ] **Every item on "The feature surface" this connector actually has
+      was tested against a real table with the feature enabled, not
+      assumed from documentation, and every finding — including "this is
+      already fine" — is a permanent test in the suite, not just a
+      throwaway probe's output.** A feature found to genuinely need a fix
+      (the schema-affecting-behavior category is the likely source, per
+      Delta's schema-evolution and generated-columns bugs) has both the
+      fix and a test proving it; a feature confirmed transparent has a
+      test proving that too, so a future regression doesn't have to be
+      rediscovered from scratch. See "The feature surface (format-specific
+      behaviors)" above.
 - [ ] Mutation testing scoped to the changed/added files clears 70% (see
       CLAUDE.md's "Mutation Testing Requirement"); `mimaReportBinaryIssues`
       is clean.
@@ -186,10 +260,22 @@ Delta reads" ship as if `.insertInto()`/`.writeTo()`/streaming/time
 travel didn't exist either — both times because nothing forced an
 explicit accounting of what the pass *didn't* cover.
 
+The same requirement applies to "The feature surface" above, with the
+same three dispositions adapted to what a feature check actually
+produces: **✅ Confirmed** (tested against a real table with the feature
+on, permanent test exists — whether or not a fix was needed), **🔧 Found
+and fixed** (a real bug was found; cite the fix and the test proving it),
+or **❓ Not investigated / not testable** (state why — out of scope, or,
+like Delta's identity columns, genuinely can't be exercised in this
+environment — and the next step). A feature surface with rows that only
+cite a deleted probe's remembered output, rather than a live test in the
+suite, does not satisfy this — see "The feature surface" above for why a
+probe alone was ruled out as sufficient evidence.
+
 A "done" connector's docs/SPARK_ADAPTER.md section, ROADMAP.md sub-phase,
-and CHANGELOG.md entry (below) are exactly this ledger, formatted for
-their audience — never a blanket "full support" sentence standing in for
-it.
+and CHANGELOG.md entry (below) are exactly these two ledgers, formatted
+for their audience — never a blanket "full support" sentence standing in
+for either.
 
 ## The investigation methodology
 
@@ -317,6 +403,32 @@ side, streaming, a specific DML operation — say so explicitly rather than
 letting a reader assume "full support" covers it. "Do we now have 100%
 coverage?" should always be answerable precisely, operation by operation,
 not with a yes/no guess.
+
+### 6. Test the feature surface, not just the operation surface
+
+Steps 1–5 prove every write/read *shape* is recognized. That leaves the
+question "The feature surface" above exists for: does recognition stay
+correct once this format's own distinguishing behaviors are actually
+exercised? Enumerate them (see "The feature surface" for the categories
+to check), then for each one, build a throwaway probe exactly like step
+2's — same technique, same disposability — against a real table with the
+feature turned on, and read what `WriteCommandSupport`/`StructuralVerifier`
+actually report.
+
+The one place this step differs from steps 1–5: **the probe's job ends
+the moment you have an answer, not when the code is confirmed correct.**
+"This is already fine, no fix needed" is a legitimate, common outcome —
+Delta's deletion vectors, column mapping, liquid clustering, and `CHECK`
+constraints were all exactly that. It is not, on its own, a stopping
+point: convert the scenario the probe just exercised into a permanent
+test in the connector's `*Spec.scala` file (a `PASS` test asserting the
+write succeeds and the contract holds, mirroring the existing PASS/FAIL
+pairs), *then* delete the probe. A probe's output is memory of what was
+once true; a test in the suite is a standing check that it's still true.
+Treat "I tried it and it worked" as equivalent to "untested" until it's
+been turned into something CI runs on every future change — the
+difference is exactly what separates a real coverage-ledger row from a
+sentence in a chat transcript nobody can re-run.
 
 ## Known limitations (the general pattern, not connector-specific)
 

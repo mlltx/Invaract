@@ -1519,6 +1519,89 @@ verification only.
       docs/SPARK_ADAPTER.md's "Delta Lake operation-surface coverage
       ledger" section.
 
+#### Sub-phase: Delta feature-by-feature confidence pass (done)
+
+The ledger above closing every write-command *shape* left a separate,
+previously-implicit gap: "expected to work" against Delta table
+*features* (schema evolution, generated columns, deletion vectors, column
+mapping, liquid clustering, CHECK constraints, identity columns) is not
+the same claim as "confirmed to work" — nothing had actually exercised
+most of them. This sub-phase tried each one for real, not from
+documentation, and turned every finding into either a fix or a permanent
+regression test — no more relying on throwaway probe evidence.
+
+- [x] **Schema evolution (`MERGE` + `autoMerge.enabled`) — real bug,
+      found and fixed.** `target.schema` at analysis time is the
+      *pre-merge* schema, confirmed empirically to not yet include
+      columns evolution is about to add — a contract requiring such a
+      field was wrongly `MISSING_OUTPUT_FIELD`-rejected. Fixed via
+      `MergeIntoCommand.schemaEvolutionEnabled()` (public, confirmed via
+      `javap`); the source's new fields are unioned into `target.schema`
+      as a best-effort approximation, with a diagnostic. A second finding
+      along the way: with `autoMerge` disabled, `INSERT *` silently drops
+      a source column the target doesn't have (confirmed empirically,
+      not assumed) — so the fix must gate strictly on
+      `schemaEvolutionEnabled()`, not just "does the source have extra
+      fields." Two PASS tests in `ContractEnforcementRuleSpec` cover both
+      directions.
+- [x] **Generated columns (`GENERATED ALWAYS AS (...)`) — real bug, found
+      and fixed.** Same false-rejection class: Delta computes these at
+      commit time, never supplied by the writer, so `AppendData`/
+      `OverwriteByExpression`'s `outputSchema` never included them.
+      Confirmed the hard way that no DataFrame-facing schema exposes the
+      `delta.generationExpression` metadata key Delta itself sets on a
+      generated column's `StructField` — not a read-back, not a catalog
+      table, not even the DSv2 `Table` handle's own `.schema()`
+      (`DeltaTableV2.schema()`, specifically) — only Delta's internal
+      `Snapshot.schema()` (`DeltaTableV2.initialSnapshot()`) does. Fixed
+      by reading that reflectively (`outputSchemaWithGeneratedColumns`/
+      `deltaGeneratedFields`, same no-compile-time-dependency, `Try`-wrapped
+      convention as `deltaRowLevelDml`) and unioning the target's
+      generated-only columns in — checking the metadata key directly
+      rather than reflecting into Delta's own
+      `GeneratedColumn.isGeneratedColumn` helper (a `/simplify` pass
+      finding: `StructField.metadata` needs no `Protocol` lookup or
+      overload resolution, and is already a plain public Spark type).
+      Verified with a PASS test (built via the
+      `io.delta.tables.DeltaTable` builder API — raw SQL DDL for
+      generated columns fails outright in this environment, confirmed
+      empirically, even with explicit reader/writer-version
+      `TBLPROPERTIES`).
+- [x] **Deletion vectors, column mapping mode (`'name'`), liquid
+      clustering (`CLUSTER BY`) — confirmed transparent.** Real writes/DML
+      against tables with each enabled are recognized exactly as they
+      would be without it — correct location, schema, no diagnostics. A
+      permanent PASS test added for each in `ContractEnforcementRuleSpec`
+      (previously only throwaway probe evidence existed).
+- [x] **CHECK constraints — confirmed orthogonal.** Delta enforces these
+      itself, independently, at commit time; Invariant has no rule
+      vocabulary for a row-level condition. A permanent test asserts
+      both halves: a violating write is recognized by `WriteCommandSupport`
+      identically to a satisfying one (no diagnostic from Invariant), and
+      is then rejected by Delta's own `DeltaInvariantViolationException`
+      before commit.
+- [x] **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
+      untestable in this environment, documented as such rather than
+      silently skipped.** Spark 3.5.1's own SQL parser rejects the syntax
+      (`[PARSE_SYNTAX_ERROR] ... extra input 'IDENTITY'`), confirmed via a
+      dedicated probe with no exception-masking `try`/`catch` — almost
+      certainly a Databricks Runtime-only grammar extension not present
+      in vanilla OSS Spark 3.5.1 at all, so there is no analyzed plan for
+      `WriteCommandSupport` to ever see. Recorded as ❓ Not investigated
+      in docs/SPARK_ADAPTER.md, not claimed as covered.
+- [x] Mutation testing scoped to `WriteCommandSupport.scala` (the only
+      file touched this sub-phase): **73.08%** (19/26 non-excluded
+      mutants killed). Every real survivor investigated, not just cited —
+      see docs/SPARK_ADAPTER.md's "Delta feature-by-feature confidence
+      pass" mutation-testing subsection for the per-mutant breakdown (one
+      killed with a new direct-inspection test, one accepted as
+      near-equivalent given the surrounding `Try`'s safety net, the rest
+      pre-existing from earlier sub-phases). Full suite passing (89/89);
+      `mimaReportBinaryIssues` clean.
+- [x] All throwaway probe specs used during this pass deleted once their
+      findings were captured as permanent tests/docs — no probe evidence
+      left standing in as a substitute for a real regression test.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

@@ -590,6 +590,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inspection test for a path-based operation with no catalog table at
   all. Mutation testing scoped to the two changed files: 85.71% overall.
   All 13 rows of the Delta operation-surface ledger are now ✅ Covered.
+- **Delta feature-by-feature confidence pass**, closing the gap between
+  "every write-command shape covered" and "every Delta table feature
+  actually tried": schema evolution and generated columns each had a
+  real false-rejection bug, found and fixed; deletion vectors, column
+  mapping mode, liquid clustering, and CHECK constraints are confirmed
+  transparent with a permanent test each, replacing what was previously
+  only throwaway probe evidence; identity columns are confirmed
+  untestable in this Spark 3.5.1 environment (parser-level rejection) and
+  documented as such rather than silently skipped. See
+  docs/SPARK_ADAPTER.md's new "Delta feature-by-feature confidence pass"
+  subsection and ROADMAP.md for full details.
 
 ### Fixed
 

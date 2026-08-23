@@ -5,9 +5,11 @@ package com.example.sparkadapter
 
 import com.example.contract.ContractParser
 
+import io.delta.tables.DeltaTable
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.{DateType, TimestampType}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -581,6 +583,200 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
   }
 
+  // A real bug, found by writing this test rather than assumed away: a
+  // contract requiring a field that a schema-evolving MERGE is about to
+  // add would previously be rejected with MISSING_OUTPUT_FIELD, even
+  // though the merge would have satisfied it - because outputSchema came
+  // from target.schema at analysis time (pre-merge), confirmed empirically
+  // to not yet include columns schema evolution is about to add.
+  // deltaRowLevelDml now detects MergeIntoCommand.schemaEvolutionEnabled()
+  // and unions in the source's new fields as a best-effort approximation.
+  test("PASS: a MERGE INTO with schema evolution enabled, satisfying a contract requiring the newly-added column") {
+    val tablePath = scratchDir.resolve("merge_schema_evo_target").toString
+    val tableName = "merge_schema_evo_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |        - name: extra_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    // The session (and its SQL conf) is shared across this whole spec, so
+    // this must not leak "enabled = true" to later tests even if the MERGE
+    // itself throws unexpectedly.
+    withContract(yaml) {
+      spark.sql("SET spark.databricks.delta.schema.autoMerge.enabled = true")
+      try {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled, 'new' as extra_col) s
+             |ON t.id = s.id
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect() // must not throw - extra_col is about to be added by evolution
+      } finally {
+        spark.sql("SET spark.databricks.delta.schema.autoMerge.enabled = false")
+      }
+    }
+
+    assert(spark.table(tableName).schema.fieldNames.contains("extra_col"), "the merge must actually have evolved the schema")
+    assert(spark.table(tableName).count() == 6)
+  }
+
+  // Confirmed empirically (MergeNoEvoExtraFieldProbeSpec, since deleted):
+  // with autoMerge disabled, a MERGE's source can carry a column the target
+  // doesn't have - INSERT * silently drops it, the commit succeeds, and the
+  // table's schema never gains it. So when schemaEvolutionEnabled() is
+  // false, outputSchema must come from target.schema alone; unioning in the
+  // source's extra fields regardless (as if evolution were always active)
+  // would report a column as written that never actually was. This is
+  // exactly the case rejectUndeclaredFields is designed to catch, so it's
+  // used here as the tripwire: real code passes (extra_col was never
+  // written, contract doesn't mention it); a build that ignored
+  // schemaEvolutionEnabled()'s actual value would wrongly add extra_col to
+  // outputSchema and abort this write.
+  test("PASS: a MERGE INTO without schema evolution enabled ignores the source's extra column, not just the target's") {
+    val tablePath = scratchDir.resolve("merge_no_evo_extra_target").toString
+    val tableName = "merge_no_evo_extra_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml, VerificationOptions(rejectUndeclaredFields = true)) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as id, 198L as doubled, 'new' as extra_col) s
+           |ON t.id = s.id
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin).collect() // must not throw - extra_col is silently dropped, never evolution-added
+    }
+
+    assert(!spark.table(tableName).schema.fieldNames.contains("extra_col"), "extra_col must not actually have been written")
+    assert(spark.table(tableName).count() == 6)
+  }
+
+  // A real bug, the same class as the MERGE schema-evolution one above,
+  // found the same way (real probes, not assumed): Delta generated columns
+  // (GENERATED ALWAYS AS (...)) are computed by Delta itself at commit
+  // time, never supplied by the writer, so AppendData's outputSchema
+  // (previously always cmd.query.schema) never included them - a contract
+  // requiring a generated column would be wrongly MISSING_OUTPUT_FIELD-
+  // rejected for an append that would actually satisfy it once Delta
+  // computed the column. Confirmed empirically that this can't be detected
+  // from any DataFrame-facing schema (read-back, catalog table, or the
+  // DSv2 Table handle's own .schema()) - only Delta's internal
+  // Snapshot.schema() carries the delta.generationExpression metadata
+  // GeneratedColumn.isGeneratedColumn actually checks -
+  // outputSchemaWithGeneratedColumns/deltaGeneratedFields now read that
+  // reflectively and union in the target's generated-only columns.
+  test("PASS: appending to a Delta table with a generated column, satisfying a contract requiring it") {
+    val tablePath = scratchDir.resolve("gen_col_target").toString
+    val tableName = "gen_col_append_tbl"
+    DeltaTable.create(spark)
+      .tableName(tableName)
+      .location(tablePath)
+      .addColumn("id", org.apache.spark.sql.types.LongType)
+      .addColumn("event_time", TimestampType)
+      .addColumn(
+        DeltaTable.columnBuilder(spark, "event_date")
+          .dataType(DateType)
+          .generatedAlwaysAs("CAST(event_time AS DATE)")
+          .build()
+      )
+      .execute()
+
+    // id/event_time: required: false - Delta reports every column nullable
+    // on read-back (see the existing Delta input-read PASS test for the
+    // same documented quirk). event_date: deliberately required: true -
+    // this is the field under test, never supplied by this write's own
+    // DataFrame (id, event_time only); required: false here would make
+    // this test pass identically whether or not the generated-column fix
+    // exists (a missing non-required field isn't flagged at all - see
+    // "an absent field is only flagged when the contract marks it
+    // required" in StructuralVerifierSpec), silently proving nothing.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: event_time
+         |          type: timestamp
+         |          required: false
+         |        - name: event_date
+         |          type: date
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.createDataFrame(Seq((1L, java.sql.Timestamp.valueOf("2024-01-01 00:00:00"))))
+        .toDF("id", "event_time")
+      df.writeTo(tableName).append() // must not throw - event_date is about to be Delta-computed
+    }
+
+    val written = spark.table(tableName).collect()
+    assert(written.length == 1)
+    assert(written.head.getAs[java.sql.Date]("event_date") != null, "event_date must actually have been Delta-computed")
+  }
+
+  // Direct-inspection companion to the PASS test above, same pattern as
+  // the path-based DML test elsewhere in this file: an AppendData against
+  // a Delta table with NO generated columns must resolve outputSchema
+  // via the ordinary query.schema path, with no diagnostic attached -
+  // proving outputSchemaWithGeneratedColumns's "nothing found" branch
+  // stays silent, not just that the schema value happens to come out the
+  // same either way.
+  test("WriteCommandSupport reports no diagnostic for AppendData into a Delta table with no generated columns") {
+    val tablePath = scratchDir.resolve("no_gen_col_target").toString
+    val tableName = "no_gen_col_append_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    capturedPlans.clear()
+
+    spark.range(5, 6).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val append = capturedPlans.collectFirst { case p: org.apache.spark.sql.catalyst.plans.logical.AppendData => p }
+      .getOrElse(fail("no AppendData plan observed"))
+    val info = WriteCommandSupport.combined.lift(append).getOrElse(fail("AppendData should be recognized"))
+    assert(info.outputSchema.fieldNames.toSet == Set("id", "doubled"))
+    assert(info.diagnostic.isEmpty, "a table with no generated columns must not get a generated-columns diagnostic")
+  }
+
   test("PASS: an UPDATE satisfying its contract's declared output executes normally") {
     val tablePath = scratchDir.resolve("update_pass_target").toString
     val tableName = "update_pass_tbl"
@@ -641,6 +837,163 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  // The four tests below lock in findings from a real probing pass over
+  // Delta features not otherwise exercised by this file (throwaway probes,
+  // since deleted, not assumed from documentation): each is confirmed
+  // transparent to Invariant - a real write against a table with the
+  // feature enabled is recognized exactly the same way as one without it,
+  // no special-casing needed in WriteCommandSupport. Unlike schema
+  // evolution and generated columns above, none of these needed a fix.
+
+  test("PASS: a DELETE against a table with deletion vectors enabled executes normally") {
+    val tablePath = scratchDir.resolve("dv_target").toString
+    val tableName = "dv_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect() // must not throw
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id <= 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  test("PASS: writes and DML against a table with column mapping mode 'name' execute normally") {
+    val tablePath = scratchDir.resolve("colmap_target").toString
+    val tableName = "colmap_pass_tbl"
+    spark.sql(
+      s"""CREATE TABLE $tableName (id LONG, doubled LONG) USING delta
+         |LOCATION '${tablePath.replace('\\', '/')}'
+         |TBLPROPERTIES (
+         |  'delta.columnMapping.mode' = 'name',
+         |  'delta.minReaderVersion' = '2',
+         |  'delta.minWriterVersion' = '5'
+         |)
+         |""".stripMargin)
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("append").saveAsTable(tableName)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5, 6).withColumn("doubled", col("id") * 2)
+      df.write.format("delta").mode("append").saveAsTable(tableName) // must not throw
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id = 5").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6)
+  }
+
+  test("PASS: appending to a table with liquid clustering (CLUSTER BY) executes normally") {
+    val tablePath = scratchDir.resolve("cluster_target").toString
+    val tableName = "cluster_pass_tbl"
+    spark.sql(
+      s"""CREATE TABLE $tableName (id LONG, doubled LONG) USING delta
+         |CLUSTER BY (id)
+         |LOCATION '${tablePath.replace('\\', '/')}'
+         |""".stripMargin)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.format("delta").mode("append").saveAsTable(tableName) // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 5)
+  }
+
+  // CHECK constraints are enforced independently by Delta itself, at
+  // commit time - Invariant's structural checks and Delta's own constraint
+  // enforcement operate orthogonally, with no interaction/gap: a violating
+  // write is recognized by Invariant identically to a satisfying one (no
+  // diagnostic, no violation - Invariant has no vocabulary for row-level
+  // constraints, only schema/location/format/save-mode), but Delta itself
+  // then rejects it before commit. Confirmed empirically, not assumed.
+  test("PASS: a write satisfying a Delta CHECK constraint executes normally; a violating one is rejected by Delta itself, not Invariant") {
+    val tablePath = scratchDir.resolve("check_target").toString
+    val tableName = "check_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    spark.sql(s"ALTER TABLE $tableName ADD CONSTRAINT id_positive CHECK (id >= 0)")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val satisfying = spark.range(5, 6).withColumn("doubled", col("id") * 2)
+      satisfying.write.format("delta").mode("append").saveAsTable(tableName) // must not throw - Invariant passes, constraint satisfied
+
+      val violating = spark.createDataFrame(Seq((-2L, -4L))).toDF("id", "doubled")
+      intercept[org.apache.spark.sql.delta.schema.DeltaInvariantViolationException] {
+        violating.write.format("delta").mode("append").saveAsTable(tableName)
+        // Invariant itself raises nothing here (no ContractViolationException) - the row that
+        // gets rejected is rejected by Delta's own commit-time constraint enforcement, not by
+        // Invariant, which has no rule vocabulary for a CHECK constraint's condition.
+      }
+    }
+
+    assert(spark.table(tableName).count() == 6, "only the satisfying row (plus the original 5) was ever committed")
   }
 
   // Every DML PASS/FAIL pair above targets a catalog table, where
