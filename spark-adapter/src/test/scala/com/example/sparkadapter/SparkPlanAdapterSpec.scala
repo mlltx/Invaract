@@ -497,7 +497,13 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     result.plan match {
       case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
-        assert(location.contains(outputPath), s"expected the table's path in the location, got '$location'")
+        // The filename only, not the full native outputPath: Spark
+        // normalizes a catalog table's storage location into a
+        // forward-slash file: URI regardless of platform, so on Windows
+        // outputPath's backslashes would never appear in it verbatim
+        // (same convention every other location assertion in this file
+        // uses, e.g. `location.contains("sample.csv")`).
+        assert(location.contains("save_as_table_test"), s"expected the table's path in the location, got '$location'")
         assert(format.contains("parquet"), s"expected the default 'parquet' format via table.provider, got $format")
         assert(saveMode.contains("overwrite"))
       case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
@@ -524,16 +530,24 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val loadResult = SparkPlanAdapter.translate(spark.read.format("delta").load(path).queryExecution.analyzed)
     loadResult.plan match {
       case Read(DatasetRef(location), None) =>
-        assert(location.contains(path), s"expected the Delta table's physical path in the location, got '$location'")
+        // Filename only, not the full native path - see the .saveAsTable()
+        // test above for why (Windows path-separator mismatch against
+        // Spark's normalized file: URIs).
+        assert(location.contains("delta_read_test"), s"expected the Delta table's physical path in the location, got '$location'")
       case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
     }
     assert(loadResult.diagnostics.isEmpty, s".load(path) should resolve via the HadoopFsRelation branch, no fallback: ${loadResult.diagnostics}")
 
-    spark.sql(s"CREATE TABLE IF NOT EXISTS spark_plan_adapter_delta_read_tbl USING delta LOCATION '$path'")
+    // Forward slashes only when building a LOCATION clause: on Windows,
+    // path's native backslashes collide with SQL string-literal escaping
+    // when interpolated directly (confirmed by a real CI failure - see
+    // ContractEnforcementRuleSpec's MERGE INTO fail-closed test for the
+    // same fix). Spark/Hadoop accept forward-slash paths on Windows too.
+    spark.sql(s"CREATE TABLE IF NOT EXISTS spark_plan_adapter_delta_read_tbl USING delta LOCATION '${path.replace('\\', '/')}'")
     val catalogResult = SparkPlanAdapter.translate(spark.table("spark_plan_adapter_delta_read_tbl").queryExecution.analyzed)
     catalogResult.plan match {
       case Read(DatasetRef(location), Some("spark_plan_adapter_delta_read_tbl")) =>
-        assert(location.contains(path), s"expected the same physical path via catalogTable.storage, got '$location'")
+        assert(location.contains("delta_read_test"), s"expected the same physical path via catalogTable.storage, got '$location'")
       case other => fail(s"expected an aliased Read, got ${PlanPrinter.render(other)}")
     }
     assert(catalogResult.diagnostics.isEmpty, s"a catalog table reference should resolve via the same HadoopFsRelation branch, no fallback: ${catalogResult.diagnostics}")

@@ -324,7 +324,13 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     // Seed the table with no active contract — only the MERGE itself should
     // be gated.
     spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
-    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '$tablePath'")
+    // Forward slashes only: on Windows, tablePath's native backslashes
+    // collide with SQL string-literal escaping when interpolated directly
+    // into a LOCATION clause, mangling the path (confirmed by a real CI
+    // failure: "Can not create a Path from an empty string"). Spark/Hadoop
+    // accept forward-slash paths on Windows too, so normalizing here is
+    // always safe, not just a Windows-only branch.
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
     val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
 
     val yaml =
