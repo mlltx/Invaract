@@ -8,8 +8,7 @@ import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
-import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
-import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -84,21 +83,24 @@ object ContractEnforcementRule {
     translated.plan match {
       case _: com.example.ir.Write =>
         val inputSchemas = plan.collect { case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema }.toList
-        // Both branches use the underlying query's schema, not the command
-        // node's own: a Command's `.schema` is its own (typically empty)
-        // output, not the data it writes - using it directly for
-        // SaveIntoDataSourceCommand silently reported every declared field
-        // as missing regardless of what was actually written, confirmed
-        // the hard way by a real Delta write test failing PASS with a
-        // MISSING_OUTPUT_FIELD violation on a field that genuinely was
-        // present (see docs/SPARK_ADAPTER.md's "Delta Lake support"
-        // section).
-        val outputSchema = plan match {
-          case cmd: InsertIntoHadoopFsRelationCommand    => cmd.query.schema
-          case cmd: SaveIntoDataSourceCommand             => cmd.query.schema
-          case cmd: CreateDataSourceTableAsSelectCommand => cmd.query.schema
-          case other                                      => other.schema
-        }
+        // WriteCommandSupport.combined is the same lookup translation used
+        // to reach this ir.Write in the first place, so this can never
+        // drift out of sync with it the way three independent matches
+        // could (and once did - see WriteCommandSupport's class doc). Its
+        // outputSchema is always the underlying query's schema, not the
+        // command node's own: a Command's `.schema` is its own (typically
+        // empty) output, not the data it writes - using that directly
+        // silently reported every declared field as missing regardless of
+        // what was actually written, confirmed the hard way by a real
+        // Delta write test failing PASS with a MISSING_OUTPUT_FIELD
+        // violation on a field that genuinely was present (see
+        // docs/SPARK_ADAPTER.md's "Delta Lake support" section). The
+        // `plan.schema` fallback only matters if `translated.plan` is an
+        // `ir.Write` `SparkPlanAdapter` produced some other way (not
+        // currently possible - `WriteCommandSupport.combined` is the only
+        // producer of `ir.Write` - but kept as a safe default rather than
+        // assuming that stays true forever).
+        val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
         val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))

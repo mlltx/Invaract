@@ -332,10 +332,9 @@ Two real bugs surfaced fixing this, neither about translation itself:
   and correctly enforced, yet the listener-based report
   (`demo/output/report.json`'s `transformationIR` section) never
   captured it. Fixed the same way, in a third, separate location — three
-  independent places recognizing "is this a write command" is itself
-  worth noting as a design smell (not fixed here; see CLAUDE.md's
-  reminder to revisit fail-open/fail-closed behavior for unrecognized
-  writes generally).
+  independent places recognizing "is this a write command" was, at the
+  time, left as a noted design smell rather than fixed. It has since been
+  fixed — see "Write command recognition: a single registry" below.
 
 Both were caught by a real, real-Spark integration test failing (the new
 Delta PASS/FAIL pair in `ContractEnforcementRuleSpec` and the translation
@@ -451,6 +450,66 @@ test (`SparkPlanAdapterSpec`).
 actually checked, confirming the fail-closed policy's biggest risk —
 blocking legitimate DDL — doesn't happen in practice, not just that the
 code compiles.
+
+## Write command recognition: a single registry
+
+Three separate places used to each answer "is this plan a write, and
+what does it mean" independently: `SparkPlanAdapter.Translator.translatePlan`
+(to translate it), `ContractEnforcementRule.verifyOrThrow` (just to pull
+the right output schema), and `SparkAdapterListener.onSuccess` (just to
+decide whether to capture a write for `demo/output/report.json`). Three
+`case cmd: X =>` matches, hand-kept in lockstep by whoever added a write
+shape. Both of this module's real Delta-support bugs (see "Delta Lake
+support" above) were exactly that: a write shape added to one match and
+missed in another. This wasn't a one-off mistake — it was a structural
+hazard built into encoding the same fact three times.
+
+**`WriteCommandSupport`** (new file) replaces all three with one
+registry: a `PartialFunction[LogicalPlan, WriteCommandInfo]` per
+recognized write shape (`InsertIntoHadoopFsRelationCommand`,
+`SaveIntoDataSourceCommand`, `CreateDataSourceTableAsSelectCommand`),
+combined via `orElse` into `WriteCommandSupport.combined`. `WriteCommandInfo`
+bundles everything a write's translation and verification both need in
+one shot — location, the (untranslated) query, format, save mode, and
+the output schema `ContractEnforcementRule` checks against — so it's
+structurally impossible to add a write shape that translates correctly
+but is missing the schema piece the way the original Delta bug did.
+
+All three sites now consult exactly this:
+
+- `SparkPlanAdapter.Translator.translatePlan`: `WriteCommandSupport.combined.lift(plan)` →
+  `Some(info)` becomes `ir.Write(DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode)`,
+  reporting `info.diagnostic` if present; `None` falls through to the
+  rest of the match (reads, `Project`, `Filter`, ..., the `Unsupported`
+  fallback).
+- `ContractEnforcementRule.verifyOrThrow`: `WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)` —
+  one line, replacing the three-case match that used to live here.
+- `SparkAdapterListener.onSuccess`: `WriteCommandSupport.combined.isDefinedAt(qe.analyzed)` —
+  the entire "is this a write" check, replacing its own three-case match.
+
+**What this means for adding a connector**: most connectors need zero new
+entries here at all — the whole point of the Delta investigation was that
+`SaveIntoDataSourceCommand` already covers any `CreatableRelationProvider`-based
+`.save(...)`, connector-specific or not. When a connector genuinely
+introduces a new write-command *shape* Spark doesn't already have a
+generic node for, adding support is: implement one more
+`PartialFunction[LogicalPlan, WriteCommandInfo]` in `WriteCommandSupport.scala`
+following the three existing ones as templates, and chain it into
+`combined`. Nothing in `SparkPlanAdapter`, `ContractEnforcementRule`, or
+`SparkAdapterListener` needs to change — see
+docs/ADDING_A_SPARK_CONNECTOR.md.
+
+**Verified behavior-preserving, not just re-tested:** the full 59-test
+suite passed unchanged before and after this refactor (identical
+translation output for every existing case), `mimaReportBinaryIssues`
+stayed clean, and `./dev/build`/`./dev/test`/`./dev/regression` all still
+pass against real `spark-submit`. Mutation testing did surface one real,
+new gap the refactor introduced — `SparkAdapterListener.onSuccess`'s
+`isDefinedAt` check surviving an "always capture" mutant, because no
+existing test asserted the *negative* case (a non-write action leaving
+`lastWrite` untouched, only ever tested the positive "a write is
+captured" side). Fixed by adding exactly that test rather than leaving it
+undetected — see "Mutation testing" below for the resulting score.
 
 ## Known limitations
 
@@ -834,28 +893,35 @@ Requirement" already names as acceptable to leave undetected with a
 documented reason; excluding it here just makes that call explicit and
 repo-wide instead of an ad hoc per-PR judgment.
 
-With that exclusion, the module scores **91.67%** (of total) / **93.22%**
-(of covered code) — 55/59 mutants killed (numbers as of the "Fail-closed
-on unverifiable writes" change; unchanged in kind, if not exact count,
-since the initial 91.53%/93.1%/54-59 baseline — every mutant this change
-added was killed, so the same five pre-existing gaps still account for
-100% of what's undetected). The five that remain undetected are the same
-gaps investigated (not ignored) during the push to 57.06%, and still
-hold, just at shifted line numbers from the code added above them:
+With that exclusion, the module scores **91.94%** (of total) / **93.44%**
+(of covered code) — 57/61 mutants killed (numbers as of the
+"Write command recognition: a single registry" refactor above; unchanged
+in kind, if not exact count, since the initial 91.53%/93.1%/54-59
+baseline — the `WriteCommandSupport` extraction itself was fully covered,
+and the one genuinely new gap it introduced (`SparkAdapterListener`'s
+`isDefinedAt` check surviving an "always capture" mutant — no existing
+test asserted the *negative* case, only ever "a write is captured") was
+closed with a new test rather than left, so the same five pre-existing
+gaps still account for 100% of what's undetected). The five that remain
+undetected are the same gaps investigated (not ignored) during the push
+to 57.06%, and still hold, just relocated by the refactor — three stayed
+in `SparkPlanAdapter.scala` (the code that moved to `WriteCommandSupport.scala`
+was the write-shape translation, not these three), two moved into
+`WriteCommandSupport.scala` along with `unwrapWriteWrapper`:
 
 - **`JDBCRelation`-guard's near-equivalent always-true mutant**
-  (`SparkPlanAdapter.scala:169`) — the `Try`/`toOption` fallback this
+  (`SparkPlanAdapter.scala:168`) — the `Try`/`toOption` fallback this
   guard feeds absorbs either outcome, so there's no test that could
   distinguish true divergence in behavior from equivalence here.
 - **`lr.catalogTable.isEmpty` and `usedFallback`'s Hive-relation branch**
-  (`SparkPlanAdapter.scala:266` and `:268`) — no Hive metastore is
+  (`SparkPlanAdapter.scala:247` and `:249`) — no Hive metastore is
   available in this environment to construct a `LogicalRelation` that
   takes this path (see *Known limitations* above).
 - **`unwrapWriteWrapper`'s no-wrapper branch**
-  (`SparkPlanAdapter.scala:372`, two mutants) — Spark 3.4+ always inserts
-  the `WriteFiles` wrapper this adapter targets, so the "no wrapper
-  present" branch has no reachable real-world trigger under the pinned
-  Spark 3.5.1.
+  (`WriteCommandSupport.scala:155`, two mutants) — Spark 3.4+ always
+  inserts the `WriteFiles` wrapper this adapter targets, so the "no
+  wrapper present" branch has no reachable real-world trigger under the
+  pinned Spark 3.5.1.
 
 Note also that Stryker4s's per-mutant reruns use coverage-based test
 selection (only tests observed to execute a mutated line are rerun for
@@ -864,7 +930,7 @@ suite would actually catch, purely because of how coverage was mapped.
 Treat "Survived" as a strong lead to investigate, not an automatic
 verdict.
 
-This module's whole-module score (91.67%) now clears the same 70% bar
+This module's whole-module score (91.94%) now clears the same 70% bar
 CLAUDE.md's "Mutation Testing Requirement" sets for new/changed code —
 the two are no longer at different levels, though the whole-module number
 stays the CI-blocking gate and the per-PR incremental check (below) stays

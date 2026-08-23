@@ -539,4 +539,25 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
       spark.listenerManager.unregister(listener)
     }
   }
+
+  // SparkAdapterListener.onSuccess gates on WriteCommandSupport.combined
+  // (see that object's class doc) rather than capturing every analyzed
+  // plan unconditionally - this is the other half of that guarantee: not
+  // just "a write is captured" (the test above) but "a non-write action
+  // is NOT captured", proving the gate actually discriminates rather than
+  // always firing.
+  test("SparkAdapterListener does not capture a non-write action (.count())") {
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    try {
+      readSample().count()
+      // No write ever ran on this session/listener pairing, so lastWrite
+      // must still be empty - give the async listener thread the same
+      // grace period the positive test does before asserting.
+      Thread.sleep(500)
+      assert(listener.lastWrite.isEmpty, s"listener captured a non-write plan: ${listener.lastWrite}")
+    } finally {
+      spark.listenerManager.unregister(listener)
+    }
+  }
 }

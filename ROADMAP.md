@@ -1126,6 +1126,55 @@ Code skill that runs it.
       "add support for X" doesn't get a one-off `translatePlan` case
       again instead of the full survey.
 
+#### Sub-phase: Write command recognition, a single registry (done)
+
+Before shipping the process above for a second/third connector, reviewed
+the code it would actually walk a contributor through — and found the
+process itself was compensating for a real structural problem: "is this
+plan a write, and what does it mean" was implemented three separate
+times (`SparkPlanAdapter.translatePlan`, `ContractEnforcementRule.verifyOrThrow`'s
+output-schema derivation, `SparkAdapterListener.onSuccess`'s capture
+check), independently kept in lockstep by hand. Both of this session's
+real Delta bugs were exactly a write shape added to one match and missed
+in another — not one-off mistakes, a hazard built into the duplication
+itself. Fixed the foundation before layering more connectors onto it.
+
+- [x] **New `WriteCommandSupport.scala`**: one
+      `PartialFunction[LogicalPlan, WriteCommandInfo]` per recognized
+      write shape (the same three as before — `InsertIntoHadoopFsRelationCommand`/
+      `SaveIntoDataSourceCommand`/`CreateDataSourceTableAsSelectCommand`),
+      combined via `orElse` into `WriteCommandSupport.combined`.
+      `WriteCommandInfo` bundles location/query/format/saveMode/
+      outputSchema in one value, so a write shape can no longer be added
+      with its schema piece missing the way the original Delta bug did —
+      the compiler enforces supplying it.
+    - `SparkPlanAdapter.Translator.translatePlan`,
+      `ContractEnforcementRule.verifyOrThrow`, and
+      `SparkAdapterListener.onSuccess` all now consult exactly this
+      registry (`.lift`/`.isDefinedAt`) instead of a match of their own.
+      Adding a write shape (when one is actually needed — most connectors
+      need none, per the Delta finding) now means: implement one
+      `PartialFunction` here, chain it in. Nothing else changes.
+- [x] **Verified behavior-preserving, not just re-tested**: full 59-test
+      suite passed unchanged before and after (identical translation
+      output for every existing case); `mimaReportBinaryIssues` stayed
+      clean; `./dev/build`/`./dev/test`/`./dev/regression` all still pass
+      against real `spark-submit`.
+    - Mutation testing surfaced one real, new gap the refactor itself
+      introduced: `SparkAdapterListener.onSuccess`'s `isDefinedAt` check
+      surviving an "always capture" mutant, because no existing test
+      asserted the *negative* case (a non-write action leaving
+      `lastWrite` untouched — every prior listener test only checked "a
+      write is captured"). Closed with a new test rather than left
+      undetected. Final score 91.94%/93.44% (up from 91.53%/93.1% before
+      any of this session's spark-adapter changes), same 5 pre-existing
+      survivors as always, none in new code.
+- [x] **docs/SPARK_ADAPTER.md, docs/ADDING_A_SPARK_CONNECTOR.md, and the
+      `add-spark-connector` skill's Phase 6 all updated** to describe the
+      one-file-one-list story instead of the old three-file one — the
+      skill now explicitly says most connectors need zero
+      `WriteCommandSupport` entries at all.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

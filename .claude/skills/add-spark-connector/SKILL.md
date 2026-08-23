@@ -133,26 +133,45 @@ shape.
 
 ## Phase 6 — Implement
 
-- `SparkPlanAdapter.scala`: add a `translatePlan` case per translatable
-  write/read shape from Phase 4, following the existing three write cases
-  as templates (`InsertIntoHadoopFsRelationCommand` for `FileFormat`
-  writes, `SaveIntoDataSourceCommand` for `CreatableRelationProvider`
+Write translation, enforcement, and reporting used to each need their own
+match statement, kept in lockstep by hand — that's what let a write shape
+added for translation go missing from enforcement or reporting, twice.
+That's fixed: all three now consult one registry
+(`WriteCommandSupport.scala`), so a new write shape touches one file, not
+three. See docs/SPARK_ADAPTER.md's "Write command recognition: a single
+registry" for the full reasoning before editing this.
+
+- `WriteCommandSupport.scala`: for each translatable write shape from
+  Phase 4, add one more `PartialFunction[LogicalPlan, WriteCommandInfo]`
+  following the existing three as templates
+  (`InsertIntoHadoopFsRelationCommand` for `FileFormat` writes,
+  `SaveIntoDataSourceCommand` for `CreatableRelationProvider`
   `.save(...)`, `CreateDataSourceTableAsSelectCommand` for new-table
-  `.saveAsTable(...)`). Reuse `formatOf`/`locationOf` where the shape
-  matches; extend them only if the connector's format/location can't be
-  derived through `DataSourceRegister`/`HadoopFsRelation`/`catalogTable`.
-- `ContractEnforcementRule.scala`: extend the `outputSchema` derivation
-  match for any new write `Command` type — this is the exact bug that hit
-  Delta the first time (defaulting to the command node's own empty
-  `.schema` instead of the query's).
-- `SparkAdapterListener.scala`: extend the write-detection match the same
-  way, for `demo/output/report.json` reporting.
+  `.saveAsTable(...)`), and chain it into `combined` via `orElse`.
+  `WriteCommandInfo` bundles location, the untranslated query, format,
+  save mode, and output schema in one value — supplying all of them is
+  what closes the exact bug that hit Delta the first time (a write
+  translated correctly but its schema defaulting to the command node's
+  own empty `.schema` elsewhere). Reuse `SparkPlanAdapter.formatOf`/
+  `SparkPlanAdapter.locationOf` where the shape matches; extend them only
+  if the connector's format/location can't be derived through
+  `DataSourceRegister`/`HadoopFsRelation`/`catalogTable`.
+- **Nothing else needs a matching write-recognition change.**
+  `SparkPlanAdapter.Translator.translatePlan`, `ContractEnforcementRule.verifyOrThrow`,
+  and `SparkAdapterListener.onSuccess` all already consult
+  `WriteCommandSupport.combined` — adding an entry there is enough for
+  all three to pick it up automatically. Read-side translation (a
+  connector introducing a new `LogicalRelation`-wrapped relation kind, or
+  something that isn't `LogicalRelation` at all) is a separate change in
+  `SparkPlanAdapter.scala`'s own read-handling case — not covered by this
+  registry, since it's not a write-recognition problem.
 - `FailClosedCommands.scala`: add Phase 4's safe-list entries, matched by
   **fully-qualified class name string** (`Set[String]`), not
   `classOf[...]`/`isInstanceOf` — the connector library isn't on the main
   compile classpath, so a hard reference would break compilation for
-  users who don't have it. This is the same reason `jdbcLocationOf`/
-  `unwrapWriteWrapper` in `SparkPlanAdapter.scala` use string matching.
+  users who don't have it. This is the same reason
+  `SparkPlanAdapter.jdbcLocationOf`/`WriteCommandSupport`'s
+  `unwrapWriteWrapper` use string matching.
 
 ## Phase 7 — Test
 

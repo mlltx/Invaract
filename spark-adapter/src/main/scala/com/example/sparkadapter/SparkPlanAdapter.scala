@@ -46,8 +46,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Union,
   Window
 }
-import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
@@ -173,6 +172,39 @@ private[sparkadapter] object SparkPlanAdapter {
       }.toOption
     } else None
 
+  /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
+    * `FileFormat`) and non-file data sources written via `.save(...)`
+    * (Delta, JDBC, ..., `CreatableRelationProvider`) mix in
+    * `DataSourceRegister`, whose `shortName()` is the same clean,
+    * stable identifier ("parquet", "delta", ...) used everywhere else in
+    * Spark (e.g. `df.write.format("delta")`) — including, notably, in a
+    * contract's own declared `format` string, which is exactly what this
+    * needs to line up with for `StructuralVerifier`'s format check. Takes
+    * `AnyRef` rather than either specific provider trait since the check
+    * is purely on the runtime type either way; a provider that doesn't
+    * implement it has no comparably reliable name to fall back to, so
+    * it's left as `None` rather than guessing from `getClass.getSimpleName`.
+    * Shared with `WriteCommandSupport`, not private to the translator —
+    * both need the same "what format did this actually write" logic.
+    */
+  private[sparkadapter] def formatOf(provider: AnyRef): Option[String] = provider match {
+    case registered: DataSourceRegister => Some(registered.shortName())
+    case _                                => None
+  }
+
+  /** Normalizes Spark's `SaveMode` enum to the same lowercase string
+    * vocabulary a contract's `saveMode` field uses ("append", "overwrite",
+    * "ignore", "error") — mirroring `formatOf`'s convention of matching
+    * whatever a contract author would naturally write. Shared with
+    * `WriteCommandSupport` for the same reason as `formatOf` above.
+    */
+  private[sparkadapter] def saveModeOf(mode: SaveMode): Option[String] = mode match {
+    case SaveMode.Append        => Some("append")
+    case SaveMode.Overwrite     => Some("overwrite")
+    case SaveMode.ErrorIfExists => Some("error")
+    case SaveMode.Ignore        => Some("ignore")
+  }
+
   private class Translator {
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList
@@ -182,71 +214,20 @@ private[sparkadapter] object SparkPlanAdapter {
 
     // ---- Plan translation ---------------------------------------------
 
-    def translatePlan(plan: LogicalPlan): ir.Plan = plan match {
-      case cmd: InsertIntoHadoopFsRelationCommand =>
-        val query = unwrapWriteWrapper(cmd.query)
-        ir.Write(
-          ir.DatasetRef(cmd.outputPath.toString),
-          translatePlan(query),
-          formatOf(cmd.fileFormat),
-          saveModeOf(cmd.mode)
-        )
+    def translatePlan(plan: LogicalPlan): ir.Plan = WriteCommandSupport.combined.lift(plan) match {
+      // Every recognized Spark write-command shape (see
+      // WriteCommandSupport's class doc for why this is a single shared
+      // lookup rather than a match here) becomes an ir.Write over its
+      // (recursively translated) query. Adding a new write shape never
+      // touches this method — it touches WriteCommandSupport instead.
+      case Some(info) =>
+        info.diagnostic.foreach(d => report(d.nodeType, d.message))
+        ir.Write(ir.DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode)
 
-      // Delta Lake (and any other CreatableRelationProvider-based source
-      // written via `.save(...)` rather than Spark's FileFormat-based
-      // write path above) goes through this command instead of
-      // InsertIntoHadoopFsRelationCommand - confirmed empirically against
-      // a real Delta-enabled session, not assumed (see docs/SPARK_ADAPTER.md's
-      // "Delta Lake support" section): `df.write.format("delta").save(path)`
-      // analyzes to exactly this node, with Delta's own DeltaDataSource as
-      // `dataSource`. No Delta-specific code or dependency is needed to
-      // translate it: SaveIntoDataSourceCommand and DataSourceRegister are
-      // both plain, public spark-sql classes already on this module's
-      // existing Spark dependency, and Delta's DeltaDataSource implements
-      // DataSourceRegister (shortName "delta") the same way every built-in
-      // format already does - this is the exact mechanism `formatOf` above
-      // already used for FileFormat, just applied to the other provider
-      // trait Spark routes non-file writes through. `saveAsTable`/catalog
-      // writes (Delta or otherwise) are a different, DataSourceV2-based
-      // plan shape this doesn't cover - see "Known limitations".
-      case cmd: SaveIntoDataSourceCommand =>
-        val location = cmd.options.get("path").getOrElse {
-          report(
-            "SaveIntoDataSourceCommand",
-            s"No 'path' option on a ${cmd.dataSource.getClass.getSimpleName} write; using its options map as a best-effort location"
-          )
-          cmd.options.toString
-        }
-        ir.Write(
-          ir.DatasetRef(location),
-          translatePlan(cmd.query),
-          formatOf(cmd.dataSource),
-          saveModeOf(cmd.mode)
-        )
+      case None => translateNonWritePlan(plan)
+    }
 
-      // `.saveAsTable(...)`/`CREATE TABLE ... USING <format> AS SELECT ...`
-      // against a *new* V1 data source table - confirmed empirically (see
-      // docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable writes"
-      // section): analyzes to this command wrapping the actual data write,
-      // distinct from both InsertIntoHadoopFsRelationCommand (used when the
-      // target table already exists) and SaveIntoDataSourceCommand.
-      // `table.provider` is already the clean format string `formatOf`
-      // derives from `DataSourceRegister` elsewhere - no lookup needed here.
-      case cmd: CreateDataSourceTableAsSelectCommand =>
-        val location = cmd.table.storage.locationUri.map(_.toString).getOrElse {
-          report(
-            "CreateDataSourceTableAsSelectCommand",
-            s"No storage location on new table '${cmd.table.identifier}'; using its table identifier as a best-effort location"
-          )
-          cmd.table.identifier.unquotedString
-        }
-        ir.Write(
-          ir.DatasetRef(location),
-          translatePlan(cmd.query),
-          cmd.table.provider,
-          saveModeOf(cmd.mode)
-        )
-
+    private def translateNonWritePlan(plan: LogicalPlan): ir.Plan = plan match {
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
           case r: ir.Read => r.copy(alias = Some(sa.identifier.name))
@@ -330,47 +311,6 @@ private[sparkadapter] object SparkPlanAdapter {
         report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
         ir.Unsupported(description, other.children.map(translatePlan).toList)
     }
-
-    /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
-      * command and its query in the optimized/analyzed plan (confirmed
-      * empirically for 3.5.1 — see docs/SPARK_ADAPTER.md). It carries no
-      * information relevant to this IR, so it's unwrapped by class name
-      * rather than importing it directly: an internal class an adapter
-      * targeting a different Spark version might not have.
-      */
-    /** Both Spark's built-in file formats (Parquet/CSV/JSON/ORC/text/...,
-      * `FileFormat`) and non-file data sources written via `.save(...)`
-      * (Delta, JDBC, ..., `CreatableRelationProvider`) mix in
-      * `DataSourceRegister`, whose `shortName()` is the same clean,
-      * stable identifier ("parquet", "delta", ...) used everywhere else in
-      * Spark (e.g. `df.write.format("delta")`) — including, notably, in a
-      * contract's own declared `format` string, which is exactly what this
-      * needs to line up with for `StructuralVerifier`'s format check. Takes
-      * `AnyRef` rather than either specific provider trait since the check
-      * is purely on the runtime type either way; a provider that doesn't
-      * implement it has no comparably reliable name to fall back to, so
-      * it's left as `None` rather than guessing from `getClass.getSimpleName`.
-      */
-    private def formatOf(provider: AnyRef): Option[String] = provider match {
-      case registered: DataSourceRegister => Some(registered.shortName())
-      case _                                => None
-    }
-
-    /** Normalizes Spark's `SaveMode` enum to the same lowercase string
-      * vocabulary a contract's `saveMode` field uses ("append", "overwrite",
-      * "ignore", "error") — mirroring `formatOf`'s convention of matching
-      * whatever a contract author would naturally write.
-      */
-    private def saveModeOf(mode: SaveMode): Option[String] = mode match {
-      case SaveMode.Append        => Some("append")
-      case SaveMode.Overwrite     => Some("overwrite")
-      case SaveMode.ErrorIfExists => Some("error")
-      case SaveMode.Ignore        => Some("ignore")
-    }
-
-    private def unwrapWriteWrapper(plan: LogicalPlan): LogicalPlan =
-      if (plan.getClass.getSimpleName == "WriteFiles" && plan.children.size == 1) plan.children.head
-      else plan
 
     private def safeSimpleString(plan: LogicalPlan): String =
       scala.util.Try(plan.simpleString(80)).getOrElse(plan.getClass.getName)

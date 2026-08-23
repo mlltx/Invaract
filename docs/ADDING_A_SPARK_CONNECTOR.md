@@ -15,6 +15,14 @@ falling through to the same silent no-op. This document is how the next
 connector gets that surveyed up front instead of discovered incident by
 incident.
 
+The same investigation also surfaced *why* those gaps kept recurring:
+translation, enforcement, and reporting each recognized write commands
+with their own independent match statement, so a write shape added to
+one could silently go missing from another. That's since been fixed —
+see docs/SPARK_ADAPTER.md's "Write command recognition: a single
+registry" — so adding a write shape now touches one file
+(`WriteCommandSupport.scala`), not three. Step 4 below reflects this.
+
 There is also a Claude Code skill (`add-spark-connector`) that walks
 through this process interactively — see its `SKILL.md` for the
 step-by-step version of what's described here.
@@ -165,12 +173,22 @@ has to be done by reading each class's documented SQL semantics.
 
 For each concrete `Command` class found:
 
-- **Translates to a real write this connector needs** → implement the
-  `translatePlan` case, following the existing three write cases in
-  `SparkPlanAdapter.scala` as templates (`InsertIntoHadoopFsRelationCommand`
-  for `FileFormat`-based writes, `SaveIntoDataSourceCommand` for
-  `CreatableRelationProvider`-based `.save(...)`,
-  `CreateDataSourceTableAsSelectCommand` for new-table `.saveAsTable(...)`).
+- **Translates to a real write this connector needs** → implement one
+  more `PartialFunction[LogicalPlan, WriteCommandInfo]` in
+  `WriteCommandSupport.scala`, following the existing three
+  (`InsertIntoHadoopFsRelationCommand` for `FileFormat`-based writes,
+  `SaveIntoDataSourceCommand` for `CreatableRelationProvider`-based
+  `.save(...)`, `CreateDataSourceTableAsSelectCommand` for new-table
+  `.saveAsTable(...)`) as templates, and chain it into `combined`. That
+  one registry is what `SparkPlanAdapter`, `ContractEnforcementRule`, and
+  `SparkAdapterListener` all consult — nothing else needs a matching
+  change (see docs/SPARK_ADAPTER.md's "Write command recognition: a
+  single registry"). Most connectors need zero entries here at all: the
+  point of the Delta investigation was that `SaveIntoDataSourceCommand`
+  already covers any `CreatableRelationProvider`-based `.save(...)`,
+  connector-specific or not — only add one when a connector genuinely
+  introduces a write-command *shape* Spark doesn't already have a generic
+  node for.
 - **Confirmed not to change a table's committed row content** (schema/
   namespace/function DDL, `SHOW`/`DESCRIBE`/`ANALYZE`/`CACHE`, session
   config, storage maintenance like compaction) → add its fully-qualified

@@ -409,6 +409,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process as an interactive 10-phase workflow with explicit sign-off
   checkpoints before the fail-closed classification is implemented and
   before a connector is called done. Cross-linked from CLAUDE.md.
+- **Write command recognition consolidated into a single registry**: "is
+  this plan a write, and what does it mean" used to be implemented three
+  separate times (`SparkPlanAdapter.translatePlan`,
+  `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation,
+  `SparkAdapterListener.onSuccess`'s capture check), independently kept
+  in lockstep by hand — exactly the structural hazard behind both of this
+  session's real Delta bugs (a write shape added to one match, missed in
+  another). New `WriteCommandSupport.scala` replaces all three with one
+  `PartialFunction[LogicalPlan, WriteCommandInfo]`-per-write-shape
+  registry (`combined`, built via `orElse`); `WriteCommandInfo` bundles
+  location/query/format/saveMode/outputSchema together, so a write shape
+  can no longer be added with its schema piece missing the way the
+  original bug did. All three sites now consult `combined` instead of
+  their own match. Verified behavior-preserving: full 59-test suite
+  passed unchanged before and after, `mimaReportBinaryIssues` clean,
+  `./dev/build`/`./dev/test`/`./dev/regression` all still pass against
+  real `spark-submit`. Mutation testing caught one real, new gap the
+  refactor introduced (`SparkAdapterListener`'s `isDefinedAt` check had
+  no test for the negative case — a non-write action leaving `lastWrite`
+  untouched), closed with a new test rather than left; final score
+  91.94%/93.44% (up from 91.53%/93.1%), same 5 pre-existing survivors as
+  always. docs/SPARK_ADAPTER.md, docs/ADDING_A_SPARK_CONNECTOR.md, and
+  the `add-spark-connector` skill's Phase 6 all updated to describe the
+  one-file-one-list story.
 
 ### Fixed
 
