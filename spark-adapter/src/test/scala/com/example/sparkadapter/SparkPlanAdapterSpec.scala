@@ -505,6 +505,40 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.isEmpty, s"a .saveAsTable() write with an explicit path should not need a fallback diagnostic: ${result.diagnostics}")
   }
 
+  // Investigated empirically before writing this (see docs/SPARK_ADAPTER.md's
+  // "Delta Lake reads" section): unlike the three write shapes above, Delta
+  // reads needed no new translatePlan case and no location-precision fix.
+  // The relation Delta hands back for both `.load(path)` and a catalog table
+  // reference is `org.apache.spark.sql.delta.DeltaLog$$anon$2` - an
+  // anonymous subclass of Spark's own `HadoopFsRelation`, not a distinct
+  // relation type - so the existing `case h: HadoopFsRelation =>` branches
+  // in `locationOf`/`translatePlan` already match it via ordinary subtyping
+  // and already extract the precise physical path. This test proves that
+  // through the real translation path, not just by inspecting the relation
+  // class - a precise `ir.Read` with no fallback diagnostic either way.
+  test("translates a Delta read (.load(path) and a catalog table reference) with a precise location, no new case needed") {
+    val df = readSample()
+    val path = outputDir.resolve("delta_read_test").toString
+    df.write.format("delta").mode(SaveMode.Overwrite).save(path)
+
+    val loadResult = SparkPlanAdapter.translate(spark.read.format("delta").load(path).queryExecution.analyzed)
+    loadResult.plan match {
+      case Read(DatasetRef(location), None) =>
+        assert(location.contains(path), s"expected the Delta table's physical path in the location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(loadResult.diagnostics.isEmpty, s".load(path) should resolve via the HadoopFsRelation branch, no fallback: ${loadResult.diagnostics}")
+
+    spark.sql(s"CREATE TABLE IF NOT EXISTS spark_plan_adapter_delta_read_tbl USING delta LOCATION '$path'")
+    val catalogResult = SparkPlanAdapter.translate(spark.table("spark_plan_adapter_delta_read_tbl").queryExecution.analyzed)
+    catalogResult.plan match {
+      case Read(DatasetRef(location), Some("spark_plan_adapter_delta_read_tbl")) =>
+        assert(location.contains(path), s"expected the same physical path via catalogTable.storage, got '$location'")
+      case other => fail(s"expected an aliased Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(catalogResult.diagnostics.isEmpty, s"a catalog table reference should resolve via the same HadoopFsRelation branch, no fallback: ${catalogResult.diagnostics}")
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)

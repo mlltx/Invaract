@@ -147,7 +147,7 @@ workaround bolted onto the adapter alone.
 | `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
 | `SaveIntoDataSourceCommand` (Delta and other `CreatableRelationProvider`-based `.save(...)` writes) | `Write(DatasetRef(options("path")), ..., format, saveMode)` — `format` from the write's `dataSource` via `DataSourceRegister.shortName()`, the same mechanism as above, just for the other provider trait Spark routes non-`FileFormat` writes through (see "Delta Lake support" below) |
 | `CreateDataSourceTableAsSelectCommand` (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data source table) | `Write(DatasetRef(storageLocation), ..., format, saveMode)` — `format` straight from `table.provider` (already the clean identifier `DataSourceRegister.shortName()` gives the other two write cases); a third, distinct write shape from both of the above (see "Fail-closed on unverifiable writes" below) |
-| `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` |
+| `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` — also covers Delta reads (`.load(path)` and catalog table references alike): Delta's read relation is an anonymous subclass of `HadoopFsRelation`, matched here via ordinary subtyping, no dedicated case needed (see "Delta Lake reads" below) |
 | `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
 | `SubqueryAlias` over a `Read` | `Read(..., alias = Some(name))` |
 | `SubqueryAlias` over anything else | pass-through + `Diagnostic` (no generic aliased-subplan node in the IR) |
@@ -350,6 +350,64 @@ plan shape entirely (`AppendData`/`OverwriteByExpression`/Delta's own
 `MergeIntoCommand`/similar) that still has no translation — not a silent
 gap any more, though: see "Fail-closed on unverifiable writes" for why
 these now abort instead of passing through unverified.
+
+## Delta Lake reads
+
+Everything above is the write side; Delta as a contract *input* was a
+separate, previously unexplored question, prompted directly by asking
+whether read recognition had the same "recognition duplicated across
+independent match sites" problem the write side did before "Write command
+recognition: a single registry" fixed it.
+
+**Investigated empirically, not assumed — and the answer turned out to be
+simpler than expected.** A real Delta-enabled session with an
+`injectCheckRule` probe (the same mechanism `ContractEnforcementRule`
+actually uses) was run against both `.load(path)` and a catalog table
+reference (`spark.table(...)`/`SELECT * FROM tbl`/`SELECT * FROM
+delta.\`path\``). Both produce a `LogicalRelation` wrapping
+`org.apache.spark.sql.delta.DeltaLog$$anon$2` — and that class is an
+**anonymous subclass of Spark's own `HadoopFsRelation`**, not a distinct
+relation type the way it first appeared. `locationOf`'s existing
+`case h: HadoopFsRelation => h.location.rootPaths...` branch (and the
+identical guard in `translatePlan`'s `LogicalRelation` case) already
+matches it through ordinary Scala subtyping, and already extracts the
+precise physical path — for `.load(path)` *and* for a catalog table
+reference alike, confirmed by checking `catalogTable.storage.locationUri`
+against what `locationOf` actually returns.
+
+**Net result: zero new code.** No new `translatePlan` case, no location
+fallback to improve, and — directly answering the motivating question —
+**no registry consolidation needed on the read side.** The write side's
+duplication bug was real and specific: three sites recognized *different*
+concrete `Command` classes, so one could add support for a class the
+others didn't know about. Reads have no analogous risk today: both
+consumer sites (`SparkPlanAdapter.translatePlan`'s `LogicalRelation` case
+and `ContractEnforcementRule.verifyOrThrow`'s `plan.collect { case lr: LogicalRelation => ... }`
+for input-schema collection) gate on the *same* single Spark type, so
+they cannot disagree with each other by construction — and Delta's read
+relation turned out to already be that type, by inheritance, not a
+second type needing its own case.
+
+This does **not** mean the read side can never have the write side's
+problem — it means it doesn't have it *today*, for *this* connector. A
+future connector whose read genuinely produces something other than
+`LogicalRelation` (a `DataSourceV2Relation`, most plausibly — the same
+"Known limitations" gap already noted for DataSourceV2 catalog writes)
+would need a real second case added in both of those sites, and *that*
+would reintroduce the write side's exact risk unless done as a shared
+mechanism from the start. Treat that as the trigger for a
+`ReadRelationSupport`-style registry, not a reason to build one now for a
+shape that doesn't exist yet — see docs/ADDING_A_SPARK_CONNECTOR.md.
+
+**Verified through real enforcement, not just translation in isolation:**
+a translation test (`SparkPlanAdapterSpec`) confirms both read shapes
+produce a precise `ir.Read` with no fallback diagnostic, and a PASS/FAIL
+enforcement pair (`ContractEnforcementRuleSpec`) confirms a contract's
+declared input schema is genuinely checked against a real Delta read's
+actual schema — including a real, incidental finding along the way: Delta
+reports every column nullable on read-back regardless of what was
+written, a genuine Delta behavior (not a bug here) that the FAIL test's
+contract works around the same way a real contract author would need to.
 
 ## Fail-closed on unverifiable writes
 

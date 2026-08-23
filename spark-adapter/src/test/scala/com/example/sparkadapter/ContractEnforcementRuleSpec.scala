@@ -211,6 +211,104 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
   }
 
+  // Delta as an INPUT, not an output — a different code path from every
+  // Delta test above. verifyOrThrow collects input schemas via its own
+  // `plan.collect { case lr: LogicalRelation => ... }`, independent of
+  // SparkPlanAdapter.translate; investigated empirically (see
+  // docs/SPARK_ADAPTER.md's "Delta Lake reads" section) that this needs no
+  // change: Delta's read relation (`DeltaLog$$anon$2`) is an anonymous
+  // subclass of Spark's own HadoopFsRelation, not a distinct type, so both
+  // this collection and translation already match it as a normal
+  // HadoopFsRelation via ordinary subtyping. This PASS/FAIL pair proves
+  // that through real enforcement, not just translation in isolation — a
+  // contract's declared input schema is genuinely checked against a real
+  // Delta read's actual schema, both when it matches and when it doesn't.
+  test("PASS: a contract's declared Delta input schema is genuinely checked against a real Delta read") {
+    val deltaInputPath = scratchDir.resolve("delta_input_pass").toString
+    val outputPath = scratchDir.resolve("pass_delta_input").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(deltaInputPath)
+
+    // required: false throughout - Delta reports every column nullable on
+    // read-back regardless of what was written (a real, separate Delta
+    // behavior, not something this test is about); nullability itself
+    // already has its own dedicated coverage in StructuralVerifierSpec.
+    // This test is specifically about field existence/type, checked
+    // against a real Delta read's real schema.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: $deltaInputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.read.format("delta").load(deltaInputPath).select("id")
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a contract requiring an input field genuinely absent from a real Delta read is rejected") {
+    val deltaInputPath = scratchDir.resolve("delta_input_fail").toString
+    val outputPath = scratchDir.resolve("fail_delta_input").toString
+    // Only id/doubled actually exist in this Delta table.
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(deltaInputPath)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: $deltaInputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.read.format("delta").load(deltaInputPath).select("id")
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.MissingInputField && v.column.contains("customer_name")),
+      s"expected a MISSING_INPUT_FIELD violation naming 'customer_name', got ${ex.result.violations}"
+    )
+  }
+
   // The fail-closed policy itself: a Spark command that's Command-shaped
   // (so it might write or otherwise mutate data) but that SparkPlanAdapter
   // has no translation for, and that isn't on FailClosedCommands' known-safe

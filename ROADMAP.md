@@ -1175,6 +1175,49 @@ itself. Fixed the foundation before layering more connectors onto it.
       skill now explicitly says most connectors need zero
       `WriteCommandSupport` entries at all.
 
+#### Sub-phase: Delta Lake reads (done)
+
+Asked directly after the write-side registry work: does the read side
+have the same "recognition duplicated across independent sites" problem?
+Investigated with the `add-spark-connector` skill rather than guessed at.
+
+- [x] **Real investigation, not assumption**: probed `.load(path)` and a
+      catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`/
+      `SELECT * FROM delta.\`path\``) against a real Delta-enabled session
+      via `injectCheckRule` (the same mechanism `ContractEnforcementRule`
+      uses). Both produce a `LogicalRelation` wrapping
+      `org.apache.spark.sql.delta.DeltaLog$$anon$2` — confirmed to be an
+      anonymous subclass of Spark's own `HadoopFsRelation`, not a distinct
+      relation type. The existing `locationOf`/`translatePlan` branches
+      already match it through ordinary subtyping and already extract the
+      precise physical path, for both read shapes.
+- [x] **Answer to the motivating question: no, not today, and here's
+      why.** The write bug was three sites recognizing *different*
+      concrete classes independently. Reads have exactly one type gate
+      (`LogicalRelation`), reused identically by both consumer sites
+      (`SparkPlanAdapter.translatePlan` and `ContractEnforcementRule.verifyOrThrow`'s
+      input-schema collection) — they cannot disagree by construction.
+      Explicitly *not* treated as "solved forever": a future connector
+      whose read produces something other than `LogicalRelation` (most
+      plausibly `DataSourceV2Relation`) would need a real second case in
+      both sites, and that's the actual trigger for a
+      `ReadRelationSupport`-style registry — building one now, for a
+      shape that doesn't exist yet, would be premature.
+- [x] **Zero production code changed.** Verified with tests, not left as
+      an inspection claim: a translation test (`SparkPlanAdapterSpec`)
+      confirms both read shapes produce a precise `ir.Read` with no
+      fallback diagnostic; a PASS/FAIL enforcement pair
+      (`ContractEnforcementRuleSpec`) confirms a contract's declared input
+      schema is genuinely checked against a real Delta read's actual
+      schema — surfacing a real, separate finding along the way (Delta
+      reports every column nullable on read-back regardless of what was
+      written), worked around in the test the same way a real contract
+      author would need to. Full suite 63/63 passing; `mimaReportBinaryIssues`
+      clean (no production code touched); full local
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+    - Full detail in docs/SPARK_ADAPTER.md's new "Delta Lake reads"
+      section.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

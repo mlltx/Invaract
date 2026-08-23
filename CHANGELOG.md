@@ -433,6 +433,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always. docs/SPARK_ADAPTER.md, docs/ADDING_A_SPARK_CONNECTOR.md, and
   the `add-spark-connector` skill's Phase 6 all updated to describe the
   one-file-one-list story.
+- **Delta Lake reads investigated and verified — zero code needed**: asked
+  directly whether read recognition had the same duplicated-recognition
+  problem the write side did before the registry above fixed it.
+  Investigated with the `add-spark-connector` skill: probed `.load(path)`
+  and a catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`)
+  against a real Delta session via `injectCheckRule`. Both produce a
+  `LogicalRelation` wrapping `org.apache.spark.sql.delta.DeltaLog$$anon$2`,
+  confirmed to be an anonymous subclass of Spark's own `HadoopFsRelation`
+  rather than a distinct relation type, so the existing `locationOf`/
+  `translatePlan` branches already match it precisely through ordinary
+  subtyping — no new case, no location fallback to fix. Answer to the
+  motivating question: reads don't have the write side's bug today,
+  because both consumer sites gate on the identical single
+  `LogicalRelation` type and can't disagree by construction (unlike
+  writes, which had three sites recognizing different concrete classes).
+  Explicitly not "solved forever" — a future connector whose read
+  produces something other than `LogicalRelation` (most plausibly
+  `DataSourceV2Relation`) would need a real second case in both sites,
+  and *that's* the actual trigger for a `ReadRelationSupport`-style
+  registry, not building one preemptively now. Verified with a
+  translation test and a PASS/FAIL enforcement pair proving a contract's
+  declared input schema is genuinely checked against a real Delta read
+  (surfacing a real, separate finding: Delta reports every column
+  nullable on read-back regardless of what was written). Zero production
+  code changed; full 63-test suite passing, `mimaReportBinaryIssues`
+  clean, full `./dev/build`/`./dev/test`/`./dev/regression` pass.
+  Documented in docs/SPARK_ADAPTER.md's new "Delta Lake reads" section.
 
 ### Fixed
 
