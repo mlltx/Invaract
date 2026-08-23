@@ -27,11 +27,41 @@ There is also a Claude Code skill (`add-spark-connector`) that walks
 through this process interactively — see its `SKILL.md` for the
 step-by-step version of what's described here.
 
+## The operation surface (canonical checklist)
+
+Every investigation, and the coverage ledger below, is scoped against
+this exact list — not "whatever operations came up." An item that
+doesn't apply to a given connector (e.g. no catalog, no streaming) is
+still listed and marked N/A with why, not silently dropped.
+
+**Read:**
+1. `.read.format(x).load(path)` — direct path read
+2. Catalog table reference (`spark.table(...)`/`SELECT * FROM t`) — if
+   the connector registers a catalog
+3. Time travel / snapshot reads (`VERSION AS OF`/`TIMESTAMP AS OF` or
+   equivalent) — if the format versions data
+4. Streaming read (`readStream`)
+5. Change-data-feed / incremental read — if the format supports one
+
+**Write:**
+1. `.save(path)` — each save mode (`append`/`overwrite`/`ignore`/`error`)
+   that produces a different plan shape
+2. `.saveAsTable(...)` — a *new* table
+3. `.saveAsTable(...)` — an *existing* table (append)
+4. `.insertInto(...)` — an existing table
+5. `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)`/
+   `.overwritePartitions()`/`.create()`/`.createOrReplace()`/`.replace()`
+6. Format-specific DML (`MERGE`/`UPDATE`/`DELETE`/`UPSERT`)
+7. Streaming write (`writeStream`)
+8. Maintenance operations that touch data (compaction, vacuum, restore,
+   clone, format conversion, or equivalent)
+
 ## Definition of done
 
 A connector is **not** done because compilation succeeds or because one
 `.save(...)` call round-trips. It's done when every item below is true —
-each with something to point at, not just an assertion:
+each with something to point at, not just an assertion — **and** the
+coverage ledger this section ends with is complete.
 
 - [ ] **Every read path the connector supports is investigated**, not
       assumed: `.read.format(x).load(path)`, and a catalog table
@@ -97,6 +127,44 @@ If any box can't be checked, the connector isn't done — it's a partial
 read or partial write shape, and the honest thing to do is say so in
 "Known limitations," the same way Delta's row-level DML and streaming
 writes are called out today rather than implied to work.
+
+### The coverage ledger — mandatory, not optional
+
+This is the rule this document exists to enforce, added after Delta's
+own onboarding was declared "done" twice while a majority of "The
+operation surface" list above had never been touched: **no pass through
+this process — full or partial, a brand-new connector or one line item
+on an existing one — ends without producing a complete ledger against
+every item in "The operation surface."** Every single item gets exactly
+one of these three dispositions, and every disposition needs something
+concrete to point at:
+
+- **✅ Covered** — translated and verified. Cite the translation test and
+  the PASS/FAIL enforcement pair.
+- **🚫 Fails closed** — deliberately not translated, verified to abort
+  rather than silently pass. Cite the fail-closed test.
+- **❓ Not investigated** — state *why* (out of scope for this pass, ran
+  out of the checkpoint's approved scope, genuinely deferred) and the
+  *next step* (what a future pass needs to do, not just "TODO").
+
+**"Not investigated" is an allowed answer. A missing row is not.** A
+narrowly-scoped invocation — "just check whether reads have the write
+side's bug," say — is completely legitimate, but it still has to open by
+stating which rows of the operation surface it intends to touch, and it
+still has to close with the full ledger, marking everything outside its
+scope ❓ with "out of scope for this pass" rather than leaving it
+unmentioned. The failure this section exists to prevent isn't scoping a
+pass narrowly — it's a narrow pass's silence being later read as "this
+connector is done." Silence is exactly what let Delta's write support
+ship as if `.saveAsTable()` didn't exist, and later let "let's support
+Delta reads" ship as if `.insertInto()`/`.writeTo()`/streaming/time
+travel didn't exist either — both times because nothing forced an
+explicit accounting of what the pass *didn't* cover.
+
+A "done" connector's docs/SPARK_ADAPTER.md section, ROADMAP.md sub-phase,
+and CHANGELOG.md entry (below) are exactly this ledger, formatted for
+their audience — never a blanket "full support" sentence standing in for
+it.
 
 ## The investigation methodology
 

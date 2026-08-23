@@ -1,6 +1,6 @@
 ---
 name: add-spark-connector
-description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invariant's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invariant work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every step in this workflow has actually been run, not assumed. Do not hand-roll a one-off translatePlan case without this skill — the fail-closed policy and FailClosedCommands' safety depend on the full survey this skill runs, and skipping it is exactly how the Delta Lake gaps happened (twice).
+description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invariant's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invariant work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every operation in its checklist has an explicit disposition, not assumed. Always ends by producing a coverage ledger (per-operation ✅ covered / 🚫 fails closed / ❓ not investigated) even for a narrowly-scoped ask — never lets a partial pass be silently mistaken for "done", which is exactly how the Delta Lake gaps happened, twice. Do not hand-roll a one-off translatePlan case without this skill.
 ---
 
 # Adding a Spark Connector
@@ -18,6 +18,29 @@ is safe" call silently defeats the entire fail-closed feature
 (`spark-adapter/src/main/scala/com/example/sparkadapter/FailClosedCommands.scala`).
 Getting Phase 5 wrong doesn't fail loudly; it fails invisibly, months
 later, on someone else's data. Slow down there specifically.
+
+**This skill does not end without producing the coverage ledger in Phase
+10 — full stop, no exceptions, including for a narrowly-scoped
+invocation.** This isn't a nice-to-have: Delta Lake's own onboarding
+shipped as "done" twice while most of "The operation surface" checklist
+in docs/ADDING_A_SPARK_CONNECTOR.md had never been touched, because
+nothing forced stating what a given pass *didn't* cover. If you're
+invoked for a narrow question ("does this connector need X", "let's just
+add reads"), say so explicitly at the start, and still close with the
+full ledger — every operation surface row gets ✅ Covered / 🚫 Fails
+closed / ❓ Not investigated (with a reason and a next step), never
+silence. A user reading only your final message must be able to tell,
+per operation, whether it works, is safely rejected, or was never
+checked — not infer "probably fine" from the parts you happened to
+mention.
+
+**A note on prior context**: if this session already did some of this
+connector's investigation earlier in the conversation, don't treat that
+as license to skip straight to whatever's left. Start by building the
+ledger for what's already been verified — cite the real tests/docs each
+row's disposition points to — *then* work the remaining ❓ rows through
+the phases below. The ledger has to be complete and accurate for the
+whole operation surface, not just the delta since last time.
 
 ## Phase 0 — Scope the connector
 
@@ -67,13 +90,14 @@ points, not one" section first — the two see genuinely different things,
 and `ContractEnforcementRule` only cares about what `injectCheckRule`
 sees.
 
-Exercise every operation listed in that doc's Phase 2 section: a plain
-read, `.save(...)` (all four save modes if the shape might differ),
-`.saveAsTable(...)` against both a new and an existing table,
-`.insertInto(...)`, `.writeTo(...)` (DataFrameWriterV2), any
-format-specific DML, streaming if supported, plus a non-`AS SELECT`
-`CREATE TABLE`, `ANALYZE TABLE`, and `SHOW TABLES` for later regression
-coverage. Record each operation's resulting plan class name(s) — you'll
+Exercise **every row of "The operation surface"** in
+docs/ADDING_A_SPARK_CONNECTOR.md (read and write both — reads are just as
+easy to under-scope as writes were the first time around), plus a
+non-`AS SELECT` `CREATE TABLE`, `ANALYZE TABLE`, and `SHOW TABLES` for
+later regression coverage. For a row that plainly doesn't apply to this
+connector (no catalog, no streaming support), note that now — it still
+needs a row in Phase 10's ledger, marked N/A with why, not skipped
+silently. Record each operation's resulting plan class name(s) — you'll
 need this list for Phase 4.
 
 ## Phase 3 — Reflectively survey the connector's Command classes
@@ -215,13 +239,43 @@ unverifiable writes" sections do), never a blanket "full support" claim:
 - A `ROADMAP.md` sub-phase under Phase 1c.
 - A `CHANGELOG.md` entry under `[Unreleased]`.
 
-## Phase 10 — Final review
+## Phase 10 — Coverage ledger and close-out
 
-Walk the "Definition of done" checklist in
+Two things, in order. Neither is optional, and neither can be skipped by
+scope ("this was just about reads") — a narrow pass still produces both,
+scoped honestly.
+
+**1. Walk the "Definition of done" checklist** in
 `docs/ADDING_A_SPARK_CONNECTOR.md` top to bottom. Every box needs
 something concrete to point at (a test, a real command's output, a cited
-mutation score) — not a restated assertion. If any box can't be checked,
-say so in "Known limitations" rather than letting the PR imply otherwise.
+mutation score) — not a restated assertion.
 
-⏸ **Checkpoint**: walk the completed checklist with the user before
-calling the connector done.
+**2. Produce the coverage ledger** — one row per item in "The operation
+surface," every row filled in, none silently omitted:
+
+| Operation | Status | Evidence / reason + next step |
+|---|---|---|
+| `.load(path)` | ✅ / 🚫 / ❓ | ... |
+| catalog table read | ✅ / 🚫 / ❓ | ... |
+| ... | | |
+
+- **✅ Covered** — cite the translation test and the PASS/FAIL
+  enforcement pair.
+- **🚫 Fails closed** — cite the fail-closed test proving rejection.
+- **❓ Not investigated** — state why (out of scope for this pass,
+  genuinely deferred) and the next step (what a future pass needs to do
+  — not just "TODO"). This is a legitimate, honest answer. An *absent*
+  row is not — every row must appear.
+
+Post this table to the user as the closing message, however narrow the
+pass was — a session that only touched two rows still renders all of
+them, with the untouched ones marked ❓. Then write it into the same
+three documentation sites Phase 9 already touched
+(docs/SPARK_ADAPTER.md/ROADMAP.md/CHANGELOG.md), so the ledger is durable
+and the next session (or the next person) doesn't have to reconstruct it
+from conversation history.
+
+⏸ **Checkpoint**: walk the completed ledger with the user before calling
+any part of the connector done. "Are we at 100%?" must always be
+answerable directly from this table, never from a general impression of
+how much work happened.
