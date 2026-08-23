@@ -4,6 +4,7 @@
 package com.example.sparkadapter
 
 import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.util.QueryExecutionListener
 
@@ -43,6 +44,10 @@ class SparkAdapterListener extends QueryExecutionListener {
       // hard way when adding Delta support here required fixing all three
       // separately, not just SparkPlanAdapter.translatePlan.
       case _: SaveIntoDataSourceCommand =>
+        _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
+      // `.saveAsTable(...)`/CTAS against a new V1 data source table - see
+      // SparkPlanAdapter's CreateDataSourceTableAsSelectCommand case.
+      case _: CreateDataSourceTableAsSelectCommand =>
         _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
       case _ => // not a write; ignore (schema inference, count(), etc.)
     }

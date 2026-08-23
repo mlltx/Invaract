@@ -358,6 +358,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DataSourceV2-based plan shape, not covered — documented as a known
   limitation. Documented in docs/SPARK_ADAPTER.md's new "Delta Lake
   support" section and ROADMAP.md's new "Delta Lake support" sub-phase.
+- **Fail-closed on unverifiable writes**: `ContractEnforcementRule` now
+  rejects a Spark write it cannot translate/verify, instead of silently
+  letting it through the way the pre-fix Delta write above did — resolves
+  the fail-open-vs-closed question that gap raised, generalized to any
+  write shape, not just Delta. A real, jar-level reflective survey (every
+  concrete class implementing Spark's `Command` marker across
+  `spark-sql`/`spark-catalyst` 3.5.1 and `delta-spark` 3.2.0 — 164
+  classes) found that Spark's own `Command` hierarchy does **not**
+  distinguish "writes data" from "pure catalog metadata"
+  (`SaveIntoDataSourceCommand` and `CreateDataSourceTableCommand`
+  implement the exact same trait), ruling out a naive "reject anything
+  unrecognized" policy as unsafe — it would have also blocked ordinary
+  `CREATE TABLE`/`ANALYZE TABLE`/`CACHE TABLE`/etc. New `FailClosedCommands`
+  holds an explicit, documented allowlist (~100 classes from the survey,
+  matched by fully-qualified name since a sixth of them are Delta-specific
+  and this module has no compile-time Delta dependency) of commands
+  confirmed not to change a table's row content; anything `Command`-shaped
+  that's neither a recognized write nor on that list is rejected with a
+  new `ViolationType.UnverifiableWrite`. Deliberately asymmetric: a
+  missing safe command costs one loud rejection; a wrongly-added
+  data-mutating one would silently defeat the feature — every
+  genuinely data-mutating command the survey found (DELETE/UPDATE/MERGE,
+  LOAD DATA, TRUNCATE, DROP TABLE, Delta's RESTORE/CLONE/etc.) was left
+  off the list. Also adds `CreateDataSourceTableAsSelectCommand`
+  (`.saveAsTable(...)`/CTAS against a new V1 table) as a real recognized
+  write — a third distinct write shape found by the same survey, same gap
+  as the original Delta bug. Verified with new PASS/FAIL pairs, a
+  fail-closed test proving a real unrecognized write (Delta `MERGE INTO`)
+  is rejected before touching the table (byte-identical rows before/after
+  the aborted merge), and a regression test proving ordinary DDL
+  (`CREATE TABLE`/`ANALYZE TABLE`/`SHOW TABLES`) is never blocked.
+  Mutation testing 91.67%/93.22% (up from 91.53%/93.1%), every mutant the
+  new code introduced killed; `mimaReportBinaryIssues` clean. Documented
+  in docs/SPARK_ADAPTER.md's new "Fail-closed on unverifiable writes"
+  section and ROADMAP.md's matching sub-phase.
 
 ### Fixed
 

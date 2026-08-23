@@ -476,6 +476,35 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.isEmpty, s"a Delta write with a 'path' option should not need a fallback diagnostic: ${result.diagnostics}")
   }
 
+  // Investigated empirically (see docs/SPARK_ADAPTER.md's "Fail-closed on
+  // unverifiable writes" section): `.saveAsTable(...)` against a *new*
+  // table analyzes to CreateDataSourceTableAsSelectCommand, a third write
+  // shape distinct from both InsertIntoHadoopFsRelationCommand (existing
+  // table) and SaveIntoDataSourceCommand (Delta/JDBC/... `.save()`).
+  // `table.provider` gives the format directly - no DataSourceRegister
+  // lookup needed here, unlike the other two cases.
+  test("translates a .saveAsTable() write via CreateDataSourceTableAsSelectCommand, not falling through to Unsupported") {
+    val outputPath = outputDir.resolve("save_as_table_test").toString
+    val df = readSample()
+
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df.write.option("path", outputPath).mode(SaveMode.Overwrite).saveAsTable("spark_plan_adapter_save_as_table_test")
+
+    val result = eventually(timeout(Span(5, Seconds))) {
+      listener.lastWrite.getOrElse(fail("listener has not captured the .saveAsTable() write yet"))
+    }
+
+    result.plan match {
+      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+        assert(location.contains(outputPath), s"expected the table's path in the location, got '$location'")
+        assert(format.contains("parquet"), s"expected the default 'parquet' format via table.provider, got $format")
+        assert(saveMode.contains("overwrite"))
+      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, s"a .saveAsTable() write with an explicit path should not need a fallback diagnostic: ${result.diagnostics}")
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)

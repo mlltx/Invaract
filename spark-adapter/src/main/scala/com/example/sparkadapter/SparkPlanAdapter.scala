@@ -46,6 +46,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Union,
   Window
 }
+import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
@@ -220,6 +221,29 @@ private[sparkadapter] object SparkPlanAdapter {
           ir.DatasetRef(location),
           translatePlan(cmd.query),
           formatOf(cmd.dataSource),
+          saveModeOf(cmd.mode)
+        )
+
+      // `.saveAsTable(...)`/`CREATE TABLE ... USING <format> AS SELECT ...`
+      // against a *new* V1 data source table - confirmed empirically (see
+      // docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable writes"
+      // section): analyzes to this command wrapping the actual data write,
+      // distinct from both InsertIntoHadoopFsRelationCommand (used when the
+      // target table already exists) and SaveIntoDataSourceCommand.
+      // `table.provider` is already the clean format string `formatOf`
+      // derives from `DataSourceRegister` elsewhere - no lookup needed here.
+      case cmd: CreateDataSourceTableAsSelectCommand =>
+        val location = cmd.table.storage.locationUri.map(_.toString).getOrElse {
+          report(
+            "CreateDataSourceTableAsSelectCommand",
+            s"No storage location on new table '${cmd.table.identifier}'; using its table identifier as a best-effort location"
+          )
+          cmd.table.identifier.unquotedString
+        }
+        ir.Write(
+          ir.DatasetRef(location),
+          translatePlan(cmd.query),
+          cmd.table.provider,
           saveModeOf(cmd.mode)
         )
 

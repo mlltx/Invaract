@@ -7,7 +7,8 @@ import com.example.contract.Contract
 import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
+import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, LogicalRelation, SaveIntoDataSourceCommand}
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
@@ -93,16 +94,30 @@ object ContractEnforcementRule {
         // present (see docs/SPARK_ADAPTER.md's "Delta Lake support"
         // section).
         val outputSchema = plan match {
-          case cmd: InsertIntoHadoopFsRelationCommand => cmd.query.schema
-          case cmd: SaveIntoDataSourceCommand          => cmd.query.schema
-          case other                                   => other.schema
+          case cmd: InsertIntoHadoopFsRelationCommand    => cmd.query.schema
+          case cmd: SaveIntoDataSourceCommand             => cmd.query.schema
+          case cmd: CreateDataSourceTableAsSelectCommand => cmd.query.schema
+          case other                                      => other.schema
         }
         val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
+      case _ if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+        val violation = Violation(
+          ViolationType.UnverifiableWrite,
+          s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
+            s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
+          remediation =
+            "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
+              "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
+              "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
+              "\"Fail-closed on unverifiable writes\" section."
+        )
+        val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+        throw new ContractViolationException(result, explain(contract, translated.plan, result))
       case _ =>
-        () // not a write; nothing to gate
+        () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
     }
   }
 

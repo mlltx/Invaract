@@ -146,6 +146,7 @@ workaround bolted onto the adapter alone.
 |---|---|
 | `InsertIntoHadoopFsRelationCommand` | `Write(DatasetRef(outputPath), ..., format, saveMode)` — `format` from the write's `FileFormat` via `DataSourceRegister.shortName()` (`None` if it doesn't implement that trait); `saveMode` from the command's own `SaveMode` (`append`/`overwrite`/`error`/`ignore`, normalized to lowercase) |
 | `SaveIntoDataSourceCommand` (Delta and other `CreatableRelationProvider`-based `.save(...)` writes) | `Write(DatasetRef(options("path")), ..., format, saveMode)` — `format` from the write's `dataSource` via `DataSourceRegister.shortName()`, the same mechanism as above, just for the other provider trait Spark routes non-`FileFormat` writes through (see "Delta Lake support" below) |
+| `CreateDataSourceTableAsSelectCommand` (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data source table) | `Write(DatasetRef(storageLocation), ..., format, saveMode)` — `format` straight from `table.provider` (already the clean identifier `DataSourceRegister.shortName()` gives the other two write cases); a third, distinct write shape from both of the above (see "Fail-closed on unverifiable writes" below) |
 | `LogicalRelation` (+ `HadoopFsRelation`) | `Read(DatasetRef(rootPath))` |
 | `LogicalRelation` (+ `JDBCRelation`) | `Read(DatasetRef("jdbc:<url>/<table>"))` — `JDBCRelation` is `private[sql]` in Spark, so its `jdbcOptions()` accessor is fetched reflectively rather than pattern-matched on the type directly (see `locationOf`'s doc comment); this is a precise identity, not the generic `catalogTable`/`toString` fallback other non-file relations get |
 | `SubqueryAlias` over a `Read` | `Read(..., alias = Some(name))` |
@@ -341,13 +342,115 @@ Delta PASS/FAIL pair in `ContractEnforcementRuleSpec` and the translation
 test in `SparkPlanAdapterSpec`), not by inspection — consistent with this
 module's general testing philosophy.
 
-**Known limitation:** only `.save(path)`-style writes are recognized, the
-same scope `InsertIntoHadoopFsRelationCommand` handling already has for
-file formats. `.saveAsTable(...)` / DataFrameWriterV2 / SQL `MERGE INTO`
-against a Delta table go through Spark's DataSourceV2 catalog write path
-instead (a different plan shape entirely, `AppendData`/
-`OverwriteByExpression`/similar over a resolved catalog table) — not
-covered by this change, and not investigated yet.
+**Known limitation:** `.save(path)`-style writes are recognized here;
+`.saveAsTable(...)` against a *new* V1 data source table is a separate,
+later addition (`CreateDataSourceTableAsSelectCommand` — see "Fail-closed
+on unverifiable writes" below). DataFrameWriterV2 and SQL `MERGE INTO`
+against a Delta (or any DataSourceV2 catalog) table go through a different
+plan shape entirely (`AppendData`/`OverwriteByExpression`/Delta's own
+`MergeIntoCommand`/similar) that still has no translation — not a silent
+gap any more, though: see "Fail-closed on unverifiable writes" for why
+these now abort instead of passing through unverified.
+
+## Fail-closed on unverifiable writes
+
+Every translation gap above — `.saveAsTable()` before
+`CreateDataSourceTableAsSelectCommand` was added, Delta's `MERGE INTO`
+today, and any future write shape this adapter hasn't been taught yet —
+shares the same failure mode: `SparkPlanAdapter` produces `ir.Unsupported`
+instead of `ir.Write`, and `ContractEnforcementRule.verifyOrThrow`
+previously treated *any* non-`ir.Write` plan as "not a write, nothing to
+gate." A write Invariant simply doesn't recognize was, until this change,
+indistinguishable from a `SELECT` or a `.count()` — silently let through,
+contract or no contract, exactly the way the original Delta gap worked
+before `SaveIntoDataSourceCommand` was recognized (see "Delta Lake
+support" above).
+
+**The fix:** a plan that's `Command`-shaped (Spark's own marker for
+"produces a side effect, not rows") and doesn't translate to `ir.Write` is
+now rejected outright — `ContractViolationException` with a
+`ViolationType.UnverifiableWrite` violation — rather than silently passed.
+Confirmed against a real case: SQL `MERGE INTO` on a Delta table analyzes
+to `org.apache.spark.sql.delta.commands.MergeIntoCommand`, which is
+neither a recognized write nor exempted (see below), so it's rejected
+before touching the target table — verified by asserting the table's rows
+are byte-identical before and after the aborted `MERGE INTO`
+(`ContractEnforcementRuleSpec`).
+
+**Why not just "any `Command` we don't recognize"?** That was the first
+design considered, and it's unsafe: a real, jar-level reflective scan of
+every concrete class implementing
+`org.apache.spark.sql.catalyst.plans.logical.Command` in Spark 3.5.1's
+`spark-sql`/`spark-catalyst` and Delta 3.2.0's `delta-spark` (164 classes
+total) found that Spark's own `Command` hierarchy does **not** distinguish
+"writes data" from "pure catalog/session metadata" — `SaveIntoDataSourceCommand`
+(writes data) and `CreateDataSourceTableCommand` (schema-only, `CREATE
+TABLE` with no data) both implement the exact same `LeafRunnableCommand`
+trait, with no structural marker separating them. A blanket "reject every
+unrecognized `Command`" policy would have also rejected ordinary `CREATE
+TABLE`, `ANALYZE TABLE`, `CACHE TABLE`, `SHOW TABLES`, and dozens of other
+legitimate DDL/administrative operations the moment a contract was active
+— a severe regression, not a safety improvement.
+
+**The actual mechanism:** `FailClosedCommands` (new file) holds an
+explicit, documented allowlist of ~100 concrete classes judged — by their
+documented SQL semantics, not re-verified execution by execution — to
+never change a table's committed row content (schema/namespace/function
+DDL, `SHOW`/`DESCRIBE`/`ANALYZE`/`CACHE`, session config, storage
+maintenance like `VACUUM`/`OPTIMIZE`). `ContractEnforcementRule.verifyOrThrow`
+rejects a `Command`-shaped, non-`ir.Write` plan unless its class is on
+that list. Matched by fully-qualified class name (`Set[String]`), not
+`classOf[...]`/`isInstanceOf`, for the same reason `SparkPlanAdapter`'s
+`jdbcLocationOf`/`unwrapWriteWrapper` use string matching: roughly a sixth
+of the safe list lives in `org.apache.spark.sql.delta`, and this module
+has no compile-time Delta dependency (see "Delta Lake support" above) —
+importing those classes directly would reintroduce exactly the dependency
+this module was built to avoid.
+
+Genuinely data-mutating commands the survey found (`DeleteFromTable(WithFilters)`,
+`MergeIntoTable`/`DeltaMergeInto`, `UpdateTable`, `LoadData(Command)`,
+`TruncateTable(Command/Partition)`, `DropTable(Command)`/
+`DropDatabaseCommand` (can delete a managed table's/database's data),
+`DropPartitions`/`AlterTableDropPartitionCommand`, `ReplaceTable`, and
+Delta's `DeleteCommand`/`UpdateCommand`/`MergeIntoCommand`/`WriteIntoDelta`/
+`CloneTableCommand`/`ConvertToDeltaCommand`/`CreateDeltaTableCommand`/
+`DeltaReorgTable(Command)`/`DeltaGenerateCommand`/`RestoreTableCommand`)
+are deliberately **not** on the safe list — they fail closed until
+`SparkPlanAdapter` gains a real translation for them (most don't fit
+`ir.Write`'s "write a dataset to a location" shape at all — `MERGE`/
+`DELETE`/`UPDATE` are row-level operations the IR wasn't designed to
+represent, a real future modeling question, not just a missing case
+arm). `InsertIntoDataSourceCommand`/`InsertIntoDataSourceDirCommand` are
+real writes with a shape similar to `SaveIntoDataSourceCommand` that could
+plausibly be added later; left off for now rather than expanding this
+change's scope further. `FailClosedCommands`' own doc comment carries the
+full list and the categorization rule ("does it change a table's
+committed row content?") so it can be extended consistently.
+
+This is intentionally asymmetric: a safe command missing from the list
+costs one unnecessary rejection until someone adds it (annoying, cheap to
+fix, loud); a data-mutating command wrongly added to the list would
+silently defeat the entire feature (invisible, expensive, exactly the
+failure mode this exists to prevent). Every uncertain case in the survey
+was left off the list on that basis.
+
+Also added in the same change: `CreateDataSourceTableAsSelectCommand`
+(`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data
+source table) is now a real, recognized `ir.Write` — a third distinct
+write shape, found via the same reflective survey, that previously fell
+through to `Unsupported` exactly like the pre-fix Delta gap. Unlike the
+other two write cases, its format comes straight from `table.provider`
+(already the clean identifier string, no `DataSourceRegister` lookup
+needed). Verified with the same PASS/FAIL enforcement pair pattern as the
+Parquet and Delta cases (`ContractEnforcementRuleSpec`) plus a translation
+test (`SparkPlanAdapterSpec`).
+
+**Regression coverage:** a dedicated test
+(`ContractEnforcementRuleSpec`) runs `CREATE TABLE`, `ANALYZE TABLE`, and
+`SHOW TABLES` under an active contract that would reject *any* plan it
+actually checked, confirming the fail-closed policy's biggest risk —
+blocking legitimate DDL — doesn't happen in practice, not just that the
+code compiles.
 
 ## Known limitations
 
@@ -367,11 +470,16 @@ covered by this change, and not investigated yet.
   the fallback's location has no reliable relationship to what a contract
   would declare for a JDBC source — but now gets its own precise
   `url`/`table`-based location; see the Translation coverage table above.)
-- **Delta `saveAsTable`/DataFrameWriterV2/`MERGE INTO` writes are not
-  recognized** — only `.save(path)`-style Delta writes are (via
-  `SaveIntoDataSourceCommand`, see "Delta Lake support" above); catalog
-  writes use Spark's DataSourceV2 write path instead, a different plan
-  shape not investigated yet.
+- **DataFrameWriterV2/SQL `MERGE INTO`/`DELETE`/`UPDATE` writes are not
+  recognized** — `.save(path)`-style writes (`SaveIntoDataSourceCommand`)
+  and `.saveAsTable(...)` against a new V1 table
+  (`CreateDataSourceTableAsSelectCommand`) are (see "Delta Lake support"
+  and "Fail-closed on unverifiable writes" above); DataSourceV2 catalog
+  writes and Delta's row-level `MERGE`/`DELETE`/`UPDATE` commands use
+  different plan shapes with no translation yet. No longer a silent gap,
+  though — an active contract now rejects these outright instead of
+  passing them through unverified (see "Fail-closed on unverifiable
+  writes").
 - **JDK 17+ requires `--add-opens` flags for `sbt test` and for the
   non-`spark-submit` fallback in `dev/test`.** Spark reflectively accesses
   JDK-internal classes (`sun.nio.ch.DirectBuffer` via
@@ -726,21 +834,25 @@ Requirement" already names as acceptable to leave undetected with a
 documented reason; excluding it here just makes that call explicit and
 repo-wide instead of an ad hoc per-PR judgment.
 
-With that exclusion, the module scores **91.53%** (of total) / **93.1%**
-(of covered code) — 54/59 mutants killed. The five that remain undetected
-are the same gaps investigated (not ignored) during the push to 57.06%,
-and still hold:
+With that exclusion, the module scores **91.67%** (of total) / **93.22%**
+(of covered code) — 55/59 mutants killed (numbers as of the "Fail-closed
+on unverifiable writes" change; unchanged in kind, if not exact count,
+since the initial 91.53%/93.1%/54-59 baseline — every mutant this change
+added was killed, so the same five pre-existing gaps still account for
+100% of what's undetected). The five that remain undetected are the same
+gaps investigated (not ignored) during the push to 57.06%, and still
+hold, just at shifted line numbers from the code added above them:
 
 - **`JDBCRelation`-guard's near-equivalent always-true mutant**
-  (`SparkPlanAdapter.scala:153`) — the `Try`/`toOption` fallback this
+  (`SparkPlanAdapter.scala:169`) — the `Try`/`toOption` fallback this
   guard feeds absorbs either outcome, so there's no test that could
   distinguish true divergence in behavior from equivalence here.
 - **`lr.catalogTable.isEmpty` and `usedFallback`'s Hive-relation branch**
-  (`SparkPlanAdapter.scala:195` and `:197`) — no Hive metastore is
+  (`SparkPlanAdapter.scala:266` and `:268`) — no Hive metastore is
   available in this environment to construct a `LogicalRelation` that
   takes this path (see *Known limitations* above).
 - **`unwrapWriteWrapper`'s no-wrapper branch**
-  (`SparkPlanAdapter.scala:298`, two mutants) — Spark 3.4+ always inserts
+  (`SparkPlanAdapter.scala:372`, two mutants) — Spark 3.4+ always inserts
   the `WriteFiles` wrapper this adapter targets, so the "no wrapper
   present" branch has no reachable real-world trigger under the pinned
   Spark 3.5.1.
@@ -752,7 +864,7 @@ suite would actually catch, purely because of how coverage was mapped.
 Treat "Survived" as a strong lead to investigate, not an automatic
 verdict.
 
-This module's whole-module score (91.53%) now clears the same 70% bar
+This module's whole-module score (91.67%) now clears the same 70% bar
 CLAUDE.md's "Mutation Testing Requirement" sets for new/changed code —
 the two are no longer at different levels, though the whole-module number
 stays the CI-blocking gate and the per-PR incremental check (below) stays
@@ -840,5 +952,5 @@ To see the translation adapter running against the actual demo pipeline:
 
 ---
 
-**Last Updated:** 2026-08-22
+**Last Updated:** 2026-08-23
 **Status:** Spark adapter — initial implementation (ROADMAP.md Phase 1c, Spark Adapter sub-phase)

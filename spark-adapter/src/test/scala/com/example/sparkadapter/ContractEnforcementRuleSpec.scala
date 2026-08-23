@@ -37,6 +37,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       // to a session every other test in this suite also shares.
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
@@ -162,6 +163,131 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the Delta write must be aborted, not merely reported as failed")
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // Closes the same kind of gap as the Delta pair above, for a third write
+  // shape: `.saveAsTable(...)` against a *new* table analyzes to
+  // CreateDataSourceTableAsSelectCommand, not InsertIntoHadoopFsRelationCommand
+  // or SaveIntoDataSourceCommand — confirmed empirically, see
+  // docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable writes" section.
+  test("PASS: a .saveAsTable() write satisfying its contract executes normally, output written") {
+    val outputPath = scratchDir.resolve("pass_saveAsTable").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.option("path", outputPath).mode("overwrite").saveAsTable("pass_save_as_table_tbl") // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a .saveAsTable() write violating its contract is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("fail_saveAsTable").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.option("path", outputPath).mode("overwrite").saveAsTable("fail_save_as_table_tbl")
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the .saveAsTable() write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // The fail-closed policy itself: a Spark command that's Command-shaped
+  // (so it might write or otherwise mutate data) but that SparkPlanAdapter
+  // has no translation for, and that isn't on FailClosedCommands' known-safe
+  // list, is rejected outright rather than silently let through. Delta's
+  // MERGE INTO is a real, concrete example — confirmed empirically to
+  // analyze to org.apache.spark.sql.delta.commands.MergeIntoCommand, which
+  // is neither a recognized write nor on the known-safe list (it's a real
+  // data mutation Invariant genuinely can't verify yet — see
+  // docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable writes" section).
+  test("FAIL-CLOSED: an unrecognized write-shaped command (Delta MERGE INTO) is rejected, not silently passed") {
+    val tablePath = scratchDir.resolve("merge_target").toString
+    val tableName = "merge_fail_closed_tbl"
+    // Seed the table with no active contract — only the MERGE itself should
+    // be gated.
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '$tablePath'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: doubled
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled) s
+             |ON t.id = s.id
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  // Regression guard for the fail-closed policy's biggest risk: it must
+  // NOT reject ordinary catalog/DDL operations just because they're
+  // Command-shaped and untranslated — only FailClosedCommands' known-safe
+  // list stands between "legitimate DDL" and "rejected as unverifiable",
+  // so this proves that list actually works for real commands, not just
+  // that it type-checks.
+  test("non-data DDL commands (CREATE TABLE, ANALYZE TABLE) are never blocked by the fail-closed policy") {
+    val yaml =
+      """id: would_always_fail
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: nonexistent/location
+        |    schema:
+        |      fields:
+        |        - name: impossible_field
+        |          type: string
+        |          required: true
+        |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("CREATE TABLE IF NOT EXISTS ddl_regression_tbl (id INT) USING parquet").collect()
+      spark.sql("ANALYZE TABLE ddl_regression_tbl COMPUTE STATISTICS").collect()
+      spark.sql("SHOW TABLES").collect()
+    }
+    // no exception means every DDL/administrative statement completed
+    succeed
   }
 
   test("the abort exception explains what/what/why/how — all four, not just a bare violation code") {

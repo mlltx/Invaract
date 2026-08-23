@@ -1018,6 +1018,77 @@ would need to add to their `spark-submit` to use Invariant.
       Delta session), in docs/SPARK_ADAPTER.md's "Delta Lake support"
       section.
 
+#### Sub-phase: Fail-closed on unverifiable writes (done)
+
+Resolves the fail-open-vs-closed question the Delta Lake sub-phase above
+flagged and CLAUDE.md's "Mutation Testing Requirement" section referenced
+as outstanding: should a write Invariant cannot translate/verify be
+*rejected* by default, rather than silently passed through the way the
+original (pre-fix) Delta gap worked? User decision: yes, fail closed —
+"the contract being valid when it's not" is worse than an aborted write,
+for any write shape, not just Delta specifically.
+
+- [x] **Real reflective survey before deciding the mechanism, not a
+      guess**: every concrete class implementing
+      `org.apache.spark.sql.catalyst.plans.logical.Command` in Spark
+      3.5.1's `spark-sql`/`spark-catalyst` jars and Delta 3.2.0's
+      `delta-spark` jar was enumerated (`JarFile` + `Class.forName` +
+      `isAssignableFrom` against the real jars) — 164 classes found.
+    - This ruled out the obvious first design ("reject any `Command` we
+      don't already translate") as unsafe: `SaveIntoDataSourceCommand`
+      (writes data) and `CreateDataSourceTableCommand` (schema-only
+      `CREATE TABLE`, no data) implement the *exact same*
+      `LeafRunnableCommand` trait — Spark's own `Command` hierarchy has no
+      structural marker separating "writes data" from "pure catalog
+      metadata." A blanket policy would have rejected ordinary `CREATE
+      TABLE`/`ANALYZE TABLE`/`CACHE TABLE`/`SHOW TABLES`/etc. the moment a
+      contract was active.
+- [x] **`FailClosedCommands`** (new file): an explicit, documented
+      allowlist of ~100 classes from the survey, judged by their
+      documented SQL semantics not to change a table's committed row
+      content (DDL/catalog/session metadata, `SHOW`/`DESCRIBE`/`ANALYZE`/
+      `CACHE`, storage maintenance like `VACUUM`/`OPTIMIZE`). Matched by
+      fully-qualified class name (`Set[String]`), not `classOf[...]`,
+      since roughly a sixth of the list is Delta-specific and this module
+      has no compile-time Delta dependency (same reasoning as the Delta
+      sub-phase above).
+    - `ContractEnforcementRule.verifyOrThrow` now rejects a
+      `Command`-shaped, non-`ir.Write` plan unless it's on that list —
+      `ContractViolationException` with a new
+      `ViolationType.UnverifiableWrite`, reusing the same
+      what/what/why/how `explain()` machinery every other violation gets.
+    - Deliberately asymmetric: a safe command missing from the list costs
+      one loud, cheap-to-fix rejection; a data-mutating command wrongly
+      added would silently defeat the whole feature. Every genuinely
+      data-mutating command the survey found (`DELETE`/`UPDATE`/`MERGE`,
+      `LOAD DATA`, `TRUNCATE`, `DROP TABLE`/`DATABASE`, Delta's
+      `RESTORE`/`CLONE`/`CONVERT TO DELTA`/etc.) was deliberately left
+      *off* the safe list rather than guessed at.
+- [x] **`CreateDataSourceTableAsSelectCommand` added as a real recognized
+      write** (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a
+      *new* V1 data source table) — a third distinct write shape found by
+      the same survey, previously falling through to `Unsupported` exactly
+      like the pre-fix Delta gap. `SparkAdapterListener` updated to
+      capture it too (report.json), same as the Delta fix required.
+- [x] **Verified end to end**: new PASS/FAIL enforcement pair for
+      `.saveAsTable()` and a translation test (mirroring the Delta/Parquet
+      pattern), a fail-closed test proving a real, concrete unrecognized
+      write (Delta SQL `MERGE INTO`, confirmed via the survey to analyze
+      to `org.apache.spark.sql.delta.commands.MergeIntoCommand`) is
+      rejected with `UnverifiableWrite` *before* touching the target
+      table (asserted via byte-identical rows before/after the aborted
+      merge), and a regression test proving `CREATE TABLE`/`ANALYZE
+      TABLE`/`SHOW TABLES` are never blocked under an active contract
+      that would reject anything it actually checked. Full suite 59/59
+      passing; mutation testing (whole-module, since every changed/added
+      file was touched) scored 91.67%/93.22%, up from 91.53%/93.1%, with
+      every mutant the new code introduced killed — the same 5
+      pre-existing, already-documented survivors account for 100% of
+      what's undetected; `mimaReportBinaryIssues` clean.
+    - Full detail in docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable
+      writes" section, including the complete per-category reasoning for
+      the safe list and what's deliberately left off it.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1036,10 +1107,17 @@ would need to add to their `spark-submit` to use Invariant.
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
 - [ ] Interpreting `rules` from the contract model
-- [ ] Enforcement currently only gates `InsertIntoHadoopFsRelationCommand`
-      writes (matching `SparkPlanAdapter`'s translation coverage); other
-      write command types (JDBC sinks, streaming writes, `saveAsTable`)
-      are unexercised
+- [ ] Enforcement now gates every recognized write shape
+      (`InsertIntoHadoopFsRelationCommand`/`SaveIntoDataSourceCommand`
+      (Delta, JDBC, ...)/`CreateDataSourceTableAsSelectCommand`
+      (`.saveAsTable(...)`)) and fails closed on any other Command-shaped
+      plan not on `FailClosedCommands`' known-safe list — see the
+      "Fail-closed on unverifiable writes" sub-phase below. Streaming
+      writes, DataSourceV2 catalog writes (`.saveAsTable` against an
+      *existing* table, DataFrameWriterV2), and Delta's row-level `MERGE`/
+      `DELETE`/`UPDATE` still have no real translation (they fail closed
+      rather than passing unverified, but aren't actually checked against
+      a contract's schema/format/save-mode declarations)
 
 #### Dependencies
 
