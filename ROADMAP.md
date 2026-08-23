@@ -1218,6 +1218,85 @@ Investigated with the `add-spark-connector` skill rather than guessed at.
     - Full detail in docs/SPARK_ADAPTER.md's new "Delta Lake reads"
       section.
 
+#### Sub-phase: Delta Lake operation-surface coverage ledger (done)
+
+Prompted directly by a user question ("so is Delta 100% supported?") that
+exposed a real process gap: `add-spark-connector` had been run for Delta
+twice (write, then read), each time declaring success on a narrower scope
+than "does Delta actually work end to end" — leaving several real
+operations (V2 `.saveAsTable`/`.insertInto`/`.writeTo`, time travel,
+streaming, CDC) never investigated at all, with no mechanism forcing that
+gap to be stated explicitly. Fixed at the process level first
+(docs/ADDING_A_SPARK_CONNECTOR.md's new "operation surface" checklist and
+mandatory "coverage ledger" — see that doc and
+`.claude/skills/add-spark-connector/SKILL.md`), then exercised against
+Delta specifically to close it.
+
+- [x] **Every row of the canonical operation surface probed empirically**,
+      not assumed: `.format("delta").saveAsTable()` (new table),
+      `.saveAsTable()`/`.insertInto()`/`.writeTo()` (existing table, every
+      sub-op), time-travel reads, streaming reads, streaming writes, and
+      CDC reads — all run against a real Delta-enabled `SparkSession` with
+      an `injectCheckRule` probe, the exact mechanism
+      `ContractEnforcementRule` uses.
+- [x] **V2 write commands (`AppendData`/`OverwriteByExpression`/
+      `ReplaceTableAsSelect`) confirmed to fail closed, not silently
+      pass.** `.saveAsTable()`/`.insertInto()`/`.writeTo()` against an
+      existing table, and `.format("delta").saveAsTable()` against a *new*
+      table, all correctly throw `ContractViolationException` with
+      `UnverifiableWrite` and write zero rows — verified with a new
+      `ContractEnforcementRuleSpec` test that asserts row content is
+      unchanged after every rejected attempt, not just that an exception
+      was thrown.
+- [x] **Time-travel reads need no new code**: `versionAsOf` produces the
+      same `LogicalRelation`-wrapping-`HadoopFsRelation` shape as an
+      ordinary read, already handled.
+- [x] **CDC reads are translated, with a caveat**: `readChangeFeed`
+      produces `LogicalRelation(relation=CDCReader$DeltaCDFRelation)`, a
+      class distinct from `HadoopFsRelation` — but `translatePlan`'s
+      generic `LogicalRelation` case (not a `HadoopFsRelation`-specific
+      one) already covers it, producing a correct `ir.Read`. Because that
+      relation has no populated `catalogTable` for a path-based read, it
+      takes the existing "fallback" branch and emits a location
+      diagnostic (uses the relation's `toString()` rather than a clean
+      physical path) — a precision gap, not a correctness one; schema
+      verification is unaffected.
+- [x] **Streaming — read and write alike — found to have zero enforcement
+      touchpoint, a genuinely different and more serious gap than
+      everything else on this list.** A real streaming write to Delta
+      produces 9 distinct plans through `injectCheckRule`; confirmed via
+      the probe's own `Command`-shaped filter that zero of them are
+      `Command`-shaped. `WriteToStream`, the top-level plan, was
+      separately confirmed via `javap` on Spark's catalyst jar to
+      implement `LogicalPlan`/`UnaryNode` but not `Command` — so
+      `ContractEnforcementRule`'s fail-closed policy, which only gates
+      `Command`-shaped plans, cannot structurally ever see it. Unlike
+      every other row here, this is not "fails closed but unverified" —
+      it is unenforced, full stop. A separate test confirms the fail-closed
+      policy does not *wrongly* block an unrelated streaming query, ruling
+      out the opposite bug. See the corrected "Scope (Future)" bullet
+      above.
+- [x] **Maintenance operations already have a reasoned classification**,
+      not a gap: `FailClosedCommands.scala`'s `knownSafe` set already
+      includes Delta's `VacuumTableCommand`/`OptimizeTableCommand`
+      (file-level, doesn't change committed row content) and deliberately
+      excludes `RestoreTableCommand`/`CloneTableCommand`/
+      `ConvertToDeltaCommand` (row-content-changing) — built from a
+      class-by-class enumeration of all 164 `Command` subclasses across
+      Spark 3.5.1 + Delta 3.2.0, documented in that file's header. Not
+      re-probed individually this pass; the classification stands.
+- [x] **Full coverage ledger — all 5 read rows and 8 write rows disposed,
+      not left implicit** — see docs/SPARK_ADAPTER.md's new "Delta Lake
+      operation-surface coverage ledger" section for the complete table
+      with evidence per row. Two probe specs
+      (`RemainingDeltaOpsProbeSpec`, `StreamingWriteProbeSpec`,
+      `CdcReadProbeSpec`) were investigation scaffolding, deleted once
+      their findings were captured in tests/docs, per this repo's own
+      established methodology.
+- [x] Full suite passing; `./dev/build`/`./dev/test`/`./dev/regression`
+      all pass; `mimaReportBinaryIssues` clean (no production API surface
+      changed — only `ROADMAP.md`/`docs/SPARK_ADAPTER.md`/test files).
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1241,12 +1320,31 @@ Investigated with the `add-spark-connector` skill rather than guessed at.
       (Delta, JDBC, ...)/`CreateDataSourceTableAsSelectCommand`
       (`.saveAsTable(...)`)) and fails closed on any other Command-shaped
       plan not on `FailClosedCommands`' known-safe list — see the
-      "Fail-closed on unverifiable writes" sub-phase below. Streaming
-      writes, DataSourceV2 catalog writes (`.saveAsTable` against an
-      *existing* table, DataFrameWriterV2), and Delta's row-level `MERGE`/
-      `DELETE`/`UPDATE` still have no real translation (they fail closed
-      rather than passing unverified, but aren't actually checked against
-      a contract's schema/format/save-mode declarations)
+      "Fail-closed on unverifiable writes" sub-phase below. DataSourceV2
+      catalog writes (`AppendData`/`OverwriteByExpression`/
+      `ReplaceTableAsSelect` — `.saveAsTable` against an *existing* Delta
+      table, `.insertInto`, `.writeTo(...)`, and `.format("delta")
+      .saveAsTable(...)` against a *new* table) and Delta's row-level
+      `MERGE`/`DELETE`/`UPDATE` still have no real translation, but *do*
+      fail closed (confirmed empirically — see the "Delta Lake
+      operation-surface coverage ledger" sub-phase below) rather than
+      passing unverified.
+- [ ] **Streaming writes are a different, more serious gap: confirmed
+      *not* to fail closed at all.** `WriteToStream` — the top-level plan
+      for every streaming write — does not implement
+      `org.apache.spark.sql.catalyst.plans.logical.Command` (confirmed via
+      `javap` on Spark's own catalyst jar), so `ContractEnforcementRule`'s
+      entire fail-closed mechanism, which only gates `Command`-shaped
+      plans, structurally cannot ever see it. A streaming write to Delta
+      commits with no contract check at all, silently — not rejected, not
+      logged as unverifiable, just unenforced. See the "Delta Lake
+      operation-surface coverage ledger" sub-phase below for the empirical
+      probe that found this (zero of 9 plans seen by `injectCheckRule`
+      during a real streaming Delta write were `Command`-shaped). Needs a
+      genuinely different enforcement mechanism than `injectCheckRule`
+      (most plausibly a `StreamingQueryListener` checking each
+      micro-batch's committed schema, or gating query start) — not
+      attempted yet
 
 #### Dependencies
 

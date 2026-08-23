@@ -460,6 +460,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code changed; full 63-test suite passing, `mimaReportBinaryIssues`
   clean, full `./dev/build`/`./dev/test`/`./dev/regression` pass.
   Documented in docs/SPARK_ADAPTER.md's new "Delta Lake reads" section.
+- **Mandatory coverage ledger required from `add-spark-connector`**: fixed
+  a process gap the Delta work above exposed twice — the skill had been
+  run once for writes and once for reads, each time declaring success on
+  a scope narrower than "does this connector actually work," with no
+  mechanism forcing the remaining gap to be stated. `docs/ADDING_A_SPARK_CONNECTOR.md`
+  gained a canonical "operation surface" checklist (5 read rows, 8 write
+  rows) and a mandatory "coverage ledger" close-out: every invocation,
+  however narrowly scoped, must now end with every row disposed as ✅
+  Covered, 🚫 Fails closed, or ❓ Not investigated (with reason + next
+  step) — a missing row is the one disallowed outcome.
+  `.claude/skills/add-spark-connector/SKILL.md` restructured to match
+  (Phase 2 exercises every row; Phase 10 produces and posts the ledger).
+- **Delta Lake operation-surface coverage ledger — every remaining row
+  closed out**: ran the full canonical checklist against Delta
+  specifically, empirically, per the new requirement above. New findings:
+  V2 write commands (`AppendData`/`OverwriteByExpression`/
+  `ReplaceTableAsSelect` — covering `.saveAsTable()`/`.insertInto()`/
+  `.writeTo()` against existing tables, and `.format("delta").saveAsTable()`
+  against a *new* table) all correctly fail closed (`UnverifiableWrite`,
+  zero rows written — verified by comparing table contents before/after
+  each rejected attempt); time-travel reads need no new code (identical
+  plan shape to a plain read); change-data-feed reads are translated via
+  the existing generic `LogicalRelation` fallback, with a location
+  diagnostic since the CDC relation has no populated `catalogTable`; and
+  maintenance operations (`OPTIMIZE`/`VACUUM` safe, `RESTORE`/`CLONE`/
+  `CONVERT TO DELTA` fail closed) were already correctly classified.
+  **Most significant finding: streaming writes to Delta have zero
+  enforcement touchpoint, not "fails closed but unverified."**
+  `WriteToStream`, the top-level plan for every streaming write, was
+  confirmed via `javap` on Spark's own catalyst jar to not implement
+  `Command` — so `ContractEnforcementRule`'s fail-closed policy (which
+  only gates `Command`-shaped plans) structurally cannot ever see it,
+  confirmed empirically by a probe showing zero of 9 plans seen by
+  `injectCheckRule` during a real streaming Delta write were
+  `Command`-shaped. A streaming write commits silently, with no contract
+  check at all — the one row in this ledger needing a genuinely different
+  enforcement mechanism (tracked as a new ROADMAP item), not more
+  `WriteCommandSupport` coverage. Full ledger — all 13 rows, each with its
+  disposition and evidence — in docs/SPARK_ADAPTER.md's new "Delta Lake
+  operation-surface coverage ledger" section; ROADMAP.md's Delta "Scope
+  (Future)" bullet corrected to no longer claim streaming writes fail
+  closed. Zero production code changed this pass (findings only); full
+  suite passing, `mimaReportBinaryIssues` clean, full
+  `./dev/build`/`./dev/test`/`./dev/regression` pass.
 
 ### Fixed
 

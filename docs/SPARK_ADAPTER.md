@@ -409,6 +409,49 @@ reports every column nullable on read-back regardless of what was
 written, a genuine Delta behavior (not a bug here) that the FAIL test's
 contract works around the same way a real contract author would need to.
 
+## Delta Lake operation-surface coverage ledger
+
+`add-spark-connector` was run for Delta twice — once for writes, once for
+reads — and each time declared its narrower scope done without stating
+what was still untouched. That gap (see
+docs/ADDING_A_SPARK_CONNECTOR.md's "coverage ledger" requirement, added
+directly because of it) is what this section closes: every row of the
+canonical operation surface, investigated empirically against a real
+Delta-enabled `SparkSession` via `injectCheckRule` — the exact mechanism
+`ContractEnforcementRule` uses — with one of three dispositions per row.
+"❓ Not investigated" would be a legitimate answer for a row; a missing
+row is not, so every row below has one.
+
+### Read
+
+| Operation | Status | Evidence |
+|---|---|---|
+| `.read.format("delta").load(path)` | ✅ Covered | `LogicalRelation` wraps `DeltaLog$$anon$2`, an anonymous `HadoopFsRelation` subclass matched by ordinary subtyping — see "Delta Lake reads" above. `SparkPlanAdapterSpec`, `ContractEnforcementRuleSpec` PASS/FAIL pair. |
+| Catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`) | ✅ Covered | Same relation shape as above, confirmed for both forms — see "Delta Lake reads" above. |
+| Time travel / snapshot reads (`versionAsOf`/`timestampAsOf`) | ✅ Covered | Probed empirically: produces the identical `LogicalRelation(relation=HadoopFsRelation)` shape as a plain read. Zero new code needed. |
+| Streaming read | ⚠️ Not enforced | Probed empirically: `readStream.format("delta").load(path)` into a memory sink produces `StreamingRelation`/`MemoryPlan`/`WriteToStream`/`CreateViewCommand`/`LogicalRDD` through `injectCheckRule`, none recognized. Root cause is the same structural gap as streaming write below — `WriteToStream` isn't `Command`-shaped, so the whole streaming pipeline (source and sink alike) is invisible to this enforcement mechanism. A separate test confirms an unrelated streaming query is at least never *wrongly* blocked. Next step: a different enforcement mechanism (e.g. a `StreamingQueryListener`) would be needed to gate streaming reads at all — out of scope for this pass. |
+| Change-data-feed / incremental read (`readChangeFeed`) | ✅ Covered (with a precision caveat) | Probed empirically: produces `LogicalRelation(relation=CDCReader$$DeltaCDFRelation)`, a class distinct from `HadoopFsRelation` — but `translatePlan`'s generic `LogicalRelation` case (not the `HadoopFsRelation`-specific branch) already handles any relation type, producing a correct `ir.Read`. Because this relation has no populated `catalogTable` for a path-based read, it takes the existing "fallback" branch and reports a location diagnostic — the location string is the relation's `toString()`, not a clean physical path. Schema verification is unaffected; only location precision is reduced. Next step: none required for correctness; a future enhancement could special-case `DeltaCDFRelation` for a cleaner location string. |
+
+### Write
+
+| Operation | Status | Evidence |
+|---|---|---|
+| `.save(path)`, all save modes | ✅ Covered | `SaveIntoDataSourceCommand` — see "Delta Lake support" above. |
+| `.saveAsTable(...)`, new table | ✅ Covered for non-Delta V1 sources; 🚫 Fails closed for Delta specifically | Non-Delta: `CreateDataSourceTableAsSelectCommand`, translated (see "Translation coverage" above). Delta: probed empirically — `.format("delta").saveAsTable(...)` on a *new* table analyzes to the V2 `ReplaceTableAsSelect`, not the V1 command above. Confirmed via a `ContractEnforcementRuleSpec` FAIL-CLOSED test to be correctly rejected (`UnverifiableWrite`), writing zero rows. Next step: add a `WriteCommandSupport` case for `ReplaceTableAsSelect` to move from "safely rejected" to "actually verified" — tracked in ROADMAP.md's "Scope (Future)". |
+| `.saveAsTable(...)`, existing table (append) | 🚫 Fails closed | Analyzes to `AppendData`. Confirmed via `ContractEnforcementRuleSpec` FAIL-CLOSED test: rejected, zero rows written (asserted by comparing table contents before/after). |
+| `.insertInto(...)` | 🚫 Fails closed | Same `AppendData` shape, same test. |
+| `.writeTo(...)` (DataFrameWriterV2), all sub-ops | 🚫 Fails closed | `.append()` → `AppendData`; `.overwrite(cond)` → `OverwriteByExpression` (both confirmed via the same FAIL-CLOSED test); `.createOrReplace()` → `ReplaceTableAsSelect` (probed empirically, same class as the new-table `.saveAsTable()` row above, same disposition). |
+| Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | 🚫 Fails closed | `MERGE INTO` confirmed via an existing FAIL-CLOSED test (`MergeIntoCommand`, real Spark analysis — see "Fail-closed on unverifiable writes" below). `UPDATE`/`DELETE` not individually re-probed this pass; both are explicitly named as deliberately-excluded, `Command`-shaped classes in `FailClosedCommands.scala`'s header comment, so they follow the same default-reject path by construction. |
+| Streaming write | ⚠️ **Not enforced — confirmed, not assumed** | Probed empirically (`writeStream.format("delta").start(path)`): 9 distinct plans reach `injectCheckRule`; the probe's own `Command`-shaped filter found **zero** of them are `Command`-shaped. `WriteToStream`, the top-level plan, was independently confirmed via `javap` on Spark's catalyst jar to implement `LogicalPlan`/`UnaryNode` but **not** `Command`. `ContractEnforcementRule`'s entire fail-closed policy only gates `Command`-shaped plans, so it structurally cannot ever see a streaming write. This is categorically different from every other row here: not "fails closed but unverified," but genuinely unenforced — a streaming write to Delta commits whatever it writes, silently, with no contract check at all. Next step: needs a different enforcement mechanism entirely, most plausibly a `StreamingQueryListener` checking each micro-batch's committed schema (or gating query start) — out of scope for this pass, tracked explicitly in ROADMAP.md rather than left implicit. |
+| Maintenance operations that touch data (`OPTIMIZE`/`VACUUM`/`RESTORE`/`CLONE`/`CONVERT TO DELTA`) | ✅ Covered by policy classification | `FailClosedCommands.scala`'s `knownSafe` set already includes `VacuumTableCommand`/`OptimizeTableCommand` (rewrites/removes files, doesn't change a table's committed row content) and deliberately excludes `RestoreTableCommand`/`CloneTableCommand`/`ConvertToDeltaCommand` (row-content-changing) — built from a class-by-class enumeration of all 164 `Command` subclasses across Spark 3.5.1 + Delta 3.2.0, reasoned and documented in that file's header comment. Not re-probed individually this pass (the classification predates it); if any one of these is ever doubted, a targeted probe test is cheap to add. |
+
+**Net assessment:** Delta is not "100% supported" and no single pass makes
+it so — but the gap is now fully enumerated instead of implicit. Twelve of
+thirteen rows are either genuinely verified or safely fail closed pending
+translation. One — streaming writes (and, for the same underlying reason,
+streaming reads) — is a real, unenforced hole, now documented as such
+rather than left to be rediscovered.
+
 ## Fail-closed on unverifiable writes
 
 Every translation gap above — `.saveAsTable()` before

@@ -365,6 +365,117 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
   }
 
+  // Closing the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
+  // coverage ledger flagged: .format("delta").saveAsTable() on a NEW table,
+  // .saveAsTable()/.insertInto() appending to an EXISTING table, and
+  // DataFrameWriterV2 (.writeTo()) all analyze to V2 write commands
+  // (ReplaceTableAsSelect/AppendData/OverwriteByExpression) - confirmed
+  // empirically via injectCheckRule, not assumed - which are none of them
+  // SparkPlanAdapter/WriteCommandSupport's three recognized shapes, and
+  // none of them are on FailClosedCommands' safe list (they're real V2
+  // write commands, not metadata). This proves the fail-closed policy
+  // already protects these specific, concrete operations rather than
+  // leaving them as a silent, unverified gap - they're rejected, not
+  // translated, but "rejected" is what "not yet supported" should mean
+  // here, never "silently allowed."
+  test("FAIL-CLOSED: .format(\"delta\").saveAsTable() on a new table is rejected, not silently passed") {
+    val yaml =
+      """id: would_always_fail
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: nonexistent/location
+        |    schema:
+        |      fields:
+        |        - name: impossible_field
+        |          type: string
+        |          required: true
+        |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      val ex = intercept[ContractViolationException] {
+        df.write.format("delta").mode("overwrite").saveAsTable("fail_closed_new_delta_tbl")
+      }
+      assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+    }
+  }
+
+  test("FAIL-CLOSED: appending to an existing Delta table via .saveAsTable()/.insertInto()/.writeTo() is rejected") {
+    val tableName = "fail_closed_append_tbl"
+    // Seed with no active contract.
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").saveAsTable(tableName)
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      """id: would_always_fail
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: nonexistent/location
+        |    schema:
+        |      fields:
+        |        - name: impossible_field
+        |          type: string
+        |          required: true
+        |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5, 6).withColumn("doubled", col("id") * 2)
+
+      val exSaveAsTable = intercept[ContractViolationException](df.write.format("delta").mode("append").saveAsTable(tableName))
+      assert(exSaveAsTable.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+
+      val exInsertInto = intercept[ContractViolationException](df.write.insertInto(tableName))
+      assert(exInsertInto.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+
+      val exWriteToAppend = intercept[ContractViolationException](df.writeTo(tableName).append())
+      assert(exWriteToAppend.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+
+      val exWriteToOverwrite = intercept[ContractViolationException](df.writeTo(tableName).overwrite(org.apache.spark.sql.functions.lit(true)))
+      assert(exWriteToOverwrite.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+    }
+
+    val afterRows = spark.table(tableName).collect().toSet
+    assert(beforeRows == afterRows, "none of the rejected attempts may have actually written anything")
+  }
+
+  // A real, important question the fail-closed policy raises but doesn't
+  // answer by construction: does starting a streaming query at all get
+  // blocked while ANY contract is active in the session, even one that
+  // has nothing to do with the streaming query's own source/sink? The
+  // check rule fires on every analyzed plan the session produces, and a
+  // streaming query's own bookkeeping plan (WriteToStream) is
+  // Command-shaped and untranslated - if it isn't on the safe list, this
+  // would be a real over-rejection bug (blocking unrelated legitimate
+  // work), not a "streaming not supported" gap. Verified directly rather
+  // than assumed from FailClosedCommands' contents.
+  test("starting a streaming query unrelated to the active contract is not blocked by the fail-closed policy") {
+    val yaml =
+      """id: would_always_fail
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: nonexistent/location
+        |    schema:
+        |      fields:
+        |        - name: impossible_field
+        |          type: string
+        |          required: true
+        |""".stripMargin
+
+    withContract(yaml) {
+      val streamDf = spark.readStream.format("rate").option("rowsPerSecond", 1).load()
+      val query = streamDf.writeStream
+        .format("memory")
+        .queryName("unrelated_stream_q")
+        .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+        .start() // must not throw
+      query.awaitTermination()
+    }
+    succeed
+  }
+
   // Regression guard for the fail-closed policy's biggest risk: it must
   // NOT reject ordinary catalog/DDL operations just because they're
   // Command-shaped and untranslated — only FailClosedCommands' known-safe
