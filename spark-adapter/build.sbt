@@ -35,26 +35,47 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
   "io.delta" %% "delta-spark" % deltaVersion % "test",
-  "org.apache.iceberg" % "iceberg-spark-runtime-3.5_2.12" % icebergVersion % "test",
-  // Confirmed empirically, not assumed: iceberg-spark-runtime-3.5_2.12's
-  // SQL extensions parser (IcebergSparkSqlExtensionsParser.isIcebergProcedure,
-  // exercised specifically by `CALL <catalog>.system.<proc>(...)` syntax -
-  // Iceberg's maintenance-operation mechanism, e.g. rewrite_data_files/
-  // expire_snapshots/rollback_to_snapshot) references scala.jdk.CollectionConverters,
-  // a class the runtime jar needs but its own published POM doesn't declare
-  // as a dependency - a real gap in Iceberg's own artifact for this
-  // Spark/Scala combination, not a bug in this module. Needed here only so
-  // this module's own test suite can exercise CALL-based Iceberg
-  // maintenance ops against a real session; a real Invariant user running
-  // Iceberg CALL procedures in their own job would need this on their
-  // runtime classpath too, independent of anything spark-adapter does.
-  "org.scala-lang.modules" %% "scala-collection-compat" % "2.13.0" % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
   "com.h2database" % "h2" % "2.2.224" % "test"
 )
+
+// Not a plain unconditional entry, unlike every other test dependency
+// above - see the "iceberg-spark-runtime-3.5_2.12:1.11.0's own classes"
+// comment further down for why. Adding these to libraryDependencies at
+// all is enough to break JDK 11: Spark's DataSource lookup uses
+// ServiceLoader to scan *every* registered DataSourceRegister provider
+// on the classpath (to find whichever one matches the requested format),
+// which means simply having iceberg-spark-runtime resolvable is enough
+// to make *any* .load()/.csv()/format-based read in *any* test suite -
+// not just Iceberg-specific ones - try to load org.apache.iceberg.spark.
+// IcebergSource and blow up on JDK 11, confirmed via a real CI failure
+// (SparkPlanAdapterSpec's plain CSV-fixture read aborted this way).
+// Excluding the dependency itself, not just IcebergConnectorSpec's own
+// test run, is what actually fixes that - a per-test-class skip alone
+// doesn't remove the jar from the classpath the ServiceLoader scans.
+libraryDependencies ++= {
+  if (scala.util.Properties.isJavaAtLeast("17"))
+    Seq(
+      "org.apache.iceberg" % "iceberg-spark-runtime-3.5_2.12" % icebergVersion % "test",
+      // Confirmed empirically, not assumed: iceberg-spark-runtime-3.5_2.12's
+      // SQL extensions parser (IcebergSparkSqlExtensionsParser.isIcebergProcedure,
+      // exercised specifically by `CALL <catalog>.system.<proc>(...)` syntax -
+      // Iceberg's maintenance-operation mechanism, e.g. rewrite_data_files/
+      // expire_snapshots/rollback_to_snapshot) references scala.jdk.CollectionConverters,
+      // a class the runtime jar needs but its own published POM doesn't declare
+      // as a dependency - a real gap in Iceberg's own artifact for this
+      // Spark/Scala combination, not a bug in this module. Needed here only so
+      // this module's own test suite can exercise CALL-based Iceberg
+      // maintenance ops against a real session; a real Invariant user running
+      // Iceberg CALL procedures in their own job would need this on their
+      // runtime classpath too, independent of anything spark-adapter does.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.13.0" % "test"
+    )
+  else Seq.empty
+}
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invariant-ir-0.1.0.jar")
 unmanagedJars in Compile += file("../contract/target/scala-2.12/invariant-contract-0.1.0.jar")
@@ -66,6 +87,32 @@ assembly / assemblyMergeStrategy := {
 }
 
 Test / parallelExecution := false
+
+// iceberg-spark-runtime-3.5_2.12:1.11.0's own classes are compiled to
+// class file version 61 (Java 17) - confirmed via CI, not assumed:
+// UnsupportedClassVersionError on org.apache.iceberg.spark.SparkCatalog/
+// IcebergSource under this repo's JDK-11 test matrix leg
+// (.github/workflows/test.yml). A genuine, external constraint of the
+// library itself, not something fixable here - unlike Delta 3.2.0 above,
+// which loads fine under JDK 11. The dependency itself is excluded under
+// JDK <17 above (see that comment for why a per-test-class skip alone
+// isn't enough - Spark's ServiceLoader-based DataSourceRegister lookup
+// touches every provider on the classpath for *any* format-based read).
+// With the dependency gone, IcebergConnectorSpec.scala's own
+// org.apache.iceberg/org.apache.spark.sql.connector.iceberg imports
+// would fail to *compile* under JDK <17 - so its source file is excluded
+// from that build too. Every other spark-adapter source file is
+// dependency-free of Iceberg (confirmed by grepping src/ - only this
+// file and FailClosedCommands.scala reference it at all, and that one
+// only via string literals, never a real import - see its own header
+// comment), so nothing else needs excluding. The module's own compiled
+// bytecode target (-target:jvm-1.8 below) is unaffected; this is purely
+// a test-only dependency's own runtime floor, not a product
+// compatibility change.
+Test / unmanagedSources / excludeFilter := {
+  if (scala.util.Properties.isJavaAtLeast("17")) (Test / unmanagedSources / excludeFilter).value
+  else (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala"
+}
 
 // Spark reflectively accesses JDK-internal classes (e.g.
 // sun.nio.ch.DirectBuffer in org.apache.spark.storage.StorageUtils) that

@@ -565,13 +565,18 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
-  // --- Fail-closed: Call (deliberately unmodeled) ---
+  // --- Fail-closed: Call, for procedures classified as genuinely
+  // data-affecting (see FailClosedCommands' safeIcebergProcedureClasses
+  // for the full 10-safe/10-unmodeled classification) ---
 
-  test("FAIL: a CALL system procedure is rejected by the fail-closed policy, since it's deliberately unmodeled") {
+  test("FAIL: rollback_to_snapshot (changes which snapshot is current) is rejected by the fail-closed policy") {
     val tableName = "local.db.call_fail_tbl"
     val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("call_fail_tbl").toString
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
     spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
 
     // Any active contract - CALL's fail-closed rejection doesn't depend on
     // the contract's content, only on the command being unrecognized and
@@ -591,9 +596,58 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     withContract(yaml) {
       intercept[ContractViolationException] {
-        spark.sql(s"CALL local.system.rewrite_data_files('db.call_fail_tbl')").collect()
+        spark.sql(s"CALL local.system.rollback_to_snapshot('db.call_fail_tbl', $firstSnapshotId)").collect()
       }
     }
+    // The rollback must never have taken effect - still both writes' rows.
+    assert(spark.table(tableName).count() == 10)
+  }
+
+  // --- Regression: Iceberg system procedures classified safe aren't blocked ---
+  //
+  // A representative sample, not all 10 (same precedent as the pre-existing
+  // metadata-safe-commands test below, which samples 4 of its 13) - one per
+  // reasoning category in FailClosedCommands' safeIcebergProcedureClasses
+  // comment: storage/metadata compaction, GC of unreferenced
+  // files/snapshots, and read-only introspection.
+
+  test("Iceberg system procedures classified safe (compaction, GC, introspection) are not blocked under an active, unrelated-checking contract") {
+    val tableName = "local.db.call_safe_tbl"
+    val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("call_safe_tbl").toString
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    // A real, checking contract (not a trivial always-pass one) - proves
+    // these calls actually reach FailClosedCommands' safe-list check
+    // rather than merely not encountering any contract at all.
+    // required: false throughout - Iceberg reports every column nullable
+    // on read-back (the same quirk documented elsewhere in this file).
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.rewrite_data_files(table => 'db.call_safe_tbl')").collect() // must not throw
+      spark.sql(s"CALL local.system.rewrite_manifests(table => 'db.call_safe_tbl')").collect() // must not throw
+      spark.sql(s"CALL local.system.expire_snapshots(table => 'db.call_safe_tbl')").collect() // must not throw
+      spark.sql(s"CALL local.system.remove_orphan_files(table => 'db.call_safe_tbl')").collect() // must not throw
+      spark.sql(s"CALL local.system.ancestors_of('db.call_safe_tbl')").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 10, "none of these procedures should have changed the table's row count")
   }
 
   // --- Regression: safe-listed Iceberg metadata commands aren't blocked ---

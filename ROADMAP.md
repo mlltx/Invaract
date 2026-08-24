@@ -1833,8 +1833,87 @@ genuine answers, not gaps needing fixes.
       row in both the Iceberg operation-surface and feature-surface
       ledgers has a disposition, none left `❓`.
 
+#### Sub-phase: Iceberg CALL procedure classification - 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed (done)
+
+Closed the one remaining Iceberg operation-surface row still marked
+`🚫 Fails closed, deliberately left unmodeled`: `CALL system.*`
+procedures. Every procedure shares the same Spark class (`Call`), so
+class-name matching alone can't distinguish them - but `Call.procedure()`
+is a real, distinct concrete class per procedure (confirmed via `javap`
+on `SparkProcedures`' builder registry, no dynamic proxy), reachable via
+reflection the same way `WriteCommandSupport`'s `deltaRowLevelDml`
+reflects into Delta's MERGE/UPDATE/DELETE. `FailClosedCommands.isKnownSafe`
+now special-cases `Call` and checks `procedure().getClass().getName()`
+against a 10-procedure safe list.
+
+- [x] Enumerated iceberg-spark-runtime 1.11.0's actual 20 concrete
+      procedure classes from the jar directly (not guessed), classified
+      each against its delegate action class (`javap`) and Iceberg's own
+      documentation. **10 reclassified safe** (`rewrite_data_files`,
+      `rewrite_manifests`, `rewrite_position_delete_files`,
+      `remove_orphan_files`, `expire_snapshots`, `register_table`,
+      `ancestors_of`, `compute_table_stats`, `compute_partition_stats`,
+      `create_changelog_view` - compaction/GC/stats/read-only, same
+      category as Delta's already-safe-listed `OPTIMIZE`/`VACUUM`).
+      **10 stay unmodeled/fail-closed, deliberately** (`rollback_to_snapshot`/
+      `rollback_to_timestamp`/`set_current_snapshot`/`cherrypick_snapshot`/
+      `publish_changes`/`fast_forward` - change what's "current";
+      `add_files`/`migrate` - genuinely add/reformat row content;
+      `snapshot`/`rewrite_table_path` - produce new persisted content
+      even though neither touches its *source* table).
+- [x] Updated `IcebergConnectorSpec`'s CALL fail-closed test to use
+      `rollback_to_snapshot` (genuinely unsafe) instead of
+      `rewrite_data_files` (now correctly allowed) as the fail-closed
+      proof - the reclassification changes what that test needed to
+      demonstrate, not just add to it. Added a regression test sampling
+      5 of the 10 newly-safe procedures, proving they run under a real,
+      otherwise-checking contract.
+- [x] Found and fixed a real coverage gap via mutation testing, not just
+      cited a score: `isKnownSafeIcebergProcedureCall`'s reflection
+      fallback (fails closed if `procedure()` reflection ever breaks -
+      the single highest-stakes line in this change) had zero coverage,
+      since a real Iceberg session's `Call` never actually fails that
+      reflection. Closed with a focused, session-free unit test
+      (`FailClosedCommandsSpec`) exercising the fallback directly.
+      Mutation testing rescoped to `FailClosedCommands.scala`: **88.42%**
+      (89.36% of covered code), zero survivors in the new code.
+      `mimaReportBinaryIssues` clean; full suite passing.
+- [x] **Explicitly scoped what this pass does NOT do**, per the user's
+      own sequencing decision: verify the 10 unmodeled procedures'
+      *actual effect* against a contract (e.g. checking a
+      `rollback_to_snapshot` target's schema before allowing it, instead
+      of rejecting outright). That needs new mechanisms this codebase
+      doesn't have yet - reading a schema from the catalog with no Spark
+      write involved, or from a table/path named in a CALL argument
+      (argument parsing/binding, never done here before) - tracked as
+      separate future work below, not attempted in this pass.
+- [x] **Found and fixed a real, pre-existing CI failure while checking
+      PR #3's checks**: `iceberg-spark-runtime-3.5_2.12:1.11.0`'s jar is
+      compiled to Java 17 class file version and can't load under this
+      repo's JDK-11 CI matrix leg - not caused by today's work, but
+      present since Iceberg support first landed, and cascading into
+      three unrelated `spark-adapter` suites sharing the same forked JVM.
+      Fixed with a targeted `Tests.Filter` in `spark-adapter/build.sbt`
+      excluding only `IcebergConnectorSpec`, only under JDK <17; every
+      other test on every JDK, and every other module, is unaffected.
+      Confirmed a no-op on JDK 17/21 locally (21/21 tests still pass);
+      no JDK 11 available locally to test the skip directly, so CI's own
+      Java-11 runner is the real verification once pushed.
+
 #### Scope (Future)
 
+- [ ] **Verify Iceberg's state-changing CALL procedures against a
+      contract, instead of leaving them fails-closed.** Pilot on
+      `rollback_to_snapshot` alone first (conceptually simplest - read
+      the target snapshot's already-recorded schema from the catalog, no
+      CALL-argument parsing needed) before generalizing to
+      `cherrypick_snapshot`/`publish_changes`/`fast_forward` (same
+      catalog-schema-read mechanism) and `add_files`/`migrate`/`snapshot`
+      (need to read a schema from a table/path named in a CALL argument -
+      argument parsing/binding this codebase has never needed before).
+      Explicitly sequenced this way per the user's own decision when this
+      work was scoped, rather than building all three mechanisms in one
+      pass.
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
       covers `MISSING_INPUT`/`UNDECLARED_INPUT` already; explicit
       "forbidden" inputs (distinct from merely undeclared) and dependency

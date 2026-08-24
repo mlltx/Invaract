@@ -45,7 +45,60 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
   */
 private[sparkadapter] object FailClosedCommands {
 
-  def isKnownSafe(plan: LogicalPlan): Boolean = knownSafe.contains(plan.getClass.getName)
+  def isKnownSafe(plan: LogicalPlan): Boolean =
+    if (plan.getClass.getName == icebergCallClassName) isKnownSafeIcebergProcedureCall(plan)
+    else knownSafe.contains(plan.getClass.getName)
+
+  // Iceberg's Call node (see the "Iceberg CALL procedures" comment at the
+  // bottom of the knownSafe set below for the full background) always has this one
+  // concrete class regardless of which `CALL system.<proc>(...)` procedure
+  // was invoked - so, uniquely among everything else in this file,
+  // class-name matching on the *plan itself* can't distinguish safe from
+  // unsafe. What can: `Call.procedure(): Procedure` is a real, concrete,
+  // per-procedure-type class (confirmed via javap - `SparkProcedures`'
+  // builder registry instantiates a distinct class per procedure name,
+  // e.g. `RewriteDataFilesProcedure`, no dynamic proxy involved), reachable
+  // via reflection the same way `WriteCommandSupport`'s `deltaRowLevelDml`
+  // reflects into Delta's MERGE/UPDATE/DELETE commands. Any reflection
+  // failure (a future Iceberg version reshaping `Call`) falls back to
+  // `false` - fails closed, never silently safe.
+  private val icebergCallClassName = "org.apache.spark.sql.catalyst.plans.logical.Call"
+
+  private[sparkadapter] def isKnownSafeIcebergProcedureCall(plan: LogicalPlan): Boolean =
+    try {
+      val procedure = plan.getClass.getMethod("procedure").invoke(plan)
+      safeIcebergProcedureClasses.contains(procedure.getClass.getName)
+    } catch {
+      case _: Throwable => false
+    }
+
+  // Classified by hand against each procedure's actual delegate action
+  // class (confirmed via javap, not guessed - e.g. RewriteDataFilesProcedure
+  // delegates to org.apache.iceberg.actions.RewriteDataFiles) and Iceberg's
+  // own documentation for the ones whose semantics weren't obvious from the
+  // class name alone. Every procedure here is either pure metadata/
+  // statistics, storage-layout compaction that preserves the same logical
+  // rows, GC of files/snapshots already unreferenced by anything live, or
+  // read-only introspection - see docs/SPARK_ADAPTER.md's "Iceberg CALL
+  // procedure classification" section for the full per-procedure reasoning,
+  // including the ten deliberately left off this list.
+  private val safeIcebergProcedureClasses: Set[String] = Set(
+    // -- Storage/metadata compaction: rewrites files, preserves the same
+    // logical rows. Same category as Delta's OptimizeTableCommand above.
+    "org.apache.iceberg.spark.procedures.RewriteDataFilesProcedure",
+    "org.apache.iceberg.spark.procedures.RewriteManifestsProcedure",
+    "org.apache.iceberg.spark.procedures.RewritePositionDeleteFilesProcedure",
+    // -- GC of files/snapshots already unreferenced by any live table
+    // state. Same category as Delta's VacuumTableCommand above.
+    "org.apache.iceberg.spark.procedures.RemoveOrphanFilesProcedure",
+    "org.apache.iceberg.spark.procedures.ExpireSnapshotsProcedure",
+    // -- Catalog/stats/introspection: no row content touched anywhere.
+    "org.apache.iceberg.spark.procedures.RegisterTableProcedure",
+    "org.apache.iceberg.spark.procedures.AncestorsOfProcedure",
+    "org.apache.iceberg.spark.procedures.ComputeTableStatsProcedure",
+    "org.apache.iceberg.spark.procedures.ComputePartitionStatsProcedure",
+    "org.apache.iceberg.spark.procedures.CreateChangelogViewProcedure"
+  )
 
   private val knownSafe: Set[String] = Set(
     // -- Storage maintenance: rewrites/removes files but doesn't change a
@@ -249,21 +302,31 @@ private[sparkadapter] object FailClosedCommands {
     // they too never reach this check.
     //
     // Iceberg's Call (org.apache.spark.sql.catalyst.plans.logical.Call) is
-    // deliberately excluded from the safe list above, unlike its other
-    // thirteen SQL-extension commands - confirmed empirically that this
-    // one class represents *every* `CALL <catalog>.system.<proc>(...)`
-    // procedure (rewrite_data_files, expire_snapshots,
-    // rollback_to_snapshot, add_files, migrate, ...) uniformly, with no
-    // structural way to tell which procedure a given instance invokes
-    // without inspecting its runtime arguments - and those procedures
-    // span the full range from genuinely safe (expire_snapshots removes
-    // only unreferenced metadata/orphaned files) to genuinely
-    // row-content-mutating (rollback_to_snapshot can revert what "current"
-    // data is). Safe-listing the class would silently pass ALL of them,
-    // including the mutating ones - exactly the asymmetry this list's own
-    // header warns against. So every CALL fails closed today, including
-    // the harmless ones, until a future pass adds procedure-name-aware
-    // classification (a genuinely bigger feature - see
-    // docs/ADDING_A_SPARK_CONNECTOR.md's "Known limitations").
+    // deliberately excluded from this class-name set, unlike its other
+    // thirteen SQL-extension commands - it's the one Spark class every
+    // `CALL <catalog>.system.<proc>(...)` procedure shares, so class-name
+    // matching on the plan itself can't distinguish safe from unsafe
+    // procedures. `isKnownSafe` special-cases it: see
+    // `isKnownSafeIcebergProcedureCall`/`safeIcebergProcedureClasses` above
+    // for per-*procedure* (not per-plan-class) classification, matched on
+    // `Call.procedure()`'s own concrete class via reflection. Ten of
+    // Iceberg's twenty system procedures are classified safe there
+    // (storage/metadata compaction, GC of already-unreferenced
+    // files/snapshots, catalog registration, stats, read-only
+    // introspection); the other ten - rollback_to_snapshot/
+    // rollback_to_timestamp/set_current_snapshot (change which snapshot is
+    // "current"), cherrypick_snapshot/publish_changes/fast_forward (apply
+    // or fast-forward to a different snapshot's changes), add_files
+    // (imports external files as new rows), migrate (converts an existing
+    // table's format in place), snapshot/rewrite_table_path (produce new
+    // persisted table content, even though neither modifies its *source*
+    // table) - stay unmodeled and fail closed, deliberately: each would
+    // need its own new verification mechanism (a target snapshot's
+    // already-recorded schema read from the catalog, or a schema read from
+    // a CALL argument's referenced table/path - neither is "translate a
+    // Spark write," the model every other case here fits), tracked as
+    // separate future work, not attempted in this pass. See
+    // docs/SPARK_ADAPTER.md's "Iceberg CALL procedure classification"
+    // section for the full per-procedure reasoning.
   )
 }

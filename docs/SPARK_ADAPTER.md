@@ -645,6 +645,20 @@ fixed via an Avro 1.12.1 upgrade that landed before 1.11.0. Test-scope
 only, same reasoning as `delta-spark` above — no compile-time or runtime
 dependency for a non-Iceberg job.
 
+**A JDK-11 CI-only gap found later, not at onboarding time**: this
+version's jar is compiled to class file version 61 (Java 17) —
+confirmed via a real CI failure (`UnsupportedClassVersionError` on
+`SparkCatalog`/`IcebergSource`) on this repo's `ubuntu-latest`/Java-11
+matrix leg, and — since this module's suites share one forked JVM —
+cascaded into three unrelated suites in the same run, not just
+`IcebergConnectorSpec`. A genuine, external constraint of the library
+(unlike Delta 3.2.0 above, which loads fine under JDK 11), not fixable
+here. `spark-adapter/build.sbt` excludes only `IcebergConnectorSpec`,
+only under JDK <17 (`Test / testOptions`'s `Tests.Filter`) — every other
+test, in this module and every other, still runs on JDK 11. The
+module's own compiled bytecode target (`-target:jvm-1.8`) is unaffected;
+this is purely a test-only dependency's own runtime floor.
+
 Iceberg is a "pure" DataSourceV2 connector — its catalog (`SparkCatalog`/
 `SparkSessionCatalog`) is the same *kind* of thing Delta's `DeltaCatalog`
 is, but unlike Delta, Iceberg's *reads* never happen to be a
@@ -780,6 +794,98 @@ silently into the Delta section above, specifically so a future
 connector's investigation can search for "batch DataSourceV2Relation"
 and find this, rather than rediscovering the same gap a third time.
 
+### Iceberg CALL procedure classification
+
+A follow-up pass targeting the one row the initial Iceberg investigation
+left `🚫 Fails closed, deliberately left unmodeled`: `CALL
+<catalog>.system.<proc>(...)` procedures. Every procedure — safe and
+unsafe alike — analyzes to the *same* Spark class,
+`org.apache.spark.sql.catalyst.plans.logical.Call`, so `FailClosedCommands`'
+usual technique (match the plan's own class name) can't distinguish them.
+
+**What actually identifies a procedure at the point `injectCheckRule`
+sees it**: not `Call`'s own class, and not a name string — the
+pre-analysis `CallStatement` node carries a `name: Seq[String]` (e.g.
+`Seq("system", "rewrite_data_files")`), but that node is gone by the time
+the analyzer resolves it into `Call`, which the check rule only ever sees
+post-analysis. What survives is `Call.procedure(): Procedure` — and
+`Procedure` itself (confirmed via `javap`) exposes no `name()` either.
+But each procedure is a genuinely distinct concrete class (confirmed via
+`javap` on `SparkProcedures`' builder registry — `newBuilder("rewrite_data_files")`
+instantiates the real `RewriteDataFilesProcedure` class directly, no
+dynamic proxy), so `Call.procedure().getClass().getName()` is a stable,
+real per-procedure signal — the same reflection-and-class-name-matching
+technique `WriteCommandSupport`'s `deltaRowLevelDml` already uses for
+Delta's MERGE/UPDATE/DELETE, just one field deeper. `FailClosedCommands.isKnownSafe`
+special-cases `Call`'s class name and delegates to this check; any
+reflection failure (a future Iceberg version reshaping `Call`) falls back
+to `false` — fails closed, never silently safe.
+
+**Classification** (iceberg-spark-runtime 1.11.0's `org.apache.iceberg.spark.procedures`
+package has exactly 20 concrete procedure classes — enumerated from the
+jar directly, not guessed), grounded in each procedure's own delegate
+action class (confirmed via `javap`) and Iceberg's own documentation for
+the ones whose semantics weren't obvious from the class name alone:
+
+| Procedure | Disposition | Reasoning |
+|---|---|---|
+| `rewrite_data_files` | ✅ Safe-listed | Storage compaction, preserves the same logical rows — same category as Delta's `OptimizeTableCommand`, already safe-listed |
+| `rewrite_manifests` | ✅ Safe-listed | Metadata-file compaction, never touches data files |
+| `rewrite_position_delete_files` | ✅ Safe-listed | Compacts delete files, preserves the same logical deletes |
+| `remove_orphan_files` | ✅ Safe-listed | Deletes files unreferenced by any live metadata — same category as Delta's `VacuumTableCommand`, already safe-listed |
+| `expire_snapshots` | ✅ Safe-listed | Removes old snapshots/unreachable files, doesn't touch the *current* snapshot |
+| `register_table` | ✅ Safe-listed | Catalog-pointer registration from an existing `metadata.json` — no data touched |
+| `ancestors_of` | ✅ Safe-listed | Read-only snapshot-lineage introspection |
+| `compute_table_stats` | ✅ Safe-listed | Writes auxiliary CBO statistics only, same category as `ANALYZE TABLE` |
+| `compute_partition_stats` | ✅ Safe-listed | Same reasoning, partition-scoped |
+| `create_changelog_view` | ✅ Safe-listed | Creates a read-only temp view, mutates nothing |
+| `rollback_to_snapshot` / `rollback_to_timestamp` / `set_current_snapshot` | 🚫 Left unmodeled | Changes which snapshot is "current" — the table's visible content changes |
+| `cherrypick_snapshot` / `publish_changes` | 🚫 Left unmodeled | Applies a staged (WAP) snapshot's changes into the current table — content-affecting |
+| `fast_forward` | 🚫 Left unmodeled | Advances a branch's current snapshot — content-affecting for that branch's readers |
+| `add_files` | 🚫 Left unmodeled | Imports external files as new data — genuinely adds rows |
+| `migrate` | 🚫 Left unmodeled | Converts an existing table's format to Iceberg in place — structurally significant, one-time, not routine maintenance |
+| `snapshot` | 🚫 Left unmodeled | Iceberg's own docs confirm it never modifies the *source* table, but it creates an entirely new table from data — new persisted content the safe-list mechanism (a silent, unverified no-op) shouldn't quietly wave through |
+| `rewrite_table_path` | 🚫 Left unmodeled | Same reasoning as `snapshot` — doesn't touch the source table, but stages new metadata elsewhere; kept conservative rather than silently trusted |
+
+Verified against real CALL statements, not asserted: `IcebergConnectorSpec`'s
+`rollback_to_snapshot` fail-closed test (proving a genuinely unsafe
+procedure is still rejected, replacing the suite's earlier
+`rewrite_data_files`-based version of that test now that
+`rewrite_data_files` is correctly allowed) and a new regression test
+sampling five of the ten safe-listed procedures (`rewrite_data_files`,
+`rewrite_manifests`, `expire_snapshots`, `remove_orphan_files`,
+`ancestors_of`) across compaction, GC, and read-only introspection —
+proving they run under an active, otherwise-checking contract instead of
+being wrongly rejected.
+
+Mutation testing scoped to `FailClosedCommands.scala`: **88.42%** (of
+total), 89.36% (of covered code) — comfortably above the 70% bar.
+Mutation testing itself found a real gap along the way, not just
+confirmed the score: `isKnownSafeIcebergProcedureCall`'s reflection
+fallback (`case _: Throwable => false` — the line that keeps a future
+Iceberg version reshaping `Call` failing closed, rather than silently
+resolving to "safe") had zero coverage from `IcebergConnectorSpec`'s
+real-session tests, since a genuine Iceberg `Call`'s `procedure()`
+reflection never actually fails there. Closed with a focused,
+session-free unit test (`FailClosedCommandsSpec`, no `SparkSession`
+needed) that calls the fallback directly with a plan lacking a
+`procedure()` method — killing the mutant for real, not just documenting
+around it, since this is the single highest-stakes line in the whole
+change (a wrongly-flipped `true` here would silently defeat the entire
+feature for any future Iceberg version).
+
+**What this does not do**: verify the ten unmodeled procedures' actual
+effect against a contract (e.g. confirming a `rollback_to_snapshot`
+target's schema still satisfies the contract before allowing it, rather
+than rejecting the operation outright). That's real, separately-scoped
+future work — each of the three procedure groups above needs its own new
+mechanism (a target snapshot's already-recorded schema read from the
+catalog with no Spark write involved; a schema read from a table/path
+named in a CALL *argument*, which needs argument parsing/binding this
+codebase has never done before) rather than fitting `WriteCommandSupport`'s
+existing "translate a Spark write" model. See ROADMAP.md for the planned
+pilot (verifying `rollback_to_snapshot` alone first, before generalizing).
+
 ### Iceberg operation-surface coverage ledger
 
 | Operation | Status | Evidence / next step |
@@ -799,7 +905,7 @@ and find this, rather than rediscovering the same gap a third time.
 | `.writeTo(...).createOrReplace()`/`.replace()` | ✅ Covered | `ReplaceTableAsSelect`, already generic — confirmed via probe. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally, closed this pass** | New `dsv2RowLevelWrite` case (`ReplaceData`/`WriteDelta`, via the standard `RowLevelWrite` trait — no reflection, unlike Delta's `deltaRowLevelDml`), connector-agnostic. Same structural-only scope as Delta's row-level DML row. `IcebergConnectorSpec`'s PASS/FAIL pair for MERGE, plus PASS tests for UPDATE/DELETE. |
 | Streaming write (`writeStream`) | ✅ Covered | `WriteToStream`, already generic (closed during the Delta pass) — confirmed for Iceberg via `IcebergConnectorSpec`'s streaming `.toTable()` test, using the `catalogTable`-populated fallback tier (Iceberg's streaming sink didn't need the reflective `DeltaSink`-style fallback Delta's did). |
-| Maintenance operations that touch data (`CALL system.*` procedures) | 🚫 **Fails closed, deliberately left unmodeled** | See "`CALL`... is deliberately left unmodeled" above. Next step: procedure-name-aware classification (inspect the `Call` node's procedure identifier/arguments at runtime, not just its class) — a genuinely bigger feature, not a small addition. `IcebergConnectorSpec`'s dedicated fail-closed test proves the rejection. |
+| Maintenance operations that touch data (`CALL system.*` procedures) | 🔀 **Partially covered — closed this pass** | Procedure-name-aware classification implemented (see "Iceberg CALL procedure classification" above): 10 of 20 procedures (storage/metadata compaction, GC of unreferenced files/snapshots, catalog registration, stats, read-only introspection) now run as verified no-ops instead of being wrongly rejected. The other 10 (rollback/cherrypick/publish/fast-forward/add_files/migrate/snapshot/rewrite_table_path) still fail closed, deliberately — each needs its own new verification mechanism (a catalog-level schema read, or CALL-argument parsing) rather than fitting the existing "translate a Spark write" model; tracked as separate future work, piloting on `rollback_to_snapshot` first. `IcebergConnectorSpec`'s `rollback_to_snapshot` fail-closed test plus a safe-procedures regression test (5 of the 10) prove both halves. |
 | Iceberg's own metadata/ref DDL (branch/tag/partition-spec/identifier-fields/write-ordering/views) | ✅ Covered by policy classification | 13 classes added to `FailClosedCommands`' safe list, reasoning in that file's own comment. `IcebergConnectorSpec`'s regression test proves none are blocked under an active, otherwise-rejecting contract. |
 
 ### Iceberg feature-surface coverage ledger
@@ -814,7 +920,7 @@ connector-specific list, not the fixed operation-surface template above.
 | Staged-table location reporting differs from Delta's | 🔧 **Found and fixed** | See "A second staged-table trap" above. Fixed by keying the location-resolution fallback on the `StagedTable` marker interface itself, not on whether a `"location"` property happens to be absent. |
 | Partition evolution (`ADD`/`DROP`/`REPLACE PARTITION FIELD`) | ✅ Confirmed | Metadata-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises `ADD PARTITION FIELD` directly under an active contract. |
 | Branching and tagging (named refs to a snapshot) | ✅ Confirmed | Metadata/ref-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises create/drop of both directly. |
-| `CALL` system procedures (maintenance) | 🔧 **Found — deliberately left unmodeled, not fixed** | See the operation-surface row above; this is a feature whose correct disposition *is* "fails closed for everything, including the safe procedures," not a bug to fix in this pass. |
+| `CALL` system procedures (maintenance) | 🔧 **Found and partially fixed** | See "Iceberg CALL procedure classification" above and the operation-surface row above — 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed; the other 10's correct disposition remains fail-closed, now for a documented per-procedure reason instead of "unmodeled." |
 | Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
 | `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
 | Deletion vectors / merge-on-read positional deletes | ✅ **Confirmed — closed this pass** | Real probe (since deleted): a `DELETE` against a real `format-version = 3` table (Iceberg's deletion-vector spec) still produces a plain `ReplaceData` node — the same class `dsv2RowLevelWrite` already matches via the shared `RowLevelWrite` trait. The storage mechanism behind a merge-on-read delete (position-delete file vs. deletion vector) isn't visible at the `LogicalPlan` level this adapter operates on at all, so no code change was needed. `IcebergConnectorSpec`'s new "PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table..." test. |

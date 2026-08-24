@@ -653,9 +653,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   translate or verify. `IcebergConnectorSpec`: 17 → 19 tests (19/19
   passing). Both of Iceberg's coverage ledgers (operation surface and
   feature surface) are now fully closed, no `❓` rows remaining.
+- **Iceberg CALL procedure classification**: closed the last remaining
+  Iceberg operation-surface gap by teaching `FailClosedCommands` to tell
+  Iceberg's 20 system procedures apart, not just recognize the shared
+  `Call` class they all analyze to. `Call.procedure().getClass().getName()`
+  is a real, distinct class per procedure (confirmed via the jar, not
+  guessed) — 10 procedures (storage/metadata compaction, GC of
+  unreferenced files/snapshots, catalog registration, stats, read-only
+  introspection) reclassified from wrongly-rejected to correctly-allowed;
+  the other 10 (rollback/cherrypick/publish/fast-forward/add_files/migrate/
+  snapshot/rewrite_table_path) stay fails-closed, deliberately, since
+  each genuinely changes a table's current content or produces new
+  persisted content. Mutation testing found a real gap in the new code —
+  the reflection fallback that keeps this fails-closed if a future
+  Iceberg version reshapes `Call` had zero coverage — closed with a
+  dedicated, session-free unit test rather than just documented around.
+  `FailClosedCommands.scala` mutation score: 88.42% (89.36% of covered
+  code), zero survivors in the new code. Verifying the 10 unmodeled
+  procedures' actual effect against a contract is scoped as separate
+  future work (ROADMAP.md), piloting on `rollback_to_snapshot` alone
+  first.
 
 ### Fixed
 
+- **A pre-existing CI failure on `ubuntu-latest`/Java 11**, found while
+  checking PR checks: `iceberg-spark-runtime-3.5_2.12:1.11.0`'s jar is
+  compiled to Java 17 class file version and can't load under JDK 11,
+  cascading into three unrelated `spark-adapter` suites sharing the same
+  forked JVM. Fixed with a `Tests.Filter` in `spark-adapter/build.sbt`
+  excluding only `IcebergConnectorSpec`, only under JDK <17 — every other
+  test, in this module and every other, is unaffected.
 - Two real bugs found while adding Delta Lake write support, both caught
   by genuinely failing tests rather than inspection:
   - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
