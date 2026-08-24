@@ -21,7 +21,17 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
   private var outputDir: Path = _
 
   override def beforeAll(): Unit = {
-    spark = SparkSession.builder().master("local[*]").appName("SparkPlanAdapterSpec").getOrCreate()
+    spark = SparkSession
+      .builder()
+      .master("local[*]")
+      .appName("SparkPlanAdapterSpec")
+      // Delta's session extension/catalog only activate for `.format("delta")`
+      // usage - confirmed harmless to every other test in this suite by the
+      // full suite still passing with this enabled (see docs/SPARK_ADAPTER.md's
+      // "Delta Lake support" section for how this was investigated).
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
     outputDir = Files.createTempDirectory("invariant-spark-adapter-test")
@@ -430,6 +440,156 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
+  // Investigated empirically against a real Delta-enabled session before
+  // writing this (see docs/SPARK_ADAPTER.md's "Delta Lake support"
+  // section): a `.format("delta").save(path)` write does NOT go through
+  // InsertIntoHadoopFsRelationCommand like Parquet/CSV/JSON above - it
+  // analyzes to SaveIntoDataSourceCommand instead, the same generic
+  // command any CreatableRelationProvider-based `.save(...)` write uses.
+  // Before the SaveIntoDataSourceCommand case was added, this fell
+  // through to Unsupported - which, per ContractEnforcementRule's "only
+  // ir.Write is checked" design, meant a Delta write passed through
+  // completely unverified. This test is the translation half of closing
+  // that gap; ContractEnforcementRuleSpec's Delta tests are the
+  // enforcement half.
+  test("translates a Delta write via SaveIntoDataSourceCommand, not falling through to Unsupported") {
+    val outputPath = outputDir.resolve("delta_write_test").toString
+    val df = readSample()
+
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df.write.format("delta").mode(SaveMode.Overwrite).save(outputPath)
+
+    val result = eventually(timeout(Span(5, Seconds))) {
+      listener.lastWrite.getOrElse(fail("listener has not captured the Delta write yet"))
+    }
+
+    result.plan match {
+      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+        assert(location.contains(outputPath), s"expected the Delta table path in the location, got '$location'")
+        assert(format.contains("delta"), s"expected format 'delta' via DataSourceRegister.shortName(), got $format")
+        assert(saveMode.contains("overwrite"))
+      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    // Confirms this is a real, precise translation, not a best-effort
+    // fallback that merely happens to produce a Write node.
+    assert(result.diagnostics.isEmpty, s"a Delta write with a 'path' option should not need a fallback diagnostic: ${result.diagnostics}")
+  }
+
+  // Investigated empirically (see docs/SPARK_ADAPTER.md's "Fail-closed on
+  // unverifiable writes" section): `.saveAsTable(...)` against a *new*
+  // table analyzes to CreateDataSourceTableAsSelectCommand, a third write
+  // shape distinct from both InsertIntoHadoopFsRelationCommand (existing
+  // table) and SaveIntoDataSourceCommand (Delta/JDBC/... `.save()`).
+  // `table.provider` gives the format directly - no DataSourceRegister
+  // lookup needed here, unlike the other two cases.
+  test("translates a .saveAsTable() write via CreateDataSourceTableAsSelectCommand, not falling through to Unsupported") {
+    val outputPath = outputDir.resolve("save_as_table_test").toString
+    val df = readSample()
+
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df.write.option("path", outputPath).mode(SaveMode.Overwrite).saveAsTable("spark_plan_adapter_save_as_table_test")
+
+    val result = eventually(timeout(Span(5, Seconds))) {
+      listener.lastWrite.getOrElse(fail("listener has not captured the .saveAsTable() write yet"))
+    }
+
+    result.plan match {
+      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+        // The filename only, not the full native outputPath: Spark
+        // normalizes a catalog table's storage location into a
+        // forward-slash file: URI regardless of platform, so on Windows
+        // outputPath's backslashes would never appear in it verbatim
+        // (same convention every other location assertion in this file
+        // uses, e.g. `location.contains("sample.csv")`).
+        assert(location.contains("save_as_table_test"), s"expected the table's path in the location, got '$location'")
+        assert(format.contains("parquet"), s"expected the default 'parquet' format via table.provider, got $format")
+        assert(saveMode.contains("overwrite"))
+      case other => fail(s"expected a Write over a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, s"a .saveAsTable() write with an explicit path should not need a fallback diagnostic: ${result.diagnostics}")
+  }
+
+  // Investigated empirically before writing this (see docs/SPARK_ADAPTER.md's
+  // "Delta Lake reads" section): unlike the three write shapes above, Delta
+  // reads needed no new translatePlan case and no location-precision fix.
+  // The relation Delta hands back for both `.load(path)` and a catalog table
+  // reference is `org.apache.spark.sql.delta.DeltaLog$$anon$2` - an
+  // anonymous subclass of Spark's own `HadoopFsRelation`, not a distinct
+  // relation type - so the existing `case h: HadoopFsRelation =>` branches
+  // in `locationOf`/`translatePlan` already match it via ordinary subtyping
+  // and already extract the precise physical path. This test proves that
+  // through the real translation path, not just by inspecting the relation
+  // class - a precise `ir.Read` with no fallback diagnostic either way.
+  test("translates a Delta read (.load(path) and a catalog table reference) with a precise location, no new case needed") {
+    val df = readSample()
+    val path = outputDir.resolve("delta_read_test").toString
+    df.write.format("delta").mode(SaveMode.Overwrite).save(path)
+
+    val loadResult = SparkPlanAdapter.translate(spark.read.format("delta").load(path).queryExecution.analyzed)
+    loadResult.plan match {
+      case Read(DatasetRef(location), None) =>
+        // Filename only, not the full native path - see the .saveAsTable()
+        // test above for why (Windows path-separator mismatch against
+        // Spark's normalized file: URIs).
+        assert(location.contains("delta_read_test"), s"expected the Delta table's physical path in the location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(loadResult.diagnostics.isEmpty, s".load(path) should resolve via the HadoopFsRelation branch, no fallback: ${loadResult.diagnostics}")
+
+    // Forward slashes only when building a LOCATION clause: on Windows,
+    // path's native backslashes collide with SQL string-literal escaping
+    // when interpolated directly (confirmed by a real CI failure - see
+    // ContractEnforcementRuleSpec's MERGE INTO fail-closed test for the
+    // same fix). Spark/Hadoop accept forward-slash paths on Windows too.
+    spark.sql(s"CREATE TABLE IF NOT EXISTS spark_plan_adapter_delta_read_tbl USING delta LOCATION '${path.replace('\\', '/')}'")
+    val catalogResult = SparkPlanAdapter.translate(spark.table("spark_plan_adapter_delta_read_tbl").queryExecution.analyzed)
+    catalogResult.plan match {
+      case Read(DatasetRef(location), Some("spark_plan_adapter_delta_read_tbl")) =>
+        assert(location.contains("delta_read_test"), s"expected the same physical path via catalogTable.storage, got '$location'")
+      case other => fail(s"expected an aliased Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(catalogResult.diagnostics.isEmpty, s"a catalog table reference should resolve via the same HadoopFsRelation branch, no fallback: ${catalogResult.diagnostics}")
+  }
+
+  // Closes the streaming-read-as-input coverage-ledger gap: neither
+  // StreamingRelation (the legacy V1 path Delta itself uses) nor
+  // StreamingRelationV2 (the modern DataSourceV2 path - rate, Kafka, ...)
+  // was previously a recognized read shape, so a contract declaring a
+  // streaming source as a required input always reported MISSING_INPUT.
+  // A path-based Delta streaming source and a path-less rate one exercise
+  // both branches of each case's fallback-diagnostic condition - neither
+  // was reachable through this suite's other Delta streaming tests
+  // (which chain a `rate` source into a Delta *sink*, wrapped in typed
+  // encoding nodes this translator doesn't descend through), confirmed
+  // by a real mutation-testing run finding both conditions uncovered.
+  test("translates a streaming Delta read (.readStream.format(\"delta\").load(path)) with a precise location, no fallback needed") {
+    val path = outputDir.resolve("streaming_read_translation_test").toString
+    readSample().write.format("delta").mode(SaveMode.Overwrite).save(path)
+
+    val result = SparkPlanAdapter.translate(spark.readStream.format("delta").load(path).queryExecution.analyzed)
+    result.plan match {
+      case Read(DatasetRef(location), None) =>
+        assert(location.contains("streaming_read_translation_test"), s"expected the Delta source's physical path in the location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.isEmpty, s"a path-based streaming Delta read shouldn't need a fallback diagnostic: ${result.diagnostics}")
+  }
+
+  test("translates a streaming rate read (no path option) via the fallback branch, with a diagnostic naming the source") {
+    val result = SparkPlanAdapter.translate(spark.readStream.format("rate").load().queryExecution.analyzed)
+    result.plan match {
+      case Read(DatasetRef(location), None) =>
+        assert(location == "rate", s"expected the source name as a best-effort location for a source with no physical location, got '$location'")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(
+      result.diagnostics.exists(_.nodeType == "StreamingRelationV2"),
+      s"a source with no resolvable location should report a fallback diagnostic: ${result.diagnostics}"
+    )
+  }
+
   test("end to end: a real write via spark-submit-style DataFrame.write is captured through SparkAdapterListener") {
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)
@@ -460,6 +620,27 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
       val lineage = Lineage.trace(result.plan)
       assert(lineage.find(_.output.name == "lifetime_value").get.aggregated)
+    } finally {
+      spark.listenerManager.unregister(listener)
+    }
+  }
+
+  // SparkAdapterListener.onSuccess gates on WriteCommandSupport.combined
+  // (see that object's class doc) rather than capturing every analyzed
+  // plan unconditionally - this is the other half of that guarantee: not
+  // just "a write is captured" (the test above) but "a non-write action
+  // is NOT captured", proving the gate actually discriminates rather than
+  // always firing.
+  test("SparkAdapterListener does not capture a non-write action (.count())") {
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    try {
+      readSample().count()
+      // No write ever ran on this session/listener pairing, so lastWrite
+      // must still be empty - give the async listener thread the same
+      // grace period the positive test does before asserting.
+      Thread.sleep(500)
+      assert(listener.lastWrite.isEmpty, s"listener captured a non-write plan: ${listener.lastWrite}")
     } finally {
       spark.listenerManager.unregister(listener)
     }

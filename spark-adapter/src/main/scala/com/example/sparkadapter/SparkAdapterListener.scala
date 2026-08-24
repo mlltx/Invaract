@@ -4,7 +4,6 @@
 package com.example.sparkadapter
 
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand
 import org.apache.spark.sql.util.QueryExecutionListener
 
 /** A `QueryExecutionListener` that captures the translated IR for every
@@ -30,12 +29,17 @@ class SparkAdapterListener extends QueryExecutionListener {
     */
   def lastWrite: Option[TranslationResult] = _lastWrite
 
+  // Consults the same WriteCommandSupport.combined lookup
+  // SparkPlanAdapter's translation and ContractEnforcementRule's
+  // enforcement do, rather than a match of its own - this listener used
+  // to have its own independent "is this a write" check, and that's
+  // exactly what let a real write shape (Delta's) go uncaptured here even
+  // after translation and enforcement were both already fixed for it. See
+  // WriteCommandSupport's class doc.
   override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit =
-    qe.analyzed match {
-      case _: InsertIntoHadoopFsRelationCommand =>
-        _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
-      case _ => // not a write; ignore (schema inference, count(), etc.)
-    }
+    if (WriteCommandSupport.combined.isDefinedAt(qe.analyzed)) {
+      _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
+    } // else not a write; ignore (schema inference, count(), etc.)
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = ()
 }

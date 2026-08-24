@@ -55,6 +55,16 @@ object ViolationType {
   val UndeclaredOutputColumn = "UNDECLARED_OUTPUT_COLUMN"
   val OutputFieldTypeMismatch = "OUTPUT_FIELD_TYPE_MISMATCH"
   val OutputFieldNullabilityMismatch = "OUTPUT_FIELD_NULLABILITY_MISMATCH"
+
+  /** Not produced by `StructuralVerifier` itself — this is
+    * `ContractEnforcementRule`'s fail-closed response when a Spark command
+    * looks like it writes or otherwise mutates data (it's `Command`-shaped
+    * and not on the known-safe list) but `SparkPlanAdapter` has no
+    * translation for it, so it was never actually checked against the
+    * contract. See `ContractEnforcementRule`'s "Fail-closed on unverifiable
+    * writes" doc.
+    */
+  val UnverifiableWrite = "UNVERIFIABLE_WRITE"
 }
 
 /** The two "unexpected X can be rejected" toggles from the check list —

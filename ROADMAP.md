@@ -944,6 +944,664 @@ catch it.
       docs/TRANSFORMATION_IR.md, and docs/SPARK_ADAPTER.md's "API
       compatibility" sections.
 
+#### Sub-phase: Delta Lake support (done)
+
+Closed a real, previously-unknown correctness gap: a Delta Lake write
+(`df.write.format("delta").save(path)`) translated to `ir.Unsupported`,
+not `ir.Write` — meaning `ContractEnforcementRule` silently treated it as
+a no-op and let it through completely unverified, contract or no
+contract. Found while answering a user question about what a Delta user
+would need to add to their `spark-submit` to use Invariant.
+
+- [x] **`SparkPlanAdapter` recognizes `SaveIntoDataSourceCommand`**, the
+      plan node Delta (and any other `CreatableRelationProvider`-based
+      `.save(...)` source) actually analyzes to, confirmed empirically
+      against a real Delta-enabled `SparkSession` rather than assumed from
+      documentation.
+    - The originally-proposed approach (a `provided`-scope `delta-spark`
+      dependency plus Delta-specific typed pattern matching, justified by
+      an empirically-verified JVM lazy-classloading argument) turned out
+      to be unnecessary: `SaveIntoDataSourceCommand` and
+      `DataSourceRegister` are both plain, public `spark-sql` classes
+      already on this module's existing `provided` Spark dependency.
+      `formatOf` (previously typed to `FileFormat` for the
+      `InsertIntoHadoopFsRelationCommand` case) was widened to `AnyRef`
+      and reused for both cases — Delta's `DeltaDataSource` implements
+      `DataSourceRegister` the same way every built-in format already
+      does (`shortName() == "delta"`).
+    - Net result: **zero added runtime or compile-time dependency** for
+      non-Delta users. `delta-spark` (pinned to 3.2.0, not the latest 3.x
+      — a confirmed real bug, `delta-io/delta#3737`, affects 3.2.1 on
+      Scala 2.12 + Spark 3.5.1) is `% "test"` only, to spin up a real
+      Delta-enabled session to test against. Confirmed via `unzip -l` on
+      the assembled jar that it's unchanged in size and contains zero
+      Delta classes.
+    - `.saveAsTable`/DataFrameWriterV2/SQL `MERGE INTO` writes are a
+      different, DataSourceV2-based plan shape, not covered by this and
+      not yet investigated — documented as a known limitation.
+- [x] **Two real bugs found and fixed, both via genuinely failing tests,
+      not inspection:**
+    - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
+      special-cased only `InsertIntoHadoopFsRelationCommand`
+      (`cmd.query.schema`), falling back to the write command node's own
+      `.schema` for everything else — which is empty for a `Command`.
+      Caught by a Delta PASS test that instead threw
+      `MISSING_OUTPUT_FIELD` on fields that were genuinely present. Fixed
+      by adding the same `cmd.query.schema` handling for
+      `SaveIntoDataSourceCommand`.
+    - `SparkAdapterListener.onSuccess` had its own entirely independent
+      "is this a write" filter, also hardcoded to
+      `InsertIntoHadoopFsRelationCommand` only — meaning fixing
+      translation and enforcement alone was insufficient. Caught by a
+      test timeout (`eventually` never observed `listener.lastWrite`
+      populate for a real Delta write). Fixed the same way. Left as an
+      explicitly-documented design smell (three independent
+      "is this a write" checks scattered across the module) rather than
+      refactored now — tied to the still-outstanding fail-open-vs-closed
+      question for unrecognized writes generally (see "Scope (Future)"
+      below).
+- [x] **Verified end to end**, not just unit-tested in isolation: new
+      Delta translation test in `SparkPlanAdapterSpec` (via
+      `SparkAdapterListener`) and a Delta PASS/FAIL enforcement pair in
+      `ContractEnforcementRuleSpec` (mirroring the existing Parquet
+      pair), all against a real Delta-enabled `SparkSession`. Full suite
+      54/54 passing; mutation testing scoped to the 3 changed files
+      (`SparkPlanAdapter.scala`, `ContractEnforcementRule.scala`,
+      `SparkAdapterListener.scala`) scored 82.14%, clearing the 70% bar,
+      with all 5 survivors pre-existing/already-documented, none in the
+      new code; whole-module score unchanged at 91.53%; `mimaReportBinaryIssues`
+      clean (only new pattern-match arms were added, no public signature
+      changed); full local `./dev/build` + `./dev/test` + `./dev/regression`
+      all pass.
+    - Full detail, including the empirical investigation methodology
+      (throwaway `QueryExecutionListener`-based probes against a real
+      Delta session), in docs/SPARK_ADAPTER.md's "Delta Lake support"
+      section.
+
+#### Sub-phase: Fail-closed on unverifiable writes (done)
+
+Resolves the fail-open-vs-closed question the Delta Lake sub-phase above
+flagged and CLAUDE.md's "Mutation Testing Requirement" section referenced
+as outstanding: should a write Invariant cannot translate/verify be
+*rejected* by default, rather than silently passed through the way the
+original (pre-fix) Delta gap worked? User decision: yes, fail closed —
+"the contract being valid when it's not" is worse than an aborted write,
+for any write shape, not just Delta specifically.
+
+- [x] **Real reflective survey before deciding the mechanism, not a
+      guess**: every concrete class implementing
+      `org.apache.spark.sql.catalyst.plans.logical.Command` in Spark
+      3.5.1's `spark-sql`/`spark-catalyst` jars and Delta 3.2.0's
+      `delta-spark` jar was enumerated (`JarFile` + `Class.forName` +
+      `isAssignableFrom` against the real jars) — 164 classes found.
+    - This ruled out the obvious first design ("reject any `Command` we
+      don't already translate") as unsafe: `SaveIntoDataSourceCommand`
+      (writes data) and `CreateDataSourceTableCommand` (schema-only
+      `CREATE TABLE`, no data) implement the *exact same*
+      `LeafRunnableCommand` trait — Spark's own `Command` hierarchy has no
+      structural marker separating "writes data" from "pure catalog
+      metadata." A blanket policy would have rejected ordinary `CREATE
+      TABLE`/`ANALYZE TABLE`/`CACHE TABLE`/`SHOW TABLES`/etc. the moment a
+      contract was active.
+- [x] **`FailClosedCommands`** (new file): an explicit, documented
+      allowlist of ~100 classes from the survey, judged by their
+      documented SQL semantics not to change a table's committed row
+      content (DDL/catalog/session metadata, `SHOW`/`DESCRIBE`/`ANALYZE`/
+      `CACHE`, storage maintenance like `VACUUM`/`OPTIMIZE`). Matched by
+      fully-qualified class name (`Set[String]`), not `classOf[...]`,
+      since roughly a sixth of the list is Delta-specific and this module
+      has no compile-time Delta dependency (same reasoning as the Delta
+      sub-phase above).
+    - `ContractEnforcementRule.verifyOrThrow` now rejects a
+      `Command`-shaped, non-`ir.Write` plan unless it's on that list —
+      `ContractViolationException` with a new
+      `ViolationType.UnverifiableWrite`, reusing the same
+      what/what/why/how `explain()` machinery every other violation gets.
+    - Deliberately asymmetric: a safe command missing from the list costs
+      one loud, cheap-to-fix rejection; a data-mutating command wrongly
+      added would silently defeat the whole feature. Every genuinely
+      data-mutating command the survey found (`DELETE`/`UPDATE`/`MERGE`,
+      `LOAD DATA`, `TRUNCATE`, `DROP TABLE`/`DATABASE`, Delta's
+      `RESTORE`/`CLONE`/`CONVERT TO DELTA`/etc.) was deliberately left
+      *off* the safe list rather than guessed at.
+- [x] **`CreateDataSourceTableAsSelectCommand` added as a real recognized
+      write** (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a
+      *new* V1 data source table) — a third distinct write shape found by
+      the same survey, previously falling through to `Unsupported` exactly
+      like the pre-fix Delta gap. `SparkAdapterListener` updated to
+      capture it too (report.json), same as the Delta fix required.
+- [x] **Verified end to end**: new PASS/FAIL enforcement pair for
+      `.saveAsTable()` and a translation test (mirroring the Delta/Parquet
+      pattern), a fail-closed test proving a real, concrete unrecognized
+      write (Delta SQL `MERGE INTO`, confirmed via the survey to analyze
+      to `org.apache.spark.sql.delta.commands.MergeIntoCommand`) is
+      rejected with `UnverifiableWrite` *before* touching the target
+      table (asserted via byte-identical rows before/after the aborted
+      merge), and a regression test proving `CREATE TABLE`/`ANALYZE
+      TABLE`/`SHOW TABLES` are never blocked under an active contract
+      that would reject anything it actually checked. Full suite 59/59
+      passing; mutation testing (whole-module, since every changed/added
+      file was touched) scored 91.67%/93.22%, up from 91.53%/93.1%, with
+      every mutant the new code introduced killed — the same 5
+      pre-existing, already-documented survivors account for 100% of
+      what's undetected; `mimaReportBinaryIssues` clean.
+    - Full detail in docs/SPARK_ADAPTER.md's "Fail-closed on unverifiable
+      writes" section, including the complete per-category reasoning for
+      the safe list and what's deliberately left off it.
+
+#### Sub-phase: Reusable process for adding a Spark connector (done)
+
+Delta Lake support was built twice — once for `.save(...)` writes, again
+separately for `.saveAsTable(...)` and the fail-closed policy — because
+the first pass didn't survey the connector's full operation surface up
+front. Rather than let the next connector (Iceberg, ClickHouse, Avro, ...)
+repeat that, the investigation methodology that eventually got Delta
+right (probe with `injectCheckRule`, reflectively survey the connector's
+`Command` classes, classify every one found, verify rather than assert)
+is now written up as a repeatable process, with an interactive Claude
+Code skill that runs it.
+
+- [x] **docs/ADDING_A_SPARK_CONNECTOR.md**: the durable design doc — a
+      "Definition of done" checklist (every read/write path investigated,
+      not assumed; every `Command` class the connector's jar defines
+      classified, not guessed at; zero added dependency for non-users
+      verified by jar inspection, not asserted; mutation testing/MiMa/
+      `./dev/test`/`./dev/regression` all actually run), the exact
+      investigation methodology (dependency scoping, dual-extension-point
+      probing, reflective survey, classification rules), and a "Known
+      limitations" section naming what this pattern doesn't yet solve for
+      any connector (row-level DML has no IR representation yet;
+      streaming is unexplored; DataSourceV2 catalog writes are a
+      recurring gap worth solving once, not per-connector).
+- [x] **`add-spark-connector` Claude Code skill**
+      (`.claude/skills/add-spark-connector/SKILL.md`): the same process as
+      an interactive, ordered workflow — 10 phases from scoping the
+      connector through a final Definition-of-Done review, with explicit
+      checkpoints (⏸) requiring user sign-off before the fail-closed
+      classification is implemented and before the connector is called
+      done. Deliberately does not duplicate the doc's prose — points back
+      to the relevant section at each phase, per the progressive-
+      disclosure pattern Claude Code skills use.
+    - Cross-linked from CLAUDE.md's doc index and References section so
+      "add support for X" doesn't get a one-off `translatePlan` case
+      again instead of the full survey.
+
+#### Sub-phase: Write command recognition, a single registry (done)
+
+Before shipping the process above for a second/third connector, reviewed
+the code it would actually walk a contributor through — and found the
+process itself was compensating for a real structural problem: "is this
+plan a write, and what does it mean" was implemented three separate
+times (`SparkPlanAdapter.translatePlan`, `ContractEnforcementRule.verifyOrThrow`'s
+output-schema derivation, `SparkAdapterListener.onSuccess`'s capture
+check), independently kept in lockstep by hand. Both of this session's
+real Delta bugs were exactly a write shape added to one match and missed
+in another — not one-off mistakes, a hazard built into the duplication
+itself. Fixed the foundation before layering more connectors onto it.
+
+- [x] **New `WriteCommandSupport.scala`**: one
+      `PartialFunction[LogicalPlan, WriteCommandInfo]` per recognized
+      write shape (the same three as before — `InsertIntoHadoopFsRelationCommand`/
+      `SaveIntoDataSourceCommand`/`CreateDataSourceTableAsSelectCommand`),
+      combined via `orElse` into `WriteCommandSupport.combined`.
+      `WriteCommandInfo` bundles location/query/format/saveMode/
+      outputSchema in one value, so a write shape can no longer be added
+      with its schema piece missing the way the original Delta bug did —
+      the compiler enforces supplying it.
+    - `SparkPlanAdapter.Translator.translatePlan`,
+      `ContractEnforcementRule.verifyOrThrow`, and
+      `SparkAdapterListener.onSuccess` all now consult exactly this
+      registry (`.lift`/`.isDefinedAt`) instead of a match of their own.
+      Adding a write shape (when one is actually needed — most connectors
+      need none, per the Delta finding) now means: implement one
+      `PartialFunction` here, chain it in. Nothing else changes.
+- [x] **Verified behavior-preserving, not just re-tested**: full 59-test
+      suite passed unchanged before and after (identical translation
+      output for every existing case); `mimaReportBinaryIssues` stayed
+      clean; `./dev/build`/`./dev/test`/`./dev/regression` all still pass
+      against real `spark-submit`.
+    - Mutation testing surfaced one real, new gap the refactor itself
+      introduced: `SparkAdapterListener.onSuccess`'s `isDefinedAt` check
+      surviving an "always capture" mutant, because no existing test
+      asserted the *negative* case (a non-write action leaving
+      `lastWrite` untouched — every prior listener test only checked "a
+      write is captured"). Closed with a new test rather than left
+      undetected. Final score 91.94%/93.44% (up from 91.53%/93.1% before
+      any of this session's spark-adapter changes), same 5 pre-existing
+      survivors as always, none in new code.
+- [x] **docs/SPARK_ADAPTER.md, docs/ADDING_A_SPARK_CONNECTOR.md, and the
+      `add-spark-connector` skill's Phase 6 all updated** to describe the
+      one-file-one-list story instead of the old three-file one — the
+      skill now explicitly says most connectors need zero
+      `WriteCommandSupport` entries at all.
+
+#### Sub-phase: Delta Lake reads (done)
+
+Asked directly after the write-side registry work: does the read side
+have the same "recognition duplicated across independent sites" problem?
+Investigated with the `add-spark-connector` skill rather than guessed at.
+
+- [x] **Real investigation, not assumption**: probed `.load(path)` and a
+      catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`/
+      `SELECT * FROM delta.\`path\``) against a real Delta-enabled session
+      via `injectCheckRule` (the same mechanism `ContractEnforcementRule`
+      uses). Both produce a `LogicalRelation` wrapping
+      `org.apache.spark.sql.delta.DeltaLog$$anon$2` — confirmed to be an
+      anonymous subclass of Spark's own `HadoopFsRelation`, not a distinct
+      relation type. The existing `locationOf`/`translatePlan` branches
+      already match it through ordinary subtyping and already extract the
+      precise physical path, for both read shapes.
+- [x] **Answer to the motivating question: no, not today, and here's
+      why.** The write bug was three sites recognizing *different*
+      concrete classes independently. Reads have exactly one type gate
+      (`LogicalRelation`), reused identically by both consumer sites
+      (`SparkPlanAdapter.translatePlan` and `ContractEnforcementRule.verifyOrThrow`'s
+      input-schema collection) — they cannot disagree by construction.
+      Explicitly *not* treated as "solved forever": a future connector
+      whose read produces something other than `LogicalRelation` (most
+      plausibly `DataSourceV2Relation`) would need a real second case in
+      both sites, and that's the actual trigger for a
+      `ReadRelationSupport`-style registry — building one now, for a
+      shape that doesn't exist yet, would be premature.
+- [x] **Zero production code changed.** Verified with tests, not left as
+      an inspection claim: a translation test (`SparkPlanAdapterSpec`)
+      confirms both read shapes produce a precise `ir.Read` with no
+      fallback diagnostic; a PASS/FAIL enforcement pair
+      (`ContractEnforcementRuleSpec`) confirms a contract's declared input
+      schema is genuinely checked against a real Delta read's actual
+      schema — surfacing a real, separate finding along the way (Delta
+      reports every column nullable on read-back regardless of what was
+      written), worked around in the test the same way a real contract
+      author would need to. Full suite 63/63 passing; `mimaReportBinaryIssues`
+      clean (no production code touched); full local
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+    - Full detail in docs/SPARK_ADAPTER.md's new "Delta Lake reads"
+      section.
+
+#### Sub-phase: Delta Lake operation-surface coverage ledger (done)
+
+Prompted directly by a user question ("so is Delta 100% supported?") that
+exposed a real process gap: `add-spark-connector` had been run for Delta
+twice (write, then read), each time declaring success on a narrower scope
+than "does Delta actually work end to end" — leaving several real
+operations (V2 `.saveAsTable`/`.insertInto`/`.writeTo`, time travel,
+streaming, CDC) never investigated at all, with no mechanism forcing that
+gap to be stated explicitly. Fixed at the process level first
+(docs/ADDING_A_SPARK_CONNECTOR.md's new "operation surface" checklist and
+mandatory "coverage ledger" — see that doc and
+`.claude/skills/add-spark-connector/SKILL.md`), then exercised against
+Delta specifically to close it.
+
+- [x] **Every row of the canonical operation surface probed empirically**,
+      not assumed: `.format("delta").saveAsTable()` (new table),
+      `.saveAsTable()`/`.insertInto()`/`.writeTo()` (existing table, every
+      sub-op), time-travel reads, streaming reads, streaming writes, and
+      CDC reads — all run against a real Delta-enabled `SparkSession` with
+      an `injectCheckRule` probe, the exact mechanism
+      `ContractEnforcementRule` uses.
+- [x] **V2 write commands (`AppendData`/`OverwriteByExpression`/
+      `ReplaceTableAsSelect`) confirmed to fail closed, not silently
+      pass.** `.saveAsTable()`/`.insertInto()`/`.writeTo()` against an
+      existing table, and `.format("delta").saveAsTable()` against a *new*
+      table, all correctly throw `ContractViolationException` with
+      `UnverifiableWrite` and write zero rows — verified with a new
+      `ContractEnforcementRuleSpec` test that asserts row content is
+      unchanged after every rejected attempt, not just that an exception
+      was thrown.
+- [x] **Time-travel reads need no new code**: `versionAsOf` produces the
+      same `LogicalRelation`-wrapping-`HadoopFsRelation` shape as an
+      ordinary read, already handled.
+- [x] **CDC reads are translated, with a caveat**: `readChangeFeed`
+      produces `LogicalRelation(relation=CDCReader$DeltaCDFRelation)`, a
+      class distinct from `HadoopFsRelation` — but `translatePlan`'s
+      generic `LogicalRelation` case (not a `HadoopFsRelation`-specific
+      one) already covers it, producing a correct `ir.Read`. Because that
+      relation has no populated `catalogTable` for a path-based read, it
+      takes the existing "fallback" branch and emits a location
+      diagnostic (uses the relation's `toString()` rather than a clean
+      physical path) — a precision gap, not a correctness one; schema
+      verification is unaffected.
+- [x] **Streaming write found to have zero enforcement touchpoint — since
+      closed (see the sub-phase immediately below).** At the time of this
+      investigation, a real streaming write to Delta produced 9 distinct
+      plans through `injectCheckRule`; confirmed via the probe's own
+      `Command`-shaped filter that zero of them were `Command`-shaped.
+      `WriteToStream`, the top-level plan, was separately confirmed via
+      `javap` on Spark's catalyst jar to implement `LogicalPlan`/
+      `UnaryNode` but not `Command` — so `ContractEnforcementRule`'s
+      fail-closed policy, which only gates `Command`-shaped plans, could
+      not structurally ever see it. Unlike every other row in this
+      ledger, this was not "fails closed but unverified" — it was
+      unenforced, full stop. A separate test confirmed the fail-closed
+      policy did not *wrongly* block an unrelated streaming query, ruling
+      out the opposite bug.
+- [x] **Maintenance operations already have a reasoned classification**,
+      not a gap: `FailClosedCommands.scala`'s `knownSafe` set already
+      includes Delta's `VacuumTableCommand`/`OptimizeTableCommand`
+      (file-level, doesn't change committed row content) and deliberately
+      excludes `RestoreTableCommand`/`CloneTableCommand`/
+      `ConvertToDeltaCommand` (row-content-changing) — built from a
+      class-by-class enumeration of all 164 `Command` subclasses across
+      Spark 3.5.1 + Delta 3.2.0, documented in that file's header. Not
+      re-probed individually this pass; the classification stands.
+- [x] **Full coverage ledger — all 5 read rows and 8 write rows disposed,
+      not left implicit** — see docs/SPARK_ADAPTER.md's new "Delta Lake
+      operation-surface coverage ledger" section for the complete table
+      with evidence per row. Two probe specs
+      (`RemainingDeltaOpsProbeSpec`, `StreamingWriteProbeSpec`,
+      `CdcReadProbeSpec`) were investigation scaffolding, deleted once
+      their findings were captured in tests/docs, per this repo's own
+      established methodology.
+- [x] Full suite passing; `./dev/build`/`./dev/test`/`./dev/regression`
+      all pass; `mimaReportBinaryIssues` clean (no production API surface
+      changed — only `ROADMAP.md`/`docs/SPARK_ADAPTER.md`/test files).
+
+#### Sub-phase: Streaming writes closed; fail-closed reframed as a
+#### stopgap, not a verdict (done)
+
+Two changes, prompted by a single user question after the ledger above
+shipped: "any way to close the streaming gap, and — the ledger's 🚫 rows
+read like 'not supported' is an acceptable resting state; that was never
+the point of fail-closed, was it?"
+
+- [x] **Streaming writes: closed, not just documented.** `WriteToStream`
+      reaches `injectCheckRule` (confirmed by the coverage-ledger pass
+      above — it just isn't `Command`-shaped). Rather than special-casing
+      it in `ContractEnforcementRule`'s fail-closed check, it was added as
+      a real `WriteCommandSupport` entry — the same registry every other
+      write shape goes through — so it's genuinely translated and
+      verified, not merely gated. `inputQuery.schema` gives the output
+      schema; location comes from a resolved `catalogTable`
+      (`.toTable(...)`, confirmed to carry `storage.locationUri`/
+      `provider`) or, for a path-based `.start(path)` write, from the
+      sink's `name()` when that doesn't throw, or — since Delta's
+      `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()`
+      unconditionally throw `IllegalStateException("should not be
+      called")`, confirmed empirically via a real probe — a reflective
+      call to its public `path()` accessor, the same
+      no-compile-time-dependency reflection technique `jdbcLocationOf`
+      already uses for `JDBCRelation`. Verified through real enforcement:
+      a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)`
+      (the `catalogTable`-populated path), a direct-inspection test
+      confirming format is detected as `"delta"` (StructuralVerifier only
+      checks format when the contract also declares one, so this
+      wouldn't otherwise surface as a PASS/FAIL failure), and a test
+      confirming a streaming write to a location unrelated to the active
+      contract is now correctly rejected (`OUTPUT_LOCATION_MISMATCH`) —
+      the same behavior batch writes have always had, no longer
+      special-cased by omission. Mutation testing scoped to
+      `WriteCommandSupport.scala`: first run found two survived mutants in
+      code added this pass (both in `streamSinkFormatOf`'s class-name
+      string match — `StructuralVerifier` only compares format when the
+      contract also declares one, so a wrong-format bug there wasn't
+      guaranteed to surface through the PASS/FAIL pair alone); killed by
+      adding the direct-inspection test above, confirmed by a second run:
+      90.77% overall (92.19% of covered code) — the remaining survived/
+      uncovered mutants are all in `unwrapWriteWrapper`/`SparkPlanAdapter`
+      code this pass didn't touch. Full suite passing;
+      `mimaReportBinaryIssues` clean; `./dev/build`/`./dev/test`/
+      `./dev/regression` all pass.
+- [x] **`add-spark-connector`'s "fails closed" framing corrected.** The
+      coverage ledger's 🚫 disposition was written (and, in the Delta
+      ledger above, applied) as if "not yet translated, verified to
+      abort" were a complete, acceptable answer on its own — no different
+      in spirit from ✅ Covered, just a different flavor of done. That's
+      backwards: fail-closed exists to catch operations Invariant *hasn't
+      gotten around to translating yet*, not to bless them as
+      out-of-scope forever. Fixed at the process level:
+      docs/ADDING_A_SPARK_CONNECTOR.md gained a "What 'fails closed'
+      means (and doesn't)" section, and both it and
+      `.claude/skills/add-spark-connector/SKILL.md` now require every 🚫
+      ledger row to carry a next step — either the real translation work
+      that would close it (the default assumption), or, rarely, a
+      specific documented reason it should never be translated. The
+      Delta ledger in docs/SPARK_ADAPTER.md was rewritten to match: every
+      remaining 🚫 row (`AppendData`, `OverwriteByExpression`,
+      `ReplaceTableAsSelect`, row-level DML) now states concretely what
+      would close it, not just that it's currently rejected.
+
+#### Sub-phase: Remaining Delta write-side gaps closed; streaming reads
+#### recognized as contract inputs (done)
+
+Follow-up to the sub-phase above, closing every 🚫 row the corrected
+ledger could actually state a concrete next step for.
+
+- [x] **`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`: all
+      three now real `WriteCommandSupport` entries.** `AppendData` covers
+      `.saveAsTable()` append, `.insertInto()`, and `.writeTo().append()`
+      in one entry; `OverwriteByExpression` covers `.writeTo().overwrite(cond)`,
+      mapped to the contract's `saveMode: overwrite` uniformly (the
+      predicate itself needed no IR extension after all — contrary to
+      what the previous sub-phase assumed, `StructuralVerifier`'s
+      save-mode check never needed it); `ReplaceTableAsSelect` covers
+      `.format("delta").saveAsTable()` on a new table and
+      `.writeTo().createOrReplace()`. Location resolution for
+      `AppendData`/`OverwriteByExpression` prefers a resolved
+      `DataSourceV2Relation`'s `Table.properties()["location"]` (the
+      physical warehouse path, confirmed empirically), shared via a new
+      `SparkPlanAdapter.tableLocationAndFormat` helper. Verified via
+      PASS/FAIL pairs in `ContractEnforcementRuleSpec` for both the new-
+      and existing-table cases.
+- [x] **Found and fixed a real correctness trap along the way: atomic
+      CTAS/RTAS issues a second, nested write.** A single
+      `.saveAsTable()` on a *new* table produces two write-shaped plans
+      through `injectCheckRule` — the top-level `ReplaceTableAsSelect`
+      and an internal `AppendData` against a `StagedTable` (Spark's own
+      public 2-phase-commit protocol for atomic CTAS/RTAS) — both
+      genuinely visible to `ContractEnforcementRule.verifyOrThrow`. A
+      `StagedTable`'s `properties()` has no `"location"` yet, so the
+      naive translation gave the two plans two *different* location
+      strings for the same destination — a real PASS test failure, not
+      caught by inspection. Fixed via a shared `qualifiedIdentifier`
+      helper: `DataSourceV2Relation`'s own `catalog`/`identifier` fields
+      (confirmed populated even for a staged table) now produce the exact
+      same qualified form `ReplaceTableAsSelect`'s `ResolvedIdentifier`
+      case does, so the two agree by construction. Documented in
+      docs/SPARK_ADAPTER.md's new "A shared pitfall" subsection for
+      whichever connector hits this next.
+- [x] **Streaming reads recognized as contract inputs, closing a real
+      false-positive.** Neither `StreamingRelation` (the legacy V1 path
+      Delta's own streaming read uses, confirmed empirically — not
+      `StreamingRelationV2`) nor `StreamingRelationV2` (the modern
+      DataSourceV2 path — `rate`, Kafka, ...) was a `LogicalRelation`, so
+      a contract declaring a streaming source as a required `input`
+      always reported `MISSING_INPUT` even though data was genuinely
+      being read. Closed in both `SparkPlanAdapter`'s translation and
+      `ContractEnforcementRule`'s input-schema collection via two new
+      shared helpers (`streamingRelationLocationOf`/
+      `streamingRelationV2LocationOf`) rather than two independent
+      matches — the exact duplication risk the write side already
+      learned from. `StreamingRelation.dataSource.options`/`sourceName`
+      need no reflection (plain public spark-sql classes, unlike
+      `WriteToStream`'s sink); `StreamingRelationV2` reuses the same
+      `Table.properties()` lookup as the write-side V2 cases above.
+      Verified via a PASS/FAIL pair proving a contract's declared input
+      schema is genuinely checked against a real streaming Delta source.
+- [x] **Mutation testing scoped to all three changed files
+      (`WriteCommandSupport.scala`/`SparkPlanAdapter.scala`/
+      `ContractEnforcementRule.scala`): 88.57% overall (89.86% of covered
+      code)**, up from 84.29%/85.51% on the first run — two direct
+      translation-level tests added (asserting both location *and*
+      diagnostics, mirroring this file's existing Delta-read-translation
+      test) to kill mutants in the new `StreamingRelation`/
+      `StreamingRelationV2` fallback-diagnostic conditions. Two mutants
+      remain in new code, both in those same fallback-diagnostic
+      conditions (whether a *diagnostic message* gets attached, not
+      whether the translated location itself is correct — both directions
+      of that are already asserted correct by the new tests): killing
+      them fully would need a legacy V1 `StreamingRelation` source with no
+      path option, which isn't realistically constructible from the
+      sources available in this test environment (every built-in
+      no-physical-location source, `rate` included, is natively V2).
+      Left as an accepted mutant, the same category CLAUDE.md's own
+      "Mutation Testing Requirement" already carves out (a StringLiteral
+      mutant on human-readable message text) — this is a
+      ConditionalExpression mutant on whether that same kind of message
+      gets attached at all, not a correctness difference. Full suite
+      passing (76/76); `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+
+#### Sub-phase: Row-level DML — structural verification, the last
+#### coverage-ledger row closed (done)
+
+Closes the final 🚫 row in the Delta operation-surface ledger. Scoped
+deliberately after discussion: the fuller version (verifying the actual
+merge condition/update columns/delete predicate) needs both a new IR node
+and contract `rules` interpretation, neither of which exist — see the
+"Full semantic DML verification" item in "Scope (Future)" below for that
+larger, explicitly-deferred design, kept there specifically so it isn't
+lost. This sub-phase does the achievable, honest subset: structural
+verification only.
+
+- [x] **`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` recognized as
+      real `WriteCommandSupport` entries**, matched by reflection (all
+      three are Delta-internal classes, confirmed empirically via
+      `injectCheckRule` — not generic Spark API the way `AppendData`/
+      `OverwriteByExpression`/`ReplaceTableAsSelect` are), using their
+      public `target()`/`catalogTable()`/`source()` methods (confirmed
+      via `javap`, no `setAccessible` needed). Wrapped in `Try` (via
+      `Function.unlift`), unlike the stable-API write cases: reflecting
+      into undocumented, no-cross-version-guarantee Delta internals
+      needs to degrade to the pre-existing fail-closed default if a
+      future Delta version renames a method, not crash a real Spark job
+      with a raw `ReflectiveOperationException`.
+- [x] **What's checked, and what deliberately isn't, stated explicitly
+      in code and docs, not left implicit.** Checked: the operation's
+      *target* against the contract's declared output location and
+      current schema (a `MERGE`/`UPDATE`/`DELETE`'s own `output` is a
+      row-count summary, not data, confirmed empirically — there's no
+      "new schema" to check the usual way, but the target's *existing*
+      schema is still worth confirming still matches). Not checked, and
+      not yet checkable: the merge condition, which columns an `UPDATE`
+      touches, whether a `DELETE` is unconditional — no contract
+      vocabulary exists for that (see the "Full semantic DML
+      verification" item below).
+- [x] **MERGE's `source` recognized as a contract input — found and fixed
+      a real second correctness trap along the way.** Initially assumed
+      (documented as such, before verifying) that
+      `ContractEnforcementRule.verifyOrThrow`'s existing `plan.collect`
+      input-schema collection would reach MERGE's source automatically,
+      the same way it does for every other write shape. A real FAIL test
+      (asserting `intercept[ContractViolationException]`) proved that
+      assumption wrong: `plan.collect` walks `children`, and Delta's DML
+      commands are effectively leaf nodes in the tree-traversal sense —
+      `source`/`target` are ordinary case-class fields, never exposed as
+      children — so a plain `plan.collect` on the command finds nothing
+      inside it. Fixed by having `verifyOrThrow` also walk
+      `WriteCommandSupport`'s already-extracted `query` field (MERGE's
+      `source`) in addition to the raw plan. Documented in
+      docs/SPARK_ADAPTER.md's new second "shared pitfall" subsection.
+- [x] Verified through real enforcement, not translation in isolation: a
+      PASS/FAIL pair for MERGE (rows genuinely merged on PASS; aborted,
+      target genuinely untouched on FAIL, both for a target-schema
+      violation and, separately, a MERGE-source-input violation), plus a
+      PASS test each for `UPDATE`/`DELETE` (rows genuinely mutated), all
+      in `ContractEnforcementRuleSpec`. A dedicated direct-inspection
+      test also covers a path-based DML operation with no catalog table
+      at all (`UPDATE delta.\`path\``, confirmed empirically to leave
+      `catalogTable` as `None`, not just missing a location) — the
+      fallback branch every other DML test's catalog-backed target
+      doesn't reach.
+- [x] Mutation testing scoped to `WriteCommandSupport.scala`/
+      `ContractEnforcementRule.scala`: 85.71% overall (86.84%–89.19% of
+      covered code across runs). Two mutants remain in new code, both in
+      `deltaRowLevelDml`'s fallback-diagnostic-message branch
+      (`catalogTable.isDefined`, deciding which of two message strings to
+      use — the actual `location`/`format` computation doesn't re-branch
+      there, it's already been computed above) — the same category of
+      accepted mutant as this module's other message-wording-only cases
+      (formally equivalent in spirit to the already-excluded
+      `StringLiteral` mutator category). Full suite passing (81/81);
+      `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+- [x] **Every row of the Delta operation-surface ledger is now ✅
+      Covered** — 5 read rows, 8 write rows, all 13. Full ledger in
+      docs/SPARK_ADAPTER.md's "Delta Lake operation-surface coverage
+      ledger" section.
+
+#### Sub-phase: Delta feature-by-feature confidence pass (done)
+
+The ledger above closing every write-command *shape* left a separate,
+previously-implicit gap: "expected to work" against Delta table
+*features* (schema evolution, generated columns, deletion vectors, column
+mapping, liquid clustering, CHECK constraints, identity columns) is not
+the same claim as "confirmed to work" — nothing had actually exercised
+most of them. This sub-phase tried each one for real, not from
+documentation, and turned every finding into either a fix or a permanent
+regression test — no more relying on throwaway probe evidence.
+
+- [x] **Schema evolution (`MERGE` + `autoMerge.enabled`) — real bug,
+      found and fixed.** `target.schema` at analysis time is the
+      *pre-merge* schema, confirmed empirically to not yet include
+      columns evolution is about to add — a contract requiring such a
+      field was wrongly `MISSING_OUTPUT_FIELD`-rejected. Fixed via
+      `MergeIntoCommand.schemaEvolutionEnabled()` (public, confirmed via
+      `javap`); the source's new fields are unioned into `target.schema`
+      as a best-effort approximation, with a diagnostic. A second finding
+      along the way: with `autoMerge` disabled, `INSERT *` silently drops
+      a source column the target doesn't have (confirmed empirically,
+      not assumed) — so the fix must gate strictly on
+      `schemaEvolutionEnabled()`, not just "does the source have extra
+      fields." Two PASS tests in `ContractEnforcementRuleSpec` cover both
+      directions.
+- [x] **Generated columns (`GENERATED ALWAYS AS (...)`) — real bug, found
+      and fixed.** Same false-rejection class: Delta computes these at
+      commit time, never supplied by the writer, so `AppendData`/
+      `OverwriteByExpression`'s `outputSchema` never included them.
+      Confirmed the hard way that no DataFrame-facing schema exposes the
+      `delta.generationExpression` metadata key Delta itself sets on a
+      generated column's `StructField` — not a read-back, not a catalog
+      table, not even the DSv2 `Table` handle's own `.schema()`
+      (`DeltaTableV2.schema()`, specifically) — only Delta's internal
+      `Snapshot.schema()` (`DeltaTableV2.initialSnapshot()`) does. Fixed
+      by reading that reflectively (`outputSchemaWithGeneratedColumns`/
+      `deltaGeneratedFields`, same no-compile-time-dependency, `Try`-wrapped
+      convention as `deltaRowLevelDml`) and unioning the target's
+      generated-only columns in — checking the metadata key directly
+      rather than reflecting into Delta's own
+      `GeneratedColumn.isGeneratedColumn` helper (a `/simplify` pass
+      finding: `StructField.metadata` needs no `Protocol` lookup or
+      overload resolution, and is already a plain public Spark type).
+      Verified with a PASS test (built via the
+      `io.delta.tables.DeltaTable` builder API — raw SQL DDL for
+      generated columns fails outright in this environment, confirmed
+      empirically, even with explicit reader/writer-version
+      `TBLPROPERTIES`).
+- [x] **Deletion vectors, column mapping mode (`'name'`), liquid
+      clustering (`CLUSTER BY`) — confirmed transparent.** Real writes/DML
+      against tables with each enabled are recognized exactly as they
+      would be without it — correct location, schema, no diagnostics. A
+      permanent PASS test added for each in `ContractEnforcementRuleSpec`
+      (previously only throwaway probe evidence existed).
+- [x] **CHECK constraints — confirmed orthogonal.** Delta enforces these
+      itself, independently, at commit time; Invariant has no rule
+      vocabulary for a row-level condition. A permanent test asserts
+      both halves: a violating write is recognized by `WriteCommandSupport`
+      identically to a satisfying one (no diagnostic from Invariant), and
+      is then rejected by Delta's own `DeltaInvariantViolationException`
+      before commit.
+- [x] **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
+      untestable in this environment, documented as such rather than
+      silently skipped.** Spark 3.5.1's own SQL parser rejects the syntax
+      (`[PARSE_SYNTAX_ERROR] ... extra input 'IDENTITY'`), confirmed via a
+      dedicated probe with no exception-masking `try`/`catch` — almost
+      certainly a Databricks Runtime-only grammar extension not present
+      in vanilla OSS Spark 3.5.1 at all, so there is no analyzed plan for
+      `WriteCommandSupport` to ever see. Recorded as ❓ Not investigated
+      in docs/SPARK_ADAPTER.md, not claimed as covered.
+- [x] Mutation testing scoped to `WriteCommandSupport.scala` (the only
+      file touched this sub-phase): **73.08%** (19/26 non-excluded
+      mutants killed). Every real survivor investigated, not just cited —
+      see docs/SPARK_ADAPTER.md's "Delta feature-by-feature confidence
+      pass" mutation-testing subsection for the per-mutant breakdown (one
+      killed with a new direct-inspection test, one accepted as
+      near-equivalent given the surrounding `Try`'s safety net, the rest
+      pre-existing from earlier sub-phases). Full suite passing (89/89);
+      `mimaReportBinaryIssues` clean.
+- [x] All throwaway probe specs used during this pass deleted once their
+      findings were captured as permanent tests/docs — no probe evidence
+      left standing in as a substitute for a real regression test.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -961,11 +1619,41 @@ catch it.
       categories above as they're implemented — its `{status, contract,
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
-- [ ] Interpreting `rules` from the contract model
-- [ ] Enforcement currently only gates `InsertIntoHadoopFsRelationCommand`
-      writes (matching `SparkPlanAdapter`'s translation coverage); other
-      write command types (JDBC sinks, streaming writes, `saveAsTable`)
-      are unexercised
+- [ ] Interpreting `rules` from the contract model — see the item
+      immediately below for the concrete feature this unblocks first
+- [ ] **Full semantic DML verification** (row-level `MERGE`/`UPDATE`/
+      `DELETE`). Structural verification of these three (target location/
+      schema, MERGE's source as an input) is done — see the "Delta Lake
+      operation-surface coverage ledger" sub-phase below. What's still
+      unverified, deliberately: the operation's actual row-level logic -
+      the merge condition, which columns an `UPDATE` touches, whether a
+      `DELETE` is unconditional. This needs **two** things together, not
+      one:
+      1. An IR extension modeling the operation itself (`ir.Write` only
+         models "replace/append the output of a query" - something like
+         `ir.Merge`/`ir.RowMutation` capturing condition/matched-clauses/
+         not-matched-clauses would be needed).
+      2. Interpreting contract `rules` (the item above) - without this,
+         an `ir.Merge` node would hold structure nothing could check,
+         since `StructuralVerifier` only compares schema/format/location/
+         save-mode, and a contract has no vocabulary yet for constraining
+         a merge condition or which columns an update may touch.
+      Concrete example of the rule vocabulary this would need (not
+      hypothetical - discussed and explicitly deferred, not forgotten):
+      ```yaml
+      rules:
+        - type: merge_condition
+          on: [customer_id]
+        - type: forbid_unconditional_delete
+        - type: allowed_update_columns
+          columns: [status, updated_at]
+      ```
+      Building the IR node before the rule vocabulary exists to consume
+      it would be speculative API surface in a MiMa-checked module - the
+      two should be designed together, not the IR first. Not started;
+      deliberately scoped out of the structural-DML pass below, per an
+      explicit user decision to keep this session's DML work structural-
+      only and document the fuller version here instead of losing it.
 
 #### Dependencies
 

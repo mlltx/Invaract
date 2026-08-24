@@ -5,9 +5,24 @@ organization := "com.example"
 
 val sparkVersion = "3.5.1"
 
+// Test-scope only, not provided: empirical investigation (see
+// docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta
+// writes go through Spark's own generic SaveIntoDataSourceCommand +
+// DataSourceRegister - both plain, public spark-sql classes already on
+// the `provided` Spark dependency above. Translating them needs no
+// Delta-specific type at all, so delta-spark is only needed here to spin
+// up a real Delta-enabled session to test against (the same role
+// com.h2database plays for the JDBC precedent below), never to compile
+// or run the main translation code.
+// 3.2.0, not the latest 3.x release: a confirmed real bug in 3.2.1 affects
+// exactly this combination (Scala 2.12 + Spark 3.5.1) - see
+// docs/SPARK_ADAPTER.md's Delta section for the citation.
+val deltaVersion = "3.2.0"
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+  "io.delta" %% "delta-spark" % deltaVersion % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",

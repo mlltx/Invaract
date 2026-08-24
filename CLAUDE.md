@@ -30,7 +30,15 @@ Full architecture, component breakdown, and data flow:
 [ROADMAP.md](ROADMAP.md). Module-level design docs:
 [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
 [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
-[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md).
+[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md). Adding support for a new
+Spark data connector (Iceberg, ClickHouse, Avro, ...) has its own
+reusable process — full read/write investigation, fail-closed
+classification, verification — documented in
+[docs/ADDING_A_SPARK_CONNECTOR.md](docs/ADDING_A_SPARK_CONNECTOR.md) and
+runnable as the `add-spark-connector` Claude Code skill
+(`.claude/skills/add-spark-connector/`); use it rather than adding a
+one-off `translatePlan` case, since skipping the survey it requires is
+exactly how the Delta Lake gaps happened.
 
 Keep this distinction in mind before proposing a testing or tooling
 addition: something that protects the engine's real behavior (fuzzing,
@@ -737,6 +745,8 @@ On mobile network, the web UI may be slower due to data volume (~100KB report).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — full architecture, ADRs, data flow
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
+- [docs/ADDING_A_SPARK_CONNECTOR.md](docs/ADDING_A_SPARK_CONNECTOR.md) —
+  reusable process for adding a new Spark connector to `spark-adapter`
 - [Apache Spark](https://spark.apache.org/)
 - [Scala 2.12](https://docs.scala-lang.org/2.12/)
 - [sbt](https://www.scala-sbt.org/)
@@ -746,6 +756,6 @@ On mobile network, the web UI may be slower due to data volume (~100KB report).
 
 ---
 
-**Last Updated**: 2026-08-22
+**Last Updated**: 2026-08-23
 **Status**: Phase 1 (verification engine) complete; example harness and
 web UI stable. See ROADMAP.md for what's next.

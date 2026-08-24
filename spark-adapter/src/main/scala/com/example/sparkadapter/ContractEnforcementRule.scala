@@ -7,8 +7,10 @@ import com.example.contract.Contract
 import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, LogicalRelation}
+import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
+import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.streaming.StreamingRelation
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -82,17 +84,80 @@ object ContractEnforcementRule {
     val translated = SparkPlanAdapter.translate(plan)
     translated.plan match {
       case _: com.example.ir.Write =>
-        val inputSchemas = plan.collect { case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema }.toList
-        val outputSchema = plan match {
-          case cmd: InsertIntoHadoopFsRelationCommand => cmd.query.schema
-          case other                                   => other.schema
-        }
+        // Collects every recognized *read* shape found anywhere in the
+        // plan - LogicalRelation for batch reads, and (see
+        // docs/SPARK_ADAPTER.md's "Streaming reads as a contract input")
+        // StreamingRelation/StreamingRelationV2 for a legacy-V1 or
+        // DataSourceV2 streaming source respectively. A contract
+        // declaring a streaming source as a required `input` used to
+        // always report MISSING_INPUT, even though data was genuinely
+        // being read, because this collection only recognized
+        // LogicalRelation - the same location-extraction logic
+        // SparkPlanAdapter's own translation now uses for those two
+        // shapes is reused here rather than re-derived, so the two sites
+        // can't drift the way write recognition once did (see
+        // WriteCommandSupport's class doc).
+        //
+        // `plan.collect` walks `children`, which is empty for Delta's row-
+        // level DML commands (MergeIntoCommand/UpdateCommand/DeleteCommand
+        // are effectively leaf nodes in the tree-traversal sense - their
+        // `source`/`target` are ordinary case-class fields, not exposed as
+        // children) - confirmed empirically by a real FAIL test never
+        // throwing, not assumed to "just work" the way it does for every
+        // other write shape. So this also walks `query` - the same field
+        // `WriteCommandSupport` already extracted (MERGE's `source` for
+        // DML, the same plan `plan.collect` would already reach on its own
+        // for every other shape) - which is a real, independently
+        // traversable `LogicalPlan`, unlike the outer command.
+        val inputSchemas = (
+          plan.collect {
+            case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+            case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+            case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+          } ++
+            WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect {
+              case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+              case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+              case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+            })
+        ).distinct.toList
+        // WriteCommandSupport.combined is the same lookup translation used
+        // to reach this ir.Write in the first place, so this can never
+        // drift out of sync with it the way three independent matches
+        // could (and once did - see WriteCommandSupport's class doc). Its
+        // outputSchema is always the underlying query's schema, not the
+        // command node's own: a Command's `.schema` is its own (typically
+        // empty) output, not the data it writes - using that directly
+        // silently reported every declared field as missing regardless of
+        // what was actually written, confirmed the hard way by a real
+        // Delta write test failing PASS with a MISSING_OUTPUT_FIELD
+        // violation on a field that genuinely was present (see
+        // docs/SPARK_ADAPTER.md's "Delta Lake support" section). The
+        // `plan.schema` fallback only matters if `translated.plan` is an
+        // `ir.Write` `SparkPlanAdapter` produced some other way (not
+        // currently possible - `WriteCommandSupport.combined` is the only
+        // producer of `ir.Write` - but kept as a safe default rather than
+        // assuming that stays true forever).
+        val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
         val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
+      case _ if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+        val violation = Violation(
+          ViolationType.UnverifiableWrite,
+          s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
+            s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
+          remediation =
+            "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
+              "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
+              "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
+              "\"Fail-closed on unverifiable writes\" section."
+        )
+        val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+        throw new ContractViolationException(result, explain(contract, translated.plan, result))
       case _ =>
-        () // not a write; nothing to gate
+        () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
     }
   }
 
