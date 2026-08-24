@@ -5,7 +5,15 @@ package com.example.sparkadapter
 
 import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable => SparkCatalogTable}
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, ReplaceTableAsSelect}
+import org.apache.spark.sql.catalyst.plans.logical.{
+  AppendData,
+  CreateTableAsSelect,
+  LogicalPlan,
+  OverwriteByExpression,
+  OverwritePartitionsDynamic,
+  ReplaceTableAsSelect,
+  RowLevelWrite
+}
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -271,6 +279,37 @@ private[sparkadapter] object WriteCommandSupport {
       )
   }
 
+  // `.writeTo(...).overwritePartitions()` - Spark's "dynamic partition
+  // overwrite" (replace only the partitions the query's rows actually
+  // touch, leaving the rest untouched). Confirmed empirically (a real
+  // Iceberg-enabled session, not assumed - see docs/SPARK_ADAPTER.md's
+  // Iceberg section) to be a real, previously-unrecognized write shape:
+  // Command-shaped, not on FailClosedCommands' safe list, so it was
+  // already failing closed rather than silently passing - this closes it
+  // for real instead. Exact same NamedRelation-`table`-plus-`query` shape
+  // as AppendData/OverwriteByExpression above (confirmed via `V2WriteCommand`,
+  // the shared supertype all three implement), so it reuses the same two
+  // helpers rather than re-deriving anything connector- or shape-specific.
+  // Maps to the contract's coarse-grained "overwrite" saveMode, the same
+  // approximation OverwriteByExpression's own conditional/dynamic case
+  // already makes - StructuralVerifier's save-mode check doesn't
+  // distinguish "overwrite everything" from "overwrite only the touched
+  // partitions" any more than it does "overwrite matching a predicate".
+  private val overwritePartitionsDynamic: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: OverwritePartitionsDynamic =>
+      val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
+      val (outputSchema, generatedColumnsDiagnostic) =
+        outputSchemaWithGeneratedColumns(cmd.table, cmd.query, "OverwritePartitionsDynamic")
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = format,
+        saveMode = Some("overwrite"),
+        outputSchema = outputSchema,
+        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic)
+      )
+  }
+
   // `.format("delta").saveAsTable(...)` on a *new* table, and
   // `.writeTo(...).createOrReplace()` - confirmed empirically to both
   // analyze to this V2 command (not CreateDataSourceTableAsSelectCommand,
@@ -283,18 +322,7 @@ private[sparkadapter] object WriteCommandSupport {
   // V2 counterpart of `cmd.table.provider` above.
   private val replaceTableAsSelect: PartialFunction[LogicalPlan, WriteCommandInfo] = {
     case cmd: ReplaceTableAsSelect =>
-      val (location, diagnostic) = cmd.name match {
-        case ri: ResolvedIdentifier =>
-          val qualified = qualifiedIdentifier(ri.catalog, ri.identifier)
-          val msg = s"No physical location resolved yet for new/replaced table '$qualified' " +
-            "(ReplaceTableAsSelect names a table that doesn't exist until this write runs); " +
-            "using its qualified catalog identifier as the location"
-          (qualified, Some(Diagnostic("ReplaceTableAsSelect", msg)))
-        case other =>
-          val msg = s"Could not resolve a table identifier from ReplaceTableAsSelect's unresolved " +
-            s"name (${other.getClass.getSimpleName}); using its toString as a best-effort location"
-          (other.toString, Some(Diagnostic("ReplaceTableAsSelect", msg)))
-      }
+      val (location, diagnostic) = v2CreateOrReplaceLocation(cmd.name, "ReplaceTableAsSelect")
       WriteCommandInfo(
         location = location,
         query = cmd.query,
@@ -309,6 +337,59 @@ private[sparkadapter] object WriteCommandSupport {
         diagnostic = diagnostic
       )
   }
+
+  // `.writeTo(...).create()` - explicit-create V2 CTAS (fails if the
+  // table already exists, unless `ignoreIfExists` - `CREATE TABLE IF NOT
+  // EXISTS ... AS SELECT`). Confirmed empirically (a real Iceberg-enabled
+  // session, not assumed) to be a real, previously-unrecognized write
+  // shape distinct from `ReplaceTableAsSelect` above - `.saveAsTable()`
+  // and `.writeTo(...).createOrReplace()` both map to REPLACE semantics
+  // under a V2 catalog (confirmed via the same probe), but a bare,
+  // explicit `.writeTo(...).create()` produces this separate command -
+  // was Command-shaped, not on FailClosedCommands' safe list, so it was
+  // already failing closed rather than silently passing; not
+  // Iceberg-specific - any DSv2-catalog connector's explicit-create CTAS
+  // hits the identical gap, closed here once for all of them. Same
+  // `name`/`tableSpec`/`query` shape as ReplaceTableAsSelect, so it
+  // reuses the same location-resolution helper.
+  private val createTableAsSelect: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: CreateTableAsSelect =>
+      val (location, diagnostic) = v2CreateOrReplaceLocation(cmd.name, "CreateTableAsSelect")
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = cmd.tableSpec.provider,
+        // ignoreIfExists distinguishes CREATE TABLE IF NOT EXISTS (silently
+        // skip if the table's already there) from a bare CREATE TABLE
+        // (error if it is) - the same distinction SaveMode.Ignore/
+        // SaveMode.ErrorIfExists make on the V1 side.
+        saveMode = Some(if (cmd.ignoreIfExists) "ignore" else "error"),
+        outputSchema = cmd.query.schema,
+        diagnostic = diagnostic
+      )
+  }
+
+  /** Shared by `replaceTableAsSelect`/`createTableAsSelect` above: both
+    * commands name their (not-yet-existing, or about-to-be-replaced)
+    * target the same way - a `LogicalPlan` that's a `ResolvedIdentifier`
+    * once analyzed, with no physical storage location yet since the table
+    * doesn't exist until this write actually runs. Kept in one place so
+    * the two can't drift into two subtly different fallback messages for
+    * what's really the same situation.
+    */
+  private def v2CreateOrReplaceLocation(name: LogicalPlan, tag: String): (String, Option[Diagnostic]) =
+    name match {
+      case ri: ResolvedIdentifier =>
+        val qualified = qualifiedIdentifier(ri.catalog, ri.identifier)
+        val msg = s"No physical location resolved yet for new/replaced table '$qualified' " +
+          s"($tag names a table that doesn't exist until this write runs); " +
+          "using its qualified catalog identifier as the location"
+        (qualified, Some(Diagnostic(tag, msg)))
+      case other =>
+        val msg = s"Could not resolve a table identifier from $tag's unresolved " +
+          s"name (${other.getClass.getSimpleName}); using its toString as a best-effort location"
+        (other.toString, Some(Diagnostic(tag, msg)))
+    }
 
   /** Shared by `appendData`/`overwriteByExpression` above and
     * `replaceTableAsSelect`'s `ResolvedIdentifier` case: the exact same
@@ -329,24 +410,35 @@ private[sparkadapter] object WriteCommandSupport {
     * `StreamingRelationV2` read case.
     *
     * Three tiers, not two — confirmed necessary empirically, not assumed:
-    * `.saveAsTable(...)`/`.writeTo(...).createOrReplace()` on a *new*
-    * table produces both a top-level `ReplaceTableAsSelect` (handled by
-    * `replaceTableAsSelect` above) *and* an internal, nested `AppendData`
+    * `.saveAsTable(...)`/`.writeTo(...).createOrReplace()`/`.create()` on
+    * a *new* table produces both a top-level `ReplaceTableAsSelect`/
+    * `CreateTableAsSelect` (handled by `replaceTableAsSelect`/
+    * `createTableAsSelect` above) *and* an internal, nested `AppendData`
     * against a `StagedTable` (Spark's own public 2-phase-commit protocol
     * for atomic CTAS/RTAS — Delta's `StagedDeltaTableV2` implements it) —
-    * both visible to `injectCheckRule` for the same one `.saveAsTable()`
-    * call. A `StagedTable`'s `properties()` has no `"location"` yet (the
-    * table doesn't physically exist until commit), so without this middle
-    * tier the two writes would resolve to two different, mismatched
-    * locations for what's really one destination — the outer command's
-    * qualified identifier, and the inner one's bare, unqualified
-    * `Table.name()` — and whichever one a contract's declared location
-    * matched, the other would fail with `OUTPUT_LOCATION_MISMATCH`,
-    * aborting a genuinely contract-satisfying write. `DataSourceV2Relation`'s
-    * own `catalog`/`identifier` fields (confirmed populated even for a
-    * staged table, unlike its `Table.properties()`) give the same
-    * qualified form `qualifiedIdentifier` above computes from
-    * `ReplaceTableAsSelect`'s `ResolvedIdentifier` — the two now always
+    * both visible to `injectCheckRule` for the same one call. Without this
+    * middle tier the two writes would resolve to two different, mismatched
+    * locations for what's really one destination, and whichever one a
+    * contract's declared location matched, the other would fail with
+    * `OUTPUT_LOCATION_MISMATCH`, aborting a genuinely contract-satisfying
+    * write.
+    *
+    * The tier is keyed on `StagedTable` itself (Spark's own public marker
+    * for "not committed yet"), not on whether `properties()` happens to
+    * omit `"location"` — confirmed empirically, the hard way, that the
+    * latter doesn't generalize: Delta's `StagedDeltaTableV2` reports no
+    * `"location"` pre-commit, but Iceberg's staged table *does* report one
+    * (a real path that turned out not to match `CreateTableAsSelect`'s own
+    * qualified-identifier resolution — caught by a real
+    * `OUTPUT_LOCATION_MISMATCH` test failure, not assumed to generalize
+    * from the Delta case). A staged table's reported location, even when
+    * present, isn't trustworthy for this purpose - the table isn't
+    * committed yet - so `StagedTable` forces the qualified-identifier tier
+    * unconditionally, before `tableLocationAndFormat` is even consulted.
+    * `DataSourceV2Relation`'s own `catalog`/`identifier` fields (confirmed
+    * populated even for a staged table) give the same qualified form
+    * `qualifiedIdentifier` above computes from `ReplaceTableAsSelect`'s/
+    * `CreateTableAsSelect`'s own `ResolvedIdentifier` — the two now always
     * agree for the same table by construction, not by coincidence.
     *
     * Falls back to the relation's own `name()` only when neither a
@@ -355,15 +447,19 @@ private[sparkadapter] object WriteCommandSupport {
   private def namedRelationLocationAndFormat(table: NamedRelation): (String, Option[String], Option[Diagnostic]) =
     table match {
       case v2: DataSourceV2Relation =>
-        val (location, format) = SparkPlanAdapter.tableLocationAndFormat(v2.table)
+        val (rawLocation, format) = SparkPlanAdapter.tableLocationAndFormat(v2.table)
+        val location =
+          if (v2.table.isInstanceOf[org.apache.spark.sql.connector.catalog.StagedTable]) None else rawLocation
         location match {
           case Some(loc) => (loc, format, None)
           case None =>
             (v2.catalog, v2.identifier) match {
               case (Some(catalog), Some(identifier)) =>
                 val qualified = qualifiedIdentifier(catalog, identifier)
-                val msg = s"No 'location' property on write target '$qualified' (likely a staged table pending " +
-                  "an atomic CREATE/REPLACE commit); using its qualified catalog identifier as the location"
+                val msg = s"No physical location trusted for write target '$qualified' (a StagedTable pending " +
+                  "an atomic CREATE/REPLACE commit isn't committed yet, so any location it reports isn't " +
+                  "trustworthy - confirmed empirically that this varies by connector); using its qualified " +
+                  "catalog identifier as the location"
                 (qualified, format, Some(Diagnostic("V2Write", msg)))
               case _ =>
                 val msg = s"No 'location' property and no catalog/identifier on write target '${table.name}'; " +
@@ -573,6 +669,47 @@ private[sparkadapter] object WriteCommandSupport {
     "org.apache.spark.sql.delta.commands.DeleteCommand"
   )
 
+  // Row-level DML (MERGE/UPDATE/DELETE) for connectors implementing
+  // Spark's standard DSv2 `SupportsRowLevelOperations` - Iceberg's
+  // mechanism, confirmed empirically (a real Iceberg-enabled session, not
+  // assumed) to be genuinely different from Delta's: Spark's own
+  // `RewriteRowLevelOperation` optimizer-rule family rewrites MERGE/
+  // UPDATE/DELETE into one of two *stable, public* Spark classes -
+  // `ReplaceData` (copy-on-write) or `WriteDelta` (merge-on-read) - both
+  // implementing the shared `RowLevelWrite` trait (which extends
+  // `V2WriteCommand`, the same `table`/`query` shape `AppendData`/
+  // `OverwriteByExpression`/`OverwritePartitionsDynamic` already share).
+  // Unlike `deltaRowLevelDml` above, this needs no reflection at all -
+  // `RowLevelWrite` is a real, importable Spark type, not a
+  // connector-internal one - so this is a genuinely connector-agnostic
+  // case: any future DSv2 connector using Spark's standard row-level-
+  // operation API is covered by this same case, not a per-connector copy.
+  //
+  // Scope mirrors `deltaRowLevelDml` deliberately, for the same reason:
+  // structural verification only. `cmd.table`'s *current* schema is what's
+  // checked against the contract (not `cmd.query`, which is the rewritten
+  // rows to write for the matched/unmatched branches, not the whole
+  // committed table) - the actual row-level logic (the merge condition,
+  // which columns an UPDATE touches, whether a DELETE is unconditional)
+  // has no IR representation and isn't checked; see ROADMAP.md's "Full
+  // semantic DML verification" item and docs/ADDING_A_SPARK_CONNECTOR.md's
+  // "Known limitations" for why that's deliberately out of scope here,
+  // not an oversight. `saveMode = None`, same reasoning as
+  // `deltaRowLevelDml`: in-place mutation isn't append/overwrite/ignore/
+  // error.
+  private val dsv2RowLevelWrite: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: RowLevelWrite =>
+      val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
+      WriteCommandInfo(
+        location = location,
+        query = cmd.query,
+        format = format,
+        saveMode = None,
+        outputSchema = cmd.table.schema,
+        diagnostic = diagnostic
+      )
+  }
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -585,7 +722,8 @@ private[sparkadapter] object WriteCommandSupport {
     */
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
     insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
-      appendData orElse overwriteByExpression orElse replaceTableAsSelect orElse deltaRowLevelDml
+      appendData orElse overwriteByExpression orElse overwritePartitionsDynamic orElse replaceTableAsSelect orElse
+      createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

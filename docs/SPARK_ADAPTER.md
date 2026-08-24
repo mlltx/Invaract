@@ -620,6 +620,199 @@ surface nothing could consume. That's real, scoped future work, tracked
 explicitly in ROADMAP.md's "Full semantic DML verification" item, not a
 silent gap.
 
+## Iceberg support
+
+Added via the `add-spark-connector` skill's process
+(docs/ADDING_A_SPARK_CONNECTOR.md), investigated against a real
+Iceberg-enabled session
+(`spark.sql.extensions=...IcebergSparkSessionExtensions`,
+`spark.sql.catalog.local=...SparkCatalog` with `type=hadoop`, no external
+metastore needed for local/test use). Pinned to
+`org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.11.0` — a checked
+compatibility issue before pinning, per Phase 0's "any known
+compatibility issues" step: 1.10.0 had a confirmed `NoSuchMethodError`
+from an Avro 1.11/1.12 API mismatch against Spark 3.5/3.4
+([apache/iceberg#14232](https://github.com/apache/iceberg/issues/14232)),
+fixed via an Avro 1.12.1 upgrade that landed before 1.11.0. Test-scope
+only, same reasoning as `delta-spark` above — no compile-time or runtime
+dependency for a non-Iceberg job.
+
+Iceberg is a "pure" DataSourceV2 connector — its catalog (`SparkCatalog`/
+`SparkSessionCatalog`) is the same *kind* of thing Delta's `DeltaCatalog`
+is, but unlike Delta, Iceberg's *reads* never happen to be a
+`LogicalRelation`-wrapped V1 relation the way Delta's `DeltaLog$$anon$2`
+is. That difference is what made this investigation surface two real
+gaps that predate Iceberg entirely — general DSv2-connector gaps Delta's
+own investigation never hit, because Delta's read/write shapes happened
+to avoid them:
+
+- **Batch `DataSourceV2Relation` reads had no translation case at all.**
+  `SparkPlanAdapter.Translator.translatePlan` had cases for
+  `LogicalRelation` (V1 batch), `StreamingRelation` (V1 streaming), and
+  `StreamingRelationV2` (V2 streaming) — nothing for a *batch* V2 catalog
+  read, so it fell through to the generic `Unsupported` fallback.
+  Confirmed by direct code inspection (not assumed): `StructuralVerifier.collectReads`
+  only recognizes `ir.Read` nodes, so any pure-V2 connector's catalog
+  reads could never satisfy a contract's declared input — the same class
+  of bug streaming reads had before that was fixed (see "A read
+  discovered through Delta's own investigation" note below), just for a
+  batch read this time. Fixed by adding a `DataSourceV2Relation` case
+  reusing `tableLocationAndFormat` (the same `Table.properties()` lookup
+  `StreamingRelationV2`'s case and the write side's `AppendData`/
+  `OverwriteByExpression` cases already share) — connector-agnostic, not
+  Iceberg-specific. `ContractEnforcementRule.verifyOrThrow`'s input-schema
+  collection needed the matching case too (both were previously
+  duplicated three times across two `plan.collect` sites; adding a fourth
+  case to both by hand was the moment that duplication got extracted into
+  one shared `recognizedRead: PartialFunction`, reused by both sites, the
+  same "one source of truth" reasoning `WriteCommandSupport.combined`
+  already applies to write recognition).
+- **`CreateTableAsSelect` (explicit-create V2 CTAS) and
+  `OverwritePartitionsDynamic` had no `WriteCommandSupport` case.**
+  `.writeTo(...).create()` (fails if the table exists, unless
+  `ignoreIfExists` — `CREATE TABLE IF NOT EXISTS ... AS SELECT`) is a
+  *different* Spark command than `.saveAsTable()`/`.writeTo(...).createOrReplace()`
+  (`ReplaceTableAsSelect`, already covered) — genuinely never probed for
+  any connector before, Delta included, since nothing had tried a bare
+  `.writeTo(...).create()`. Both were Command-shaped, on neither
+  `WriteCommandSupport` nor `FailClosedCommands`' safe list, so both were
+  already failing closed rather than silently passing — real gaps, now
+  closed for every DSv2 connector at once (`createTableAsSelect` reuses
+  `ReplaceTableAsSelect`'s own location-resolution helper, renamed
+  `v2CreateOrReplaceLocation`; `overwritePartitionsDynamic` reuses
+  `AppendData`/`OverwriteByExpression`'s `namedRelationLocationAndFormat`
+  directly, since `OverwritePartitionsDynamic` shares the identical
+  `NamedRelation table` + `LogicalPlan query` shape via the same
+  `V2WriteCommand` supertype).
+- **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) goes through a genuinely
+  different, more standard mechanism than Delta's.** Confirmed
+  empirically: Iceberg implements Spark's own `SupportsRowLevelOperations`
+  API, and Spark's `RewriteRowLevelOperation` optimizer-rule family
+  rewrites `MERGE`/`UPDATE`/`DELETE` into one of two *stable, public*
+  Spark classes — `ReplaceData` (copy-on-write) or `WriteDelta`
+  (merge-on-read) — both implementing the shared `RowLevelWrite` trait
+  (itself extending `V2WriteCommand`, the same shape `AppendData` uses).
+  This is a real, structural difference from Delta's proprietary
+  `MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` classes, which
+  needed reflection (`deltaRowLevelDml`) precisely because they're
+  Delta-internal, undocumented, no-cross-version-guarantee types. The new
+  `dsv2RowLevelWrite` case needs no reflection at all — `RowLevelWrite`
+  is a real, importable Spark type — making it a genuinely
+  connector-agnostic case: any future DSv2 connector using Spark's
+  standard row-level-operation API is covered by this same case, not a
+  per-connector copy, unlike `deltaRowLevelDml`. Scope mirrors
+  `deltaRowLevelDml` deliberately: structural verification only (the
+  target's *current* schema against the contract; the merge
+  condition/update columns/delete predicate itself is not checked — see
+  ROADMAP.md's "Full semantic DML verification" item).
+- **A second staged-table trap, this time in the opposite direction from
+  Delta's.** `.writeTo(...).create()`/`.saveAsTable()` on a new table
+  produces both the outer `CreateTableAsSelect`/`ReplaceTableAsSelect`
+  *and* a nested `AppendData` against a `StagedTable` (Spark's public
+  2-phase-commit protocol for atomic CTAS/RTAS) — the same "shared
+  pitfall" documented above for Delta, whose fix's own doc comment
+  claimed the two "now always agree... not by coincidence." That claim
+  didn't generalize: confirmed by a real `OUTPUT_LOCATION_MISMATCH` test
+  failure, not assumed, that Iceberg's `StagedTable` *does* report a
+  `"location"` property pre-commit (Delta's doesn't), so the outer
+  command's qualified-identifier resolution and the inner `AppendData`'s
+  physical-path resolution disagreed. Fixed properly this time: keyed on
+  the `StagedTable` marker interface itself (Spark's own "not committed
+  yet" signal), not on whether `properties()` happens to omit
+  `"location"` — a staged table's reported location isn't trustworthy
+  regardless of whether a given connector happens to populate it, so
+  `namedRelationLocationAndFormat` now forces the qualified-identifier
+  tier unconditionally whenever `v2.table.isInstanceOf[StagedTable]`,
+  before even consulting `tableLocationAndFormat`.
+- **`CALL <catalog>.system.<proc>(...)` (Iceberg's maintenance-operation
+  mechanism — `rewrite_data_files`/`expire_snapshots`/
+  `rollback_to_snapshot`/etc.) is deliberately left unmodeled.** All of
+  Iceberg's own SQL-extension commands are `Command`-shaped classes
+  found via the same reflective jar-scan technique used for Delta
+  (`JarFile` + `Class.forName` + `Command.isAssignableFrom`, this time
+  against `iceberg-spark-runtime-3.5_2.12` — 14 classes found). Thirteen
+  are genuinely metadata/ref-only (branch/tag create-or-replace/drop,
+  partition-spec and identifier-field evolution, write-distribution/
+  ordering config, view create/drop/show) and are now on
+  `FailClosedCommands`' safe list. The fourteenth, `Call`, represents
+  *every* system procedure through one shared class — no structural way
+  to tell which procedure a given instance invokes without inspecting
+  runtime arguments, and those procedures span genuinely safe
+  (`expire_snapshots`) to genuinely row-content-mutating
+  (`rollback_to_snapshot`). Safe-listing the class would silently pass
+  all of them; left off both lists instead, so every `CALL` fails closed
+  today, confirmed by a real test — a real, documented limitation (see
+  docs/ADDING_A_SPARK_CONNECTOR.md's "Known limitations"), not an
+  oversight.
+- **`iceberg-spark-runtime-3.5_2.12:1.11.0`'s own published Maven POM is
+  missing a real dependency.** Confirmed empirically, the hard way (a
+  `NoClassDefFoundError: scala/jdk/CollectionConverters$` escaping a
+  `scala.util.Try` wrapper — `LinkageError` isn't `NonFatal`, so it isn't
+  caught): the runtime jar's SQL-extensions parser
+  (`IcebergSparkSqlExtensionsParser.isIcebergProcedure`, exercised
+  specifically by `CALL` syntax) needs `scala.jdk.CollectionConverters`
+  (native in Scala 2.13, backported for 2.12 via
+  `scala-collection-compat`), but the jar's own POM doesn't declare that
+  dependency. Added as a `% "test"` dependency here, purely so this
+  module's own test suite can exercise `CALL`-based operations against a
+  real session — a real Invariant user running Iceberg `CALL` procedures
+  in their own job would need this on their own runtime classpath too,
+  independent of anything `spark-adapter` does.
+
+### Delta feature-by-feature confidence pass, revisited: a read discovered through Delta's own investigation
+
+Streaming reads (`StreamingRelation`/`StreamingRelationV2`) were already
+closed before this Iceberg pass — see the Delta operation-surface ledger
+above. The batch `DataSourceV2Relation` gap this section opens with is
+the same *class* of bug (a read shape with no translation case, silently
+never satisfying a contract's `input`), just for the one read shape
+Delta's own investigation never exercised, because Delta's batch reads
+happen to be `LogicalRelation`-wrapped. Documented here, not folded
+silently into the Delta section above, specifically so a future
+connector's investigation can search for "batch DataSourceV2Relation"
+and find this, rather than rediscovering the same gap a third time.
+
+### Iceberg operation-surface coverage ledger
+
+| Operation | Status | Evidence / next step |
+|---|---|---|
+| `.load(path)` (bare filesystem path, unqualified) | 🚫 **Not Iceberg's supported access pattern** | Confirmed empirically: a bare `.format("iceberg").save(path)`/`.load(path)` with no catalog qualification fails hard (`NoClassDefFoundError` reaching for a default `HiveCatalog` no metastore client is on the classpath for), regardless of named-catalog config. Not a gap to close — Iceberg's real path-based mechanism is a path identifier *under* a named Hadoop-type catalog (`` local.`/abs/path` ``, confirmed working, covered by the `AppendData`/`DataSourceV2Relation` rows below). |
+| Catalog table read (batch) | ✅ **Covered — closed this pass** | New `DataSourceV2Relation` case in `SparkPlanAdapter`, connector-agnostic. `IcebergConnectorSpec`'s "translates a batch Iceberg catalog read" test, plus a direct-construction no-location fallback test in `SparkPlanAdapterSpec`. |
+| Time travel / snapshot reads (`VERSION AS OF`, `snapshot-id` option) | ✅ Covered | Both resolve to the same `DataSourceV2Relation` shape as an ordinary catalog read (confirmed via probe — the time-travel option doesn't change the node type), so the new case covers them without separate handling. No dedicated permanent test beyond the plain catalog-read one — the shape is identical. |
+| Streaming read (`readStream`) | ✅ Covered | `StreamingRelationV2`, already generic (closed during the Delta pass). Confirmed for Iceberg via `IcebergConnectorSpec`'s streaming `.toTable()` test (exercises both the read and write halves together). |
+| Change-data-feed / incremental read (`start-snapshot-id`) | ✅ Covered | Same `DataSourceV2Relation` shape as time travel — confirmed via probe, no separate case needed. |
+| `.save(path)` (bare filesystem path) | 🚫 **N/A — see the `.load(path)` row above** | Same finding, write side. |
+| `.saveAsTable(...)`, new table | ✅ Covered | `ReplaceTableAsSelect`, already generic (closed during the Delta pass) — confirmed for Iceberg via probe (`.saveAsTable()` on a new table maps to `ReplaceTableAsSelect` under a V2 catalog, same as Delta). |
+| `.saveAsTable(...)`, existing table (append) | ✅ Covered | `AppendData`, already generic. `IcebergConnectorSpec`'s PASS/FAIL pair. |
+| `.insertInto(...)` | ✅ Covered | Same `AppendData` shape, confirmed via probe. |
+| `.writeTo(...).append()`/`.overwrite(cond)` | ✅ Covered | `AppendData`/`OverwriteByExpression`, already generic. |
+| `.writeTo(...).overwritePartitions()` | ✅ **Covered — closed this pass** | New `OverwritePartitionsDynamic` case, connector-agnostic. `IcebergConnectorSpec`'s PASS test. |
+| `.writeTo(...).create()` | ✅ **Covered — closed this pass** | New `CreateTableAsSelect` case, connector-agnostic. `IcebergConnectorSpec`'s PASS/FAIL pair plus a direct-inspection `saveMode` test. |
+| `.writeTo(...).createOrReplace()`/`.replace()` | ✅ Covered | `ReplaceTableAsSelect`, already generic — confirmed via probe. |
+| Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally, closed this pass** | New `dsv2RowLevelWrite` case (`ReplaceData`/`WriteDelta`, via the standard `RowLevelWrite` trait — no reflection, unlike Delta's `deltaRowLevelDml`), connector-agnostic. Same structural-only scope as Delta's row-level DML row. `IcebergConnectorSpec`'s PASS/FAIL pair for MERGE, plus PASS tests for UPDATE/DELETE. |
+| Streaming write (`writeStream`) | ✅ Covered | `WriteToStream`, already generic (closed during the Delta pass) — confirmed for Iceberg via `IcebergConnectorSpec`'s streaming `.toTable()` test, using the `catalogTable`-populated fallback tier (Iceberg's streaming sink didn't need the reflective `DeltaSink`-style fallback Delta's did). |
+| Maintenance operations that touch data (`CALL system.*` procedures) | 🚫 **Fails closed, deliberately left unmodeled** | See "`CALL`... is deliberately left unmodeled" above. Next step: procedure-name-aware classification (inspect the `Call` node's procedure identifier/arguments at runtime, not just its class) — a genuinely bigger feature, not a small addition. `IcebergConnectorSpec`'s dedicated fail-closed test proves the rejection. |
+| Iceberg's own metadata/ref DDL (branch/tag/partition-spec/identifier-fields/write-ordering/views) | ✅ Covered by policy classification | 13 classes added to `FailClosedCommands`' safe list, reasoning in that file's own comment. `IcebergConnectorSpec`'s regression test proves none are blocked under an active, otherwise-rejecting contract. |
+
+### Iceberg feature-surface coverage ledger
+
+Iceberg's own distinguishing behaviors beyond its write-command shapes -
+per docs/ADDING_A_SPARK_CONNECTOR.md's "The feature surface", a
+connector-specific list, not the fixed operation-surface template above.
+
+| Feature | Status | Evidence / next step |
+|---|---|---|
+| Copy-on-write vs. merge-on-read row-level operations | ✅ Confirmed | Both modes rewrite to the same `RowLevelWrite`-family shape (`ReplaceData` for copy-on-write, `WriteDelta` for merge-on-read) — `dsv2RowLevelWrite` matches the shared trait, so either mode is recognized identically. `IcebergConnectorSpec`'s MERGE/UPDATE/DELETE tests exercise Iceberg's default mode; not separately tested per mode (the mechanism is provably mode-agnostic by construction — it matches the trait both extend, not either concrete class). |
+| Staged-table location reporting differs from Delta's | 🔧 **Found and fixed** | See "A second staged-table trap" above. Fixed by keying the location-resolution fallback on the `StagedTable` marker interface itself, not on whether a `"location"` property happens to be absent. |
+| Partition evolution (`ADD`/`DROP`/`REPLACE PARTITION FIELD`) | ✅ Confirmed | Metadata-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises `ADD PARTITION FIELD` directly under an active contract. |
+| Branching and tagging (named refs to a snapshot) | ✅ Confirmed | Metadata/ref-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises create/drop of both directly. |
+| `CALL` system procedures (maintenance) | 🔧 **Found — deliberately left unmodeled, not fixed** | See the operation-surface row above; this is a feature whose correct disposition *is* "fails closed for everything, including the safe procedures," not a bug to fix in this pass. |
+| Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
+| `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
+| Deletion vectors / merge-on-read positional deletes | ❓ **Not investigated** | Iceberg 3.0+ has its own deletion-vector spec (V3), analogous to Delta's — not probed this pass. Next step: same technique as Delta's deletion-vector confirmation (a real DELETE against a table with deletion vectors enabled, confirmed to route through the same `dsv2RowLevelWrite` case with no special-casing needed, or found otherwise). |
+| Schema evolution on write (`spark.sql.iceberg.merge-schema` / `mergeSchema` option) | ❓ **Not investigated** | Iceberg has its own schema-evolution mechanism, likely a real analog to Delta's `schemaEvolutionEnabled()` false-rejection bug (`outputSchema` for `AppendData`/`OverwritePartitionsDynamic` currently comes from `cmd.query.schema` alone — an evolving write's newly-added columns may not be visible there any more than they were for Delta's MERGE). Next step: a real probe against an Iceberg table with schema evolution enabled, the same way Delta's was found. |
+| Identity/generated columns | ❓ **Not investigated** | Iceberg doesn't have Delta-style `GENERATED ALWAYS AS` computed columns as a first-class concept (its closest analog is partition transforms, already covered under partition evolution above), but this wasn't confirmed by directly checking Iceberg's own spec — flagged as unconfirmed rather than assumed absent. |
+
 ## Fail-closed on unverifiable writes
 
 Every translation gap above — `.saveAsTable()` before
@@ -1256,6 +1449,50 @@ artificial object purpose-built to defeat the guard. The remaining five
 survivors (`catalogTable.isDefined` ×2, the `WriteFiles`-unwrap pair, and
 `DeltaSink`'s format check) predate this sub-phase and are already
 accounted for above/in ROADMAP.md.
+
+#### Iceberg support
+
+Scoped `sbt stryker --mutate "{WriteCommandSupport.scala,SparkPlanAdapter.scala,ContractEnforcementRule.scala,FailClosedCommands.scala}"`
+(all four files this sub-phase touched) scored **80.65%** (of total) /
+**81.97%** (of covered code) — 50/61 non-excluded mutants killed.
+
+Two real survivors were in this pass's own new code, both killed rather
+than left:
+
+- **`CreateTableAsSelect`'s `cmd.ignoreIfExists` branch** (deciding
+  between `saveMode = "error"`/`"ignore"`) survived forced to both `true`
+  and `false` — no existing test distinguished a bare
+  `.writeTo(...).create()` from `CREATE TABLE IF NOT EXISTS ... AS
+  SELECT`. Killed with a new direct-inspection test capturing both real
+  plan shapes and asserting `saveMode` for each
+  (`IcebergConnectorSpec`'s "CreateTableAsSelect's saveMode reflects
+  ignoreIfExists").
+- **The new `DataSourceV2Relation` read case's no-location diagnostic
+  branch** (`SparkPlanAdapter.scala`) survived because every real test
+  exercising it happened to resolve a genuine location (a real Iceberg
+  catalog table always does) — the mutant only diverges when the
+  location is genuinely absent, a case no real Iceberg session in this
+  test suite naturally produces. Killed with a directly-constructed
+  minimal `Table` (implementing just `name()`/`schema()`/`capabilities()`
+  — `properties()` has an empty-map default) wrapped in a real
+  `DataSourceV2Relation` via `DataSourceV2Relation.create(...)`, no
+  session needed at all (`SparkPlanAdapterSpec`'s "falls back to a
+  DataSourceV2Relation's name() with a diagnostic when its Table reports
+  no location") — the same technique that would be needed to kill
+  `StreamingRelationV2`'s still-surviving analogous mutant (see below),
+  left for a future pass since it predates this one.
+
+The remaining 12 survivors all predate this sub-phase and are already
+documented (here or in ROADMAP.md's earlier sub-phases):
+`deltaDmlClassNames`'s guard, the `WriteFiles`-unwrap pair, `DeltaSink`'s
+format check, `deltaRowLevelDml`'s `catalogTable.isDefined` diagnostic
+branch ×2, `deltaGeneratedFields`'s `DeltaTableV2` guard, the
+`JDBCRelation` near-equivalent, `StreamingRelationV2`'s own no-location
+branch (the streaming counterpart to the batch case just fixed above —
+not addressed this pass, since closing it isn't part of what Iceberg's
+investigation required), `StreamingRelation`'s path-option check, the
+Hive-metastore-unavailable `NoCoverage` gap, and `LogicalRelation`'s
+`usedFallback` branch.
 
 #### Incremental checking in CI
 

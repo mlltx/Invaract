@@ -601,6 +601,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented as such rather than silently skipped. See
   docs/SPARK_ADAPTER.md's new "Delta feature-by-feature confidence pass"
   subsection and ROADMAP.md for full details.
+- **Apache Iceberg support**: second connector onboarded via the
+  `add-spark-connector` skill's process (`iceberg-spark-runtime-3.5_2.12`
+  1.11.0, test-scope only). Found and closed two real, connector-agnostic
+  gaps that predate Iceberg entirely — batch DataSourceV2 catalog reads
+  had no translation case at all, and explicit-create V2 CTAS
+  (`.writeTo(...).create()`) / dynamic-partition overwrite
+  (`.writeTo(...).overwritePartitions()`) had no write-recognition case,
+  both silently failing closed until now. Closed row-level DML
+  (`MERGE`/`UPDATE`/`DELETE`) via a new, connector-agnostic case matching
+  Spark's own standard `RowLevelWrite` API (`ReplaceData`/`WriteDelta`) —
+  no reflection needed, unlike Delta's proprietary DML classes. Found and
+  fixed a second staged-table location-resolution bug (Iceberg's staged
+  table reports a location Delta's doesn't, breaking the fix's own
+  "always agree" claim from the prior pass) by keying the fallback on
+  Spark's `StagedTable` marker interface instead of property presence.
+  Deliberately left Iceberg's `CALL system.*` maintenance procedures
+  unmodeled (one shared Spark class covers every procedure, safe and
+  unsafe alike, with no structural way to tell them apart) — documented
+  as a real limitation, not silently passed. See docs/SPARK_ADAPTER.md's
+  new "Iceberg support" section (including both coverage ledgers) and
+  ROADMAP.md for full details.
 
 ### Fixed
 

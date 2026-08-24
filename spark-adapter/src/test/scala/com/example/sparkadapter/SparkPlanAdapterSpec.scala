@@ -8,6 +8,9 @@ import com.example.ir._
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.connector.catalog.{Table => V2Table, TableCapability}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually._
 import org.scalatest.funsuite.AnyFunSuite
@@ -438,6 +441,32 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     } finally {
       conn.close()
     }
+  }
+
+  // A minimal, directly-constructed `Table` (no real catalog/session
+  // needed - `Table.properties()` has an empty-map default, so this
+  // implements only the interface's other two abstract methods) with no
+  // `"location"` property - the batch DataSourceV2Relation counterpart to
+  // StreamingRelationV2's own no-location fallback path. Confirmed via a
+  // real Iceberg-enabled session elsewhere (IcebergConnectorSpec) that a
+  // resolved catalog table's read finds a real location; this is the
+  // other half - proving the fallback diagnostic actually fires when one
+  // isn't found, not just that the happy path works.
+  test("falls back to a DataSourceV2Relation's name() with a diagnostic when its Table reports no location") {
+    val fakeTable = new V2Table {
+      override def name(): String = "fake_v2_table"
+      override def schema(): StructType = StructType(Seq(StructField("id", LongType)))
+      override def capabilities(): java.util.Set[TableCapability] = java.util.Collections.emptySet()
+    }
+    val relation = DataSourceV2Relation.create(fakeTable, None, None)
+
+    val result = SparkPlanAdapter.translate(relation)
+
+    result.plan match {
+      case Read(DatasetRef(location), None) => assert(location == "fake_v2_table")
+      case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.nonEmpty, "a Table with no location property should report a fallback diagnostic")
   }
 
   // Investigated empirically against a real Delta-enabled session before

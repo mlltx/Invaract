@@ -1602,6 +1602,125 @@ regression test — no more relying on throwaway probe evidence.
       findings were captured as permanent tests/docs — no probe evidence
       left standing in as a substitute for a real regression test.
 
+#### Sub-phase: Iceberg connector support (done)
+
+Second connector onboarded via the `add-spark-connector` skill's
+10-phase process. Pinned `org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.11.0`
+(test-scope only, after checking the connector's own issue tracker per
+Phase 0 — 1.10.0 had a confirmed Avro/Spark-3.5 compatibility bug, fixed
+before 1.11.0). Full findings, the operation-surface and feature-surface
+coverage ledgers, and the per-mutant mutation-testing breakdown are in
+docs/SPARK_ADAPTER.md's "Iceberg support" section — summary here:
+
+- [x] **Two real, connector-agnostic gaps found and closed, that
+      predate Iceberg entirely.** Batch `DataSourceV2Relation` reads had
+      no `SparkPlanAdapter` translation case at all (fell to the generic
+      `Unsupported` fallback, meaning no pure-DSv2 connector's reads
+      could ever satisfy a contract's declared input) — Delta's own
+      reads never hit this because Delta's batch reads happen to be
+      `LogicalRelation`-wrapped V1 relations. `CreateTableAsSelect`
+      (explicit-create V2 CTAS) and `OverwritePartitionsDynamic` had no
+      `WriteCommandSupport` case — both Command-shaped, neither
+      translated nor safe-listed, so both were already failing closed;
+      closed with two new cases reusing existing helpers
+      (`v2CreateOrReplaceLocation`, shared with `ReplaceTableAsSelect`;
+      `namedRelationLocationAndFormat`, shared with `AppendData`/
+      `OverwriteByExpression`).
+- [x] **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) closed via a
+      genuinely different, more standard mechanism than Delta's.**
+      Iceberg implements Spark's own `SupportsRowLevelOperations` API;
+      `MERGE`/`UPDATE`/`DELETE` rewrite to stable, public Spark classes
+      (`ReplaceData`/`WriteDelta`, sharing the `RowLevelWrite` trait) —
+      no reflection needed, unlike Delta's proprietary command classes.
+      New `dsv2RowLevelWrite` case is connector-agnostic: any future
+      DSv2 connector using this standard API is covered automatically.
+      Same structural-only scope as Delta's row-level DML (target schema
+      checked, merge condition/predicate not).
+- [x] **A second staged-table location trap found, in the opposite
+      direction from Delta's — the fix from the row-level-DML sub-phase
+      didn't generalize the way its own doc comment claimed.** Iceberg's
+      `StagedTable` (unlike Delta's) reports a real `"location"`
+      property pre-commit, so the existing "prefer physical location,
+      fall back to qualified identifier" logic produced two
+      *disagreeing* locations for one atomic CTAS/RTAS commit — caught
+      by a real `OUTPUT_LOCATION_MISMATCH` test failure, not assumed to
+      generalize from Delta. Fixed properly: `namedRelationLocationAndFormat`
+      now keys the qualified-identifier fallback on Spark's own
+      `StagedTable` marker interface, not on whether `properties()`
+      happens to omit `"location"` — a staged table's reported location
+      isn't trustworthy regardless of what a given connector populates.
+- [x] **`CALL <catalog>.system.<proc>(...)` (Iceberg's maintenance
+      mechanism) deliberately left unmodeled — a genuinely new
+      classification problem, not solved by extending
+      `FailClosedCommands`' existing per-class approach.** One shared
+      Spark class (`Call`) represents every system procedure
+      (`rewrite_data_files`/`expire_snapshots`/`rollback_to_snapshot`/...),
+      spanning genuinely safe to genuinely row-content-mutating with no
+      structural way to distinguish them by class identity. Safe-listing
+      would silently pass all of them; left off both lists, so every
+      `CALL` fails closed today (confirmed by a real test) — a
+      documented limitation with a next step (procedure-name-aware
+      classification), not an oversight. The other 13 Iceberg SQL-
+      extension commands found via the same reflective jar-scan Delta's
+      used (branch/tag ref management, partition-spec/identifier-field
+      evolution, write-ordering config, view management) are genuinely
+      metadata-only and are on the safe list.
+- [x] **A real gap found in Iceberg's own published Maven artifact, not
+      an Invariant bug.** `iceberg-spark-runtime-3.5_2.12:1.11.0`'s POM
+      doesn't declare `scala-collection-compat`, which its SQL-extensions
+      parser needs specifically for `CALL` syntax — confirmed via a real
+      `NoClassDefFoundError` escaping an existing `Try` wrapper
+      (`LinkageError` isn't `NonFatal`). Added as a `% "test"` dependency
+      so this module's own suite can exercise `CALL`-based operations; a
+      real user hitting this in their own job needs it on their runtime
+      classpath too, independent of `spark-adapter`.
+- [x] **Confirmed Iceberg's own path-based access pattern differs from
+      Delta/Parquet's**, not a gap: a bare `.format("iceberg").save(path)`/
+      `.load(path)` with no catalog qualification fails hard (defaults to
+      an unreachable `HiveCatalog`); Iceberg's real mechanism is a path
+      identifier under a named Hadoop-type catalog
+      (`` local.`/abs/path` ``), confirmed working through the same
+      `AppendData`/`DataSourceV2Relation` cases as any other table.
+- [x] New `IcebergConnectorSpec.scala` (separate SparkSession from
+      `ContractEnforcementRuleSpec` — Delta's and Iceberg's
+      `spark.sql.extensions`/catalog configs can't coexist in one
+      session): translation test for the new read case, PASS/FAIL pairs
+      for every new write case, a direct-inspection test for
+      `CreateTableAsSelect.saveMode`, a fail-closed test for `CALL`, a
+      regression test proving the 13 safe-listed metadata commands
+      aren't blocked, and a streaming-write test confirming
+      `WriteToStream` needed no Iceberg-specific handling. Plus a new
+      direct-construction test in `SparkPlanAdapterSpec.scala` proving
+      the batch-read fallback diagnostic actually fires (not just that
+      the happy path works).
+- [x] Mutation testing scoped to all four changed files
+      (`WriteCommandSupport.scala`, `SparkPlanAdapter.scala`,
+      `ContractEnforcementRule.scala`, `FailClosedCommands.scala`):
+      **80.65%** (of total) / **81.97%** (of covered code) — 50/61
+      non-excluded mutants killed. Both real survivors in this pass's own
+      new code (`CreateTableAsSelect.saveMode`'s `ignoreIfExists` branch;
+      the new batch-read no-location diagnostic) were killed with new
+      tests, not left — see docs/SPARK_ADAPTER.md's "Iceberg support"
+      section for the per-mutant breakdown. The remaining 12 survivors
+      are all pre-existing, already-documented from earlier sub-phases
+      (Delta's `catalogTable.isDefined`/`DeltaTableV2` guards, the
+      `WriteFiles`/`DeltaSink`/`JDBCRelation` near-equivalents, the
+      Hive-metastore-unavailable gap) — none in code this pass touched.
+      Full suite passing (104/104); `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass, including a
+      real jar inspection confirming zero Iceberg classes bundled for
+      non-Iceberg users.
+- [x] `docs/ADDING_A_SPARK_CONNECTOR.md`'s "Known limitations" section —
+      found stale before starting (still described row-level DML/
+      streaming writes/DSv2 catalog writes as unsolved, all closed by
+      the prior Delta pass) — corrected first, so this pass's own
+      classification work was grounded in accurate information rather
+      than repeating a documentation-drift mistake.
+- [x] Both required coverage ledgers (operation surface, feature
+      surface) produced and written into docs/SPARK_ADAPTER.md, ROADMAP.md
+      (this entry), and CHANGELOG.md, per the `add-spark-connector`
+      skill's Phase 11.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

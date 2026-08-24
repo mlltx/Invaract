@@ -189,7 +189,34 @@ private[sparkadapter] object FailClosedCommands {
 
     // -- datasources package - metadata/cache only.
     "org.apache.spark.sql.execution.datasources.CreateTempViewUsing",
-    "org.apache.spark.sql.execution.datasources.RefreshResource"
+    "org.apache.spark.sql.execution.datasources.RefreshResource",
+
+    // -- Iceberg 1.11.0's own SQL-extension commands (found via the same
+    // reflective-jar-scan technique as Delta's, this time against
+    // iceberg-spark-runtime-3.5_2.12) - all thirteen are metadata/ref
+    // operations, never row content: branch/tag create-or-replace/drop
+    // manage a *named pointer* to an existing, immutable snapshot (the
+    // same reasoning a git branch/tag ref would get - creating, moving,
+    // or deleting the pointer doesn't touch any commit's actual content);
+    // partition-spec and identifier-field evolution change how *future*
+    // writes are organized, not any already-committed row; write-
+    // distribution/ordering is a write-planning hint; view create/drop/
+    // show are SQL view definitions, no data of their own (matching
+    // this list's existing view-command entries above). See
+    // docs/SPARK_ADAPTER.md's Iceberg section for the full reasoning.
+    "org.apache.spark.sql.catalyst.plans.logical.AddPartitionField",
+    "org.apache.spark.sql.catalyst.plans.logical.CreateOrReplaceBranch",
+    "org.apache.spark.sql.catalyst.plans.logical.CreateOrReplaceTag",
+    "org.apache.spark.sql.catalyst.plans.logical.DropBranch",
+    "org.apache.spark.sql.catalyst.plans.logical.DropIdentifierFields",
+    "org.apache.spark.sql.catalyst.plans.logical.DropPartitionField",
+    "org.apache.spark.sql.catalyst.plans.logical.DropTag",
+    "org.apache.spark.sql.catalyst.plans.logical.ReplacePartitionField",
+    "org.apache.spark.sql.catalyst.plans.logical.SetIdentifierFields",
+    "org.apache.spark.sql.catalyst.plans.logical.SetWriteDistributionAndOrdering",
+    "org.apache.spark.sql.catalyst.plans.logical.views.CreateIcebergView",
+    "org.apache.spark.sql.catalyst.plans.logical.views.DropIcebergView",
+    "org.apache.spark.sql.catalyst.plans.logical.views.ShowIcebergViews"
 
     // Deliberately NOT listed (fails closed until SparkPlanAdapter
     // translates them, or someone confirms they're safe and adds them
@@ -215,5 +242,28 @@ private[sparkadapter] object FailClosedCommands {
     // in the exclusion list above either - they're neither known-safe
     // nor unhandled). See that case's own doc for exactly what it does
     // and, just as importantly, doesn't verify about them.
+    //
+    // Iceberg's ReplaceData/WriteDelta (its MERGE/UPDATE/DELETE mechanism)
+    // are the same story, via WriteCommandSupport's dsv2RowLevelWrite case
+    // - recognized directly (no reflection needed, unlike Delta's), so
+    // they too never reach this check.
+    //
+    // Iceberg's Call (org.apache.spark.sql.catalyst.plans.logical.Call) is
+    // deliberately excluded from the safe list above, unlike its other
+    // thirteen SQL-extension commands - confirmed empirically that this
+    // one class represents *every* `CALL <catalog>.system.<proc>(...)`
+    // procedure (rewrite_data_files, expire_snapshots,
+    // rollback_to_snapshot, add_files, migrate, ...) uniformly, with no
+    // structural way to tell which procedure a given instance invokes
+    // without inspecting its runtime arguments - and those procedures
+    // span the full range from genuinely safe (expire_snapshots removes
+    // only unreferenced metadata/orphaned files) to genuinely
+    // row-content-mutating (rollback_to_snapshot can revert what "current"
+    // data is). Safe-listing the class would silently pass ALL of them,
+    // including the mutating ones - exactly the asymmetry this list's own
+    // header warns against. So every CALL fails closed today, including
+    // the harmless ones, until a future pass adds procedure-name-aware
+    // classification (a genuinely bigger feature - see
+    // docs/ADDING_A_SPARK_CONNECTOR.md's "Known limitations").
   )
 }

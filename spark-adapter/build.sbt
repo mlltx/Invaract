@@ -19,10 +19,36 @@ val sparkVersion = "3.5.1"
 // docs/SPARK_ADAPTER.md's Delta section for the citation.
 val deltaVersion = "3.2.0"
 
+// Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
+// for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
+// up a real Iceberg-enabled session to test against. Checked the
+// connector's own issue tracker before pinning, per Phase 0's "any known
+// compatibility issues" step: 1.10.0 had a confirmed real bug on this exact
+// combination (Avro 1.12 API used against Spark 3.5's bundled Avro 1.11,
+// NoSuchMethodError on org.apache.avro.LogicalTypes.timestampNanos -
+// apache/iceberg#14232), fixed via #14292 and folded into the Avro-1.12.1
+// upgrade that landed before this version - see docs/SPARK_ADAPTER.md's
+// Iceberg section for the citation.
+val icebergVersion = "1.11.0"
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
   "io.delta" %% "delta-spark" % deltaVersion % "test",
+  "org.apache.iceberg" % "iceberg-spark-runtime-3.5_2.12" % icebergVersion % "test",
+  // Confirmed empirically, not assumed: iceberg-spark-runtime-3.5_2.12's
+  // SQL extensions parser (IcebergSparkSqlExtensionsParser.isIcebergProcedure,
+  // exercised specifically by `CALL <catalog>.system.<proc>(...)` syntax -
+  // Iceberg's maintenance-operation mechanism, e.g. rewrite_data_files/
+  // expire_snapshots/rollback_to_snapshot) references scala.jdk.CollectionConverters,
+  // a class the runtime jar needs but its own published POM doesn't declare
+  // as a dependency - a real gap in Iceberg's own artifact for this
+  // Spark/Scala combination, not a bug in this module. Needed here only so
+  // this module's own test suite can exercise CALL-based Iceberg
+  // maintenance ops against a real session; a real Invariant user running
+  // Iceberg CALL procedures in their own job would need this on their
+  // runtime classpath too, independent of anything spark-adapter does.
+  "org.scala-lang.modules" %% "scala-collection-compat" % "2.13.0" % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
