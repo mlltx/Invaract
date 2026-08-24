@@ -1893,12 +1893,52 @@ against a 10-procedure safe list.
       repo's JDK-11 CI matrix leg - not caused by today's work, but
       present since Iceberg support first landed, and cascading into
       three unrelated `spark-adapter` suites sharing the same forked JVM.
-      Fixed with a targeted `Tests.Filter` in `spark-adapter/build.sbt`
-      excluding only `IcebergConnectorSpec`, only under JDK <17; every
-      other test on every JDK, and every other module, is unaffected.
-      Confirmed a no-op on JDK 17/21 locally (21/21 tests still pass);
-      no JDK 11 available locally to test the skip directly, so CI's own
-      Java-11 runner is the real verification once pushed.
+      A first attempt (a `Tests.Filter` skipping only `IcebergConnectorSpec`
+      at test-run time) turned out insufficient and was replaced before
+      landing: merely having the jar on the classpath is enough to break
+      JDK 11, since Spark's `ServiceLoader`-based `DataSourceRegister`
+      lookup scans every registered provider for *any* format-based read,
+      not just Iceberg's - confirmed via a real CI failure where a plain
+      CSV read in an unrelated suite aborted the same way. The actual fix
+      excludes the Iceberg dependency itself from `libraryDependencies`
+      under JDK <17, and excludes `IcebergConnectorSpec.scala`'s own
+      compilation under the same condition. Verified by simulating both
+      branches locally (not just trusting the sbt syntax): with Iceberg
+      forced out, all other suites compile and pass cleanly (91/91, zero
+      `ServiceLoader` aborts); with it present, all 111 tests including
+      `IcebergConnectorSpec` pass unchanged. Confirmed for real in CI
+      after pushing: `Test on ubuntu-latest / Java 11` went from failing
+      to passing.
+
+#### Sub-phase: CI mutation-testing wall-clock cut via two real levers (done)
+
+Found while the user watched CI's mutation-testing job run 35-40+
+minutes on the CALL-classification PR - a different question from the
+earlier *local* `sbt test` speed investigation (session reuse, shuffle
+partitions, codegen), which found no real lever there.
+
+- [x] **`--concurrency` works as an explicit CLI flag** (confirmed via
+      the "Creating N test-runners" log line changing from 2 to 4), even
+      though the equivalent `stryker4s.conf`/`build.sbt` settings don't
+      take effect with this plugin version - the same category of quirk
+      already documented for `--mutate`/`--thresholds`. Added to every
+      `sbt stryker` invocation in CI.
+- [x] **Split the single `mutation-testing` CI job into two parallel
+      jobs** (`mutation-testing-ir`, `mutation-testing-spark-adapter`):
+      independent modules, independent test suites, no reason to
+      serialize them on one runner. Cuts wall-clock from
+      `ir_time + spark_adapter_time` to roughly
+      `max(ir_time, spark_adapter_time)`. `ir` has zero Spark dependency
+      (confirmed via `ir/build.sbt`), so its job also drops the entire
+      Spark cache/download/configure sequence `spark-adapter`'s job still
+      needs. Updated `summary`'s `needs:` list and result-check condition
+      to the two new job names.
+- [x] **Honestly scoped what these levers don't fix**: `spark-adapter`'s
+      whole-module run (~30-40 min) is still the real cost - genuine work
+      (the full suite once per mutant against real Delta/Iceberg-backed
+      Spark sessions), not overhead. Also corrected a stale
+      ARCHITECTURE.md estimate (`~1-5 min`) that never matched the real
+      observed time, unrelated to today's split.
 
 #### Scope (Future)
 

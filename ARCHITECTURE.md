@@ -369,7 +369,8 @@ gating, and API-compatibility checking.
 | Demo job execution | ~5-10s | Local master, 10-row demo data |
 | Report generation | <100ms | JSON serialization |
 | **Total `./dev/test`** | **~30-60s** | After first (cold-cache) build |
-| Mutation testing (`ir` + `spark-adapter`, CI) | ~1-5 min | Separate CI job, not part of `./dev/test` |
+| Mutation testing `ir` (CI) | ~1-2 min | Separate parallel CI job, not part of `./dev/test`; no Spark dependency |
+| Mutation testing `spark-adapter` (CI) | ~30-40 min | Separate parallel CI job, not part of `./dev/test` — the actual bottleneck, not the ~1-5 min this table previously (and wrongly) estimated. Runs the whole-module suite once per generated mutant against Delta+Iceberg-backed Spark sessions; see docs/SPARK_ADAPTER.md's mutation-testing-speed investigation for what was and wasn't a real lever here |
 
 ## Future Architecture Directions
 

@@ -1704,8 +1704,10 @@ Hive-metastore-unavailable `NoCoverage` gap, and `LogicalRelation`'s
 
 That 70%-on-new-code bar was originally a manual step (run a scoped
 `sbt stryker` locally, read the report). `.github/workflows/test.yml`'s
-`mutation-testing` job now automates it for every PR: a "Mutation test
-changed files" step diffs against the PR's base commit
+`mutation-testing-ir`/`mutation-testing-spark-adapter` jobs (see "CI
+mutation-testing wall-clock" below for why there are two, not one) now
+automate it for every PR: a "Mutation test changed files" step diffs
+against the PR's base commit
 (`github.event.pull_request.base.sha`), filters to each module's changed
 `src/main/scala/**/*.scala` files, and runs `sbt stryker` scoped to just
 those — via a brace-expansion glob for multiple files
@@ -1729,6 +1731,46 @@ wrapper around the same `--mutate` scoping mechanism used throughout this
 section, not a built-in capability. It only runs on `pull_request` events
 — a bare `push` has no unambiguous "changed relative to what" to diff
 against.
+
+#### CI mutation-testing wall-clock
+
+Two real, previously-untried levers found while investigating why CI's
+mutation-testing job was taking 35-40+ minutes (an earlier session
+investigated *local* `sbt test` speed — session reuse, shuffle
+partitions, codegen — and found no real lever there; this is a
+different, CI-specific question).
+
+**`--concurrency` works as an explicit CLI flag** (`sbt "stryker
+--concurrency 4"`), even though the equivalent `stryker4s.conf`/
+`build.sbt` settings don't take effect with this plugin version (see
+`spark-adapter/stryker4s.conf`'s own comment) — confirmed via the log
+line changing from "Creating 2 test-runners" to "Creating 4
+test-runners". Same category of quirk this repo already documented for
+`--mutate`/`--thresholds`: config-file settings silently no-op, CLI
+flags work. Added to every `sbt stryker` invocation in both mutation-
+testing CI jobs below.
+
+**The single `mutation-testing` job was split into two parallel jobs**
+(`mutation-testing-ir`, `mutation-testing-spark-adapter`). `ir` and
+`spark-adapter` are independent modules with independent test suites —
+nothing about mutating one depends on the other finishing — so running
+them sequentially on one runner was pure wasted wall-clock. Splitting
+lets GitHub schedule them concurrently, cutting wall-clock from
+`ir_time + spark_adapter_time` to roughly `max(ir_time, spark_adapter_time)`.
+Since `spark-adapter` is far larger and slower (Delta + Iceberg +
+everything else) and `ir` has zero Spark dependency at all (confirmed by
+grepping `ir/build.sbt`), this also lets `ir`'s job skip the entire Spark
+cache/download/configure sequence `spark-adapter`'s job still needs —
+`ir`'s own run is now ~1-2 minutes, mostly hidden under `spark-adapter`'s
+much larger cost rather than adding to it serially. `summary`'s `needs:`
+list and result-check condition were updated to the two new job names.
+
+**What this doesn't change**: `spark-adapter`'s own whole-module run is
+still the real bottleneck (~30-40 min) — it runs the full test suite once
+per generated mutant against real Delta- and Iceberg-backed Spark
+sessions, which is genuine, unavoidable work, not overhead. These two
+levers reduce wasted time around that core cost (serialization,
+under-utilized cores), not the cost itself.
 
 ### API compatibility
 

@@ -678,11 +678,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A pre-existing CI failure on `ubuntu-latest`/Java 11**, found while
   checking PR checks: `iceberg-spark-runtime-3.5_2.12:1.11.0`'s jar is
-  compiled to Java 17 class file version and can't load under JDK 11,
-  cascading into three unrelated `spark-adapter` suites sharing the same
-  forked JVM. Fixed with a `Tests.Filter` in `spark-adapter/build.sbt`
-  excluding only `IcebergConnectorSpec`, only under JDK <17 — every other
-  test, in this module and every other, is unaffected.
+  compiled to Java 17 class file version and can't load under JDK 11. A
+  first attempt (skipping only `IcebergConnectorSpec` at test-run time)
+  was insufficient — merely having the jar on the classpath breaks any
+  format-based read in any suite, since Spark's `DataSource` lookup scans
+  every registered provider via `ServiceLoader`. Fixed for real by
+  excluding the Iceberg dependency itself, and `IcebergConnectorSpec.scala`'s
+  compilation, under JDK <17 — verified locally by simulating both
+  branches, and confirmed in CI: `Test on ubuntu-latest / Java 11` went
+  from failing to passing.
+- **CI's mutation-testing wall-clock**, cut via two real levers found
+  while it ran 35-40+ minutes on the CALL-classification PR:
+  `--concurrency 4` works as a CLI flag (confirmed via the "Creating N
+  test-runners" log line) even though the config-file equivalent
+  doesn't; and the single `mutation-testing` job was split into two
+  parallel jobs (`ir`, `spark-adapter` — independent modules, no reason
+  to serialize them on one runner). `spark-adapter`'s own run (~30-40
+  min) is still the real, genuine cost — these levers cut wasted
+  serialization/under-utilization around it, not the core work itself.
 - Two real bugs found while adding Delta Lake write support, both caught
   by genuinely failing tests rather than inspection:
   - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
