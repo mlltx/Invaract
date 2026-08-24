@@ -1785,7 +1785,53 @@ actually satisfies the contract.
       this suite's tiny data volumes. Kept the shuffle-partitions tuning
       anyway (correct, zero-downside best practice) despite it not being
       the fix; reverted nothing else, since neither lever cost anything
-      to try.
+      to try. A third lever, `spark.sql.codegen.wholeStage=false` (the
+      leading untried hypothesis — per-query-shape JIT/codegen
+      compilation cost across this suite's ~100+ distinct query shapes),
+      was tried and measured *worse*, not better: 106/106 tests still
+      passed, but wall-clock went from 109s (sbt-reported total time) to
+      149s — roughly 35-40s slower, real and reproducible, not noise.
+      Reverted immediately; disabling codegen apparently costs more in
+      slower interpreted execution than it saves in compilation time at
+      this suite's scale. No further Spark-config levers were pursued —
+      the honest remaining hypothesis is genuine Delta/Iceberg
+      table-commit I/O (`_delta_log`/Iceberg metadata JSON per commit),
+      which isn't a tunable config; it's the thing actually being tested.
+
+#### Sub-phase: Iceberg's last two ❓ feature-surface rows closed - deletion vectors, identity/generated columns (done)
+
+Targeted follow-up closing the two rows the initial Iceberg pass left
+`❓ Not investigated`. Both closed with real probes and permanent tests,
+**zero production code changes** — both were genuine questions with
+genuine answers, not gaps needing fixes.
+
+- [x] **Deletion vectors** (Iceberg's V3 merge-on-read spec): a real
+      probe against a genuine `format-version = 3` table confirmed a
+      `DELETE` still produces a plain `ReplaceData` node — the same
+      class `dsv2RowLevelWrite` already matches via the shared
+      `RowLevelWrite` trait. The deletion-vector-vs-position-delete-file
+      distinction is below the `LogicalPlan` level this adapter
+      translates at; nothing to special-case. Closed with one permanent
+      test in `IcebergConnectorSpec`, no code change.
+- [x] **Identity/generated columns**: two real probes (Spark's
+      `GENERATED ALWAYS AS` syntax, and a column `DEFAULT` value —
+      Iceberg V3's `initial-default`/`write-default` mechanism) both
+      confirmed `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`)
+      thrown by Spark's own analyzer before any plan is produced, and
+      that `write.spark.accept-any-schema` doesn't change the outcome
+      (tried explicitly). Unlike Delta, this Iceberg integration has no
+      generated/default-column concept reachable through Spark SQL at
+      all — nothing for `outputSchemaWithTargetOnlyFields` or anything
+      else to need to handle. Closed with two permanent tests asserting
+      the rejection.
+- [x] `IcebergConnectorSpec`: 17 → 19 tests, all passing (19/19). No
+      `spark-adapter` main source changed, so CLAUDE.md's
+      mutation-testing requirement (scoped to changed/added
+      `src/main/scala`) doesn't apply this pass; `mimaReportBinaryIssues`
+      confirmed clean regardless.
+- [x] Both of Iceberg's feature-surface ledger rows now closed — every
+      row in both the Iceberg operation-surface and feature-surface
+      ledgers has a disposition, none left `❓`.
 
 #### Scope (Future)
 

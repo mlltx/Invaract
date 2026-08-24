@@ -637,6 +637,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silenced) with a dedicated test, not just asserted. Mutation testing
   rescoped after the simplification: 76.92%, zero survivors in the new
   code.
+- **Closed Iceberg's last two `❓` feature-surface rows: deletion vectors
+  and identity/generated columns.** Both closed with real probes and
+  permanent tests, zero production code changes. Deletion vectors
+  (Iceberg's V3 merge-on-read spec): a `DELETE` against a real
+  `format-version = 3` table still produces a plain `ReplaceData` node,
+  already matched by the existing connector-agnostic `dsv2RowLevelWrite`
+  case — the storage mechanism behind a merge-on-read delete isn't
+  visible at the `LogicalPlan` level this adapter operates on.
+  Identity/generated columns: confirmed, not assumed, that this Iceberg
+  catalog integration rejects both `GENERATED ALWAYS AS` and column
+  `DEFAULT` values outright with `AnalysisException`, before any plan is
+  produced, unaffected by `accept-any-schema` — so unlike Delta, there is
+  no generated/default-column concept reachable here for Invariant to
+  translate or verify. `IcebergConnectorSpec`: 17 → 19 tests (19/19
+  passing). Both of Iceberg's coverage ledgers (operation surface and
+  feature surface) are now fully closed, no `❓` rows remaining.
 
 ### Fixed
 

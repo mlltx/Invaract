@@ -413,6 +413,49 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
   }
 
+  // --- Feature surface: deletion vectors (format-version=3 merge-on-read deletes) ---
+  //
+  // Confirmed empirically (throwaway probe, since deleted) that a real
+  // format-version=3 table (Iceberg's deletion-vector spec, the successor
+  // to position-delete files for merge-on-read deletes) still produces a
+  // plain ReplaceData node for a DELETE - the same class the existing
+  // dsv2RowLevelWrite case already matches via the shared RowLevelWrite
+  // trait. No new code was needed: the storage mechanism behind a
+  // merge-on-read delete (position-delete file vs. deletion vector) isn't
+  // visible at the LogicalPlan level Invariant operates on at all.
+
+  test("PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table satisfying its contract executes normally") {
+    val tableName = "local.db.dv_delete_pass_tbl"
+    val expectedLocation = tableName
+    spark.sql(
+      s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg
+         |TBLPROPERTIES ('format-version' = '3')
+         |""".stripMargin)
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
   // --- Write: target-only fields (outputSchemaWithTargetOnlyFields) ---
   //
   // A real bug, found while investigating Iceberg's own schema-evolution
@@ -488,6 +531,37 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     // safety argument: a genuinely-missing field is still caught upstream.
     intercept[org.apache.spark.sql.AnalysisException] {
       spark.range(5, 6).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    }
+  }
+
+  // --- Feature surface: identity/generated columns ---
+  //
+  // Confirmed empirically (throwaway probes, since deleted): unlike
+  // Delta, this Iceberg catalog integration rejects both Spark's
+  // GENERATED ALWAYS AS syntax and column DEFAULT values outright -
+  // UNSUPPORTED_FEATURE.TABLE_OPERATION, thrown by Spark's own analyzer
+  // before a plan is ever produced, regardless of 'write.spark.accept-
+  // any-schema'. So there's no Iceberg analog to Delta's generated
+  // columns reachable through Spark SQL with this connector: nothing for
+  // Invariant to translate or verify, and no gap the outputSchemaWith-
+  // TargetOnlyFields mechanism needs to cover for this case.
+
+  test("GENERATED ALWAYS AS is rejected outright by this Iceberg catalog integration, before any plan is produced") {
+    val tableName = "local.db.gen_col_unsupported_tbl"
+    intercept[org.apache.spark.sql.AnalysisException] {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT GENERATED ALWAYS AS (id * 2)) USING iceberg
+           |""".stripMargin)
+    }
+  }
+
+  test("a column DEFAULT value is rejected outright by this Iceberg catalog integration, even under accept-any-schema") {
+    val tableName = "local.db.default_col_unsupported_tbl"
+    intercept[org.apache.spark.sql.AnalysisException] {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT, status STRING DEFAULT 'active') USING iceberg
+           |TBLPROPERTIES ('format-version' = '3', 'write.spark.accept-any-schema' = 'true')
+           |""".stripMargin)
     }
   }
 

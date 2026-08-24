@@ -817,9 +817,9 @@ connector-specific list, not the fixed operation-surface template above.
 | `CALL` system procedures (maintenance) | 🔧 **Found — deliberately left unmodeled, not fixed** | See the operation-surface row above; this is a feature whose correct disposition *is* "fails closed for everything, including the safe procedures," not a bug to fix in this pass. |
 | Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
 | `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
-| Deletion vectors / merge-on-read positional deletes | ❓ **Not investigated** | Iceberg 3.0+ has its own deletion-vector spec (V3), analogous to Delta's — not probed this pass. Next step: same technique as Delta's deletion-vector confirmation (a real DELETE against a table with deletion vectors enabled, confirmed to route through the same `dsv2RowLevelWrite` case with no special-casing needed, or found otherwise). |
+| Deletion vectors / merge-on-read positional deletes | ✅ **Confirmed — closed this pass** | Real probe (since deleted): a `DELETE` against a real `format-version = 3` table (Iceberg's deletion-vector spec) still produces a plain `ReplaceData` node — the same class `dsv2RowLevelWrite` already matches via the shared `RowLevelWrite` trait. The storage mechanism behind a merge-on-read delete (position-delete file vs. deletion vector) isn't visible at the `LogicalPlan` level this adapter operates on at all, so no code change was needed. `IcebergConnectorSpec`'s new "PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table..." test. |
 | Schema evolution on write (`write.spark.accept-any-schema` table property + `mergeSchema` write option) | 🔧 **Found and fixed** | Real bug, but the *opposite* direction from the one predicted before investigating: adding a genuinely new column via `mergeSchema` was already correct (`cmd.query.schema` — the writer's own DataFrame — already includes it, confirmed empirically; unlike Delta's MERGE, `AppendData`'s query *is* the writer-supplied data, not a re-derived plan that could go stale). The real bug is a *narrower* write: with `accept-any-schema` enabled, Iceberg accepts an append missing a column the target already has, NULL-filling it — `outputSchema` (from `query.schema` alone) omitted that column entirely, so a contract requiring it was wrongly `MISSING_OUTPUT_FIELD`-rejected. See "Generalizing the generated-columns fix" below — fixed by the same mechanism that now also covers Delta's generated columns. |
-| Identity/generated columns | ❓ **Not investigated** | Iceberg doesn't have Delta-style `GENERATED ALWAYS AS` computed columns as a first-class concept (its closest analog is partition transforms, already covered under partition evolution above), but this wasn't confirmed by directly checking Iceberg's own spec — flagged as unconfirmed rather than assumed absent. |
+| Identity/generated columns | ✅ **Confirmed — closed this pass** | Real probes (since deleted), not assumed from docs: both Spark's `GENERATED ALWAYS AS` syntax and column `DEFAULT` values are rejected outright by this Iceberg catalog integration — `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`, "does not support generated columns"/"does not support column default value"), thrown by Spark's own analyzer before any plan is ever produced, regardless of `write.spark.accept-any-schema` (tried explicitly, made no difference). So unlike Delta, there's no Iceberg analog to generated columns reachable through Spark SQL with this connector version — nothing for Invariant to translate, verify, or fix. `IcebergConnectorSpec`'s new "GENERATED ALWAYS AS is rejected outright..." and "a column DEFAULT value is rejected outright..." tests. |
 
 ### Generalizing the generated-columns fix: target-only fields, not just generated columns
 
@@ -872,6 +872,46 @@ unchanged against the new mechanism. Mutation testing rescoped to
 `unionNewFields` code has zero survivors; all 6 remaining are
 pre-existing, already-documented from earlier sub-phases (`catalogTable.isDefined`
 ×2, the `deltaDmlClassNames` guard, `WriteFiles`/`DeltaSink` near-equivalents).
+
+### Closing Iceberg's last two ❓ feature-surface rows: deletion vectors and generated/default columns
+
+A follow-up pass targeting exactly the two rows the initial Iceberg
+investigation left as ❓ Not investigated. Both closed with **no
+production code changes** — each was a real question with a real,
+testable answer, not a gap needing a fix.
+
+**Deletion vectors** (Iceberg's V3 merge-on-read spec, the successor to
+position-delete files): a real probe against a genuine `format-version =
+3` table, with a real `DELETE` run against it, confirmed the resulting
+plan is still a plain `ReplaceData` — the same class `dsv2RowLevelWrite`
+already matches via the shared `RowLevelWrite` trait Iceberg's row-level
+API rewrites both copy-on-write and merge-on-read operations into. The
+storage representation of the delete (a position-delete file vs. a
+deletion vector) is an Iceberg-internal detail below the `LogicalPlan`
+level this adapter translates at all — so there was never anything for
+this layer to special-case. Closed by adding one permanent test, not by
+changing any translation logic.
+
+**Identity/generated columns**: two real probes — Spark's `GENERATED
+ALWAYS AS` syntax, and a column `DEFAULT` value (Iceberg's V3
+`initial-default`/`write-default` mechanism) — both against this
+connector's real catalog integration. Both are rejected outright by
+Spark's own analyzer (`AnalysisException`,
+`UNSUPPORTED_FEATURE.TABLE_OPERATION`) before any `LogicalPlan` is ever
+produced, and setting `write.spark.accept-any-schema` doesn't change
+that outcome (tried explicitly). So, unlike Delta, this Iceberg
+integration has no generated/default-column concept reachable through
+Spark SQL at all — there's no feature here for
+`outputSchemaWithTargetOnlyFields` (or anything else) to need to handle.
+Closed by adding two permanent tests asserting the rejection, the same
+pattern already used for "a narrower append is still rejected by Spark
+itself... before reaching Invariant."
+
+Both findings are `IcebergConnectorSpec` tests (19 tests total in that
+suite after this pass, up from 17). No `spark-adapter` main source
+changed this pass, so CLAUDE.md's mutation-testing requirement (scoped to
+changed/added `src/main/scala` files) doesn't apply; `sbt
+mimaReportBinaryIssues` stayed clean as expected for a test-only change.
 
 ## Fail-closed on unverifiable writes
 
