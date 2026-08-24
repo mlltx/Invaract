@@ -570,6 +570,14 @@ confirmed untestable in this environment, not silently skipped.
   actually create one here) — a contract requiring the generated column
   is satisfied by an append that never supplies it.
 
+  **Superseded**: `outputSchemaWithGeneratedColumns`/`deltaGeneratedFields`
+  above were later replaced by a connector-agnostic, reflection-free
+  mechanism once an Iceberg investigation found the same underlying
+  situation under a different mechanism — see "Generalizing the
+  generated-columns fix" in the Iceberg support section below. The
+  finding stands (this is *why* the fix was needed); the implementation
+  described here no longer exists in the code.
+
 - **Deletion vectors, column mapping mode (`'name'`), liquid clustering
   (`CLUSTER BY`) — confirmed transparent, no fix needed.** Real writes
   and DML against tables with each of these enabled are recognized by
@@ -810,8 +818,60 @@ connector-specific list, not the fixed operation-surface template above.
 | Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
 | `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
 | Deletion vectors / merge-on-read positional deletes | ❓ **Not investigated** | Iceberg 3.0+ has its own deletion-vector spec (V3), analogous to Delta's — not probed this pass. Next step: same technique as Delta's deletion-vector confirmation (a real DELETE against a table with deletion vectors enabled, confirmed to route through the same `dsv2RowLevelWrite` case with no special-casing needed, or found otherwise). |
-| Schema evolution on write (`spark.sql.iceberg.merge-schema` / `mergeSchema` option) | ❓ **Not investigated** | Iceberg has its own schema-evolution mechanism, likely a real analog to Delta's `schemaEvolutionEnabled()` false-rejection bug (`outputSchema` for `AppendData`/`OverwritePartitionsDynamic` currently comes from `cmd.query.schema` alone — an evolving write's newly-added columns may not be visible there any more than they were for Delta's MERGE). Next step: a real probe against an Iceberg table with schema evolution enabled, the same way Delta's was found. |
+| Schema evolution on write (`write.spark.accept-any-schema` table property + `mergeSchema` write option) | 🔧 **Found and fixed** | Real bug, but the *opposite* direction from the one predicted before investigating: adding a genuinely new column via `mergeSchema` was already correct (`cmd.query.schema` — the writer's own DataFrame — already includes it, confirmed empirically; unlike Delta's MERGE, `AppendData`'s query *is* the writer-supplied data, not a re-derived plan that could go stale). The real bug is a *narrower* write: with `accept-any-schema` enabled, Iceberg accepts an append missing a column the target already has, NULL-filling it — `outputSchema` (from `query.schema` alone) omitted that column entirely, so a contract requiring it was wrongly `MISSING_OUTPUT_FIELD`-rejected. See "Generalizing the generated-columns fix" below — fixed by the same mechanism that now also covers Delta's generated columns. |
 | Identity/generated columns | ❓ **Not investigated** | Iceberg doesn't have Delta-style `GENERATED ALWAYS AS` computed columns as a first-class concept (its closest analog is partition transforms, already covered under partition evolution above), but this wasn't confirmed by directly checking Iceberg's own spec — flagged as unconfirmed rather than assumed absent. |
+
+### Generalizing the generated-columns fix: target-only fields, not just generated columns
+
+Investigating the schema-evolution row above found that Delta's
+generated-columns fix (`outputSchemaWithGeneratedColumns`/
+`deltaGeneratedFields`, described in the "Delta feature-by-feature
+confidence pass" section above — reflecting into `DeltaTableV2.initialSnapshot()`
+to read the `delta.generationExpression` metadata key) and Iceberg's
+narrower-write case are two connector-specific *mechanisms* for the same
+underlying situation: a resolved write target can legitimately have
+fields the write's own `query` doesn't supply, that will still exist in
+the committed row. Confirmed empirically that this generalizes further
+than either mechanism alone: `cmd.table.schema()`/`cmd.table.columns()`
+(the resolved `NamedRelation`'s current, already-committed schema — a
+plain public API, no reflection) already carries a Delta generated
+column's *name* even though its `.metadata` (the part that would have
+identified it as specifically "generated") is stripped — so detecting
+*which* target-only fields are generated was never actually necessary,
+only whether the target has fields the query doesn't.
+
+**Why unioning in every target-only field is safe, not just convenient**:
+by the time a `DataSourceV2Relation`-based write reaches this check rule
+at all, Spark's own analyzer has already validated the write's schema is
+acceptable against the target — confirmed empirically (a real probe,
+since deleted) that an Iceberg table *without* `accept-any-schema`
+rejects a narrower write with `AnalysisException` before it ever
+produces an `AppendData` node for this rule to see (verified by a
+permanent test, `IcebergConnectorSpec`'s "a narrower append is still
+rejected by Spark itself... before reaching Invariant"). So a
+genuinely-missing required field (the case `MISSING_OUTPUT_FIELD` exists
+to catch) is never silenced by this: either Spark's analyzer already
+rejected the write for real (this code never runs), or the target's own
+connector has already endorsed the field's absence as valid, meaning
+unioning it into `outputSchema` reports what will actually be committed,
+not merely what the writer provided.
+
+`outputSchemaWithGeneratedColumns`/`deltaGeneratedFields` (reflective,
+Delta-specific) were replaced outright by `outputSchemaWithTargetOnlyFields`
+(no reflection, connector-agnostic) — `AppendData`/`OverwriteByExpression`/
+`OverwritePartitionsDynamic` all call the new one. `Table.columns()`
+(not the deprecated `Table.schema()`) is used for the field list — a
+`Column` only guarantees `name()`/`dataType()`/`nullable()`, exactly
+what's needed; no other `Column` field (default value, generation
+expression, comment) is read. Verified: `IcebergConnectorSpec`'s
+existing generated-column-equivalent tests (the narrower-write PASS/FAIL
+pair) and the pre-existing Delta generated-column test both still pass
+unchanged against the new mechanism. Mutation testing rescoped to
+`WriteCommandSupport.scala` after this simplification: **76.92%**
+(20/26 non-excluded mutants killed) — the new `outputSchemaWithTargetOnlyFields`/
+`unionNewFields` code has zero survivors; all 6 remaining are
+pre-existing, already-documented from earlier sub-phases (`catalogTable.isDefined`
+×2, the `deltaDmlClassNames` guard, `WriteFiles`/`DeltaSink` near-equivalents).
 
 ## Fail-closed on unverifiable writes
 

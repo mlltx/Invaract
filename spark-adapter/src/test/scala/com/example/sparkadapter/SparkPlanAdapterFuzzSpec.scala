@@ -43,7 +43,12 @@ class SparkPlanAdapterFuzzSpec extends AnyFunSuite with BeforeAndAfterAll with S
   private var spark: SparkSession = _
 
   override def beforeAll(): Unit = {
-    spark = SparkSession.builder().master("local[*]").appName("SparkPlanAdapterFuzzSpec").getOrCreate()
+    spark = SparkSession.builder().master("local[*]").appName("SparkPlanAdapterFuzzSpec")
+      // See ContractEnforcementRuleSpec's beforeAll for why - this
+      // property-based suite runs many small Spark actions per case, so
+      // the default 200-task shuffle overhead compounds badly here.
+      .config("spark.sql.shuffle.partitions", "2")
+      .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }
 

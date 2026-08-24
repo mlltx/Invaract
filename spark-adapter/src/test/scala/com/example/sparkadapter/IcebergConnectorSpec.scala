@@ -44,6 +44,9 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
       .config("spark.sql.catalog.local.type", "hadoop")
       .config("spark.sql.catalog.local.warehouse", scratchDir.resolve("warehouse").toString)
+      // See ContractEnforcementRuleSpec's beforeAll for why - same
+      // reasoning, and this suite's MERGE/UPDATE/DELETE tests shuffle too.
+      .config("spark.sql.shuffle.partitions", "2")
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan
@@ -408,6 +411,84 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  // --- Write: target-only fields (outputSchemaWithTargetOnlyFields) ---
+  //
+  // A real bug, found while investigating Iceberg's own schema-evolution
+  // mechanism (throwaway probes, since deleted, not assumed): with
+  // 'write.spark.accept-any-schema' = 'true', Iceberg accepts a narrower
+  // append - a write whose DataFrame is missing a column the target
+  // already has - silently NULL-filling the omitted column. Confirmed
+  // empirically that Spark's own analyzer only allows this when the
+  // property is set (a plain narrower append against a table without it
+  // is rejected with AnalysisException before ever reaching a check
+  // rule) - so by the time a resolved AppendData/OverwritePartitionsDynamic/
+  // OverwriteByExpression reaches WriteCommandSupport at all, the
+  // target's own connector has already endorsed the field's absence as
+  // valid. Previously, outputSchema (from query.schema alone) omitted
+  // that field entirely, so a contract requiring it would be wrongly
+  // MISSING_OUTPUT_FIELD-rejected for a write that actually satisfies it.
+  // Fixed by generalizing what was previously a Delta-specific
+  // "generated columns" fix (outputSchemaWithGeneratedColumns, reflecting
+  // into DeltaTableV2/Snapshot metadata) into a connector-agnostic one
+  // (outputSchemaWithTargetOnlyFields, plain cmd.table.schema() - no
+  // reflection at all) once this investigation confirmed the field NAME
+  // was already present there all along, just not its Delta-specific
+  // generation metadata - see docs/SPARK_ADAPTER.md's Iceberg section.
+  test("PASS: an append narrower than an Iceberg table's schema, under accept-any-schema, satisfies a contract requiring the omitted column") {
+    val tableName = "local.db.narrow_evo_pass_tbl"
+    val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("narrow_evo_pass_tbl").toString
+    spark.sql(
+      s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT, extra_col STRING) USING iceberg
+         |TBLPROPERTIES ('write.spark.accept-any-schema' = 'true')
+         |""".stripMargin)
+    spark.range(5).withColumn("doubled", col("id") * 2).withColumn("extra_col", lit("x")).writeTo(tableName).append()
+
+    // required: false throughout - Iceberg reports every column nullable
+    // on read-back (the same quirk already documented for Delta), and
+    // extra_col specifically must be nullable for Iceberg to NULL-fill it.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |        - name: extra_col
+         |          type: string
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      // No extra_col supplied - Iceberg NULL-fills it, but the contract
+      // requires it - must not throw, since it's still genuinely committed.
+      spark.range(5, 6).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    }
+
+    val written = spark.table(tableName).where("id = 5").collect()
+    assert(written.length == 1)
+    assert(written.head.isNullAt(2), "extra_col must actually have been NULL-filled by Iceberg, not supplied")
+  }
+
+  test("FAIL: a narrower append is still rejected by Spark itself without accept-any-schema, before reaching Invariant") {
+    val tableName = "local.db.narrow_no_evo_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT, extra_col STRING) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).withColumn("extra_col", lit("x")).writeTo(tableName).append()
+
+    // No active contract - this must fail on Spark's own analysis, not
+    // Invariant's enforcement, proving outputSchemaWithTargetOnlyFields's
+    // safety argument: a genuinely-missing field is still caught upstream.
+    intercept[org.apache.spark.sql.AnalysisException] {
+      spark.range(5, 6).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    }
   }
 
   // --- Fail-closed: Call (deliberately unmodeled) ---

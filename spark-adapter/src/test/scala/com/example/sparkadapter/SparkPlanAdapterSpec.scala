@@ -34,6 +34,11 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
       // "Delta Lake support" section for how this was investigated).
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      // See ContractEnforcementRuleSpec's beforeAll for why - Spark's
+      // default (200) is wasted overhead against these tiny fixtures,
+      // and this suite's own join/aggregate/window translation tests
+      // shuffle too.
+      .config("spark.sql.shuffle.partitions", "2")
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 

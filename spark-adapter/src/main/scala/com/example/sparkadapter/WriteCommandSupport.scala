@@ -244,7 +244,7 @@ private[sparkadapter] object WriteCommandSupport {
     case cmd: AppendData =>
       val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
       val (outputSchema, generatedColumnsDiagnostic) =
-        outputSchemaWithGeneratedColumns(cmd.table, cmd.query, "AppendData")
+        outputSchemaWithTargetOnlyFields(cmd.table, cmd.query, "AppendData")
       WriteCommandInfo(
         location = location,
         query = cmd.query,
@@ -268,7 +268,7 @@ private[sparkadapter] object WriteCommandSupport {
     case cmd: OverwriteByExpression =>
       val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
       val (outputSchema, generatedColumnsDiagnostic) =
-        outputSchemaWithGeneratedColumns(cmd.table, cmd.query, "OverwriteByExpression")
+        outputSchemaWithTargetOnlyFields(cmd.table, cmd.query, "OverwriteByExpression")
       WriteCommandInfo(
         location = location,
         query = cmd.query,
@@ -299,7 +299,7 @@ private[sparkadapter] object WriteCommandSupport {
     case cmd: OverwritePartitionsDynamic =>
       val (location, format, diagnostic) = namedRelationLocationAndFormat(cmd.table)
       val (outputSchema, generatedColumnsDiagnostic) =
-        outputSchemaWithGeneratedColumns(cmd.table, cmd.query, "OverwritePartitionsDynamic")
+        outputSchemaWithTargetOnlyFields(cmd.table, cmd.query, "OverwritePartitionsDynamic")
       WriteCommandInfo(
         location = location,
         query = cmd.query,
@@ -473,89 +473,81 @@ private[sparkadapter] object WriteCommandSupport {
         (table.name, None, Some(Diagnostic("V2Write", msg)))
     }
 
-  /** Delta's generated columns (`GENERATED ALWAYS AS (...)`) are computed by
-    * Delta itself at commit time, never supplied by the writer - so
-    * `cmd.query.schema` for `AppendData`/`OverwriteByExpression` never
-    * includes them, the same class of false-rejection schema evolution has
-    * for MERGE (see `deltaRowLevelDml` below): a contract requiring a
-    * generated column would be wrongly `MISSING_OUTPUT_FIELD`-rejected for
-    * a write that would actually satisfy it once Delta computes the
-    * column.
+  /** A resolved write target can legitimately have fields the write's own
+    * `query` doesn't supply, that will still exist in the committed row -
+    * Delta's generated columns (`GENERATED ALWAYS AS (...)`, computed by
+    * Delta at commit time) and Iceberg's `write.spark.accept-any-schema`
+    * partial/narrower writes (the omitted, already-existing column is
+    * NULL-filled) are two real, connector-specific *mechanisms* for the
+    * same underlying situation. Both were originally two separate special
+    * cases here (a Delta-specific reflective metadata lookup for
+    * generated columns) until a real Iceberg investigation found the
+    * second mechanism and, in confirming it, found this simpler,
+    * connector-agnostic fix subsumes the first one too: `cmd.table.schema()`
+    * (the resolved `NamedRelation`'s current, already-committed schema -
+    * a plain, public API, no reflection) already carries a generated
+    * column's *name*, confirmed empirically even though its `.metadata`
+    * (the part that would have identified it as specifically "generated")
+    * is stripped - so detecting *which* target-only fields are generated
+    * was never actually necessary; only whether the target has fields the
+    * query doesn't.
     *
-    * Confirmed empirically (probes, since deleted, not assumed) that this
-    * can't be read from any DataFrame-facing schema at all: neither
-    * `spark.read.format("delta").load(path).schema`, nor a catalog-table
-    * read (`spark.table(name).schema`), nor a DSv2 `Table.schema()`
-    * (confirmed specifically for `DeltaTableV2.schema()` - the exact
-    * handle `AppendData`/`OverwriteByExpression` resolve their target to)
-    * carries the `delta.generationExpression` metadata key Delta itself
-    * sets on a generated column's `StructField` - only Delta's own
-    * internal `Snapshot.schema()` does (reached via
-    * `DeltaTableV2.initialSnapshot()`). So this reads that, reflectively -
-    * `DeltaTableV2`/`Snapshot` are Delta-internal, no compile-time
-    * dependency on this module - the same convention `deltaRowLevelDml`
-    * uses below, for the same reason.
+    * Why this is safe, not just convenient: by the time a `DataSourceV2Relation`-based
+    * write reaches this check rule at all, Spark's own analyzer has
+    * *already* validated the write's schema is acceptable against the
+    * target - confirmed empirically (a real probe, since deleted) that an
+    * Iceberg table *without* `accept-any-schema` rejects a narrower write
+    * with `AnalysisException` before it ever produces an `AppendData`
+    * node for this rule to see at all. So a genuinely-missing required
+    * field (the case `MISSING_OUTPUT_FIELD` exists to catch) is never
+    * silenced by this: either Spark's analyzer already rejected the write
+    * for real (this code never runs), or the target's own connector has
+    * already endorsed the field being absent from `query` as valid,
+    * meaning unioning it into `outputSchema` reports what will actually
+    * be committed, not what the writer merely provided.
     */
-  private def outputSchemaWithGeneratedColumns(
+  private def outputSchemaWithTargetOnlyFields(
     table: NamedRelation,
     query: LogicalPlan,
     tag: String
   ): (StructType, Option[Diagnostic]) = {
-    val generatedFields = table match {
-      case v2: DataSourceV2Relation => deltaGeneratedFields(v2.table)
+    val targetFields = table match {
+      // Table.columns() (not the deprecated Table.schema()) - a Column
+      // only guarantees name/dataType/nullable, exactly what's needed
+      // here; no other Column field (default value, generation
+      // expression, comment) is used.
+      case v2: DataSourceV2Relation =>
+        v2.table.columns().toSeq.map(c => StructField(c.name(), c.dataType(), c.nullable()))
       case _ => Seq.empty[StructField]
     }
-    val (unioned, newGeneratedFields) = unionNewFields(query.schema, generatedFields)
-    if (newGeneratedFields.isEmpty) (query.schema, None)
+    val (unioned, targetOnlyFields) = unionNewFields(query.schema, targetFields)
+    if (targetOnlyFields.isEmpty) (query.schema, None)
     else {
-      val msg = "Target has Delta generated column(s) not present in the write's own schema " +
-        s"(${newGeneratedFields.map(_.name).mkString(", ")}) - these are computed by Delta at " +
-        "commit time, never supplied by the writer, so they're unioned into outputSchema as a " +
-        "best-effort approximation of the committed schema, not a full evaluation of each " +
-        "generation expression."
+      val msg = "Target has field(s) not present in the write's own schema " +
+        s"(${targetOnlyFields.map(_.name).mkString(", ")}) - a resolved write reaching this point " +
+        "means the target's own connector has already endorsed their absence as valid (e.g. a " +
+        "Delta generated column, or an Iceberg accept-any-schema partial write), so they're unioned " +
+        "into outputSchema as a best-effort approximation of the committed schema."
       (unioned, Some(Diagnostic(tag, msg)))
     }
   }
 
-  /** Shared by `outputSchemaWithGeneratedColumns` above and
+  /** Shared by `outputSchemaWithTargetOnlyFields` above and
     * `deltaRowLevelDml`'s MERGE schema-evolution branch below: both need
     * "which fields does `candidateFields` have that `base` doesn't (by
     * name), and what does `base` look like with those unioned in" - the
     * exact same computation over two different schema pairs (a target
-    * schema vs. its generated columns; a target schema vs. an evolving
-    * MERGE's source). Returns the *new* fields alongside the unioned
-    * `StructType` so each call site can still decide independently
-    * whether "no new fields" is worth a diagnostic - they currently
-    * differ on that, deliberately (see each caller).
+    * schema vs. the resolved target's own current schema; a target
+    * schema vs. an evolving MERGE's source). Returns the *new* fields
+    * alongside the unioned `StructType` so each call site can still
+    * decide independently whether "no new fields" is worth a diagnostic -
+    * they currently differ on that, deliberately (see each caller).
     */
   private def unionNewFields(base: StructType, candidateFields: Seq[StructField]): (StructType, Seq[StructField]) = {
     val baseFieldNames = base.fieldNames.toSet
     val newFields = candidateFields.filterNot(f => baseFieldNames.contains(f.name))
     (StructType(base.fields ++ newFields), newFields)
   }
-
-  /** Wrapped in `Try`, like `deltaRowLevelDml`: a future Delta version
-    * renaming `initialSnapshot`/`schema`, or dropping the
-    * `delta.generationExpression` metadata key, must degrade to "no
-    * generated columns found" (safe - outputSchema just stays
-    * `query.schema`, exactly this fix's pre-existing behavior) rather
-    * than let a `ReflectiveOperationException` escape into a real Spark
-    * job. Checking the metadata key directly - rather than reflecting
-    * into Delta's own `GeneratedColumn.isGeneratedColumn(protocol, field)`
-    * helper - needs no `Protocol` lookup and no overload resolution;
-    * `StructField.metadata` is already a plain public Spark type this
-    * file has on its main classpath, confirmed via a real probe to carry
-    * this exact key on `Snapshot.schema()`'s fields.
-    */
-  private def deltaGeneratedFields(table: AnyRef): Seq[StructField] =
-    scala.util.Try {
-      if (table.getClass.getName != "org.apache.spark.sql.delta.catalog.DeltaTableV2") Seq.empty[StructField]
-      else {
-        val snapshot = table.getClass.getMethod("initialSnapshot").invoke(table)
-        val schema = snapshot.getClass.getMethod("schema").invoke(snapshot).asInstanceOf[StructType]
-        schema.fields.filter(_.metadata.contains("delta.generationExpression")).toSeq
-      }
-    }.getOrElse(Seq.empty)
 
   // Delta's row-level DML - MERGE INTO / UPDATE / DELETE - all analyze to
   // Delta-internal command classes (org.apache.spark.sql.delta.commands.*),

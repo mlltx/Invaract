@@ -49,6 +49,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
+      // Spark's default (200) is tuned for real clusters; every shuffle
+      // (a MERGE's join included) against these few-row local fixtures
+      // would otherwise spin up 200 tasks for no benefit - real,
+      // measured overhead in a suite this size. Purely a physical-
+      // execution parallelism knob, invisible to query results.
+      .config("spark.sql.shuffle.partitions", "2")
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan

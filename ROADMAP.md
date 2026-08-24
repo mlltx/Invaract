@@ -1721,6 +1721,72 @@ docs/SPARK_ADAPTER.md's "Iceberg support" section — summary here:
       (this entry), and CHANGELOG.md, per the `add-spark-connector`
       skill's Phase 11.
 
+#### Sub-phase: Iceberg's own schema-evolution row closed, generalizing the Delta generated-columns fix (done)
+
+Follow-up investigation into the Iceberg feature-surface ledger's one
+remaining ❓ row. The predicted bug (newly-added columns invisible to
+`outputSchema`, the same shape as Delta's MERGE bug) turned out not to
+exist — confirmed empirically that `AppendData`'s `query.schema` already
+reflects a `mergeSchema`-evolving write's new columns correctly, since
+(unlike Delta's MERGE) the query *is* the writer-supplied data, not a
+re-derived plan that can go stale. The real bug was the *other*
+direction: with Iceberg's `write.spark.accept-any-schema` table property,
+a *narrower* append (missing a column the target already has) is
+accepted and NULL-fills the omitted column — `outputSchema` omitted that
+column entirely, wrongly `MISSING_OUTPUT_FIELD`-rejecting a write that
+actually satisfies the contract.
+
+- [x] **Found this generalizes Delta's existing generated-columns fix,
+      not just adds a parallel Iceberg-specific one.** Both are the same
+      underlying situation — a resolved target can have fields its
+      `query` doesn't supply that still exist in the committed row —
+      under two different connector-specific mechanisms. Confirmed
+      `cmd.table.columns()` (plain public API, no reflection) already
+      carries a Delta generated column's *name*, even without its
+      generation metadata — detecting *which* target-only fields exist
+      for a specific reason was never actually necessary. Replaced the
+      Delta-specific reflective `outputSchemaWithGeneratedColumns`/
+      `deltaGeneratedFields` outright with connector-agnostic
+      `outputSchemaWithTargetOnlyFields`, used by `AppendData`/
+      `OverwriteByExpression`/`OverwritePartitionsDynamic` alike.
+- [x] **Verified the safety argument directly, not just asserted it**:
+      a permanent test proves Spark's own analyzer rejects a genuinely-
+      unsanctioned narrower write (`accept-any-schema` off) with
+      `AnalysisException` before Invariant's check rule ever sees it —
+      so unioning in every target-only field can never silence a
+      genuinely-missing required field.
+- [x] Mutation testing rescoped to `WriteCommandSupport.scala` after the
+      simplification: **76.92%** (20/26 non-excluded mutants killed) —
+      zero survivors in the new code; the 6 remaining are pre-existing
+      and already documented from earlier sub-phases. Full suite passing
+      (106/106); `mimaReportBinaryIssues` clean.
+- [x] Removed a `Table.schema()` deprecation warning introduced along
+      the way by switching to `Table.columns()` (the non-deprecated
+      replacement) — "no new warnings" held, not just "tests pass."
+- [x] **A mutation-testing speed investigation, prompted mid-session**:
+      confirmed this module's ~5 test suites already share a single
+      `SparkSession` bootstrap via Spark's own `getOrCreate()` semantics
+      (config from later `.config(...)` calls merges into an already-active
+      session rather than requiring a fresh one — confirmed empirically,
+      not assumed, via log inspection: one `sparkDriver` service start
+      for the whole suite, zero `SparkContext` stops), so repeated
+      session bootstrap wasn't the mutation-testing bottleneck to begin
+      with. Tried two real levers: Stryker4s's `concurrency` config (2→4
+      test-runners on this environment's 4-core box) didn't take effect
+      via `stryker4s.conf` with this plugin version (the same class of
+      quirk already documented for `mutate`/`thresholds`, and no
+      build.sbt-level setting exists in this plugin version either);
+      `spark.sql.shuffle.partitions` (200 default, unset anywhere in this
+      suite) tuned to `2` across all five test `SparkSession` builders —
+      confirmed applied (`spark.conf.get` verified `"2"` directly) but
+      measured *zero* wall-clock change on a full suite run (131s before,
+      131s and 115s after, within normal variance) - the real cost is
+      genuine per-test Spark/table-commit work, not shuffle overhead, at
+      this suite's tiny data volumes. Kept the shuffle-partitions tuning
+      anyway (correct, zero-downside best practice) despite it not being
+      the fix; reverted nothing else, since neither lever cost anything
+      to try.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

@@ -622,6 +622,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a real limitation, not silently passed. See docs/SPARK_ADAPTER.md's
   new "Iceberg support" section (including both coverage ledgers) and
   ROADMAP.md for full details.
+- **Closed Iceberg's schema-evolution gap by generalizing, not
+  duplicating, Delta's generated-columns fix.** The predicted bug didn't
+  exist (a `mergeSchema`-evolving append's new columns were already
+  visible correctly); the real one was the opposite direction — a
+  narrower append under `write.spark.accept-any-schema`, omitting a
+  column Iceberg NULL-fills, was wrongly `MISSING_OUTPUT_FIELD`-rejected.
+  Found this is the same underlying situation as Delta's generated
+  columns under a different mechanism, and that a plain public API
+  (`Table.columns()`, no reflection) already carries what's needed for
+  both — replaced the Delta-specific reflective fix outright with one
+  connector-agnostic mechanism. Verified the safety argument (a
+  genuinely-missing field is still caught by Spark's own analyzer, not
+  silenced) with a dedicated test, not just asserted. Mutation testing
+  rescoped after the simplification: 76.92%, zero survivors in the new
+  code.
 
 ### Fixed
 
