@@ -10,7 +10,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.types.StructType
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -76,6 +78,27 @@ object ContractEnforcementRule {
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options)
 
+  /** Every recognized *read* shape's location/schema extraction, in one
+    * place - shared by both `plan.collect` sites in `verifyOrThrow` below
+    * (the raw plan, and a recognized write's own `query`), which used to
+    * each hand-repeat the same three (now four) cases; adding
+    * `DataSourceV2Relation` here reaches both sites at once instead of
+    * needing to remember to update two copies, the same
+    * single-source-of-truth reasoning `WriteCommandSupport.combined`
+    * already applies to write recognition.
+    */
+  private val recognizedRead: PartialFunction[LogicalPlan, (String, StructType)] = {
+    case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
+    case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
+    case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
+    // A batch DataSourceV2 catalog read - see SparkPlanAdapter's own
+    // DataSourceV2Relation case for why this is needed at all (any "pure"
+    // DSv2 connector's reads, Iceberg's included, previously fell through
+    // to the generic Unsupported translation and so could never satisfy a
+    // contract's declared input).
+    case dsv2: DataSourceV2Relation => SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name) -> dsv2.schema
+  }
+
   /** The check logic itself, exposed directly for tests and for callers
     * that want to verify without going through `SparkSession` construction
     * (`forContract` is a thin adapter to the shape `injectCheckRule` wants).
@@ -85,18 +108,19 @@ object ContractEnforcementRule {
     translated.plan match {
       case _: com.example.ir.Write =>
         // Collects every recognized *read* shape found anywhere in the
-        // plan - LogicalRelation for batch reads, and (see
-        // docs/SPARK_ADAPTER.md's "Streaming reads as a contract input")
-        // StreamingRelation/StreamingRelationV2 for a legacy-V1 or
-        // DataSourceV2 streaming source respectively. A contract
-        // declaring a streaming source as a required `input` used to
-        // always report MISSING_INPUT, even though data was genuinely
-        // being read, because this collection only recognized
-        // LogicalRelation - the same location-extraction logic
-        // SparkPlanAdapter's own translation now uses for those two
-        // shapes is reused here rather than re-derived, so the two sites
-        // can't drift the way write recognition once did (see
-        // WriteCommandSupport's class doc).
+        // plan via `recognizedRead` above - LogicalRelation for batch V1
+        // reads, StreamingRelation/StreamingRelationV2 for a legacy-V1 or
+        // DataSourceV2 streaming source (see docs/SPARK_ADAPTER.md's
+        // "Streaming reads as a contract input"), and DataSourceV2Relation
+        // for a batch DSv2 catalog read (any "pure" DSv2 connector's
+        // reads, Iceberg's included). Each was added after a contract
+        // declaring that kind of source as a required `input` was found
+        // to always report MISSING_INPUT, even though data was genuinely
+        // being read, because this collection didn't yet recognize it -
+        // the same location-extraction logic SparkPlanAdapter's own
+        // translation uses for each shape is reused here rather than
+        // re-derived, so the two sites can't drift the way write
+        // recognition once did (see WriteCommandSupport's class doc).
         //
         // `plan.collect` walks `children`, which is empty for Delta's row-
         // level DML commands (MergeIntoCommand/UpdateCommand/DeleteCommand
@@ -110,16 +134,8 @@ object ContractEnforcementRule {
         // for every other shape) - which is a real, independently
         // traversable `LogicalPlan`, unlike the outer command.
         val inputSchemas = (
-          plan.collect {
-            case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
-            case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
-            case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
-          } ++
-            WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect {
-              case lr: LogicalRelation => SparkPlanAdapter.locationOf(lr) -> lr.schema
-              case sr: StreamingRelation => SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.schema
-              case sr2: StreamingRelationV2 => SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.schema
-            })
+          plan.collect(recognizedRead) ++
+            WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect(recognizedRead))
         ).distinct.toList
         // WriteCommandSupport.combined is the same lookup translation used
         // to reach this ir.Write in the first place, so this can never
@@ -143,21 +159,43 @@ object ContractEnforcementRule {
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
-      case _ if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-        val violation = Violation(
-          ViolationType.UnverifiableWrite,
-          s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
-            s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
-          remediation =
-            "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-              "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-              "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-              "\"Fail-closed on unverifiable writes\" section."
-        )
-        val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-        throw new ContractViolationException(result, explain(contract, translated.plan, result))
       case _ =>
-        () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+        // Checked before the fail-closed Command catch-all below: a
+        // recognized state-changing CALL (nine procedures - see
+        // StateChangingCallSupport) genuinely verifies the resulting
+        // state, rather than being rejected outright the way it was
+        // before this case existed. rewrite_table_path (the one remaining
+        // state-changing procedure) is instead safe-listed in
+        // FailClosedCommands, having no state a contract could ever check.
+        StateChangingCallSupport.extract(plan) match {
+          case Some(info) =>
+            val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
+            if (!result.passed) {
+              // No ir.Plan translation exists for a state-changing CALL
+              // (there's no Spark write/query to translate) - a plain
+              // description standing in for `explain`'s usual rendered
+              // plan tree, reusing the rest of its explanation format
+              // unchanged.
+              val describedPlan =
+                com.example.ir.Unsupported(s"CALL ${info.callName}(...) targeting '${info.location}'")
+              throw new ContractViolationException(result, explain(contract, describedPlan, result))
+            }
+          case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+            val violation = Violation(
+              ViolationType.UnverifiableWrite,
+              s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
+                s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
+              remediation =
+                "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
+                  "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
+                  "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
+                  "\"Fail-closed on unverifiable writes\" section."
+            )
+            val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+            throw new ContractViolationException(result, explain(contract, translated.plan, result))
+          case None =>
+            () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+        }
     }
   }
 
