@@ -48,6 +48,7 @@ class SparkPlanAdapterFuzzSpec extends AnyFunSuite with BeforeAndAfterAll with S
       // property-based suite runs many small Spark actions per case, so
       // the default 200-task shuffle overhead compounds badly here.
       .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.ui.enabled", "false")
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }

@@ -47,6 +47,7 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       // See ContractEnforcementRuleSpec's beforeAll for why - same
       // reasoning, and this suite's MERGE/UPDATE/DELETE tests shuffle too.
       .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.ui.enabled", "false")
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan

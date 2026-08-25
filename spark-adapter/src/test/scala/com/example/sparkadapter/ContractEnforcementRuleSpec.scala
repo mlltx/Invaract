@@ -55,6 +55,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       // measured overhead in a suite this size. Purely a physical-
       // execution parallelism knob, invisible to query results.
       .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.ui.enabled", "false")
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan

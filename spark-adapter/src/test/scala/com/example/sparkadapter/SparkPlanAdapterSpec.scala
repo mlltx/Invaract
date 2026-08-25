@@ -39,6 +39,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
       // and this suite's own join/aggregate/window translation tests
       // shuffle too.
       .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.ui.enabled", "false")
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
