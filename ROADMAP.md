@@ -1940,20 +1940,66 @@ partitions, codegen), which found no real lever there.
       ARCHITECTURE.md estimate (`~1-5 min`) that never matched the real
       observed time, unrelated to today's split.
 
+#### Sub-phase: Verify `rollback_to_snapshot` against a contract - pilot, with a mid-course design correction (done)
+
+Piloted contract verification for one of the 10 state-changing CALL
+procedures left fail-closed by the classification pass above, per the
+user's own decision to sequence this as a pilot rather than building all
+mechanisms at once.
+
+- [x] **Original design proven wrong, not just buggy, and corrected
+      honestly rather than patched around.** The first design read the
+      *target snapshot's own* historical schema (Iceberg's
+      `SparkTable.copyWithSnapshotId(id).schema()`) and checked that
+      against the contract. A real end-to-end test - not a mock - showed
+      the post-rollback schema unchanged even after `refreshTable()`;
+      investigated seriously rather than assumed to be a caching bug,
+      and corroborated against Apache Iceberg's own issue tracker
+      (apache/iceberg#15165, open/unresolved): `rollback_to_snapshot`
+      moves which snapshot's *data* is current but never reverts
+      `current-schema-id` - schema evolution and snapshot rollback are
+      independent in Iceberg's model, so the original design was
+      checking a question the operation can't actually answer.
+- [x] **Corrected design**, prompted by the user's own reframing ("both
+      file path and schema - not schema alone"): check the table's
+      *current* schema (which a rollback provably cannot change) plus
+      location as a scoping gate - a rollback on a table the active
+      contract doesn't govern is allowed, not swept into an unrelated
+      contract's rejection, mirroring how `StructuralVerifier.verify`'s
+      `Write` case already treats out-of-scope locations. New
+      `StateChangingCallSupport.extract` (2 reflection hops: `Call.procedure()`
+      to the concrete `RollbackToSnapshotProcedure`, then
+      `BaseProcedure.tableCatalog()` to a plain public `TableCatalog` -
+      down from 3 hops in the original design, and no Iceberg-specific
+      type needed at all). New `StructuralVerifier.verifyStateChange` and
+      a `ContractEnforcementRule.verifyOrThrow` branch consulting it
+      before falling through to `FailClosedCommands`' blanket rejection.
+- [x] **Mutation testing caught a real gap in the pilot's own test
+      rigor, not just the code.** The "unrelated table" scoping test's
+      contract only required an already-present field, so it would have
+      passed even with scoping completely broken (mutated to always
+      check schema); fixed by requiring a field the unrelated table
+      genuinely lacks, so a real schema check - if scoping had failed -
+      would provably fail. Mutation score went from 96.08% to **100%**
+      (51/51) as a result; `mimaReportBinaryIssues` clean.
+- [x] `IcebergConnectorSpec` PASS/FAIL/scoping tests for
+      `rollback_to_snapshot`, plus a new `cherrypick_snapshot` fail-closed
+      test taking over `rollback_to_snapshot`'s old role as the "some CALL
+      still fails closed" proof.
+
 #### Scope (Future)
 
-- [ ] **Verify Iceberg's state-changing CALL procedures against a
-      contract, instead of leaving them fails-closed.** Pilot on
-      `rollback_to_snapshot` alone first (conceptually simplest - read
-      the target snapshot's already-recorded schema from the catalog, no
-      CALL-argument parsing needed) before generalizing to
-      `cherrypick_snapshot`/`publish_changes`/`fast_forward` (same
-      catalog-schema-read mechanism) and `add_files`/`migrate`/`snapshot`
-      (need to read a schema from a table/path named in a CALL argument -
-      argument parsing/binding this codebase has never needed before).
-      Explicitly sequenced this way per the user's own decision when this
-      work was scoped, rather than building all three mechanisms in one
-      pass.
+- [ ] **Extend state-changing CALL verification to the remaining 9
+      procedures**, now that `rollback_to_snapshot` above has proven the
+      approach end-to-end. `rollback_to_timestamp`/`set_current_snapshot`/
+      `cherrypick_snapshot`/`publish_changes`/`fast_forward` are a small,
+      mechanical extension of `rollback_to_snapshot`'s exact mechanism
+      (same "changes what's current, current schema is unaffected" shape -
+      `StateChangingCallSupport` just needs another procedure-class
+      branch each). `add_files`/`migrate`/`snapshot` need a materially
+      different, harder mechanism: parsing/binding a schema from a
+      table/path named in the CALL's own arguments, not just its target -
+      argument parsing this codebase has never needed before.
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
       covers `MISSING_INPUT`/`UNDECLARED_INPUT` already; explicit
       "forbidden" inputs (distinct from merely undeclared) and dependency

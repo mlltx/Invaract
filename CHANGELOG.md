@@ -673,6 +673,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   procedures' actual effect against a contract is scoped as separate
   future work (ROADMAP.md), piloting on `rollback_to_snapshot` alone
   first.
+- **Verified `rollback_to_snapshot` against a contract**, the pilot for
+  the 10 state-changing CALL procedures left fail-closed above — the
+  first to get real verification instead of a blanket rejection or a
+  no-op. The original design (check the *target snapshot's* own
+  historical schema) was proven wrong by a real end-to-end test, not
+  just buggy: a rollback plus `refreshTable()` still reported the
+  table's current, post-evolution schema, corroborated by Apache
+  Iceberg's own issue tracker (apache/iceberg#15165) — snapshot rollback
+  never reverts `current-schema-id`, so schema evolution and rollback
+  are independent in Iceberg's model. Corrected design checks the
+  table's *current* schema (which a rollback provably cannot change)
+  plus location as a scoping gate, so a rollback on a table the active
+  contract doesn't govern is allowed rather than wrongly rejected. New
+  `StateChangingCallSupport` (2 reflection hops, no Iceberg-specific
+  type needed) and `StructuralVerifier.verifyStateChange`. Mutation
+  testing caught a real gap in the pilot's own test, not the code — a
+  scoping test whose contract couldn't actually distinguish "scoping
+  worked" from "the check would have passed regardless" — fixed to
+  **100%** (51/51), up from 96.08%; `mimaReportBinaryIssues` clean.
+  `IcebergConnectorSpec`: 20 → 23 tests.
 
 ### Fixed
 

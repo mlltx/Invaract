@@ -159,21 +159,43 @@ object ContractEnforcementRule {
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
-      case _ if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-        val violation = Violation(
-          ViolationType.UnverifiableWrite,
-          s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
-            s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
-          remediation =
-            "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-              "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-              "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-              "\"Fail-closed on unverifiable writes\" section."
-        )
-        val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-        throw new ContractViolationException(result, explain(contract, translated.plan, result))
       case _ =>
-        () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+        // Checked before the fail-closed Command catch-all below: a
+        // recognized state-changing CALL (currently just
+        // rollback_to_snapshot - see StateChangingCallSupport) genuinely
+        // verifies the resulting state, rather than being rejected
+        // outright the way it was before this case existed and still is
+        // for the nine other state-changing procedures StateChangingCallSupport
+        // doesn't recognize.
+        StateChangingCallSupport.extract(plan) match {
+          case Some(info) =>
+            val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
+            if (!result.passed) {
+              // No ir.Plan translation exists for a state-changing CALL
+              // (there's no Spark write/query to translate) - a plain
+              // description standing in for `explain`'s usual rendered
+              // plan tree, reusing the rest of its explanation format
+              // unchanged.
+              val describedPlan =
+                com.example.ir.Unsupported(s"CALL rollback_to_snapshot(...) targeting '${info.location}'")
+              throw new ContractViolationException(result, explain(contract, describedPlan, result))
+            }
+          case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+            val violation = Violation(
+              ViolationType.UnverifiableWrite,
+              s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
+                s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
+              remediation =
+                "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
+                  "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
+                  "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
+                  "\"Fail-closed on unverifiable writes\" section."
+            )
+            val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+            throw new ContractViolationException(result, explain(contract, translated.plan, result))
+          case None =>
+            () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
+        }
     }
   }
 

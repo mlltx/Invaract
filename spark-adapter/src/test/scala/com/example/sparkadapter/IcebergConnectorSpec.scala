@@ -566,11 +566,147 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
-  // --- Fail-closed: Call, for procedures classified as genuinely
-  // data-affecting (see FailClosedCommands' safeIcebergProcedureClasses
-  // for the full 10-safe/10-unmodeled classification) ---
+  // --- StateChangingCallSupport: rollback_to_snapshot, genuinely verified
+  // (not just fail-closed) - see that file's own doc for the reflection
+  // mechanism and why this is a separate registry from WriteCommandSupport.
 
-  test("FAIL: rollback_to_snapshot (changes which snapshot is current) is rejected by the fail-closed policy") {
+  // Corrected design (see StateChangingCallSupport's own doc for the full
+  // finding): rollback_to_snapshot moves which snapshot's *data* is
+  // current but never reverts current-schema-id (confirmed empirically
+  // and independently corroborated by apache/iceberg#15165) - so what's
+  // checked is the table's CURRENT schema (unaffected by the rollback)
+  // plus location, not the target snapshot's own historical schema.
+
+  test("PASS: rollback_to_snapshot on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.rollback_pass_tbl"
+    val expectedLocation = tableName
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.rollback_to_snapshot('db.rollback_pass_tbl', $firstSnapshotId)").collect() // must not throw
+    }
+
+    // A CALL-driven rollback doesn't go through Spark's normal write path,
+    // which is what usually auto-invalidates the session's cached table
+    // metadata - refresh explicitly rather than assume spark.table(...)
+    // reflects the post-rollback state.
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 5, "the rollback must actually have taken effect (data reverted)")
+  }
+
+  test("FAIL: rollback_to_snapshot on a table whose current schema violates the contract is aborted before touching the table") {
+    val tableName = "local.db.rollback_fail_tbl"
+    val expectedLocation = tableName
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    // Contract requires 'missing_col', which the table's CURRENT schema
+    // doesn't have (and never will, regardless of which snapshot the
+    // rollback targets) - the operation must be rejected.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: missing_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"CALL local.system.rollback_to_snapshot('db.rollback_fail_tbl', $firstSnapshotId)").collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the rollback must be aborted before touching the table")
+  }
+
+  test("PASS: rollback_to_snapshot on a table the active contract doesn't govern is allowed, not swept up by an unrelated contract") {
+    val governedTable = "local.db.rollback_unrelated_governed_tbl"
+    val unrelatedTable = "local.db.rollback_unrelated_target_tbl"
+    val expectedLocation = governedTable
+    spark.sql(s"CREATE TABLE $governedTable (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(governedTable).append()
+
+    spark.sql(s"CREATE TABLE $unrelatedTable (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(unrelatedTable).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $unrelatedTable.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(unrelatedTable).append()
+
+    // A contract that would genuinely reject unrelatedTable's current
+    // schema if it applied there (requires 'missing_col', which
+    // unrelatedTable doesn't have) - proving location-scoping actually
+    // skips the schema check, not just that a lenient contract happens to
+    // pass either way (a real mutation-testing survivor caught this test
+    // not actually distinguishing the two - see StructuralVerifier.
+    // verifyStateChange's own doc).
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $expectedLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: missing_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      // Targets unrelatedTable, not governedTable - must not throw, since
+      // this contract doesn't govern unrelatedTable at all.
+      spark.sql(s"CALL local.system.rollback_to_snapshot('db.rollback_unrelated_target_tbl', $firstSnapshotId)").collect()
+    }
+
+    spark.catalog.refreshTable(unrelatedTable)
+    assert(spark.table(unrelatedTable).count() == 5, "the rollback on the unrelated table must actually have taken effect")
+  }
+
+  // --- Fail-closed: Call, for procedures still classified as genuinely
+  // data-affecting and unmodeled (see FailClosedCommands'
+  // safeIcebergProcedureClasses for the full classification -
+  // rollback_to_snapshot above is the one exception now that has real
+  // support via StateChangingCallSupport; every other state-changing
+  // procedure still fails closed unconditionally) ---
+
+  test("FAIL: cherrypick_snapshot (still unmodeled - no verification mechanism built for it yet) is rejected by the fail-closed policy") {
     val tableName = "local.db.call_fail_tbl"
     val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("call_fail_tbl").toString
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
@@ -581,7 +717,7 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     // Any active contract - CALL's fail-closed rejection doesn't depend on
     // the contract's content, only on the command being unrecognized and
-    // not on FailClosedCommands' safe list.
+    // not on FailClosedCommands' safe list or StateChangingCallSupport.
     val yaml =
       s"""id: enforcement_demo
          |version: "1.0.0"
@@ -597,10 +733,10 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     withContract(yaml) {
       intercept[ContractViolationException] {
-        spark.sql(s"CALL local.system.rollback_to_snapshot('db.call_fail_tbl', $firstSnapshotId)").collect()
+        spark.sql(s"CALL local.system.cherrypick_snapshot('db.call_fail_tbl', $firstSnapshotId)").collect()
       }
     }
-    // The rollback must never have taken effect - still both writes' rows.
+    // The cherry-pick must never have taken effect - still both writes' rows.
     assert(spark.table(tableName).count() == 10)
   }
 

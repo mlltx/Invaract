@@ -839,7 +839,8 @@ the ones whose semantics weren't obvious from the class name alone:
 | `compute_table_stats` | ✅ Safe-listed | Writes auxiliary CBO statistics only, same category as `ANALYZE TABLE` |
 | `compute_partition_stats` | ✅ Safe-listed | Same reasoning, partition-scoped |
 | `create_changelog_view` | ✅ Safe-listed | Creates a read-only temp view, mutates nothing |
-| `rollback_to_snapshot` / `rollback_to_timestamp` / `set_current_snapshot` | 🚫 Left unmodeled | Changes which snapshot is "current" — the table's visible content changes |
+| `rollback_to_snapshot` | 🔧 **Genuinely verified — closed this pass** | See "Verifying `rollback_to_snapshot`" below — no longer blanket-rejected; checked against the contract for real. |
+| `rollback_to_timestamp` / `set_current_snapshot` | 🚫 Left unmodeled | Same effect as `rollback_to_snapshot` (changes which snapshot is "current") but not yet wired to `StateChangingCallSupport` — a small, mechanical extension of the same pattern, not attempted this pass |
 | `cherrypick_snapshot` / `publish_changes` | 🚫 Left unmodeled | Applies a staged (WAP) snapshot's changes into the current table — content-affecting |
 | `fast_forward` | 🚫 Left unmodeled | Advances a branch's current snapshot — content-affecting for that branch's readers |
 | `add_files` | 🚫 Left unmodeled | Imports external files as new data — genuinely adds rows |
@@ -848,11 +849,11 @@ the ones whose semantics weren't obvious from the class name alone:
 | `rewrite_table_path` | 🚫 Left unmodeled | Same reasoning as `snapshot` — doesn't touch the source table, but stages new metadata elsewhere; kept conservative rather than silently trusted |
 
 Verified against real CALL statements, not asserted: `IcebergConnectorSpec`'s
-`rollback_to_snapshot` fail-closed test (proving a genuinely unsafe
-procedure is still rejected, replacing the suite's earlier
-`rewrite_data_files`-based version of that test now that
-`rewrite_data_files` is correctly allowed) and a new regression test
-sampling five of the ten safe-listed procedures (`rewrite_data_files`,
+`cherrypick_snapshot` fail-closed test (proving a genuinely unsafe,
+still-unmodeled procedure is still rejected — `rollback_to_snapshot` is no
+longer the example used here, since it now has real support; see
+"Verifying `rollback_to_snapshot`" below) and a regression test sampling
+five of the ten safe-listed procedures (`rewrite_data_files`,
 `rewrite_manifests`, `expire_snapshots`, `remove_orphan_files`,
 `ancestors_of`) across compaction, GC, and read-only introspection —
 proving they run under an active, otherwise-checking contract instead of
@@ -874,17 +875,80 @@ around it, since this is the single highest-stakes line in the whole
 change (a wrongly-flipped `true` here would silently defeat the entire
 feature for any future Iceberg version).
 
-**What this does not do**: verify the ten unmodeled procedures' actual
-effect against a contract (e.g. confirming a `rollback_to_snapshot`
-target's schema still satisfies the contract before allowing it, rather
-than rejecting the operation outright). That's real, separately-scoped
-future work — each of the three procedure groups above needs its own new
-mechanism (a target snapshot's already-recorded schema read from the
-catalog with no Spark write involved; a schema read from a table/path
-named in a CALL *argument*, which needs argument parsing/binding this
-codebase has never done before) rather than fitting `WriteCommandSupport`'s
-existing "translate a Spark write" model. See ROADMAP.md for the planned
-pilot (verifying `rollback_to_snapshot` alone first, before generalizing).
+**What this still does not do**: verify the nine still-unmodeled
+procedures' actual effect against a contract. `rollback_to_snapshot` is
+done (see below); the rest need their own mechanism — a target snapshot's
+already-recorded schema read from the catalog with no Spark write
+involved (`rollback_to_timestamp`/`set_current_snapshot`/`cherrypick_snapshot`/
+`publish_changes`/`fast_forward`, a small extension of `rollback_to_snapshot`'s
+own mechanism), or a schema read from a table/path named in a CALL
+*argument*, which needs argument parsing/binding this codebase has never
+done before (`add_files`/`migrate`/`snapshot`) — rather than fitting
+`WriteCommandSupport`'s existing "translate a Spark write" model.
+
+### Verifying `rollback_to_snapshot`
+
+A pilot, not the full set: the first of the ten unmodeled state-changing
+procedures to get real verification instead of a blanket rejection,
+scoped deliberately narrow to prove the approach before generalizing (see
+ROADMAP.md for the original scoping decision).
+
+**The first design was wrong, and mutation testing caught it, not
+inspection.** The initial implementation extracted the *target snapshot's
+own* historical schema — via Iceberg's `SparkTable.copyWithSnapshotId(id).schema()`,
+confirmed reachable via a real probe (since deleted) that showed the
+extracted schema correctly omitting a column added *after* that snapshot
+— and checked that against the contract. This turned out to verify
+something that doesn't correspond to what the operation actually does:
+a real end-to-end test (rollback, then an explicit `refreshTable`) showed
+the table's schema *unchanged* — still reflecting the latest evolution,
+not the target snapshot's. Independently corroborated by Apache Iceberg's
+own issue tracker (apache/iceberg#15165, open and unresolved as of this
+writing): a maintainer's own report says `current-schema-id` "always
+points to the latest schema" regardless of which snapshot a rollback
+makes current. Schema evolution and snapshot rollback are independent in
+Iceberg's model — a rollback can never change a table's schema at all, so
+comparing against the target snapshot's own schema was answering a
+question with no real referent.
+
+**The corrected design** checks the two things a rollback can actually
+be judged against, together:
+
+- **Location** — does this CALL even target the contract's declared
+  output? Confirmed as a *scoping* gate, not a violation: a state-changing
+  operation on a table the active contract doesn't govern is now
+  correctly allowed, not swept up by an unrelated contract the way every
+  rollback was before this file existed (`StructuralVerifier.verifyStateChange`
+  returns a clean pass, skipping the schema check entirely, when location
+  doesn't match — deliberately different from `verify`'s `Write` case,
+  where a wrong-location write IS a violation, since something was
+  genuinely written to the wrong place there).
+- **Current schema** — since the operation can't change it, checking the
+  table's schema *right now* (via the plain, connector-agnostic
+  `Table.columns()`, not Iceberg's `SparkTable`) is exactly checking what
+  will still be true afterward. Catches a table already out of compliance
+  (e.g. an out-of-band schema change) at the point of a state-changing
+  operation on it.
+
+Extraction needs only two reflective hops now (down from three) —
+`BaseProcedure.tableCatalog()` (protected, `setAccessible`) and
+`TableCatalog.loadTable(Identifier)` (fully public) — since the
+snapshot-specific `copyWithSnapshotId` hop is no longer needed at all.
+
+**Verified with real tests, including a real bug the tests themselves
+caught**: `IcebergConnectorSpec`'s PASS test (current schema satisfies
+the contract → allowed), FAIL test (current schema doesn't → rejected
+before touching the table), and a location-scoping test (targets a table
+the active contract doesn't govern → allowed). The location-scoping
+test's first version passed even though a mutation-testing survivor
+proved it wasn't actually distinguishing "scoping worked" from "the
+contract happened to be lenient enough to pass anyway" — its contract
+only required an already-present, optional field. Fixed by requiring a
+field the unrelated table genuinely lacks, so a real schema check (if
+scoping were broken) would provably fail. Mutation testing on the three
+changed files (`StateChangingCallSupport.scala`, `StructuralVerifier.scala`,
+`ContractEnforcementRule.scala`): **100%** (51/51) after that fix — up
+from 96.08% (2 survivors) beforehand. `mimaReportBinaryIssues` clean.
 
 ### Iceberg operation-surface coverage ledger
 
@@ -905,7 +969,7 @@ pilot (verifying `rollback_to_snapshot` alone first, before generalizing).
 | `.writeTo(...).createOrReplace()`/`.replace()` | ✅ Covered | `ReplaceTableAsSelect`, already generic — confirmed via probe. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally, closed this pass** | New `dsv2RowLevelWrite` case (`ReplaceData`/`WriteDelta`, via the standard `RowLevelWrite` trait — no reflection, unlike Delta's `deltaRowLevelDml`), connector-agnostic. Same structural-only scope as Delta's row-level DML row. `IcebergConnectorSpec`'s PASS/FAIL pair for MERGE, plus PASS tests for UPDATE/DELETE. |
 | Streaming write (`writeStream`) | ✅ Covered | `WriteToStream`, already generic (closed during the Delta pass) — confirmed for Iceberg via `IcebergConnectorSpec`'s streaming `.toTable()` test, using the `catalogTable`-populated fallback tier (Iceberg's streaming sink didn't need the reflective `DeltaSink`-style fallback Delta's did). |
-| Maintenance operations that touch data (`CALL system.*` procedures) | 🔀 **Partially covered — closed this pass** | Procedure-name-aware classification implemented (see "Iceberg CALL procedure classification" above): 10 of 20 procedures (storage/metadata compaction, GC of unreferenced files/snapshots, catalog registration, stats, read-only introspection) now run as verified no-ops instead of being wrongly rejected. The other 10 (rollback/cherrypick/publish/fast-forward/add_files/migrate/snapshot/rewrite_table_path) still fail closed, deliberately — each needs its own new verification mechanism (a catalog-level schema read, or CALL-argument parsing) rather than fitting the existing "translate a Spark write" model; tracked as separate future work, piloting on `rollback_to_snapshot` first. `IcebergConnectorSpec`'s `rollback_to_snapshot` fail-closed test plus a safe-procedures regression test (5 of the 10) prove both halves. |
+| Maintenance operations that touch data (`CALL system.*` procedures) | 🔀 **Partially covered — extended this pass** | Procedure-name-aware classification (see "Iceberg CALL procedure classification" above): 10 of 20 procedures (storage/metadata compaction, GC of unreferenced files/snapshots, catalog registration, stats, read-only introspection) run as verified no-ops. `rollback_to_snapshot` (see "Verifying `rollback_to_snapshot`" below) is now genuinely verified — not a no-op and not a blanket rejection — via a catalog-level current-schema-plus-location check, closing 11 of 20. The remaining 9 (rollback_to_timestamp/set_current_snapshot/cherrypick_snapshot/publish_changes/fast_forward/add_files/migrate/snapshot/rewrite_table_path) still fail closed, deliberately: the first five are a small, mechanical extension of `rollback_to_snapshot`'s exact mechanism (same "changes what's current, current schema is unaffected" shape); the last four need a materially different mechanism — parsing/binding a schema from a table or path named in the CALL's own arguments, not just its target — not attempted this pass. `IcebergConnectorSpec`'s `rollback_to_snapshot` PASS/FAIL/scoping tests, a `cherrypick_snapshot` fail-closed test, and a safe-procedures regression test (5 of the 10 no-ops) prove all three tiers. |
 | Iceberg's own metadata/ref DDL (branch/tag/partition-spec/identifier-fields/write-ordering/views) | ✅ Covered by policy classification | 13 classes added to `FailClosedCommands`' safe list, reasoning in that file's own comment. `IcebergConnectorSpec`'s regression test proves none are blocked under an active, otherwise-rejecting contract. |
 
 ### Iceberg feature-surface coverage ledger
@@ -920,7 +984,7 @@ connector-specific list, not the fixed operation-surface template above.
 | Staged-table location reporting differs from Delta's | 🔧 **Found and fixed** | See "A second staged-table trap" above. Fixed by keying the location-resolution fallback on the `StagedTable` marker interface itself, not on whether a `"location"` property happens to be absent. |
 | Partition evolution (`ADD`/`DROP`/`REPLACE PARTITION FIELD`) | ✅ Confirmed | Metadata-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises `ADD PARTITION FIELD` directly under an active contract. |
 | Branching and tagging (named refs to a snapshot) | ✅ Confirmed | Metadata/ref-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises create/drop of both directly. |
-| `CALL` system procedures (maintenance) | 🔧 **Found and partially fixed** | See "Iceberg CALL procedure classification" above and the operation-surface row above — 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed; the other 10's correct disposition remains fail-closed, now for a documented per-procedure reason instead of "unmodeled." |
+| `CALL` system procedures (maintenance) | 🔧 **Found and partially fixed** | See "Iceberg CALL procedure classification" and "Verifying `rollback_to_snapshot`" above, and the operation-surface row above — 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed no-ops, and `rollback_to_snapshot` reclassified from wrongly-rejected to genuinely verified, for 11 of 20 with real disposition; the other 9's correct disposition remains fail-closed, now for a documented per-procedure reason instead of "unmodeled." |
 | Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
 | `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
 | Deletion vectors / merge-on-read positional deletes | ✅ **Confirmed — closed this pass** | Real probe (since deleted): a `DELETE` against a real `format-version = 3` table (Iceberg's deletion-vector spec) still produces a plain `ReplaceData` node — the same class `dsv2RowLevelWrite` already matches via the shared `RowLevelWrite` trait. The storage mechanism behind a merge-on-read delete (position-delete file vs. deletion vector) isn't visible at the `LogicalPlan` level this adapter operates on at all, so no code change was needed. `IcebergConnectorSpec`'s new "PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table..." test. |

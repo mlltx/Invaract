@@ -267,6 +267,45 @@ private[sparkadapter] object StructuralVerifier {
     VerificationResult.of(s"${contract.id}@${contract.version}", violations)
   }
 
+  /** For state-changing, non-write operations that still result in a
+    * committed schema change at a location - currently just Iceberg's
+    * `rollback_to_snapshot` (see `StateChangingCallSupport`) - checked
+    * against a contract's declared output. Deliberately narrower than
+    * `verify` above: no `ir.Plan` to walk (there's no Spark query being
+    * written, so no reads to collect and no input-side checking applies).
+    *
+    * Location is a *scoping* gate here, not a violation the way it is for
+    * `verify`'s `Write` case above: a real write happening under an active
+    * contract, to the wrong place, is worth flagging (something WAS
+    * written, just not where expected). A state-changing operation on a
+    * table this contract doesn't declare at all isn't a wrong-place write -
+    * it's simply not this contract's concern, since one contract's
+    * presence shouldn't gate every operation on every table in a job that
+    * happens to run under it. So a location that doesn't match returns a
+    * clean pass (no violations, schema not even checked) rather than an
+    * `OutputLocationMismatch` violation - confirmed by a real test
+    * (`IcebergConnectorSpec`'s "rollback_to_snapshot on a table the active
+    * contract doesn't govern") that first caught this getting it backwards.
+    * Schema checking only happens once location scoping says this
+    * operation IS the contract's concern - reuses `checkSchema` directly
+    * rather than duplicating it, same rules/violation types/remediation
+    * wording as every other output check in this file.
+    */
+  private[sparkadapter] def verifyStateChange(
+    contract: Contract,
+    location: String,
+    resultingSchema: StructType,
+    options: VerificationOptions = VerificationOptions()
+  ): VerificationResult = {
+    val expectedOutput = contract.outputs.head
+    if (!locationsMatch(expectedOutput.location, location))
+      VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
+    else {
+      val schemaViolations = checkSchema(expectedOutput.schema.fields, resultingSchema, "OUTPUT", options.rejectUndeclaredFields)
+      VerificationResult.of(s"${contract.id}@${contract.version}", schemaViolations)
+    }
+  }
+
   private def collectReads(plan: Plan): List[Read] = plan match {
     case r: Read => List(r)
     case other    => other.children.flatMap(collectReads)
