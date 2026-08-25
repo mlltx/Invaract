@@ -719,6 +719,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   genuinely equivalent guard mutant, same category already accepted in
   the pilot); `ContractEnforcementRule.scala` 100% (10/10).
   `mimaReportBinaryIssues` clean. `IcebergConnectorSpec`: 23 → 31 tests.
+- **Verified the remaining 4 "harder" Iceberg CALL procedures**
+  (`add_files`, `migrate`, `snapshot`, `rewrite_table_path`) — all 20
+  Iceberg system CALL procedures now have a real, evidenced disposition
+  (11 safe-listed no-ops + 9 genuinely verified), none left unmodeled.
+  Real investigation (`javap` plus a live probe per procedure, since
+  deleted) found the original "these all need new CALL-argument-parsing
+  mechanism" assumption wrong for 3 of the 4: `add_files`/`migrate` fit
+  the existing 6-procedure mechanism unchanged (confirmed `add_files`
+  never touches its target's schema regardless of source shape;
+  confirmed `migrate`'s actual production code path already resolves the
+  pre-migration schema Iceberg preserves unchanged); `rewrite_table_path`
+  needed no verification at all (confirmed it never touches its table's
+  own catalog entry/schema/snapshot, joining the safe list instead).
+  Only `snapshot` needed genuinely new mechanism — it creates a table
+  whose schema comes from a *different* source table than the one a
+  contract governs, and both can be qualified with a catalog other than
+  the CALL's own — solved with `SparkSession.active`'s `CatalogManager`
+  (fully public APIs, not reflection) re-implementing Iceberg's own
+  identifier-resolution algorithm; hit and worked around a real Scala
+  access-control surprise (`CatalogManager`'s type isn't nameable outside
+  Spark's own package despite public bytecode). Also solved a real test-
+  environment obstacle without adding a dependency: `migrate` rejects any
+  Hadoop-type destination catalog unconditionally, confirmed via probe;
+  used Iceberg's `JdbcCatalog` against H2 (already transitively on the
+  test classpath) instead of a new `spark-hive` dependency. Mutation
+  testing found a real `resolveIdentifier` gap, closed with a permanent
+  test: `StateChangingCallSupport.scala` 85% (17/20, 3 accepted
+  near-equivalents); `FailClosedCommands.scala` 100% (4/4).
+  `mimaReportBinaryIssues` clean. `IcebergConnectorSpec`: 31 → 35 tests.
 
 ### Fixed
 

@@ -2033,14 +2033,67 @@ extension" scope this work's original sequencing called out.
       clean (both touched types stay `private[sparkadapter]`). Full
       `./dev/build`/`./dev/test`/`./dev/regression` passing.
 
+#### Sub-phase: Verify the remaining 4 harder CALL procedures - `add_files`, `migrate`, `snapshot`, `rewrite_table_path` (done)
+
+Closed the last operation-surface gap in Iceberg's CALL procedure
+coverage. The original scoping (above) assumed all 4 needed a materially
+harder mechanism (CALL-argument schema parsing); real investigation via
+`javap` on the real jar plus a live probe (since deleted) per procedure
+found that assumption wrong for 3 of the 4, in both directions.
+
+- [x] **`add_files`/`migrate` fit the existing 6-procedure mechanism
+      unchanged - zero new code beyond a map entry each.** Confirmed via
+      probe: `add_files` never changes its target's schema regardless of
+      the source's shape (an extra source column is silently dropped, a
+      missing one is NULL-filled - the same narrower-append behavior
+      already handled elsewhere), so `source_table` is never read at all.
+      `migrate` converts its table in place; probed using the actual
+      production code path (`TableCatalog.loadTable`, not a
+      `spark.table(...)` read) that it correctly resolves the
+      *pre*-migration schema, which Iceberg always preserves unchanged
+      anyway.
+- [x] **`snapshot` is the one procedure that's genuinely different**,
+      confirmed via probe: it creates a *new* table whose schema comes
+      from a *different, existing* source table - the opposite
+      schema/location pairing from every other procedure - and both
+      arguments can be qualified with a catalog other than the CALL's
+      own. Needed genuinely new resolution (`resolveIdentifier`,
+      re-implementing Iceberg's own `Spark3Util.catalogAndIdentifier`
+      algorithm) using `SparkSession.active`'s `CatalogManager` - fully
+      public Spark APIs, not reflection, unlike every other procedure's
+      `tableCatalogOf`. Hit one real Scala access-control surprise along
+      the way (`CatalogManager`'s type can't be named directly in this
+      module despite public bytecode - it's `private[sql]` at the Scala
+      level) - worked around by passing `SparkSession` itself instead.
+- [x] **`rewrite_table_path` needed no verification mechanism at all - a
+      real positive finding.** Confirmed via probe: never touches the
+      table's own catalog entry, schema, or snapshot, and registers no
+      new catalog table itself - joined `FailClosedCommands`' safe list
+      instead, the same disposition as the original 10 compaction/GC
+      procedures.
+- [x] **Solved a real environment obstacle without a new dependency.**
+      Testing `migrate`/`snapshot` needs a default catalog that resolves
+      both native and Iceberg tables; a Hadoop-type catalog rejects
+      `migrate` unconditionally (any table with a pre-existing "custom"
+      location, which every native table has - confirmed via probe, not
+      a path-format bug). A real Hive metastore would need a new
+      `spark-hive` test dependency; used Iceberg's `JdbcCatalog` against
+      H2 instead, already transitively present on the test classpath.
+- [x] Mutation testing found two real gaps (not just cited a score): a
+      `resolveIdentifier` boundary condition (multi-part identifier
+      without a catalog prefix) had no test distinguishing correct
+      catalog-fallback behavior from a mutant that mishandled it - closed
+      with a dedicated permanent test, which incidentally also proved
+      that exact resolution path for real. Final score:
+      `StateChangingCallSupport.scala` 85% (17/20 - 3 accepted
+      near-equivalents, each documented inline at the survived mutant);
+      `FailClosedCommands.scala` (`rewrite_table_path`'s new safe-list
+      entry) 100% (4/4). `mimaReportBinaryIssues` clean. All 20 Iceberg
+      CALL procedures now have a permanent, evidenced disposition - none
+      left unmodeled.
+
 #### Scope (Future)
 
-- [ ] **Extend state-changing CALL verification to the remaining 4
-      procedures** (`add_files`/`migrate`/`snapshot`/`rewrite_table_path`).
-      These need a materially different, harder mechanism than the six
-      above: parsing/binding a schema from a table/path named in the
-      CALL's own arguments, not just its target - argument parsing this
-      codebase has never needed before.
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
       covers `MISSING_INPUT`/`UNDECLARED_INPUT` already; explicit
       "forbidden" inputs (distinct from merely undeclared) and dependency

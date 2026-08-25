@@ -44,6 +44,22 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
       .config("spark.sql.catalog.local.type", "hadoop")
       .config("spark.sql.catalog.local.warehouse", scratchDir.resolve("warehouse").toString)
+      // add_files/migrate/snapshot need a *default* catalog that can
+      // resolve both plain native (non-Iceberg) tables AND Iceberg CALL
+      // procedures against the same identifier space - SparkSessionCatalog,
+      // not "local" above (a plain Hadoop-type catalog, which only ever
+      // holds Iceberg tables). Confirmed via a real probe (since deleted)
+      // that a Hadoop-type destination catalog specifically rejects
+      // migrate (it refuses any table with a pre-existing "custom"
+      // location, which every native Spark table has) - JdbcCatalog
+      // doesn't have that restriction. H2 is already on this module's test
+      // classpath (a transitive dependency, not something added for this),
+      // so this needs no new dependency.
+      .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog")
+      .config("spark.sql.catalog.spark_catalog.catalog-impl", "org.apache.iceberg.jdbc.JdbcCatalog")
+      .config("spark.sql.catalog.spark_catalog.uri", s"jdbc:h2:${scratchDir.resolve("catalog_db")}")
+      .config("spark.sql.catalog.spark_catalog.warehouse", scratchDir.resolve("default_warehouse").toString)
+      .config("spark.sql.warehouse.dir", scratchDir.resolve("default_warehouse").toString)
       // See ContractEnforcementRuleSpec's beforeAll for why - same
       // reasoning, and this suite's MERGE/UPDATE/DELETE tests shuffle too.
       .config("spark.sql.shuffle.partitions", "2")
@@ -974,31 +990,134 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(tableName).collect().toSet == mainRowsBefore, "main must be untouched (it always was) and b1 must never have moved")
   }
 
-  // --- Fail-closed: Call, for procedures still classified as genuinely
-  // data-affecting and unmodeled (see FailClosedCommands'
-  // safeIcebergProcedureClasses for the full classification - the six
-  // procedures above are the exceptions that now have real support via
-  // StateChangingCallSupport; every other state-changing procedure still
-  // fails closed unconditionally) ---
+  // --- StateChangingCallSupport's remaining three procedures: add_files
+  // and migrate reuse the exact same mechanism as the nine above (target's
+  // current schema, unaffected either way - confirmed via probe, see that
+  // file's own doc); snapshot is genuinely different (schema comes from a
+  // *different* identifier - the source - than the one a contract governs
+  // - the destination - and both can be qualified with a catalog other
+  // than the one the CALL itself was invoked against).
+  //
+  // With these three, all 20 of Iceberg's system CALL procedures now have
+  // a real, evidenced disposition: 11 safe no-ops (10 original +
+  // rewrite_table_path, confirmed via probe to touch no catalog-governed
+  // state at all - see FailClosedCommands) and 9 genuinely verified. A
+  // "still-unmodeled CALL fails closed" demonstration - this suite's old
+  // role for add_files, and cherrypick_snapshot before it - has no real
+  // procedure left to demonstrate with; the underlying fail-closed wiring
+  // for an unrecognized Command remains covered by FailClosedCommandsSpec's
+  // direct unit test of the reflection-fallback path and this module's
+  // other (non-CALL) UnverifiableWrite tests.
 
-  test("FAIL: add_files (still unmodeled - no verification mechanism built for it yet) is rejected by the fail-closed policy") {
-    val tableName = "local.db.call_fail_tbl"
-    val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("call_fail_tbl").toString
+  test("PASS: add_files importing a native table's files into an Iceberg table satisfying its contract executes normally") {
+    val tableName = "local.db.add_files_pass_tbl"
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
-    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    spark.sql("CREATE TABLE add_files_pass_source (id BIGINT, doubled BIGINT) USING parquet")
+    spark.sql("INSERT INTO add_files_pass_source VALUES (1, 2), (2, 4)")
 
-    // Any active contract - CALL's fail-closed rejection doesn't depend on
-    // the contract's content, only on the command being unrecognized and
-    // not on FailClosedCommands' safe list or StateChangingCallSupport.
-    // add_files never even reaches Iceberg's own execution (which would
-    // fail anyway - 'db.nonexistent_source' doesn't exist) since
-    // Invariant's check rule throws first, during analysis.
     val yaml =
       s"""id: enforcement_demo
          |version: "1.0.0"
          |outputs:
          |  - name: out
-         |    location: $expectedLocation
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.add_files('db.add_files_pass_tbl', 'default.add_files_pass_source')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 2, "the import must actually have taken effect")
+  }
+
+  test("PASS: migrate converting a native table into Iceberg in place, satisfying its contract, executes normally") {
+    spark.sql("CREATE DATABASE IF NOT EXISTS mig")
+    spark.sql("CREATE TABLE mig.migrate_pass_tbl (id BIGINT, doubled BIGINT) USING parquet")
+    spark.sql("INSERT INTO mig.migrate_pass_tbl VALUES (1, 2), (2, 4)")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: spark_catalog.mig.migrate_pass_tbl
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("CALL system.migrate('mig.migrate_pass_tbl')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable("mig.migrate_pass_tbl")
+    assert(spark.table("mig.migrate_pass_tbl").count() == 2, "the migration must actually have taken effect (still Iceberg-readable, same rows)")
+  }
+
+  // snapshot's schema/location pairing is the opposite of every other
+  // procedure above: the contract governs the *destination* (args(1)),
+  // but the schema being checked comes from the *source* (args.head) -
+  // and both are deliberately cross-catalog here (source under the
+  // default spark_catalog, destination under "local") to prove the new
+  // per-argument catalog resolution actually works, not just the
+  // single-catalog case every other procedure's tests exercise.
+  test("PASS: snapshot creating a new Iceberg table from a native source satisfying its contract executes normally") {
+    spark.sql("CREATE TABLE snapshot_pass_source (id BIGINT, doubled BIGINT) USING parquet")
+    spark.sql("INSERT INTO snapshot_pass_source VALUES (1, 2), (2, 4)")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: local.db.snapshot_pass_dst
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("CALL local.system.snapshot('snapshot_pass_source', 'local.db.snapshot_pass_dst')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable("local.db.snapshot_pass_dst")
+    assert(spark.table("local.db.snapshot_pass_dst").count() == 2, "the new table must actually reference the source's data")
+  }
+
+  // Proves resolveIdentifier's catalog-vs-namespace boundary for real: a
+  // destination with an explicit multi-part identifier ("db.<table>") but
+  // NO catalog prefix at all must resolve under the session's current/
+  // default catalog (spark_catalog here), not be mistaken for a
+  // catalog-qualified name just because it has more than one segment.
+  test("PASS: snapshot with a destination that has a namespace but no catalog prefix resolves under the session's default catalog") {
+    spark.sql("CREATE TABLE snapshot_pass_source2 (id BIGINT) USING parquet")
+    spark.sql("INSERT INTO snapshot_pass_source2 VALUES (1), (2)")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: spark_catalog.db.snapshot_dst_bare
          |    schema:
          |      fields:
          |        - name: id
@@ -1007,12 +1126,43 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
          |""".stripMargin
 
     withContract(yaml) {
+      spark.sql("CALL local.system.snapshot('snapshot_pass_source2', 'db.snapshot_dst_bare')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable("db.snapshot_dst_bare")
+    assert(spark.table("db.snapshot_dst_bare").count() == 2, "the new table must actually reference the source's data")
+  }
+
+  test("FAIL: snapshot is aborted, and no new table created, when the SOURCE's schema violates the contract governing the destination") {
+    spark.sql("CREATE TABLE snapshot_fail_source (id BIGINT) USING parquet")
+    spark.sql("INSERT INTO snapshot_fail_source VALUES (1), (2)")
+
+    // Contract governs the DESTINATION location and requires a field the
+    // SOURCE (and therefore the about-to-be-created table) doesn't have.
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: local.db.snapshot_fail_dst
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: missing_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
       intercept[ContractViolationException] {
-        spark.sql(s"CALL local.system.add_files('db.call_fail_tbl', 'db.nonexistent_source')").collect()
+        spark.sql("CALL local.system.snapshot('snapshot_fail_source', 'local.db.snapshot_fail_dst')").collect()
       }
     }
-    // Nothing was imported - still just the one write's rows.
-    assert(spark.table(tableName).count() == 5)
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+    assert(!spark.catalog.tableExists("local.db.snapshot_fail_dst"), "the new table must never be created, not merely reported as failed")
   }
 
   // --- Regression: Iceberg system procedures classified safe aren't blocked ---

@@ -81,7 +81,9 @@ private[sparkadapter] object FailClosedCommands {
   // rows, GC of files/snapshots already unreferenced by anything live, or
   // read-only introspection - see docs/SPARK_ADAPTER.md's "Iceberg CALL
   // procedure classification" section for the full per-procedure reasoning,
-  // including the ten deliberately left off this list.
+  // including the ones deliberately left off this list (most of which have
+  // real verification via StateChangingCallSupport instead, not a blanket
+  // rejection - see that file's own doc for which).
   private val safeIcebergProcedureClasses: Set[String] = Set(
     // -- Storage/metadata compaction: rewrites files, preserves the same
     // logical rows. Same category as Delta's OptimizeTableCommand above.
@@ -97,7 +99,17 @@ private[sparkadapter] object FailClosedCommands {
     "org.apache.iceberg.spark.procedures.AncestorsOfProcedure",
     "org.apache.iceberg.spark.procedures.ComputeTableStatsProcedure",
     "org.apache.iceberg.spark.procedures.ComputePartitionStatsProcedure",
-    "org.apache.iceberg.spark.procedures.CreateChangelogViewProcedure"
+    "org.apache.iceberg.spark.procedures.CreateChangelogViewProcedure",
+    // -- rewrite_table_path: writes a portable copy of metadata/data file
+    // references at a target path prefix, for physically relocating a
+    // table's storage - confirmed via a real probe (since deleted) that it
+    // never touches the SOURCE table's own catalog entry, current schema,
+    // or current snapshot, and registers no new catalog table itself (an
+    // external process is expected to do that later, against the copy).
+    // Nothing a contract could ever check is affected - same category as
+    // the read-only/GC procedures above, not "genuinely data-mutating but
+    // unmodeled" the way the CALL-argument-parsing procedures below are.
+    "org.apache.iceberg.spark.procedures.RewriteTablePathProcedure"
   )
 
   private val knownSafe: Set[String] = Set(

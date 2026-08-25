@@ -161,12 +161,12 @@ object ContractEnforcementRule {
         }
       case _ =>
         // Checked before the fail-closed Command catch-all below: a
-        // recognized state-changing CALL (six procedures - see
+        // recognized state-changing CALL (nine procedures - see
         // StateChangingCallSupport) genuinely verifies the resulting
         // state, rather than being rejected outright the way it was
-        // before this case existed and still is for the four remaining
-        // state-changing procedures StateChangingCallSupport doesn't
-        // recognize.
+        // before this case existed. rewrite_table_path (the one remaining
+        // state-changing procedure) is instead safe-listed in
+        // FailClosedCommands, having no state a contract could ever check.
         StateChangingCallSupport.extract(plan) match {
           case Some(info) =>
             val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
