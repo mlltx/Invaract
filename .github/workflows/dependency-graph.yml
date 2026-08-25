@@ -22,6 +22,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Kept in sync by hand with the module list in test.yml's `sbom`
+        # job (and, transitively, dev/build's own dependency order) -
+        # there's no single source of truth across the three, so a new
+        # module added to one needs the same edit made in the others.
         module: [contract, ir, plugin, runner, spark-adapter]
     steps:
       - name: Checkout code

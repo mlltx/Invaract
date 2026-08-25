@@ -574,13 +574,31 @@ jobs:
         run: ./dev/build
         shell: bash
 
+      # Once dev/build above has put every sibling jar in place, these 5
+      # invocations have no ordering dependency on each other (unlike the
+      # build itself) - each is just that module's own already-resolved
+      # dependency graph written to a file. Backgrounding them cuts the
+      # per-module JVM/sbt startup + resolution overhead from paying out
+      # serially 5 times to paying out roughly once.
       - name: Generate SBOM for each Scala module
         shell: bash
         run: |
+          # pipefail: without it, a subshell's exit status is `sed`'s (the
+          # last command in its pipeline), which is always 0 - masking a
+          # real `sbt makeBom` failure and letting this step pass silently.
+          set -o pipefail
+          # See dependency-graph.yml for why this list is also spelled out
+          # there - kept in sync by hand, not derived from a shared source.
+          pids=()
           for m in contract ir plugin spark-adapter runner; do
-            echo "=== $m: sbt makeBom ==="
-            (cd "$m" && sbt makeBom)
+            (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
+            pids+=($!)
           done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit $status
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
