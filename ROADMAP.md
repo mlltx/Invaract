@@ -1602,6 +1602,496 @@ regression test — no more relying on throwaway probe evidence.
       findings were captured as permanent tests/docs — no probe evidence
       left standing in as a substitute for a real regression test.
 
+#### Sub-phase: Iceberg connector support (done)
+
+Second connector onboarded via the `add-spark-connector` skill's
+10-phase process. Pinned `org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.11.0`
+(test-scope only, after checking the connector's own issue tracker per
+Phase 0 — 1.10.0 had a confirmed Avro/Spark-3.5 compatibility bug, fixed
+before 1.11.0). Full findings, the operation-surface and feature-surface
+coverage ledgers, and the per-mutant mutation-testing breakdown are in
+docs/SPARK_ADAPTER.md's "Iceberg support" section — summary here:
+
+- [x] **Two real, connector-agnostic gaps found and closed, that
+      predate Iceberg entirely.** Batch `DataSourceV2Relation` reads had
+      no `SparkPlanAdapter` translation case at all (fell to the generic
+      `Unsupported` fallback, meaning no pure-DSv2 connector's reads
+      could ever satisfy a contract's declared input) — Delta's own
+      reads never hit this because Delta's batch reads happen to be
+      `LogicalRelation`-wrapped V1 relations. `CreateTableAsSelect`
+      (explicit-create V2 CTAS) and `OverwritePartitionsDynamic` had no
+      `WriteCommandSupport` case — both Command-shaped, neither
+      translated nor safe-listed, so both were already failing closed;
+      closed with two new cases reusing existing helpers
+      (`v2CreateOrReplaceLocation`, shared with `ReplaceTableAsSelect`;
+      `namedRelationLocationAndFormat`, shared with `AppendData`/
+      `OverwriteByExpression`).
+- [x] **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) closed via a
+      genuinely different, more standard mechanism than Delta's.**
+      Iceberg implements Spark's own `SupportsRowLevelOperations` API;
+      `MERGE`/`UPDATE`/`DELETE` rewrite to stable, public Spark classes
+      (`ReplaceData`/`WriteDelta`, sharing the `RowLevelWrite` trait) —
+      no reflection needed, unlike Delta's proprietary command classes.
+      New `dsv2RowLevelWrite` case is connector-agnostic: any future
+      DSv2 connector using this standard API is covered automatically.
+      Same structural-only scope as Delta's row-level DML (target schema
+      checked, merge condition/predicate not).
+- [x] **A second staged-table location trap found, in the opposite
+      direction from Delta's — the fix from the row-level-DML sub-phase
+      didn't generalize the way its own doc comment claimed.** Iceberg's
+      `StagedTable` (unlike Delta's) reports a real `"location"`
+      property pre-commit, so the existing "prefer physical location,
+      fall back to qualified identifier" logic produced two
+      *disagreeing* locations for one atomic CTAS/RTAS commit — caught
+      by a real `OUTPUT_LOCATION_MISMATCH` test failure, not assumed to
+      generalize from Delta. Fixed properly: `namedRelationLocationAndFormat`
+      now keys the qualified-identifier fallback on Spark's own
+      `StagedTable` marker interface, not on whether `properties()`
+      happens to omit `"location"` — a staged table's reported location
+      isn't trustworthy regardless of what a given connector populates.
+- [x] **`CALL <catalog>.system.<proc>(...)` (Iceberg's maintenance
+      mechanism) deliberately left unmodeled — a genuinely new
+      classification problem, not solved by extending
+      `FailClosedCommands`' existing per-class approach.** One shared
+      Spark class (`Call`) represents every system procedure
+      (`rewrite_data_files`/`expire_snapshots`/`rollback_to_snapshot`/...),
+      spanning genuinely safe to genuinely row-content-mutating with no
+      structural way to distinguish them by class identity. Safe-listing
+      would silently pass all of them; left off both lists, so every
+      `CALL` fails closed today (confirmed by a real test) — a
+      documented limitation with a next step (procedure-name-aware
+      classification), not an oversight. The other 13 Iceberg SQL-
+      extension commands found via the same reflective jar-scan Delta's
+      used (branch/tag ref management, partition-spec/identifier-field
+      evolution, write-ordering config, view management) are genuinely
+      metadata-only and are on the safe list.
+- [x] **A real gap found in Iceberg's own published Maven artifact, not
+      an Invariant bug.** `iceberg-spark-runtime-3.5_2.12:1.11.0`'s POM
+      doesn't declare `scala-collection-compat`, which its SQL-extensions
+      parser needs specifically for `CALL` syntax — confirmed via a real
+      `NoClassDefFoundError` escaping an existing `Try` wrapper
+      (`LinkageError` isn't `NonFatal`). Added as a `% "test"` dependency
+      so this module's own suite can exercise `CALL`-based operations; a
+      real user hitting this in their own job needs it on their runtime
+      classpath too, independent of `spark-adapter`.
+- [x] **Confirmed Iceberg's own path-based access pattern differs from
+      Delta/Parquet's**, not a gap: a bare `.format("iceberg").save(path)`/
+      `.load(path)` with no catalog qualification fails hard (defaults to
+      an unreachable `HiveCatalog`); Iceberg's real mechanism is a path
+      identifier under a named Hadoop-type catalog
+      (`` local.`/abs/path` ``), confirmed working through the same
+      `AppendData`/`DataSourceV2Relation` cases as any other table.
+- [x] New `IcebergConnectorSpec.scala` (separate SparkSession from
+      `ContractEnforcementRuleSpec` — Delta's and Iceberg's
+      `spark.sql.extensions`/catalog configs can't coexist in one
+      session): translation test for the new read case, PASS/FAIL pairs
+      for every new write case, a direct-inspection test for
+      `CreateTableAsSelect.saveMode`, a fail-closed test for `CALL`, a
+      regression test proving the 13 safe-listed metadata commands
+      aren't blocked, and a streaming-write test confirming
+      `WriteToStream` needed no Iceberg-specific handling. Plus a new
+      direct-construction test in `SparkPlanAdapterSpec.scala` proving
+      the batch-read fallback diagnostic actually fires (not just that
+      the happy path works).
+- [x] Mutation testing scoped to all four changed files
+      (`WriteCommandSupport.scala`, `SparkPlanAdapter.scala`,
+      `ContractEnforcementRule.scala`, `FailClosedCommands.scala`):
+      **80.65%** (of total) / **81.97%** (of covered code) — 50/61
+      non-excluded mutants killed. Both real survivors in this pass's own
+      new code (`CreateTableAsSelect.saveMode`'s `ignoreIfExists` branch;
+      the new batch-read no-location diagnostic) were killed with new
+      tests, not left — see docs/SPARK_ADAPTER.md's "Iceberg support"
+      section for the per-mutant breakdown. The remaining 12 survivors
+      are all pre-existing, already-documented from earlier sub-phases
+      (Delta's `catalogTable.isDefined`/`DeltaTableV2` guards, the
+      `WriteFiles`/`DeltaSink`/`JDBCRelation` near-equivalents, the
+      Hive-metastore-unavailable gap) — none in code this pass touched.
+      Full suite passing (104/104); `mimaReportBinaryIssues` clean;
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass, including a
+      real jar inspection confirming zero Iceberg classes bundled for
+      non-Iceberg users.
+- [x] `docs/ADDING_A_SPARK_CONNECTOR.md`'s "Known limitations" section —
+      found stale before starting (still described row-level DML/
+      streaming writes/DSv2 catalog writes as unsolved, all closed by
+      the prior Delta pass) — corrected first, so this pass's own
+      classification work was grounded in accurate information rather
+      than repeating a documentation-drift mistake.
+- [x] Both required coverage ledgers (operation surface, feature
+      surface) produced and written into docs/SPARK_ADAPTER.md, ROADMAP.md
+      (this entry), and CHANGELOG.md, per the `add-spark-connector`
+      skill's Phase 11.
+
+#### Sub-phase: Iceberg's own schema-evolution row closed, generalizing the Delta generated-columns fix (done)
+
+Follow-up investigation into the Iceberg feature-surface ledger's one
+remaining ❓ row. The predicted bug (newly-added columns invisible to
+`outputSchema`, the same shape as Delta's MERGE bug) turned out not to
+exist — confirmed empirically that `AppendData`'s `query.schema` already
+reflects a `mergeSchema`-evolving write's new columns correctly, since
+(unlike Delta's MERGE) the query *is* the writer-supplied data, not a
+re-derived plan that can go stale. The real bug was the *other*
+direction: with Iceberg's `write.spark.accept-any-schema` table property,
+a *narrower* append (missing a column the target already has) is
+accepted and NULL-fills the omitted column — `outputSchema` omitted that
+column entirely, wrongly `MISSING_OUTPUT_FIELD`-rejecting a write that
+actually satisfies the contract.
+
+- [x] **Found this generalizes Delta's existing generated-columns fix,
+      not just adds a parallel Iceberg-specific one.** Both are the same
+      underlying situation — a resolved target can have fields its
+      `query` doesn't supply that still exist in the committed row —
+      under two different connector-specific mechanisms. Confirmed
+      `cmd.table.columns()` (plain public API, no reflection) already
+      carries a Delta generated column's *name*, even without its
+      generation metadata — detecting *which* target-only fields exist
+      for a specific reason was never actually necessary. Replaced the
+      Delta-specific reflective `outputSchemaWithGeneratedColumns`/
+      `deltaGeneratedFields` outright with connector-agnostic
+      `outputSchemaWithTargetOnlyFields`, used by `AppendData`/
+      `OverwriteByExpression`/`OverwritePartitionsDynamic` alike.
+- [x] **Verified the safety argument directly, not just asserted it**:
+      a permanent test proves Spark's own analyzer rejects a genuinely-
+      unsanctioned narrower write (`accept-any-schema` off) with
+      `AnalysisException` before Invariant's check rule ever sees it —
+      so unioning in every target-only field can never silence a
+      genuinely-missing required field.
+- [x] Mutation testing rescoped to `WriteCommandSupport.scala` after the
+      simplification: **76.92%** (20/26 non-excluded mutants killed) —
+      zero survivors in the new code; the 6 remaining are pre-existing
+      and already documented from earlier sub-phases. Full suite passing
+      (106/106); `mimaReportBinaryIssues` clean.
+- [x] Removed a `Table.schema()` deprecation warning introduced along
+      the way by switching to `Table.columns()` (the non-deprecated
+      replacement) — "no new warnings" held, not just "tests pass."
+- [x] **A mutation-testing speed investigation, prompted mid-session**:
+      confirmed this module's ~5 test suites already share a single
+      `SparkSession` bootstrap via Spark's own `getOrCreate()` semantics
+      (config from later `.config(...)` calls merges into an already-active
+      session rather than requiring a fresh one — confirmed empirically,
+      not assumed, via log inspection: one `sparkDriver` service start
+      for the whole suite, zero `SparkContext` stops), so repeated
+      session bootstrap wasn't the mutation-testing bottleneck to begin
+      with. Tried two real levers: Stryker4s's `concurrency` config (2→4
+      test-runners on this environment's 4-core box) didn't take effect
+      via `stryker4s.conf` with this plugin version (the same class of
+      quirk already documented for `mutate`/`thresholds`, and no
+      build.sbt-level setting exists in this plugin version either);
+      `spark.sql.shuffle.partitions` (200 default, unset anywhere in this
+      suite) tuned to `2` across all five test `SparkSession` builders —
+      confirmed applied (`spark.conf.get` verified `"2"` directly) but
+      measured *zero* wall-clock change on a full suite run (131s before,
+      131s and 115s after, within normal variance) - the real cost is
+      genuine per-test Spark/table-commit work, not shuffle overhead, at
+      this suite's tiny data volumes. Kept the shuffle-partitions tuning
+      anyway (correct, zero-downside best practice) despite it not being
+      the fix; reverted nothing else, since neither lever cost anything
+      to try. A third lever, `spark.sql.codegen.wholeStage=false` (the
+      leading untried hypothesis — per-query-shape JIT/codegen
+      compilation cost across this suite's ~100+ distinct query shapes),
+      was tried and measured *worse*, not better: 106/106 tests still
+      passed, but wall-clock went from 109s (sbt-reported total time) to
+      149s — roughly 35-40s slower, real and reproducible, not noise.
+      Reverted immediately; disabling codegen apparently costs more in
+      slower interpreted execution than it saves in compilation time at
+      this suite's scale. No further Spark-config levers were pursued —
+      the honest remaining hypothesis is genuine Delta/Iceberg
+      table-commit I/O (`_delta_log`/Iceberg metadata JSON per commit),
+      which isn't a tunable config; it's the thing actually being tested.
+
+#### Sub-phase: Iceberg's last two ❓ feature-surface rows closed - deletion vectors, identity/generated columns (done)
+
+Targeted follow-up closing the two rows the initial Iceberg pass left
+`❓ Not investigated`. Both closed with real probes and permanent tests,
+**zero production code changes** — both were genuine questions with
+genuine answers, not gaps needing fixes.
+
+- [x] **Deletion vectors** (Iceberg's V3 merge-on-read spec): a real
+      probe against a genuine `format-version = 3` table confirmed a
+      `DELETE` still produces a plain `ReplaceData` node — the same
+      class `dsv2RowLevelWrite` already matches via the shared
+      `RowLevelWrite` trait. The deletion-vector-vs-position-delete-file
+      distinction is below the `LogicalPlan` level this adapter
+      translates at; nothing to special-case. Closed with one permanent
+      test in `IcebergConnectorSpec`, no code change.
+- [x] **Identity/generated columns**: two real probes (Spark's
+      `GENERATED ALWAYS AS` syntax, and a column `DEFAULT` value —
+      Iceberg V3's `initial-default`/`write-default` mechanism) both
+      confirmed `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`)
+      thrown by Spark's own analyzer before any plan is produced, and
+      that `write.spark.accept-any-schema` doesn't change the outcome
+      (tried explicitly). Unlike Delta, this Iceberg integration has no
+      generated/default-column concept reachable through Spark SQL at
+      all — nothing for `outputSchemaWithTargetOnlyFields` or anything
+      else to need to handle. Closed with two permanent tests asserting
+      the rejection.
+- [x] `IcebergConnectorSpec`: 17 → 19 tests, all passing (19/19). No
+      `spark-adapter` main source changed, so CLAUDE.md's
+      mutation-testing requirement (scoped to changed/added
+      `src/main/scala`) doesn't apply this pass; `mimaReportBinaryIssues`
+      confirmed clean regardless.
+- [x] Both of Iceberg's feature-surface ledger rows now closed — every
+      row in both the Iceberg operation-surface and feature-surface
+      ledgers has a disposition, none left `❓`.
+
+#### Sub-phase: Iceberg CALL procedure classification - 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed (done)
+
+Closed the one remaining Iceberg operation-surface row still marked
+`🚫 Fails closed, deliberately left unmodeled`: `CALL system.*`
+procedures. Every procedure shares the same Spark class (`Call`), so
+class-name matching alone can't distinguish them - but `Call.procedure()`
+is a real, distinct concrete class per procedure (confirmed via `javap`
+on `SparkProcedures`' builder registry, no dynamic proxy), reachable via
+reflection the same way `WriteCommandSupport`'s `deltaRowLevelDml`
+reflects into Delta's MERGE/UPDATE/DELETE. `FailClosedCommands.isKnownSafe`
+now special-cases `Call` and checks `procedure().getClass().getName()`
+against a 10-procedure safe list.
+
+- [x] Enumerated iceberg-spark-runtime 1.11.0's actual 20 concrete
+      procedure classes from the jar directly (not guessed), classified
+      each against its delegate action class (`javap`) and Iceberg's own
+      documentation. **10 reclassified safe** (`rewrite_data_files`,
+      `rewrite_manifests`, `rewrite_position_delete_files`,
+      `remove_orphan_files`, `expire_snapshots`, `register_table`,
+      `ancestors_of`, `compute_table_stats`, `compute_partition_stats`,
+      `create_changelog_view` - compaction/GC/stats/read-only, same
+      category as Delta's already-safe-listed `OPTIMIZE`/`VACUUM`).
+      **10 stay unmodeled/fail-closed, deliberately** (`rollback_to_snapshot`/
+      `rollback_to_timestamp`/`set_current_snapshot`/`cherrypick_snapshot`/
+      `publish_changes`/`fast_forward` - change what's "current";
+      `add_files`/`migrate` - genuinely add/reformat row content;
+      `snapshot`/`rewrite_table_path` - produce new persisted content
+      even though neither touches its *source* table).
+- [x] Updated `IcebergConnectorSpec`'s CALL fail-closed test to use
+      `rollback_to_snapshot` (genuinely unsafe) instead of
+      `rewrite_data_files` (now correctly allowed) as the fail-closed
+      proof - the reclassification changes what that test needed to
+      demonstrate, not just add to it. Added a regression test sampling
+      5 of the 10 newly-safe procedures, proving they run under a real,
+      otherwise-checking contract.
+- [x] Found and fixed a real coverage gap via mutation testing, not just
+      cited a score: `isKnownSafeIcebergProcedureCall`'s reflection
+      fallback (fails closed if `procedure()` reflection ever breaks -
+      the single highest-stakes line in this change) had zero coverage,
+      since a real Iceberg session's `Call` never actually fails that
+      reflection. Closed with a focused, session-free unit test
+      (`FailClosedCommandsSpec`) exercising the fallback directly.
+      Mutation testing rescoped to `FailClosedCommands.scala`: **88.42%**
+      (89.36% of covered code), zero survivors in the new code.
+      `mimaReportBinaryIssues` clean; full suite passing.
+- [x] **Explicitly scoped what this pass does NOT do**, per the user's
+      own sequencing decision: verify the 10 unmodeled procedures'
+      *actual effect* against a contract (e.g. checking a
+      `rollback_to_snapshot` target's schema before allowing it, instead
+      of rejecting outright). That needs new mechanisms this codebase
+      doesn't have yet - reading a schema from the catalog with no Spark
+      write involved, or from a table/path named in a CALL argument
+      (argument parsing/binding, never done here before) - tracked as
+      separate future work below, not attempted in this pass.
+- [x] **Found and fixed a real, pre-existing CI failure while checking
+      PR #3's checks**: `iceberg-spark-runtime-3.5_2.12:1.11.0`'s jar is
+      compiled to Java 17 class file version and can't load under this
+      repo's JDK-11 CI matrix leg - not caused by today's work, but
+      present since Iceberg support first landed, and cascading into
+      three unrelated `spark-adapter` suites sharing the same forked JVM.
+      A first attempt (a `Tests.Filter` skipping only `IcebergConnectorSpec`
+      at test-run time) turned out insufficient and was replaced before
+      landing: merely having the jar on the classpath is enough to break
+      JDK 11, since Spark's `ServiceLoader`-based `DataSourceRegister`
+      lookup scans every registered provider for *any* format-based read,
+      not just Iceberg's - confirmed via a real CI failure where a plain
+      CSV read in an unrelated suite aborted the same way. The actual fix
+      excludes the Iceberg dependency itself from `libraryDependencies`
+      under JDK <17, and excludes `IcebergConnectorSpec.scala`'s own
+      compilation under the same condition. Verified by simulating both
+      branches locally (not just trusting the sbt syntax): with Iceberg
+      forced out, all other suites compile and pass cleanly (91/91, zero
+      `ServiceLoader` aborts); with it present, all 111 tests including
+      `IcebergConnectorSpec` pass unchanged. Confirmed for real in CI
+      after pushing: `Test on ubuntu-latest / Java 11` went from failing
+      to passing.
+
+#### Sub-phase: CI mutation-testing wall-clock cut via two real levers (done)
+
+Found while the user watched CI's mutation-testing job run 35-40+
+minutes on the CALL-classification PR - a different question from the
+earlier *local* `sbt test` speed investigation (session reuse, shuffle
+partitions, codegen), which found no real lever there.
+
+- [x] **`--concurrency` works as an explicit CLI flag** (confirmed via
+      the "Creating N test-runners" log line changing from 2 to 4), even
+      though the equivalent `stryker4s.conf`/`build.sbt` settings don't
+      take effect with this plugin version - the same category of quirk
+      already documented for `--mutate`/`--thresholds`. Added to every
+      `sbt stryker` invocation in CI.
+- [x] **Split the single `mutation-testing` CI job into two parallel
+      jobs** (`mutation-testing-ir`, `mutation-testing-spark-adapter`):
+      independent modules, independent test suites, no reason to
+      serialize them on one runner. Cuts wall-clock from
+      `ir_time + spark_adapter_time` to roughly
+      `max(ir_time, spark_adapter_time)`. `ir` has zero Spark dependency
+      (confirmed via `ir/build.sbt`), so its job also drops the entire
+      Spark cache/download/configure sequence `spark-adapter`'s job still
+      needs. Updated `summary`'s `needs:` list and result-check condition
+      to the two new job names.
+- [x] **Honestly scoped what these levers don't fix**: `spark-adapter`'s
+      whole-module run (~30-40 min) is still the real cost - genuine work
+      (the full suite once per mutant against real Delta/Iceberg-backed
+      Spark sessions), not overhead. Also corrected a stale
+      ARCHITECTURE.md estimate (`~1-5 min`) that never matched the real
+      observed time, unrelated to today's split.
+
+#### Sub-phase: Verify `rollback_to_snapshot` against a contract - pilot, with a mid-course design correction (done)
+
+Piloted contract verification for one of the 10 state-changing CALL
+procedures left fail-closed by the classification pass above, per the
+user's own decision to sequence this as a pilot rather than building all
+mechanisms at once.
+
+- [x] **Original design proven wrong, not just buggy, and corrected
+      honestly rather than patched around.** The first design read the
+      *target snapshot's own* historical schema (Iceberg's
+      `SparkTable.copyWithSnapshotId(id).schema()`) and checked that
+      against the contract. A real end-to-end test - not a mock - showed
+      the post-rollback schema unchanged even after `refreshTable()`;
+      investigated seriously rather than assumed to be a caching bug,
+      and corroborated against Apache Iceberg's own issue tracker
+      (apache/iceberg#15165, open/unresolved): `rollback_to_snapshot`
+      moves which snapshot's *data* is current but never reverts
+      `current-schema-id` - schema evolution and snapshot rollback are
+      independent in Iceberg's model, so the original design was
+      checking a question the operation can't actually answer.
+- [x] **Corrected design**, prompted by the user's own reframing ("both
+      file path and schema - not schema alone"): check the table's
+      *current* schema (which a rollback provably cannot change) plus
+      location as a scoping gate - a rollback on a table the active
+      contract doesn't govern is allowed, not swept into an unrelated
+      contract's rejection, mirroring how `StructuralVerifier.verify`'s
+      `Write` case already treats out-of-scope locations. New
+      `StateChangingCallSupport.extract` (2 reflection hops: `Call.procedure()`
+      to the concrete `RollbackToSnapshotProcedure`, then
+      `BaseProcedure.tableCatalog()` to a plain public `TableCatalog` -
+      down from 3 hops in the original design, and no Iceberg-specific
+      type needed at all). New `StructuralVerifier.verifyStateChange` and
+      a `ContractEnforcementRule.verifyOrThrow` branch consulting it
+      before falling through to `FailClosedCommands`' blanket rejection.
+- [x] **Mutation testing caught a real gap in the pilot's own test
+      rigor, not just the code.** The "unrelated table" scoping test's
+      contract only required an already-present field, so it would have
+      passed even with scoping completely broken (mutated to always
+      check schema); fixed by requiring a field the unrelated table
+      genuinely lacks, so a real schema check - if scoping had failed -
+      would provably fail. Mutation score went from 96.08% to **100%**
+      (51/51) as a result; `mimaReportBinaryIssues` clean.
+- [x] `IcebergConnectorSpec` PASS/FAIL/scoping tests for
+      `rollback_to_snapshot`, plus a new `cherrypick_snapshot` fail-closed
+      test taking over `rollback_to_snapshot`'s old role as the "some CALL
+      still fails closed" proof.
+
+#### Sub-phase: Extend state-changing CALL verification to the 5 procedures sharing `rollback_to_snapshot`'s shape (done)
+
+`rollback_to_timestamp`/`cherrypick_snapshot`/`publish_changes`/
+`set_current_snapshot`/`fast_forward`, closing the "small, mechanical
+extension" scope this work's original sequencing called out.
+
+- [x] **Investigated each procedure's real argument shape before
+      generalizing, not assumed from the pilot alone.** `javap` against
+      the real `iceberg-spark-runtime-3.5_2.12:1.11.0` jar confirmed each
+      procedure's declared parameters, followed by a real probe (since
+      deleted) against a live Iceberg session. `rollback_to_timestamp`/
+      `cherrypick_snapshot`/`publish_changes` share `rollback_to_snapshot`'s
+      exact 2-arg (table, value) shape. `set_current_snapshot` declares
+      **3** parameters (table, `snapshot_id`, `ref` - mutually exclusive,
+      confirmed via probe that `Call.args` is always 3-wide with exactly
+      one of `args(1)`/`args(2)` non-null). `fast_forward`
+      (`FastForwardBranchProcedure`) also declares 3 (table, `branch`,
+      `to`) and is genuinely different: confirmed via probe that
+      fast-forwarding `"main"` changes the table's default read, while
+      fast-forwarding any other named branch leaves it unchanged - looked
+      like it might need branch-aware special-casing, but doesn't: the
+      existing check only asserts an invariant (current schema can't
+      move) that holds regardless of which branch a call targets, proven
+      with a dedicated test rather than left as a documentation claim.
+- [x] **Generalized cleanly instead of branching per procedure.**
+      `StateChangingCallSupport`'s single hardcoded procedure-class check
+      became a `Map[String, String]` (procedure class → CALL-syntax
+      name, used only for the error message via a new
+      `StateChangeInfo.callName` field); extraction, verification, and
+      `ContractEnforcementRule` wiring stayed unchanged and already
+      generic.
+- [x] Nine new `IcebergConnectorSpec` tests: one PASS per newly-recognized
+      procedure (including both `set_current_snapshot` arg forms), a
+      `rollback_to_timestamp` FAIL proving the generalized FAIL path still
+      works, and the `fast_forward`-on-a-non-`"main"`-branch FAIL test
+      proving the branch-agnostic design concretely. Replaced the old
+      "`cherrypick_snapshot` still fails closed" test (no longer true)
+      with an `add_files` fail-closed test.
+- [x] Mutation testing scoped to both changed files:
+      `StateChangingCallSupport.scala` 80% (4/5 - the one survivor a
+      genuinely equivalent `Call`-class-name guard mutant, same category
+      already accepted for this pattern in the pilot);
+      `ContractEnforcementRule.scala` 100% (10/10). `mimaReportBinaryIssues`
+      clean (both touched types stay `private[sparkadapter]`). Full
+      `./dev/build`/`./dev/test`/`./dev/regression` passing.
+
+#### Sub-phase: Verify the remaining 4 harder CALL procedures - `add_files`, `migrate`, `snapshot`, `rewrite_table_path` (done)
+
+Closed the last operation-surface gap in Iceberg's CALL procedure
+coverage. The original scoping (above) assumed all 4 needed a materially
+harder mechanism (CALL-argument schema parsing); real investigation via
+`javap` on the real jar plus a live probe (since deleted) per procedure
+found that assumption wrong for 3 of the 4, in both directions.
+
+- [x] **`add_files`/`migrate` fit the existing 6-procedure mechanism
+      unchanged - zero new code beyond a map entry each.** Confirmed via
+      probe: `add_files` never changes its target's schema regardless of
+      the source's shape (an extra source column is silently dropped, a
+      missing one is NULL-filled - the same narrower-append behavior
+      already handled elsewhere), so `source_table` is never read at all.
+      `migrate` converts its table in place; probed using the actual
+      production code path (`TableCatalog.loadTable`, not a
+      `spark.table(...)` read) that it correctly resolves the
+      *pre*-migration schema, which Iceberg always preserves unchanged
+      anyway.
+- [x] **`snapshot` is the one procedure that's genuinely different**,
+      confirmed via probe: it creates a *new* table whose schema comes
+      from a *different, existing* source table - the opposite
+      schema/location pairing from every other procedure - and both
+      arguments can be qualified with a catalog other than the CALL's
+      own. Needed genuinely new resolution (`resolveIdentifier`,
+      re-implementing Iceberg's own `Spark3Util.catalogAndIdentifier`
+      algorithm) using `SparkSession.active`'s `CatalogManager` - fully
+      public Spark APIs, not reflection, unlike every other procedure's
+      `tableCatalogOf`. Hit one real Scala access-control surprise along
+      the way (`CatalogManager`'s type can't be named directly in this
+      module despite public bytecode - it's `private[sql]` at the Scala
+      level) - worked around by passing `SparkSession` itself instead.
+- [x] **`rewrite_table_path` needed no verification mechanism at all - a
+      real positive finding.** Confirmed via probe: never touches the
+      table's own catalog entry, schema, or snapshot, and registers no
+      new catalog table itself - joined `FailClosedCommands`' safe list
+      instead, the same disposition as the original 10 compaction/GC
+      procedures.
+- [x] **Solved a real environment obstacle without a new dependency.**
+      Testing `migrate`/`snapshot` needs a default catalog that resolves
+      both native and Iceberg tables; a Hadoop-type catalog rejects
+      `migrate` unconditionally (any table with a pre-existing "custom"
+      location, which every native table has - confirmed via probe, not
+      a path-format bug). A real Hive metastore would need a new
+      `spark-hive` test dependency; used Iceberg's `JdbcCatalog` against
+      H2 instead, already transitively present on the test classpath.
+- [x] Mutation testing found two real gaps (not just cited a score): a
+      `resolveIdentifier` boundary condition (multi-part identifier
+      without a catalog prefix) had no test distinguishing correct
+      catalog-fallback behavior from a mutant that mishandled it - closed
+      with a dedicated permanent test, which incidentally also proved
+      that exact resolution path for real. Final score:
+      `StateChangingCallSupport.scala` 85% (17/20 - 3 accepted
+      near-equivalents, each documented inline at the survived mutant);
+      `FailClosedCommands.scala` (`rewrite_table_path`'s new safe-list
+      entry) 100% (4/4). `mimaReportBinaryIssues` clean. All 20 Iceberg
+      CALL procedures now have a permanent, evidenced disposition - none
+      left unmodeled.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

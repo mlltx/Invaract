@@ -50,6 +50,7 @@ import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
@@ -333,6 +334,29 @@ private[sparkadapter] object SparkPlanAdapter {
             s"No 'location' property on a '${sr2.sourceName}' streaming source's table; using its source name as a best-effort location"
           )
         ir.Read(ir.DatasetRef(SparkPlanAdapter.streamingRelationV2LocationOf(sr2)))
+
+      // A batch DataSourceV2 catalog read - confirmed empirically (a real
+      // Iceberg-enabled session, not assumed) to be the read-side shape
+      // for ANY "pure" DSv2 connector (one whose reads don't, unlike
+      // Delta's, happen to be a LogicalRelation-wrapped subclass of
+      // Spark's own V1 HadoopFsRelation - see the LogicalRelation case
+      // above). Before this case existed, every such read fell through to
+      // the generic Unsupported fallback below, meaning no DSv2-catalog-
+      // only connector's reads could ever satisfy a contract's declared
+      // input - not "fails closed on an unrecognized write" (the
+      // FailClosedCommands policy doesn't gate reads at all), but a read
+      // silently never counting as a read. Reuses tableLocationAndFormat,
+      // the same "Table.properties()" lookup StreamingRelationV2 and
+      // WriteCommandSupport's AppendData/OverwriteByExpression cases
+      // already share - this is the same fact (a Table handle for an
+      // already-registered catalog table), needed on a third site now.
+      case dsv2: DataSourceV2Relation =>
+        if (SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.isEmpty)
+          report(
+            "DataSourceV2Relation",
+            s"No 'location' property on read target '${dsv2.name}'; using its name() as a best-effort location"
+          )
+        ir.Read(ir.DatasetRef(SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name)))
 
       case p: Project =>
         ir.Project(translatePlan(p.child), p.projectList.map(translateNamed).toList)

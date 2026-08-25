@@ -432,27 +432,63 @@ sentence in a chat transcript nobody can re-run.
 
 ## Known limitations (the general pattern, not connector-specific)
 
-Every connector added this way will likely share these gaps unless a
-future contributor specifically closes them:
+This section is updated as each limitation is closed — treat a claim
+here as current, not historical; **an unrevised copy of this section is
+exactly how "DataSourceV2 catalog writes are unsolved" would have kept
+looking true after Delta's own work solved the general case.** Verify
+against `WriteCommandSupport.scala` directly if this section and the
+code seem to disagree.
 
-- **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) has no IR representation.**
+- **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) has *structural*
+  verification only, not full semantic verification.** `WriteCommandSupport`'s
+  `deltaRowLevelDml` case (Delta-specific today, matched by reflection)
+  checks the operation's target against a contract's declared output
+  location and current schema — but the actual row-level logic (the
+  merge condition, which columns an `UPDATE` touches, whether a `DELETE`
+  is unconditional) has no IR representation and isn't checked.
   `ir.Write` models "write a dataset to a location," not "conditionally
-  mutate existing rows." Translating these meaningfully is a `com.example.ir`
-  design question (a new IR node, or an explicit decision to never verify
-  row-level operations), not just a missing `SparkPlanAdapter` case —
-  don't treat it as a small addition.
-- **Streaming writes are unexplored.** Nothing in this repo's Delta work
-  investigated `writeStream`; the same investigation methodology applies,
-  but the plan shapes and timing (a streaming query's micro-batches each
-  produce their own analyzed plan) haven't been probed even once.
-- **DataSourceV2 catalog writes** (`AppendData`/`OverwriteByExpression`/
-  `OverwritePartitionsDynamic`/`ReplaceData`/`WriteDelta`, and
-  `CreateTableAsSelect`/`ReplaceTableAsSelect` for V2 CTAS) are real,
-  recurring write shapes across V2-catalog-backed connectors generally,
-  not just Delta — worth a dedicated investigation once a second
-  connector needs them, so the pattern gets solved once instead of
-  per-connector.
+  mutate existing rows" — closing this for real needs a `com.example.ir`
+  design decision (a new IR node, e.g. `ir.Merge`/`ir.RowMutation`, plus
+  contract `rules` vocabulary to check it against — see
+  docs/CONTRACT_MODEL.md's `rules` field and ROADMAP.md's "Full semantic
+  DML verification" item for the concrete design sketch), not a small
+  addition to this file. A *second* connector's row-level DML (if it
+  exists and takes a genuinely different shape than Delta's — see
+  "Row-level operations" note below) is a real opportunity to find out
+  whether `deltaRowLevelDml`'s structural approach generalizes past one
+  connector, or whether it was accidentally Delta-shaped.
+- **Streaming writes**: closed for Delta specifically (`WriteToStream` is
+  a real `WriteCommandSupport` entry — see docs/SPARK_ADAPTER.md's
+  "Delta Lake support" write-shape ledger). Not yet confirmed
+  connector-agnostic: `WriteToStream`'s location/format resolution
+  (`streamSinkLocationAndFormat`) has fallback branches written and
+  tested against Delta's specific sink shapes (a populated
+  `catalogTable`, or `DeltaSink`'s reflective `path()` accessor) — a
+  second connector's streaming sink is the first real test of whether
+  those fallbacks (or the generic `sink.name()` tier) are sufficient, or
+  whether they were unknowingly Delta-specific too.
+- **DataSourceV2 catalog writes**: `AppendData`/`OverwriteByExpression`/
+  `ReplaceTableAsSelect` are closed as real, connector-agnostic
+  `WriteCommandSupport` entries (matched on Spark's own generic classes,
+  not anything Delta-specific — see docs/SPARK_ADAPTER.md's "Write
+  command recognition: a single registry"), so any DSv2-catalog
+  connector using plain append/overwrite/CTAS-RTAS should be recognized
+  "for free," pending empirical confirmation per-connector (Phase 2 of
+  this process, never assumed). **Still open**: `OverwritePartitionsDynamic`,
+  and DSv2's dedicated *row-level operation* commands
+  (`ReplaceData`/`WriteDelta`, produced by Spark's
+  `RewriteRowLevelOperation` optimizer rule family for connectors that
+  implement `SupportsRowLevelOperations` instead of a proprietary
+  command class the way Delta's `MergeIntoCommand`/`UpdateCommand`/
+  `DeleteCommand` do) — no `WriteCommandSupport` case exists for either
+  yet. A connector whose `MERGE`/`UPDATE`/`DELETE` goes through this
+  standard DSv2 mechanism (rather than connector-proprietary commands
+  like Delta's) needs this closed as new, connector-agnostic
+  `WriteCommandSupport` cases — a stronger outcome than Delta's
+  reflection-based `deltaRowLevelDml`, since `ReplaceData`/`WriteDelta`
+  are stable public Spark classes, not connector-internal ones requiring
+  reflection at all.
 
 ---
 
-**Last Updated:** 2026-08-23
+**Last Updated:** 2026-08-24

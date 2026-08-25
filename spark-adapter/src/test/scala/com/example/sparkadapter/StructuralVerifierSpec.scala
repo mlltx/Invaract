@@ -18,7 +18,11 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   private var spark: SparkSession = _
 
   override def beforeAll(): Unit = {
-    spark = SparkSession.builder().master("local[*]").appName("StructuralVerifierSpec").getOrCreate()
+    spark = SparkSession.builder().master("local[*]").appName("StructuralVerifierSpec")
+      // See ContractEnforcementRuleSpec's beforeAll for why.
+      .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.ui.enabled", "false")
+      .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }
 
