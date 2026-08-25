@@ -161,12 +161,12 @@ object ContractEnforcementRule {
         }
       case _ =>
         // Checked before the fail-closed Command catch-all below: a
-        // recognized state-changing CALL (currently just
-        // rollback_to_snapshot - see StateChangingCallSupport) genuinely
-        // verifies the resulting state, rather than being rejected
-        // outright the way it was before this case existed and still is
-        // for the nine other state-changing procedures StateChangingCallSupport
-        // doesn't recognize.
+        // recognized state-changing CALL (six procedures - see
+        // StateChangingCallSupport) genuinely verifies the resulting
+        // state, rather than being rejected outright the way it was
+        // before this case existed and still is for the four remaining
+        // state-changing procedures StateChangingCallSupport doesn't
+        // recognize.
         StateChangingCallSupport.extract(plan) match {
           case Some(info) =>
             val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
@@ -177,7 +177,7 @@ object ContractEnforcementRule {
               // plan tree, reusing the rest of its explanation format
               // unchanged.
               val describedPlan =
-                com.example.ir.Unsupported(s"CALL rollback_to_snapshot(...) targeting '${info.location}'")
+                com.example.ir.Unsupported(s"CALL ${info.callName}(...) targeting '${info.location}'")
               throw new ContractViolationException(result, explain(contract, describedPlan, result))
             }
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>

@@ -693,6 +693,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worked" from "the check would have passed regardless" — fixed to
   **100%** (51/51), up from 96.08%; `mimaReportBinaryIssues` clean.
   `IcebergConnectorSpec`: 20 → 23 tests.
+- **Extended state-changing CALL verification to the five procedures
+  sharing `rollback_to_snapshot`'s shape**: `rollback_to_timestamp`,
+  `cherrypick_snapshot`, `publish_changes`, `set_current_snapshot`,
+  `fast_forward` — closing 16 of 20 Iceberg CALL procedures with a real
+  disposition (10 safe-listed no-ops + 6 genuinely verified), up from 11.
+  Investigated each procedure's real argument shape via `javap` on the
+  actual jar plus a live probe (since deleted) before generalizing, not
+  assumed from the pilot alone — found `set_current_snapshot` declares 3
+  parameters (`snapshot_id`/`ref` mutually exclusive) and `fast_forward`
+  declares 3 too (`branch`/`to`), genuinely different from the other four
+  procedures' 2-arg shape. `fast_forward` looked like it might need
+  branch-aware special-casing (fast-forwarding a non-`"main"` branch
+  doesn't touch the table's default read at all, confirmed via probe),
+  but doesn't — the existing check only asserts an invariant (current
+  schema can't move) that holds regardless of which branch a call
+  targets, proven with a dedicated test rather than left as a
+  documentation claim. `StateChangingCallSupport`'s single hardcoded
+  procedure-class check generalized to a `Map[String, String]` rather
+  than branching per procedure — extraction/verification/wiring
+  unchanged. Nine new `IcebergConnectorSpec` tests; the old
+  "`cherrypick_snapshot` still fails closed" test (no longer true) was
+  replaced with an `add_files` fail-closed test. Mutation testing:
+  `StateChangingCallSupport.scala` 80% (4/5 — the one survivor a
+  genuinely equivalent guard mutant, same category already accepted in
+  the pilot); `ContractEnforcementRule.scala` 100% (10/10).
+  `mimaReportBinaryIssues` clean. `IcebergConnectorSpec`: 23 → 31 tests.
 
 ### Fixed
 

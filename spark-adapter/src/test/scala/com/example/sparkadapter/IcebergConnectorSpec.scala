@@ -566,16 +566,17 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
-  // --- StateChangingCallSupport: rollback_to_snapshot, genuinely verified
-  // (not just fail-closed) - see that file's own doc for the reflection
-  // mechanism and why this is a separate registry from WriteCommandSupport.
+  // --- StateChangingCallSupport: six procedures genuinely verified (not
+  // just fail-closed) - see that file's own doc for the reflection
+  // mechanism, the per-procedure argument-shape findings, and why this is
+  // a separate registry from WriteCommandSupport.
 
   // Corrected design (see StateChangingCallSupport's own doc for the full
-  // finding): rollback_to_snapshot moves which snapshot's *data* is
-  // current but never reverts current-schema-id (confirmed empirically
-  // and independently corroborated by apache/iceberg#15165) - so what's
-  // checked is the table's CURRENT schema (unaffected by the rollback)
-  // plus location, not the target snapshot's own historical schema.
+  // finding): none of the six can revert current-schema-id (confirmed
+  // empirically per procedure, and for rollback_to_snapshot specifically
+  // independently corroborated by apache/iceberg#15165) - so what's
+  // checked is the table's CURRENT schema (unaffected by any of them)
+  // plus location, not any snapshot's own historical schema.
 
   test("PASS: rollback_to_snapshot on a table whose current schema satisfies the contract executes normally") {
     val tableName = "local.db.rollback_pass_tbl"
@@ -699,25 +700,299 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(unrelatedTable).count() == 5, "the rollback on the unrelated table must actually have taken effect")
   }
 
+  // --- StateChangingCallSupport's other five procedures. Each pairs with
+  // a genuinely different way of moving what's current (see that file's
+  // own doc, "The six procedures"), confirmed via a real probe (since
+  // deleted) before being relied on here - one PASS test per procedure is
+  // enough to kill a mutant swapping its entry in
+  // currentStateChangingProcedureClasses, since verifyStateChange's own
+  // PASS/FAIL logic is already exhaustively covered by rollback_to_snapshot's
+  // tests above and doesn't change per procedure.
+
+  test("PASS: rollback_to_timestamp on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.rollback_ts_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    Thread.sleep(50)
+    val ts = new java.sql.Timestamp(System.currentTimeMillis())
+    Thread.sleep(50)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.rollback_to_timestamp('db.rollback_ts_pass_tbl', TIMESTAMP '$ts')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 5, "the rollback must actually have taken effect (data reverted)")
+  }
+
+  test("FAIL: rollback_to_timestamp on a table whose current schema violates the contract is aborted before touching the table") {
+    val tableName = "local.db.rollback_ts_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    Thread.sleep(50)
+    val ts = new java.sql.Timestamp(System.currentTimeMillis())
+    Thread.sleep(50)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: missing_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"CALL local.system.rollback_to_timestamp('db.rollback_ts_fail_tbl', TIMESTAMP '$ts')").collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the rollback must be aborted before touching the table")
+  }
+
+  test("PASS: cherrypick_snapshot on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.cherrypick_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(tableName).append()
+    spark.sql(s"ALTER TABLE $tableName CREATE BRANCH audit")
+    spark.range(3, 5).writeTo(s"$tableName.branch_audit").append()
+    val branchSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at DESC LIMIT 1").collect().head.getLong(0)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.cherrypick_snapshot('db.cherrypick_pass_tbl', $branchSnapshotId)").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 5, "the cherry-pick must actually have taken effect on main")
+  }
+
+  test("PASS: publish_changes on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.publish_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg TBLPROPERTIES ('write.wap.enabled'='true')")
+    spark.range(3).writeTo(tableName).append()
+    spark.conf.set("spark.wap.id", "wap-invariant-pass")
+    spark.range(3, 5).writeTo(tableName).append() // staged under the WAP id, invisible on main until published
+    spark.conf.unset("spark.wap.id")
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 3, "a staged WAP write must not be visible on main before publishing")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.publish_changes('db.publish_pass_tbl', 'wap-invariant-pass')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 5, "the publish must actually have taken effect on main")
+  }
+
+  test("PASS: set_current_snapshot (by snapshot_id) on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.set_current_id_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(3, 5).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      // Named args, table + snapshot_id only - the args array is still
+      // 3-wide (ref bound to null), confirmed via probe.
+      spark.sql(s"CALL local.system.set_current_snapshot(table => 'db.set_current_id_pass_tbl', snapshot_id => $firstSnapshotId)")
+        .collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 3, "the set-current must actually have taken effect")
+  }
+
+  test("PASS: set_current_snapshot (by ref) on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.set_current_ref_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(tableName).append()
+    spark.sql(s"ALTER TABLE $tableName CREATE TAG snap1")
+    spark.range(3, 5).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      // Named args, table + ref this time - a different pair of the 3
+      // declared parameters bound than the snapshot_id test above,
+      // confirmed via probe to resolve to the same args(0)-is-the-table
+      // shape the extraction relies on.
+      spark.sql(s"CALL local.system.set_current_snapshot(table => 'db.set_current_ref_pass_tbl', ref => 'snap1')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 3, "the set-current must actually have taken effect")
+  }
+
+  test("PASS: fast_forward('main', ...) on a table whose current schema satisfies the contract executes normally") {
+    val tableName = "local.db.fast_forward_main_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(tableName).append()
+    spark.sql(s"ALTER TABLE $tableName CREATE BRANCH feature")
+    spark.range(3, 5).writeTo(s"$tableName.branch_feature").append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"CALL local.system.fast_forward('db.fast_forward_main_pass_tbl', 'main', 'feature')").collect() // must not throw
+    }
+
+    spark.catalog.refreshTable(tableName)
+    assert(spark.table(tableName).count() == 5, "fast-forwarding main must actually have taken effect on the default read")
+  }
+
+  // The one genuinely different behavior among the six (see
+  // StateChangingCallSupport's own doc): fast-forwarding a *non*-"main"
+  // branch doesn't touch the table's default read at all. The check
+  // still applies uniformly regardless - proving that concretely, not
+  // just asserting it in a comment: a fast_forward on branch "b1" is
+  // still rejected when the table's CURRENT (main) schema violates the
+  // contract, even though this specific call's own effect is scoped to
+  // "b1" and would never touch main either way.
+  test("FAIL: fast_forward on a non-'main' branch is still checked against the table's current schema, and rejected") {
+    val tableName = "local.db.fast_forward_branch_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg")
+    spark.range(3).writeTo(tableName).append()
+    spark.sql(s"ALTER TABLE $tableName CREATE BRANCH b1")
+    spark.sql(s"ALTER TABLE $tableName CREATE BRANCH b2")
+    spark.range(3, 5).writeTo(s"$tableName.branch_b2").append()
+    val mainRowsBefore = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: missing_col
+         |          type: string
+         |          required: true
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"CALL local.system.fast_forward('db.fast_forward_branch_fail_tbl', 'b1', 'b2')").collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+    assert(spark.table(tableName).collect().toSet == mainRowsBefore, "main must be untouched (it always was) and b1 must never have moved")
+  }
+
   // --- Fail-closed: Call, for procedures still classified as genuinely
   // data-affecting and unmodeled (see FailClosedCommands'
-  // safeIcebergProcedureClasses for the full classification -
-  // rollback_to_snapshot above is the one exception now that has real
-  // support via StateChangingCallSupport; every other state-changing
-  // procedure still fails closed unconditionally) ---
+  // safeIcebergProcedureClasses for the full classification - the six
+  // procedures above are the exceptions that now have real support via
+  // StateChangingCallSupport; every other state-changing procedure still
+  // fails closed unconditionally) ---
 
-  test("FAIL: cherrypick_snapshot (still unmodeled - no verification mechanism built for it yet) is rejected by the fail-closed policy") {
+  test("FAIL: add_files (still unmodeled - no verification mechanism built for it yet) is rejected by the fail-closed policy") {
     val tableName = "local.db.call_fail_tbl"
     val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("call_fail_tbl").toString
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
     spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
-    val firstSnapshotId =
-      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
-    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
 
     // Any active contract - CALL's fail-closed rejection doesn't depend on
     // the contract's content, only on the command being unrecognized and
     // not on FailClosedCommands' safe list or StateChangingCallSupport.
+    // add_files never even reaches Iceberg's own execution (which would
+    // fail anyway - 'db.nonexistent_source' doesn't exist) since
+    // Invariant's check rule throws first, during analysis.
     val yaml =
       s"""id: enforcement_demo
          |version: "1.0.0"
@@ -733,11 +1008,11 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     withContract(yaml) {
       intercept[ContractViolationException] {
-        spark.sql(s"CALL local.system.cherrypick_snapshot('db.call_fail_tbl', $firstSnapshotId)").collect()
+        spark.sql(s"CALL local.system.add_files('db.call_fail_tbl', 'db.nonexistent_source')").collect()
       }
     }
-    // The cherry-pick must never have taken effect - still both writes' rows.
-    assert(spark.table(tableName).count() == 10)
+    // Nothing was imported - still just the one write's rows.
+    assert(spark.table(tableName).count() == 5)
   }
 
   // --- Regression: Iceberg system procedures classified safe aren't blocked ---

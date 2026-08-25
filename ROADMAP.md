@@ -1987,19 +1987,60 @@ mechanisms at once.
       test taking over `rollback_to_snapshot`'s old role as the "some CALL
       still fails closed" proof.
 
+#### Sub-phase: Extend state-changing CALL verification to the 5 procedures sharing `rollback_to_snapshot`'s shape (done)
+
+`rollback_to_timestamp`/`cherrypick_snapshot`/`publish_changes`/
+`set_current_snapshot`/`fast_forward`, closing the "small, mechanical
+extension" scope this work's original sequencing called out.
+
+- [x] **Investigated each procedure's real argument shape before
+      generalizing, not assumed from the pilot alone.** `javap` against
+      the real `iceberg-spark-runtime-3.5_2.12:1.11.0` jar confirmed each
+      procedure's declared parameters, followed by a real probe (since
+      deleted) against a live Iceberg session. `rollback_to_timestamp`/
+      `cherrypick_snapshot`/`publish_changes` share `rollback_to_snapshot`'s
+      exact 2-arg (table, value) shape. `set_current_snapshot` declares
+      **3** parameters (table, `snapshot_id`, `ref` - mutually exclusive,
+      confirmed via probe that `Call.args` is always 3-wide with exactly
+      one of `args(1)`/`args(2)` non-null). `fast_forward`
+      (`FastForwardBranchProcedure`) also declares 3 (table, `branch`,
+      `to`) and is genuinely different: confirmed via probe that
+      fast-forwarding `"main"` changes the table's default read, while
+      fast-forwarding any other named branch leaves it unchanged - looked
+      like it might need branch-aware special-casing, but doesn't: the
+      existing check only asserts an invariant (current schema can't
+      move) that holds regardless of which branch a call targets, proven
+      with a dedicated test rather than left as a documentation claim.
+- [x] **Generalized cleanly instead of branching per procedure.**
+      `StateChangingCallSupport`'s single hardcoded procedure-class check
+      became a `Map[String, String]` (procedure class → CALL-syntax
+      name, used only for the error message via a new
+      `StateChangeInfo.callName` field); extraction, verification, and
+      `ContractEnforcementRule` wiring stayed unchanged and already
+      generic.
+- [x] Nine new `IcebergConnectorSpec` tests: one PASS per newly-recognized
+      procedure (including both `set_current_snapshot` arg forms), a
+      `rollback_to_timestamp` FAIL proving the generalized FAIL path still
+      works, and the `fast_forward`-on-a-non-`"main"`-branch FAIL test
+      proving the branch-agnostic design concretely. Replaced the old
+      "`cherrypick_snapshot` still fails closed" test (no longer true)
+      with an `add_files` fail-closed test.
+- [x] Mutation testing scoped to both changed files:
+      `StateChangingCallSupport.scala` 80% (4/5 - the one survivor a
+      genuinely equivalent `Call`-class-name guard mutant, same category
+      already accepted for this pattern in the pilot);
+      `ContractEnforcementRule.scala` 100% (10/10). `mimaReportBinaryIssues`
+      clean (both touched types stay `private[sparkadapter]`). Full
+      `./dev/build`/`./dev/test`/`./dev/regression` passing.
+
 #### Scope (Future)
 
-- [ ] **Extend state-changing CALL verification to the remaining 9
-      procedures**, now that `rollback_to_snapshot` above has proven the
-      approach end-to-end. `rollback_to_timestamp`/`set_current_snapshot`/
-      `cherrypick_snapshot`/`publish_changes`/`fast_forward` are a small,
-      mechanical extension of `rollback_to_snapshot`'s exact mechanism
-      (same "changes what's current, current schema is unaffected" shape -
-      `StateChangingCallSupport` just needs another procedure-class
-      branch each). `add_files`/`migrate`/`snapshot` need a materially
-      different, harder mechanism: parsing/binding a schema from a
-      table/path named in the CALL's own arguments, not just its target -
-      argument parsing this codebase has never needed before.
+- [ ] **Extend state-changing CALL verification to the remaining 4
+      procedures** (`add_files`/`migrate`/`snapshot`/`rewrite_table_path`).
+      These need a materially different, harder mechanism than the six
+      above: parsing/binding a schema from a table/path named in the
+      CALL's own arguments, not just its target - argument parsing this
+      codebase has never needed before.
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
       covers `MISSING_INPUT`/`UNDECLARED_INPUT` already; explicit
       "forbidden" inputs (distinct from merely undeclared) and dependency
