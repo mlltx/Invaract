@@ -109,19 +109,19 @@ const ReportViewer = () => {
         <div className={styles.grid}>
           <div className={styles.item}>
             <label>Plugin Version</label>
-            <value>{report.pluginVersion}</value>
+            <span>{report.pluginVersion}</span>
           </div>
           <div className={styles.item}>
             <label>Spark Version</label>
-            <value>{report.sparkVersion.split(' ').pop()}</value>
+            <span>{report.sparkVersion.split(' ').pop()}</span>
           </div>
           <div className={styles.item}>
             <label>Java Version</label>
-            <value>{report.javaVersion}</value>
+            <span>{report.javaVersion}</span>
           </div>
           <div className={styles.item}>
             <label>Build Duration</label>
-            <value>{report.durationMs}ms</value>
+            <span>{report.durationMs}ms</span>
           </div>
         </div>
       </section>
@@ -155,7 +155,7 @@ const ReportViewer = () => {
         <div className={styles.dataInfo}>
           <div className={styles.item}>
             <label>Row Count</label>
-            <value>{report.input.rowCount || '-'}</value>
+            <span>{report.input.rowCount || '-'}</span>
           </div>
           {report.input.schema && (
             <div className={styles.schemaBox}>
@@ -186,7 +186,7 @@ const ReportViewer = () => {
         <div className={styles.dataInfo}>
           <div className={styles.item}>
             <label>Row Count</label>
-            <value>{report.output.rowCount || '-'}</value>
+            <span>{report.output.rowCount || '-'}</span>
           </div>
           {report.output.schema && (
             <div className={styles.schemaBox}>
