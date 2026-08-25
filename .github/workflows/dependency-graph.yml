@@ -1,0 +1,48 @@
+name: Dependency Graph
+
+# Populates GitHub's native Dependency graph (Insights tab) with each sbt
+# module's actually-resolved dependencies, which is what powers Dependabot
+# alerts for this repo. GitHub's dependency graph doesn't parse build.sbt
+# on its own (unlike pom.xml or package-lock.json) - without this, Dependabot
+# silently sees zero Scala dependencies no matter what dependabot.yml says.
+#
+# Runs on push to main only, not on PRs: the dependency graph represents
+# the current state of the default branch, and submitting a snapshot per
+# PR branch would just create noise (see scalacenter/sbt-dependency-submission's
+# own usage docs).
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  dependency-graph:
+    name: Submit dependency graph (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Kept in sync by hand with the module list in test.yml's `sbom`
+        # job (and, transitively, dev/build's own dependency order) -
+        # there's no single source of truth across the three, so a new
+        # module added to one needs the same edit made in the others.
+        module: [contract, ir, plugin, runner, spark-adapter]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Submit ${{ matrix.module }} dependencies
+        uses: scalacenter/sbt-dependency-submission@v3
+        with:
+          working-directory: ${{ matrix.module }}
+          correlator: dependency-graph-${{ matrix.module }}

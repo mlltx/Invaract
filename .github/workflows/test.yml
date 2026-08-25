@@ -537,15 +537,102 @@ jobs:
             (cd "$module" && sbt mimaReportBinaryIssues)
           done
 
+  sbom:
+    name: Generate SBOMs
+    runs-on: ubuntu-latest
+    # Downstream transparency, not vulnerability detection (that's the
+    # dependency-graph.yml workflow, which feeds Dependabot). This produces
+    # a CycloneDX SBOM per publishable artifact so users can run their own
+    # scanners (grype, Dependency-Check, ...) against exactly what a real
+    # Invariant release depends on. One per module rather than one merged
+    # SBOM, since these are 5 separately versioned jars plus the web UI, not
+    # a single artifact.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Reuses the same build entrypoint the `test` job uses, in the same
+      # dependency order (contract, ir, plugin concurrently, then
+      # spark-adapter, then runner). spark-adapter and runner both need
+      # sibling modules' jars physically present on disk (unmanagedJars),
+      # so `sbt makeBom` can't safely run standalone per-module the way the
+      # dependency-graph.yml submissions do. dev/build is a pure sbt
+      # compile/assemble step - no Spark install needed (unlike the `test`
+      # and `mutation-testing` jobs, which run/mutate against a real
+      # local[*] Spark session and need spark-submit on PATH for that).
+      - name: Build all modules
+        run: ./dev/build
+        shell: bash
+
+      # Once dev/build above has put every sibling jar in place, these 5
+      # invocations have no ordering dependency on each other (unlike the
+      # build itself) - each is just that module's own already-resolved
+      # dependency graph written to a file. Backgrounding them cuts the
+      # per-module JVM/sbt startup + resolution overhead from paying out
+      # serially 5 times to paying out roughly once.
+      - name: Generate SBOM for each Scala module
+        shell: bash
+        run: |
+          # pipefail: without it, a subshell's exit status is `sed`'s (the
+          # last command in its pipeline), which is always 0 - masking a
+          # real `sbt makeBom` failure and letting this step pass silently.
+          set -o pipefail
+          # See dependency-graph.yml for why this list is also spelled out
+          # there - kept in sync by hand, not derived from a shared source.
+          pids=()
+          for m in contract ir plugin spark-adapter runner; do
+            (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
+            pids+=($!)
+          done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit $status
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate SBOM for web
+        working-directory: web
+        run: |
+          npm ci
+          npm sbom --sbom-format cyclonedx > sbom.json
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sboms
+          path: |
+            contract/target/*.bom.json
+            ir/target/*.bom.json
+            plugin/target/*.bom.json
+            spark-adapter/target/*.bom.json
+            runner/target/*.bom.json
+            web/sbom.json
+          if-no-files-found: error
+
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, api-compatibility]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, api-compatibility, sbom]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else
