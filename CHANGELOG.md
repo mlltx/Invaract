@@ -946,6 +946,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   format detection. `ParquetConnectorSpec`: 16 → 18 tests. Both of
   Parquet's coverage ledgers are now fully closed, no `❓` rows
   remaining.
+- **CSV connector support**: fourth connector onboarded via the
+  `add-spark-connector` skill's process — same shape as Parquet's, since
+  CSV is also Spark's own built-in `FileFormat`, not a separate library
+  (nothing added to `build.sbt`). Empirically confirmed, not assumed by
+  analogy, that CSV's operation surface routes through the exact same
+  generic mechanisms Parquet's pass already proved out, including a real
+  direct-construction test confirming the `FileStreamSink` reflection fix
+  generalizes to `CSVFileFormat` specifically. No bugs found, no new
+  structural pattern, zero `src/main/scala` changes — a pure confirmatory
+  audit on the operation surface, plus one permanent test Parquet's own
+  pass never had (`.writeTo(...).createOrReplace()`/`.replace()`
+  rejection, previously only probe-confirmed). The real substance was the
+  feature surface: CSV is a plain text format with no native schema,
+  unlike self-describing Parquet. Six CSV-specific behaviors confirmed
+  and codified into permanent tests: schema-inference default (no
+  `inferSchema` ⇒ every column reads back as `StringType`, correctly
+  rejected as a type mismatch against a contract declaring a numeric
+  type), header handling (positional `_c0`/`_c1` fallback is just an
+  ordinary column name), malformed-record modes (`FAILFAST` fails only at
+  execution, `DROPMALFORMED` silently drops bad rows), the
+  `columnNameOfCorruptRecord` column (an ordinary extra field), read-back
+  nullability (confirmed independently for CSV's own reader, not
+  inherited from Parquet), and date parsing with a custom `dateFormat`
+  (an unparseable date becomes `null` under `PERMISSIVE`, not a failure).
+  Also caught and fixed a real test-writing bug before landing: the first
+  draft of the streaming tests declared `type: long` for
+  `inferSchema=true`-sourced fields, but CSV infers small whole numbers
+  as `IntegerType` — both tests correctly failed with a real contract
+  violation on first run, fixed to declare `type: integer`. See
+  docs/SPARK_ADAPTER.md's new "CSV support" section (both coverage
+  ledgers) and ROADMAP.md for full details. `CsvConnectorSpec`: 19 tests.
+  Full `spark-adapter` suite: 163 tests, all 8 specs green.
 
 ### Deprecated
 

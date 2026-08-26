@@ -2226,6 +2226,67 @@ answers, not gaps needing a fix.
       surface and feature surface) are now fully closed — no ❓ rows
       remaining in either.
 
+#### Sub-phase: CSV connector support (done)
+
+Fourth connector onboarded via the `add-spark-connector` skill's process —
+same shape as Parquet's, since CSV is also Spark's own built-in
+`FileFormat`, not a separate library: nothing added to `build.sbt`. Full
+findings and both coverage ledgers are in docs/SPARK_ADAPTER.md's new
+"CSV support" section — summary here:
+
+- [x] **Empirically confirmed, not assumed by analogy, that CSV's
+      operation surface routes through the exact same generic mechanisms
+      Parquet's pass already proved out** — `InsertIntoHadoopFsRelationCommand`,
+      `CreateDataSourceTableAsSelectCommand`, and `WriteToStream`/
+      `FileStreamSink` (including the private-field-reflection fix from
+      Parquet's pass, confirmed to generalize to `CSVFileFormat`
+      specifically via a real direct-construction test, not just taken on
+      faith from that fix's own "connector-agnostic" doc comment). **No
+      bugs found, no new structural pattern, zero `src/main/scala`
+      changes** — a pure confirmatory audit on the operation surface.
+      Added one permanent test Parquet's own pass never had:
+      `.writeTo(...).createOrReplace()`/`.replace()` rejection, which
+      Parquet's ledger row only ever rested on probe-phase confirmation.
+- [x] **The real substance was the feature surface, not the operation
+      surface** — CSV is a plain text format with no native schema,
+      unlike self-describing Parquet. Six CSV-specific behaviors
+      confirmed with a real probe and codified into a permanent test:
+      schema-inference default (no `inferSchema` ⇒ every column reads
+      back as `StringType`, and a contract declaring a numeric type
+      against such a read is correctly rejected as
+      `OUTPUT_FIELD_TYPE_MISMATCH`), header handling (`header=false`
+      falls back to positional `_c0`/`_c1` names, ordinary column names
+      either way), malformed-record modes (`FAILFAST` fails only at
+      execution, never analysis — the same orthogonal pattern as
+      Parquet's corrupt-file case; `DROPMALFORMED` silently drops bad
+      rows without affecting the analyzed schema), `columnNameOfCorruptRecord`
+      (an ordinary extra `StringType` column, no special handling),
+      nullability on read-back (every field `nullable = true`
+      regardless of declared schema — confirmed independently for CSV's
+      own non-Parquet-based reader, not inherited from Parquet the way
+      Delta's/Iceberg's version of this finding was), and date parsing
+      with a custom `dateFormat` (an unparseable date becomes `null`
+      under `PERMISSIVE`, not a failure, schema stays `DateType`).
+- [x] **A real test-writing bug, caught and fixed before landing, not a
+      product bug**: the first draft of the two streaming tests declared
+      `type: long` for fields sourced from an `inferSchema=true` CSV
+      read, but CSV's inference actually resolves small whole numbers to
+      `IntegerType` — both tests correctly failed with a real
+      `ContractViolationException` on first run (the engine doing its
+      job), fixed by declaring `type: integer` to match CSV's real
+      inferred schema.
+- [x] No `spark-adapter` main source changed this pass, so CLAUDE.md's
+      mutation-testing requirement (scoped to changed/added
+      `src/main/scala` files) doesn't apply — confirmed via `git status`
+      before closing, not just assumed. `mimaReportBinaryIssues` is
+      unaffected for the same reason (no public signature, no signature
+      of any kind, touched). Full `spark-adapter` suite (163 tests, all 8
+      specs) passes; `CsvConnectorSpec` itself: 19 tests, all green.
+      Throwaway probe scaffolding (`CsvConnectorProbeSpec.scala`) deleted
+      before this pass ended, per the skill's own convention. Both of
+      CSV's coverage ledgers (operation surface, feature surface) are
+      fully closed — no ❓ rows remaining in either.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
