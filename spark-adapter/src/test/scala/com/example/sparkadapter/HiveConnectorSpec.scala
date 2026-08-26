@@ -333,7 +333,14 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     // exactly the command whose location resolution is the known gap:
     // the qualified catalog identifier, not the table's real physical
     // path (confirmed via `tableLocation` below, which IS the real path).
-    val result = awaitWriteTo(listener, "hive_ctas_overwrite_gap_tbl")
+    // Filtered on the exact expected qualified identifier, not just
+    // location-contains: the setup write just above (a genuinely NEW
+    // table, its own top-level query) is exactly the same "no resolved
+    // path yet" shape and can still have its own async onSuccess event
+    // in flight when this listener registers - without this filter,
+    // `eventually` can accept that stray event instead of the actual
+    // target write's.
+    val result = awaitWriteTo(listener, "hive_ctas_overwrite_gap_tbl", w => w.dataset.location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl")
     result.plan match {
       case com.example.ir.Write(com.example.ir.DatasetRef(location), _, _, _) =>
         assert(location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl",
@@ -348,6 +355,21 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // Hive table - InsertIntoHiveTable, confirmed to also appear nested
   // inside a CreateHiveTableAsSelectCommand for the append-via-saveAsTable
   // form. ---
+
+  test("translates .insertInto() with saveMode=append (not overwrite)") {
+    spark.sql("CREATE TABLE hive_insertinto_append_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df().write.insertInto("hive_insertinto_append_tbl")
+
+    val result = awaitWriteTo(listener, "hive_insertinto_append_tbl", w => w.saveMode.contains("append"))
+    result.plan match {
+      case com.example.ir.Write(_, _, format, saveMode) =>
+        assert(format.contains("hive"))
+        assert(saveMode.contains("append"))
+      case other => fail(s"expected a Write, got ${com.example.ir.PlanPrinter.render(other)}")
+    }
+  }
 
   test("PASS: .insertInto() an existing Hive table") {
     spark.sql("CREATE TABLE hive_insertinto_pass_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
