@@ -1015,7 +1015,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DDL has no `NOT NULL` column constraint) all confirmed with permanent
   tests. See docs/SPARK_ADAPTER.md's new "Hive support" section (both
   coverage ledgers) and ROADMAP.md for full details. `HiveConnectorSpec`:
-  25 tests. Full `spark-adapter` suite: 188 tests, all 9 specs green.
+  26 tests. Full `spark-adapter` suite: 189 tests, all 9 specs green.
 
 ### Deprecated
 

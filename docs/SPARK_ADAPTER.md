@@ -1860,7 +1860,7 @@ next step, not a silent one. Two real bugs were found and fixed (the
 gap was found and left open with a standing regression test proving it's
 still there (CTAS/overwrite location resolution); everything else was a
 genuine confirmation, not an assumption carried over from Delta/Iceberg/
-Parquet's own onboarding. `HiveConnectorSpec`: 25 tests.
+Parquet's own onboarding. `HiveConnectorSpec`: 26 tests.
 
 ## Fail-closed on unverifiable writes
 
@@ -2450,10 +2450,19 @@ was the write-shape translation, not these three), two moved into
   (`SparkPlanAdapter.scala:168`) — the `Try`/`toOption` fallback this
   guard feeds absorbs either outcome, so there's no test that could
   distinguish true divergence in behavior from equivalence here.
-- **`lr.catalogTable.isEmpty` and `usedFallback`'s Hive-relation branch**
-  (`SparkPlanAdapter.scala:247` and `:249`) — no Hive metastore is
-  available in this environment to construct a `LogicalRelation` that
-  takes this path (see *Known limitations* above).
+- **`lr.catalogTable.isEmpty`, the `LogicalRelation` fallback's final
+  catch-all branch** (`SparkPlanAdapter.scala:319`) — previously
+  attributed to "no Hive metastore available to exercise it"; re-checked
+  against a real Hive-enabled session once "Hive support" (above) added
+  one, and it's still `NoCoverage`, for a different and more precise
+  reason now confirmed rather than assumed: a genuine Hive-native table
+  read never reaches this branch at all — it takes the dedicated
+  `HiveTableRelation` case instead (`HiveTableRelation` is its own
+  top-level `LeafNode`, not `LogicalRelation`-wrapped). This branch is
+  for some *other*, non-`HadoopFsRelation`/non-`JDBCRelation`/non-Hive
+  `BaseRelation` wrapped in a `LogicalRelation` with no populated
+  `catalogTable` — no such relation kind is exercised anywhere in this
+  module's test suite, Hive included.
 - **`unwrapWriteWrapper`'s no-wrapper branch**
   (`WriteCommandSupport.scala:155`, two mutants) — Spark 3.4+ always
   inserts the `WriteFiles` wrapper this adapter targets, so the "no
@@ -2514,6 +2523,74 @@ which is what prompted re-diagnosing the bug's real location (see
 "Parquet support" above) rather than writing a test to force a kill of
 what turned out to be dead code. Removed outright rather than kept and
 documented as equivalent: the correct fix needed no such guard at all.
+
+#### Mutation testing: Hive connector support
+
+Scoped to the three files this pass changed (`WriteCommandSupport.scala`,
+`SparkPlanAdapter.scala`, `ContractEnforcementRule.scala`): **80.0%** (of
+total) / **81.01%** (of covered code). `ContractEnforcementRule.scala`
+has zero survivors — its new `HiveTableRelation` case in `recognizedRead`
+is fully killed. Every survivor investigated by hand, not just cited by
+percentage; ten predate this pass entirely (re-surfaced only because
+scoping covers the whole file, not because this pass touched them):
+
+- **9 pre-existing, untouched by this pass**: `deltaRowLevelDml`'s class-
+  name guard and its `catalogTable.isDefined` diagnostic branch (×2),
+  `unwrapWriteWrapper`'s no-wrapper branch (×2), `streamSinkFormatOf`'s
+  `FileStreamSink` guard, and — in `SparkPlanAdapter.scala` —
+  `StreamingRelation`'s path-option check, `StreamingRelationV2`'s no-
+  location branch, and the `JDBCRelation` near-equivalent. All already
+  documented above; none touched by this pass's actual changes.
+- **1 pre-existing, but its own documented *reasoning* corrected**:
+  `lr.catalogTable.isEmpty` (`SparkPlanAdapter.scala:319`, `NoCoverage`)
+  was previously attributed to "no Hive metastore available to exercise
+  it" — now that one exists (this pass's own test session), it's
+  confirmed to still be `NoCoverage`, for the real reason: a genuine Hive
+  table read never reaches this branch at all, since it takes the new
+  dedicated `HiveTableRelation` case instead. This branch is for some
+  *other* relation kind (non-`HadoopFsRelation`/`JDBCRelation`/Hive)
+  wrapped in a `LogicalRelation` with no `catalogTable` — genuinely not
+  exercised by anything in this suite. See the corrected bullet earlier
+  in this section.
+- **1 real, closed mutant, found then killed, not left**: `insertIntoHiveTable`'s
+  `saveMode = Some(if (overwrite) "overwrite" else "append")` ternary —
+  every test that reached this code exercised the `overwrite` branch
+  (`INSERT OVERWRITE`, or a `.saveAsTable()` append that happens to
+  default to it); nothing asserted the `append` case explicitly. Killed
+  by adding a dedicated translation test for a plain `.insertInto()`
+  asserting `saveMode.contains("append")`.
+- **3 confirmed genuinely equivalent, same reasoning as the pre-existing
+  `JDBCRelation`/`deltaRowLevelDml` guards above**: `createHiveTableAsSelect`'s,
+  `insertIntoHiveTable`'s, and `insertIntoHiveDir`'s own
+  `plan.getClass.getName != <expected>` type guards. Each feeds a
+  `scala.util.Try { ... }.toOption` block reflectively calling methods
+  that only exist on the expected class — mutating the guard to always
+  proceed makes the reflection throw for any other plan (caught by
+  `Try`, producing `None`, the same result the guard's own `if (...)
+  None` branch already gives). No test could ever distinguish the two.
+- **1 confirmed unreachable via any real Spark SQL, not just untested**:
+  `insertIntoHiveDir`'s own `saveMode = Some(if (overwrite) "overwrite"
+  else "append")` ternary. Unlike `InsertIntoHiveTable` (where plain
+  `INSERT INTO` genuinely sets `overwrite = false`), Hive/Spark SQL's
+  grammar has only one form of this statement — `INSERT OVERWRITE
+  [LOCAL] DIRECTORY ...` — there is no `INSERT INTO ... DIRECTORY`
+  syntax to parse `overwrite = false` from, so the `else` branch has no
+  real caller to write a test against.
+- **1 new, real, and left — a defensive guard genuinely unreachable in
+  this environment**: `SparkPlanAdapter`'s new `htr.tableMeta.storage.locationUri.isEmpty`
+  check (mirrors every other "no precise location" diagnostic guard in
+  this file). Every real Hive table created via `CREATE TABLE` in a live
+  session already has a resolved storage location by the time it's
+  readable — the same practical unreachability `CreateDataSourceTableAsSelectCommand`'s
+  and `SaveIntoDataSourceCommand`'s analogous "no location" diagnostics
+  already have, just never previously exercised for Hive specifically.
+
+Net: every survivor in code this pass actually added or changed is
+either a confirmed equivalent mutant, a confirmed real gap that's now
+closed, or a confirmed environment-unreachable defensive branch — none
+left uninvestigated. `mimaReportBinaryIssues` is clean (no public
+signature changed — the new write/read cases are additions inside
+existing private matchers and one new `private[sparkadapter]` helper).
 
 #### Delta feature-by-feature confidence pass
 

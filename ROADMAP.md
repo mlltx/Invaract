@@ -2402,21 +2402,36 @@ new "Hive support" section — summary here:
       way).
 - [x] Mutation testing scoped to the three changed/added files
       (`WriteCommandSupport.scala`, `SparkPlanAdapter.scala`,
-      `ContractEnforcementRule.scala`): **HIVE_MUTATION_SCORE_PLACEHOLDER
-      — see docs/SPARK_ADAPTER.md's "Mutation testing" section for the
-      full per-mutant reasoning.** `mimaReportBinaryIssues` clean (no
+      `ContractEnforcementRule.scala`): **80.0% (of total) / 81.01% (of
+      covered code)** — see docs/SPARK_ADAPTER.md's new "Mutation
+      testing: Hive connector support" subsection for the full per-
+      mutant reasoning. `ContractEnforcementRule.scala` itself: zero
+      survivors. One real survivor found and closed along the way (an
+      `.insertInto()` append-mode saveMode assertion nothing exercised),
+      not just cited — see below. `mimaReportBinaryIssues` clean (no
       public signature changed — the new read/write cases are additions
       to existing private/module-private matchers and objects). Real
       `unzip -l` jar inspection confirmed zero `spark-hive`/Hive classes
       in the assembled `spark-adapter` jar. `./dev/build`/`./dev/test`/
       `./dev/regression` all pass against real `spark-submit`. Full
-      `spark-adapter` suite: 188 tests, all 9 specs green (`HiveConnectorSpec`:
-      25 tests). Throwaway probe scaffolding (`HiveProbeSpec.scala`)
+      `spark-adapter` suite: 189 tests, all 9 specs green (`HiveConnectorSpec`:
+      26 tests). Throwaway probe scaffolding (`HiveProbeSpec.scala`)
       deleted before this pass ended, per the skill's own convention.
       Both of Hive's coverage ledgers (operation surface, feature
       surface) are fully closed — no ❓ rows remaining in either; one
       row (`.saveAsTable()` on a new table) is ✅ Covered with a
       documented, tested known limitation rather than fully closed.
+- [x] **A real cross-test flakiness bug found and fixed in the test suite
+      itself, not the product**: `SparkAdapterListener.onSuccess` fires
+      asynchronously, and a test's own setup write (creating a table just
+      before registering a fresh listener to observe the *next* write)
+      can still have its event in flight when that listener registers —
+      `eventually` could then accept the stray setup event instead of the
+      actual write under test, only visible when running the full 9-spec
+      suite together (each spec passed in isolation). Fixed by filtering
+      `awaitWriteTo` on the exact expected outcome (saveMode or location),
+      not just "any write to a matching location yet" — confirmed stable
+      across two full-suite runs after the fix.
 
 #### Scope (Future)
 
