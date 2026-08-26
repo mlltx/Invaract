@@ -905,6 +905,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-module skip loop against both a partial-existence scenario and PR
   #1's real all-three-modules-absent scenario, confirming clean skips and
   no crash either way.
+- **Parquet connector support**: third connector onboarded via the
+  `add-spark-connector` skill's process — a different shape than
+  Delta/Iceberg, since Parquet is Spark's own built-in `FileFormat`, not
+  a separate library (nothing added to `build.sbt`, not even as a
+  `% "test"` dependency). Found and fixed a real bug: streaming writes to
+  any plain `FileFormat`-based sink (Parquet, but also CSV/JSON/ORC/text
+  — they all share Spark's built-in `FileStreamSink`) resolved to a
+  useless, non-matching location, because the existing reflective
+  path-lookup fallback only ever tried a public `path()` method (matching
+  `DeltaSink`'s shape) and never found `FileStreamSink`'s private `path`
+  field. Fixed by extending that lookup to also try the declared field,
+  not by special-casing `FileStreamSink` in the earlier `sink.name()`
+  guard, as first assumed — a mutation-testing "equivalent mutant" signal
+  (a manually applied mutation of that guard produced no test failure)
+  prompted re-investigation and the correct fix. Connector-agnostic
+  either way, benefiting every `FileFormat`-based streaming sink, not
+  just Parquet's. Found a genuinely new (not a bug) structural
+  pattern: `.saveAsTable()` append onto an existing table produces two
+  nested `Command`-shaped plans through a different mechanism than
+  Delta/Iceberg's `StagedTable` case, confirmed not to cause a false-pass
+  or false-reject. Confirmed Parquet's operation surface is
+  architecturally smaller than Delta/Iceberg's — row-level DML,
+  DataSourceV2-catalog writes against an existing table, time travel, and
+  CDC reads are all genuinely rejected by Spark itself for plain Parquet,
+  the first connector where these are real `N/A` rows rather than future
+  work. Confirmed the "every column nullable on read-back" behavior
+  previously attributed only to Delta actually originates from Parquet
+  itself (both connectors store data as Parquet under the hood). See
+  docs/SPARK_ADAPTER.md's new "Parquet support" section (both coverage
+  ledgers) and ROADMAP.md for full details.
+- **Closed Parquet's last two `❓` feature-surface rows: legacy
+  timestamp/date rebase mode and writer-side storage optimizations.**
+  Both closed with real probes and permanent tests, zero production code
+  changes. Rebase mode: a pre-Gregorian date/timestamp written under
+  `LEGACY` and read back under `CORRECTED` round-trips with its schema
+  completely unchanged, and the strictest `EXCEPTION` setting never
+  blocks analysis. Storage optimizations (bloom filters, dictionary
+  encoding, summary metadata): zero effect on the analyzed schema or on
+  format detection. `ParquetConnectorSpec`: 16 → 18 tests. Both of
+  Parquet's coverage ledgers are now fully closed, no `❓` rows
+  remaining.
 
 ### Deprecated
 

@@ -2092,6 +2092,140 @@ found that assumption wrong for 3 of the 4, in both directions.
       CALL procedures now have a permanent, evidenced disposition - none
       left unmodeled.
 
+#### Sub-phase: Parquet connector support (done)
+
+Third connector onboarded via the `add-spark-connector` skill's process —
+a different shape than Delta/Iceberg, since Parquet is Spark's own
+built-in `FileFormat`, not a separate library: nothing added to
+`build.sbt`, not even a `% "test"` dependency. Full findings and both
+coverage ledgers are in docs/SPARK_ADAPTER.md's new "Parquet support"
+section — summary here:
+
+- [x] **A real bug found and fixed: streaming writes to any plain
+      `FileFormat`-based sink (Parquet, but also CSV/JSON/ORC/text —
+      they all share Spark's built-in `FileStreamSink`) resolved to a
+      useless, non-matching location — plus a wrong first diagnosis,
+      corrected by a mutation-testing "equivalent mutant" signal, not
+      assumed correct on the first pass.** `WriteCommandSupport`'s
+      `WriteToStream` case (built for Delta) tries `sink.name()`, then a
+      reflective public `path()` method, then falls back to `toString`.
+      The first fix assumed `FileStreamSink.name()` doesn't throw
+      (unlike `DeltaSink.name()`) and returns a descriptive
+      `"FileSink[<path>]"` string taken at face value — but a manually
+      applied mutation of that guard produced no test failure, the
+      documented Stryker4s "equivalent mutant" symptom, prompting
+      re-investigation. A direct-construction probe (a real
+      `FileStreamSink` built by hand, no live query) confirmed
+      `FileStreamSink.name()` genuinely throws the same way `DeltaSink`'s
+      does — the real bug was one tier later: the reflective `path()`
+      lookup only ever tried a *public method*, and `FileStreamSink.path`
+      is a `private final` field with no public accessor at all, so every
+      plain-`FileFormat` streaming write fell through to `toString`,
+      unconditionally failing `OUTPUT_LOCATION_MISMATCH` against any
+      contract's real declared path. Caught by a real PASS test failing,
+      not inspection. Fixed by extending the reflective lookup itself to
+      also try the declared field, not by special-casing `FileStreamSink`
+      in the tier-2 guard — a genuine bonus beyond the location fix:
+      `streamSinkFormatOf` previously always returned `None` for any
+      non-Delta sink; now every `FileFormat`-based streaming write gets a
+      real, precise format too, via the same private-field reflection.
+- [x] **A genuinely new operation-surface finding, not a bug:
+      `.saveAsTable()` append onto an existing table is a third instance
+      of the "one call, two nested Command-shaped plans" pattern**
+      already known from Delta/Iceberg's `StagedTable` case, via a
+      different mechanism this time (`CreateDataSourceTableAsSelectCommand.run()`'s
+      own internal delegation to a nested `InsertIntoHadoopFsRelationCommand`
+      when it detects the target already exists). Confirmed via
+      `injectCheckRule` that `ContractEnforcementRule` runs twice for one
+      logical write — and, unlike the `StagedTable` case, confirmed this
+      needs **no fix**: both plans resolve to the identical physical
+      location, so a satisfying write passes both and a violating one is
+      rejected at the first, before the nested insert ever runs (verified
+      via a real PASS/FAIL pair, the FAIL half asserting the row count is
+      unchanged). A related, *unresolved* version of this same trap — a
+      brand-new table created without an explicit path option, where the
+      outer command's location falls back to the qualified catalog
+      identifier while the nested insert's is a real physical path — was
+      found but left out of scope for this pass (every existing
+      precedent test, this pass's own included, sidesteps it with an
+      explicit path) and documented as real next-step work, not silently
+      left implicit.
+- [x] **Confirmed, empirically, that Parquet's operation surface is
+      architecturally smaller than Delta/Iceberg's, not just less
+      explored.** Time travel, CDC/incremental reads, row-level DML
+      (`MERGE`/`UPDATE`/`DELETE`), and DataSourceV2-catalog writes against
+      an existing table (`.writeTo(...).append/overwrite/overwritePartitions()`)
+      or via `createOrReplace()`/`.replace()` are all genuinely rejected
+      by Spark itself for plain Parquet (`Cannot write into v1 table`,
+      `does not support REPLACE TABLE AS SELECT`, `MERGE INTO TABLE is
+      not supported temporarily`, or simply no SQL syntax exists) — real
+      architectural constraints, not "Invariant hasn't translated this
+      yet," the first connector where these rows are 🚫 **N/A** rather
+      than future work. Confirmed via real probes and permanent
+      regression tests, not assumed from the operations' absence.
+- [x] **Feature surface: the "every column nullable on read-back"
+      behavior this document previously attributed only to Delta (and
+      separately rediscovered for Iceberg) is confirmed to originate from
+      Parquet itself** — both connectors store data as Parquet under the
+      hood, so this was always Parquet's own reader behavior, not
+      something either connector does. Schema merging (`mergeSchema`) and
+      `partitionBy` column discovery both confirmed transparent (no
+      "generated columns"-style false-rejection gap); a corrupt file in
+      the read path confirmed to fail entirely within Spark's own
+      machinery, orthogonal to Invariant either way. Two feature-surface
+      items (legacy timestamp/date rebase mode, writer-side storage
+      optimizations) left ❓ **Not investigated**, honestly scoped out
+      rather than assumed transparent by analogy.
+- [x] Mutation testing scoped to the changed file
+      (`WriteCommandSupport.scala`, the only `src/main/scala` file this
+      pass touched): **80.0% (24/30 non-excluded mutants killed) — see
+      docs/SPARK_ADAPTER.md's "Mutation testing" section for the full
+      per-mutant reasoning.** All 6 survivors investigated, not just
+      cited: 4 are pre-existing, unrelated to this pass (`unwrapWriteWrapper`'s
+      already-documented no-wrapper branch, and two `deltaRowLevelDml`
+      guards untouched by this change); the 2 in code this pass actually
+      added are the `streamSinkFormatOf` `EqualityOperator`/`!=` mutant
+      (killed) and a `ConditionalExpression`-to-`true` mutant on its
+      `FileStreamSink` guard that survives because it's provably
+      equivalent — confirmed by hand, not asserted: for a real
+      `FileStreamSink`, forcing the guard to unconditionally `true`
+      produces the identical result the real guard already does; for any
+      other sink, the reflective `fileFormat` field lookup fails either
+      way, producing `None` either way. `mimaReportBinaryIssues` clean
+      (only private-method bodies changed, no public signature touched).
+      `./dev/build`/`./dev/test`/`./dev/regression` all pass against real
+      `spark-submit`. No new
+      dependency to verify the absence of (Parquet needed none).
+
+#### Sub-phase: Parquet's last two ❓ feature-surface rows closed - rebase mode, storage optimizations (done)
+
+Same-day follow-up closing exactly the two rows the initial Parquet pass
+left ❓. Both closed with real probes and permanent tests, **zero
+production code changes** — both were real questions with real, testable
+answers, not gaps needing a fix.
+
+- [x] **Legacy timestamp/date rebase mode**: a pre-Gregorian-calendar
+      date/timestamp written under `LEGACY` and read back under
+      `CORRECTED` round-trips with its `DateType`/`TimestampType` schema
+      completely unchanged — confirmed directly, not assumed: rebase mode
+      only ever affects the encoded value, never a field's declared type
+      or nullability. Also confirmed the strictest setting (`EXCEPTION`)
+      never blocks analysis — it exists to guard genuinely ambiguous
+      files (no rebase metadata tag, i.e. written by pre-2.4.6 Spark),
+      never triggered by a file a modern Spark itself wrote.
+- [x] **Writer-side storage optimizations** (bloom filters, dictionary
+      encoding, summary metadata): zero effect on the analyzed column set
+      or on `streamSinkFormatOf`/`formatOf`'s format detection —
+      physical storage-layer decisions Parquet's reader resolves entirely
+      below the `LogicalPlan` level this adapter translates at.
+- [x] Both findings are new `ParquetConnectorSpec` tests (18 tests total
+      in that suite after this pass, up from 16). No `spark-adapter` main
+      source changed this pass, so CLAUDE.md's mutation-testing
+      requirement (scoped to changed/added `src/main/scala` files)
+      doesn't apply. Both of Parquet's coverage ledgers (operation
+      surface and feature surface) are now fully closed — no ❓ rows
+      remaining in either.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

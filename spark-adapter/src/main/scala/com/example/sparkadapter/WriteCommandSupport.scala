@@ -197,6 +197,36 @@ private[sparkadapter] object WriteCommandSupport {
     * resolve, falls back to the sink's own `toString`, exactly like every
     * other unresolvable-location case elsewhere in this module, with a
     * diagnostic explaining why.
+    *
+    * Found while adding Parquet connector support
+    * (docs/ADDING_A_SPARK_CONNECTOR.md): tier 3 (the reflective `path()`
+    * lookup) previously only tried a *public method* named `path` -
+    * exactly what `DeltaSink` exposes, but not what Spark's own built-in
+    * `org.apache.spark.sql.execution.streaming.FileStreamSink` does (the
+    * sink for every plain `FileFormat`-based streaming write -
+    * `.writeStream.format("parquet"/"csv"/"json"/"orc"/"text")...`, not
+    * just Parquet). `FileStreamSink.name()` throws the same `Sink`-default
+    * `IllegalStateException` `DeltaSink.name()` does (confirmed via
+    * `javap` and a direct-construction probe - it does *not* override
+    * `name()` with a non-throwing implementation, despite first appearing
+    * to when only its `toString()` had been observed), so tier 2 already
+    * correctly falls through for it. But `FileStreamSink.path` (confirmed
+    * via `javap`) is a `private final` field with no public accessor at
+    * all - unlike `DeltaSink.path()` - so the old method-only
+    * `reflectiveSinkPath` found nothing there either, and every plain
+    * `FileFormat`-based streaming write fell all the way to the last-resort
+    * `ws.sink.toString` (`"FileSink[<path>]"`, not a bare path) -
+    * `OUTPUT_LOCATION_MISMATCH` against any contract's real declared
+    * physical location, unconditionally. Real bug, confirmed via
+    * `ParquetConnectorSpec` PASS tests that previously failed this way.
+    * Fixed by extending `reflectiveSinkPath` to also try the *declared
+    * field* directly (`reflectivePrivateField` below) when the public-method
+    * lookup finds nothing - the same no-compile-time-dependency-tolerant
+    * convention as everywhere else in this file, just extended from
+    * "public method" to "declared field" since `FileStreamSink`, while a
+    * plain public class already on this module's `provided` Spark
+    * dependency, exposes neither `path` nor `fileFormat` as a public
+    * method.
     */
   private def streamSinkLocationAndFormat(ws: WriteToStream): (String, Option[String], Option[Diagnostic]) =
     ws.catalogTable match {
@@ -223,12 +253,40 @@ private[sparkadapter] object WriteCommandSupport {
     * `javap`), so that mechanism doesn't apply here. Matched by simple class
     * name instead, the same reflection-friendly convention as
     * `jdbcLocationOf`/`unwrapWriteWrapper`.
+    *
+    * `FileStreamSink` (Spark's own built-in sink for any `FileFormat`-based
+    * streaming write, not Parquet-specific) holds its `FileFormat` in a
+    * private `fileFormat` field, confirmed via `javap` to have no public
+    * accessor - reflected into directly (`reflectiveFileSinkFormat`) and
+    * passed through the same `formatOf` every other write shape in this
+    * file already uses, since `FileFormat`'s `DataSourceRegister.shortName()`
+    * mechanism doesn't care how the instance was obtained.
     */
   private def streamSinkFormatOf(sink: AnyRef): Option[String] =
-    if (sink.getClass.getSimpleName == "DeltaSink") Some("delta") else None
+    if (sink.getClass.getSimpleName == "DeltaSink") Some("delta")
+    else if (sink.getClass.getSimpleName == "FileStreamSink") reflectiveFileSinkFormat(sink)
+    else None
+
+  private def reflectiveFileSinkFormat(sink: AnyRef): Option[String] =
+    reflectivePrivateField(sink, "fileFormat").flatMap(SparkPlanAdapter.formatOf)
 
   private def reflectiveSinkPath(sink: AnyRef): Option[String] =
     scala.util.Try(sink.getClass.getMethod("path").invoke(sink).toString).toOption
+      .orElse(reflectivePrivateField(sink, "path").map(_.toString))
+
+  /** `FileStreamSink`'s `path`/`fileFormat` fields are `private final`, with
+    * no public accessor (confirmed via `javap` - unlike `DeltaSink`, which
+    * exposes a public `path()` method `reflectiveSinkPath`'s method-based
+    * lookup already covers). `setAccessible` is safe here: reading a value
+    * already fully constructed on Spark's own public, `provided`-dependency
+    * class, not modifying anything.
+    */
+  private def reflectivePrivateField(obj: AnyRef, fieldName: String): Option[AnyRef] =
+    scala.util.Try {
+      val f = obj.getClass.getDeclaredField(fieldName)
+      f.setAccessible(true)
+      f.get(obj)
+    }.toOption
 
   // DataSourceV2 catalog writes against an *existing* table -
   // `.saveAsTable(...)` append, `.insertInto(...)`, and
