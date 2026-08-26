@@ -978,6 +978,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docs/SPARK_ADAPTER.md's new "CSV support" section (both coverage
   ledgers) and ROADMAP.md for full details. `CsvConnectorSpec`: 19 tests.
   Full `spark-adapter` suite: 163 tests, all 8 specs green.
+- **Hive connector support**: fifth connector onboarded via the
+  `add-spark-connector` skill's process, against a real embedded-Derby
+  Hive-enabled session (`enableHiveSupport()`, no external metastore
+  needed). `org.apache.spark %% spark-hive % 3.5.1` added to
+  `spark-adapter/build.sbt` as a `% "test"` dependency only. Unlike
+  Delta/Iceberg/Parquet/CSV's onboarding, this pass found the operation
+  surface genuinely under-covered, not just confirmed by analogy: a
+  reflective jar scan found three real, previously-unhandled
+  `spark-hive` `Command` classes (`CreateHiveTableAsSelectCommand`,
+  `InsertIntoHiveTable`, `InsertIntoHiveDirCommand` — the last found only
+  by the scan, not by trying standard `.save`/`.saveAsTable`/`.insertInto`
+  operations), all now translated writes. Two real, found-and-fixed
+  false-rejection bugs: (1) `HiveTableRelation`, the read-side shape for
+  a genuinely Hive-native table, had **no translation case at all**
+  (worse than previously documented — it isn't `LogicalRelation`-wrapped
+  the way Delta's read shape is, so it fell to the fully generic
+  `Unsupported` fallback, not even an imprecise-location one), fixed with
+  **zero new dependency** since `HiveTableRelation` turned out to live in
+  plain, already-`provided` `spark-catalyst`; (2) a static-partition
+  `INSERT INTO t PARTITION(dt='...') SELECT ...` omits the partition
+  column from the query's own schema entirely, the same false-rejection
+  class as Delta's generated columns/DSv2's target-only fields, fixed by
+  reusing the existing `unionNewFields` helper. One known, documented,
+  *unfixed* limitation found and given a standing regression test rather
+  than silently left implicit: `CreateHiveTableAsSelectCommand`'s outer
+  command has no resolved physical location for a genuinely new table or
+  for `.mode("overwrite")` onto an existing one (only append mode is
+  confirmed to agree with its nested `InsertIntoHiveTable`'s location),
+  the same class of gap Parquet's own new-table CTAS test already
+  documents as out of scope. Confirmed the existing generic fail-closed
+  policy already correctly covers Hive's `LOAD DATA INPATH`/`TRUNCATE
+  TABLE`/`MERGE INTO`/`UPDATE` with zero new `FailClosedCommands`
+  entries needed. Feature surface: bucketed tables, a real Hive UDF
+  (`GenericUDFUpper`), and read-back nullability (always nullable — Hive
+  DDL has no `NOT NULL` column constraint) all confirmed with permanent
+  tests. See docs/SPARK_ADAPTER.md's new "Hive support" section (both
+  coverage ledgers) and ROADMAP.md for full details. `HiveConnectorSpec`:
+  25 tests. Full `spark-adapter` suite: 188 tests, all 9 specs green.
 
 ### Deprecated
 
