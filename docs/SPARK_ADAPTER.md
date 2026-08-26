@@ -1421,8 +1421,8 @@ flagged here rather than left implicit.
 | Schema merging (`mergeSchema=true` across heterogeneous files) | ✅ Confirmed transparent | The analyzed plan's schema genuinely includes the merged (union) column set — confirmed via a real contract that would `MISSING_OUTPUT_FIELD`-reject if the extra column weren't present. No `WriteCommandSupport`/`StructuralVerifier` change needed. `ParquetConnectorSpec`'s PASS test. |
 | Partition column discovery (`partitionBy`) | ✅ Confirmed transparent | Partition columns are genuinely present, with the correct name and type, in both the read-back schema and the write's own verified schema — no "generated columns"-style gap the way Delta's onboarding found, since (unlike a Delta generated column) a partition column is always part of `query.output` for a `FileFormat` write: Spark needs its actual value to route each row to the right directory. `ParquetConnectorSpec`'s PASS test. |
 | Corrupt/malformed file in the read path | ✅ Confirmed orthogonal | A directory containing a corrupt file fails entirely within Spark's own Parquet-reading machinery (schema/footer resolution, confirmed to occur at variable points depending on file layout — sometimes during DataFrame construction, sometimes only once a job runs) — never producing an analyzable write-command plan for `ContractEnforcementRule` to see, and never committing output. No fix needed; nothing for Invariant to check here differently. `ParquetConnectorSpec`'s test. |
-| Legacy timestamp/date rebase mode (`spark.sql.parquet.datetimeRebaseModeInRead`/`...Write`, `int96RebaseModeIn{Read,Write}`) | ❓ Not investigated | Out of scope for this pass. **Next step**: probe a read/write round-trip of pre-Gregorian-calendar dates/timestamps under each rebase mode setting and confirm the *schema* (not just the values) Invariant sees never differs — plausible it's fully transparent (rebase only ever affects encoded values, never a field's declared type/nullability), but not empirically confirmed. |
-| Writer-side storage optimizations (bloom filters, dictionary encoding, column statistics) | ❓ Not investigated | Out of scope for this pass. **Next step**: confirm these are invisible at the `LogicalPlan` level this adapter translates at all (plausible — they're physical storage-layer decisions, not schema-affecting ones — the same reasoning Delta's deletion-vectors/column-mapping/liquid-clustering rows and Iceberg's own storage-layer rows already established for their own storage optimizations), with a real probe rather than assumed by analogy. |
+| Legacy timestamp/date rebase mode (`spark.sql.parquet.datetimeRebaseModeInRead`/`...Write`, `int96RebaseModeIn{Read,Write}`) | ✅ **Confirmed — closed as a follow-up** | Real probe (since deleted), then permanent tests: a pre-Gregorian-calendar date/timestamp written under `LEGACY` and read back under `CORRECTED` round-trips with its `DateType`/`TimestampType` schema completely unchanged — rebase mode only ever affects the encoded *value*, never a field's declared type or nullability. A write sourced from such a read, under a contract declaring `date`/`timestamp` types, passes cleanly. Also confirmed the strictest setting (`EXCEPTION`) never blocks *analysis* — schema resolution succeeds regardless of rebase mode; `EXCEPTION` exists to guard genuinely ambiguous files (no rebase metadata tag, i.e. written by pre-2.4.6 Spark), which a modern-Spark-written file never triggers. `ParquetConnectorSpec`'s two new tests. |
+| Writer-side storage optimizations (bloom filters, dictionary encoding, column statistics) | ✅ **Confirmed — closed as a follow-up** | Real probe (since deleted), then a permanent test: `parquet.bloom.filter.enabled#<col>`, `parquet.enable.dictionary`, and `parquet.enable.summary-metadata` writer options have zero effect on the analyzed column set, and disabling dictionary encoding specifically doesn't affect `streamSinkFormatOf`/`formatOf`'s format detection either — these are physical storage-layer decisions Parquet's reader resolves entirely below the `LogicalPlan` level this adapter translates at, the same reasoning already established for Delta's/Iceberg's own storage-layer rows. `ParquetConnectorSpec`'s new test. |
 
 Net assessment: Parquet's operation surface is fully enumerated, not
 partially covered — every row above is either ✅ Covered or a genuinely
@@ -1435,10 +1435,12 @@ confirmatory pass: a genuine streaming-write location bug (fixed, and
 fixed connector-agnostically — every `FileFormat`-based streaming sink
 benefits, not just Parquet's), and a documented-but-not-fixed nested-write
 trap for a path-less new-table `.saveAsTable()`/`.writeTo(...).create()`,
-flagged as real future work rather than left implicit. Two feature-surface
-rows (rebase mode, storage optimizations) remain ❓, honestly stated
-rather than assumed transparent by analogy to Delta/Iceberg's own
-storage-layer rows.
+flagged as real future work rather than left implicit. Both feature-surface
+rows left ❓ after the initial pass (rebase mode, storage optimizations)
+were closed in a same-day follow-up — real probes, not assumed transparent
+by analogy to Delta/Iceberg's own storage-layer rows, each converted to a
+permanent test before its probe was deleted. Every row of both ledgers now
+has a real disposition: no ❓ remaining in either.
 
 ## Fail-closed on unverifiable writes
 

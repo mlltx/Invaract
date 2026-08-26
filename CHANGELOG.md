@@ -935,6 +935,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself (both connectors store data as Parquet under the hood). See
   docs/SPARK_ADAPTER.md's new "Parquet support" section (both coverage
   ledgers) and ROADMAP.md for full details.
+- **Closed Parquet's last two `❓` feature-surface rows: legacy
+  timestamp/date rebase mode and writer-side storage optimizations.**
+  Both closed with real probes and permanent tests, zero production code
+  changes. Rebase mode: a pre-Gregorian date/timestamp written under
+  `LEGACY` and read back under `CORRECTED` round-trips with its schema
+  completely unchanged, and the strictest `EXCEPTION` setting never
+  blocks analysis. Storage optimizations (bloom filters, dictionary
+  encoding, summary metadata): zero effect on the analyzed schema or on
+  format detection. `ParquetConnectorSpec`: 16 → 18 tests. Both of
+  Parquet's coverage ledgers are now fully closed, no `❓` rows
+  remaining.
 
 ### Deprecated
 

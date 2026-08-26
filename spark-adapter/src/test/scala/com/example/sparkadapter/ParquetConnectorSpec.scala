@@ -10,8 +10,10 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.streaming.Trigger
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
 
 import java.nio.file.{Files, Path}
+import java.sql.Date
 
 /** Parquet-specific coverage, added via the `add-spark-connector` skill
   * (docs/ADDING_A_SPARK_CONNECTOR.md). Unlike Delta/Iceberg, Parquet is not
@@ -627,5 +629,148 @@ class ParquetConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(!Files.exists(java.nio.file.Paths.get(outPath)), "a write whose source can't be read must never produce output")
     assert(capturedPlans.size == plansBefore, "a source Spark itself can't read must never reach injectCheckRule as a write command")
+  }
+
+  // --- Feature surface: legacy timestamp/date rebase mode
+  // (spark.sql.parquet.datetimeRebaseModeIn{Read,Write}, int96RebaseModeIn{Read,Write}).
+  // Confirmed transparent: a pre-Gregorian-calendar date/timestamp written
+  // under LEGACY and read back under CORRECTED round-trips with its
+  // DateType/TimestampType schema completely unchanged - rebase mode only
+  // ever affects the encoded VALUE (which of two calendar conventions a
+  // raw epoch-day/microsecond count represents), never a field's declared
+  // type or nullability, confirmed directly rather than assumed. A write
+  // sourced from such a read, under a contract declaring date/timestamp
+  // types, passes cleanly - no WriteCommandSupport/StructuralVerifier
+  // change needed. ---
+
+  private def withRebaseMode[T](mode: String)(body: => T): T = {
+    val keys = Seq(
+      "spark.sql.parquet.datetimeRebaseModeInWrite",
+      "spark.sql.parquet.datetimeRebaseModeInRead",
+      "spark.sql.parquet.int96RebaseModeInWrite",
+      "spark.sql.parquet.int96RebaseModeInRead"
+    )
+    val old = keys.map(k => k -> spark.conf.get(k, "CORRECTED"))
+    try {
+      keys.foreach(k => spark.conf.set(k, mode))
+      body
+    } finally {
+      old.foreach { case (k, v) => spark.conf.set(k, v) }
+    }
+  }
+
+  test("feature surface: a pre-Gregorian date/timestamp round-trips with unchanged schema across rebase modes") {
+    import org.apache.spark.sql.types._
+    val schema = StructType(Seq(
+      StructField("id", LongType, nullable = false),
+      StructField("d", DateType, nullable = true),
+      StructField("t", TimestampType, nullable = true)
+    ))
+    val data = spark.sparkContext.parallelize(
+      Seq(org.apache.spark.sql.Row(1L, Date.valueOf("1500-01-01"), java.sql.Timestamp.valueOf("1500-01-01 00:00:00")))
+    )
+    val written = spark.createDataFrame(data, schema)
+
+    val p = scratchDir.resolve("rebase_mode").toString
+    withRebaseMode("LEGACY") {
+      written.write.mode("overwrite").parquet(p)
+    }
+
+    withRebaseMode("CORRECTED") {
+      val readBack = spark.read.parquet(p)
+      assert(readBack.schema("d").dataType == DateType, "rebase mode must not change the field's declared type")
+      assert(readBack.schema("t").dataType == TimestampType, "rebase mode must not change the field's declared type")
+
+      val outPath = scratchDir.resolve("rebase_mode_out").toString
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $outPath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: false
+           |        - name: d
+           |          type: date
+           |          required: false
+           |        - name: t
+           |          type: timestamp
+           |          required: false
+           |""".stripMargin
+      withContract(yaml) {
+        readBack.write.mode("overwrite").parquet(outPath) // must not throw
+      }
+    }
+  }
+
+  test("feature surface: EXCEPTION rebase mode never blocks analysis, only (potentially) execution") {
+    import org.apache.spark.sql.types._
+    val schema = StructType(Seq(StructField("id", LongType), StructField("d", DateType)))
+    val data = spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1L, Date.valueOf("1500-01-01"))))
+    val written = spark.createDataFrame(data, schema)
+    val p = scratchDir.resolve("rebase_exception").toString
+    withRebaseMode("LEGACY") {
+      written.write.mode("overwrite").parquet(p)
+    }
+    withRebaseMode("EXCEPTION") {
+      val readBack = spark.read.parquet(p)
+      // Schema resolution (and therefore anything ContractEnforcementRule
+      // checks) never depends on rebase mode - confirmed by this succeeding
+      // even under the strictest setting.
+      noException should be thrownBy readBack.queryExecution.analyzed
+      assert(readBack.schema("d").dataType == DateType)
+    }
+  }
+
+  // --- Feature surface: writer-side storage optimizations (bloom filters,
+  // dictionary encoding, summary metadata / column statistics). Confirmed
+  // transparent: these are physical storage-layer decisions Parquet's
+  // reader resolves entirely below the LogicalPlan level this adapter
+  // translates at - the analyzed schema, column set, and translated
+  // format are identical whether or not they're enabled. No
+  // WriteCommandSupport/StructuralVerifier change needed. ---
+
+  test("feature surface: bloom filters, dictionary encoding, and summary metadata don't affect the translated schema or format") {
+    val p = scratchDir.resolve("storage_opts").toString
+    val written = spark.createDataFrame(Seq((1L, 10L, "a"), (2L, 20L, "b"))).toDF("id", "value", "category")
+    written.write
+      .mode("overwrite")
+      .option("parquet.bloom.filter.enabled#category", "true")
+      .option("parquet.enable.dictionary", "true")
+      .option("parquet.enable.summary-metadata", "true")
+      .parquet(p)
+
+    val readBack = spark.read.parquet(p)
+    assert(readBack.columns.toSet == Set("id", "value", "category"))
+
+    val outPath = scratchDir.resolve("storage_opts_out").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: value
+         |          type: long
+         |          required: false
+         |        - name: category
+         |          type: string
+         |          required: false
+         |""".stripMargin
+    withContract(yaml) {
+      readBack.write
+        .mode("overwrite")
+        .option("parquet.bloom.filter.enabled#category", "true")
+        .option("parquet.enable.dictionary", "false") // also confirms format detection is unaffected by disabling dictionary encoding
+        .parquet(outPath) // must not throw
+    }
   }
 }

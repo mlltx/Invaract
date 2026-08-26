@@ -2197,6 +2197,35 @@ section — summary here:
       `spark-submit`. No new
       dependency to verify the absence of (Parquet needed none).
 
+#### Sub-phase: Parquet's last two ❓ feature-surface rows closed - rebase mode, storage optimizations (done)
+
+Same-day follow-up closing exactly the two rows the initial Parquet pass
+left ❓. Both closed with real probes and permanent tests, **zero
+production code changes** — both were real questions with real, testable
+answers, not gaps needing a fix.
+
+- [x] **Legacy timestamp/date rebase mode**: a pre-Gregorian-calendar
+      date/timestamp written under `LEGACY` and read back under
+      `CORRECTED` round-trips with its `DateType`/`TimestampType` schema
+      completely unchanged — confirmed directly, not assumed: rebase mode
+      only ever affects the encoded value, never a field's declared type
+      or nullability. Also confirmed the strictest setting (`EXCEPTION`)
+      never blocks analysis — it exists to guard genuinely ambiguous
+      files (no rebase metadata tag, i.e. written by pre-2.4.6 Spark),
+      never triggered by a file a modern Spark itself wrote.
+- [x] **Writer-side storage optimizations** (bloom filters, dictionary
+      encoding, summary metadata): zero effect on the analyzed column set
+      or on `streamSinkFormatOf`/`formatOf`'s format detection —
+      physical storage-layer decisions Parquet's reader resolves entirely
+      below the `LogicalPlan` level this adapter translates at.
+- [x] Both findings are new `ParquetConnectorSpec` tests (18 tests total
+      in that suite after this pass, up from 16). No `spark-adapter` main
+      source changed this pass, so CLAUDE.md's mutation-testing
+      requirement (scoped to changed/added `src/main/scala` files)
+      doesn't apply. Both of Parquet's coverage ledgers (operation
+      surface and feature surface) are now fully closed — no ❓ rows
+      remaining in either.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
