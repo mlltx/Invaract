@@ -319,7 +319,7 @@ whether the command ran locally or its log was fetched from CI.
 
 ## Phase 10 — Document
 
-Three places, each stating **precisely** what is and isn't covered
+Two places, each stating **precisely** what is and isn't covered
 (read/write/DML/streaming/maintenance — operation by operation, the way
 `docs/connectors/delta.md` and `docs/SPARK_ADAPTER.md`'s "Fail-closed on
 unverifiable writes" section do), never a blanket "full support" claim.
@@ -340,7 +340,6 @@ section does:
 - A `ROADMAP.md` sub-phase under Phase 1c — a short summary plus a link
   to the new `docs/connectors/<connector>.md` file, not a restatement of
   its content.
-- A `CHANGELOG.md` entry under `[Unreleased]`.
 
 ## Phase 11 — Coverage ledger and close-out
 
@@ -399,9 +398,9 @@ operation surface has one):
 Post both tables to the user as the closing message, however narrow the
 pass was — a session that only touched two rows of either still renders
 all of them, with the untouched ones marked ❓. Then write them into the
-same three documentation sites Phase 10 already touched
-(docs/SPARK_ADAPTER.md/ROADMAP.md/CHANGELOG.md), so both ledgers are
-durable and the next session (or the next person) doesn't have to
+same two documentation sites Phase 10 already touched
+(docs/connectors/<connector>.md/ROADMAP.md), so both ledgers are durable
+and the next session (or the next person) doesn't have to
 reconstruct them from conversation history.
 
 ⏸ **Checkpoint**: walk both completed ledgers with the user before

@@ -322,7 +322,6 @@ Invariant/
 ├── CODE_OF_CONDUCT.md              # Community standards
 ├── SECURITY.md                      # Vulnerability reporting
 ├── ARCHITECTURE.md                  # Design decisions
-├── CHANGELOG.md                     # Release notes
 ├── CONTRIBUTORS.md                  # Community credits
 ├── README.md                        # Project overview
 ├── MISSION.md                       # Vision & goals

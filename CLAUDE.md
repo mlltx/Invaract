@@ -266,7 +266,6 @@ disabling the check — that defeats the entire point of running it.
 │
 ├── ARCHITECTURE.md               # Full architecture, ADRs, data flow
 ├── ROADMAP.md                    # Phase-by-phase plan and status
-├── CHANGELOG.md
 ├── CLAUDE.md                     # This file
 └── README.md
 ```
