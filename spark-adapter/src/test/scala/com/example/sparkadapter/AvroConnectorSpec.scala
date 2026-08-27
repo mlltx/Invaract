@@ -94,9 +94,13 @@ class AvroConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     result.plan match {
       case com.example.ir.Write(com.example.ir.DatasetRef(location), _, format, saveMode) =>
         // Spark resolves the raw path through Hadoop's Path/FileSystem
-        // machinery, which prepends the local filesystem's "file:" scheme -
-        // compare on the path component, not raw string equality.
-        assert(location.contains(p))
+        // machinery, which prepends the local filesystem's "file:" scheme
+        // and always uses forward slashes - `p` is `scratchDir.resolve(...)
+        // .toString`, the OS-native form (backslashes on Windows), so a raw
+        // substring check fails there even though the paths are the same
+        // location. Normalize separators the same way
+        // StructuralVerifier.locationsMatch does before comparing.
+        assert(location.replace('\\', '/').contains(p.replace('\\', '/')))
         assert(format.contains("avro"))
         assert(saveMode.contains("overwrite"))
       case other => fail(s"expected a Write, got ${com.example.ir.PlanPrinter.render(other)}")
@@ -286,8 +290,23 @@ class AvroConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     // contract's `location` must be given as a plain path, matching every
     // other test in this file/repo (see docs/SPARK_ADAPTER.md's connector
     // sections; none embed a "file:" scheme in a YAML `location:` value).
-    val dbLocation = scratchDir.resolve("warehouse").toFile.getCanonicalFile.toURI
-    val expectedLocation = dbLocation.getPath + "avro_locfix_pass_tbl"
+    //
+    // The expected location is derived from a real WriteCommandSupport
+    // resolution for a throwaway probe table, not hand-built via
+    // java.net.URI/File.toURI - confirmed the hard way (a real Windows/macOS
+    // CI failure) that hand-constructing this path doesn't reliably match
+    // what Hadoop's own Path/FileSystem machinery reports on every OS
+    // (drive-letter/separator/symlink-canonicalization differences), the
+    // same class of platform variance locationsMatch's own doc comment
+    // already warns about for the *declared* side.
+    val probeIndex = capturedPlans.size
+    df().write.format("avro").mode("overwrite").saveAsTable("avro_locfix_discover_tbl")
+    val probeOuter = capturedPlans.drop(probeIndex)
+      .collectFirst { case c: org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand => c }
+      .getOrElse(fail("expected a CreateDataSourceTableAsSelectCommand"))
+    val probeLocation = WriteCommandSupport.combined.lift(probeOuter).getOrElse(fail("probe not recognized")).location
+    val prefix = probeLocation.stripSuffix("avro_locfix_discover_tbl")
+    val expectedLocation = (prefix + "avro_locfix_pass_tbl").stripPrefix("file:")
     val yaml =
       s"""id: enforcement_demo
          |version: "1.0.0"
