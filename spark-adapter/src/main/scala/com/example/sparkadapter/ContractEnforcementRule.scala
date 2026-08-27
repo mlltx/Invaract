@@ -3,7 +3,7 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.Contract
+import com.example.contract.{Contract, ContractValidator}
 import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
@@ -115,6 +115,21 @@ object ContractEnforcementRule {
     val translated = SparkPlanAdapter.translate(plan)
     translated.plan match {
       case _: com.example.ir.Write =>
+        // Every check below assumes a *structurally sound* contract -
+        // StructuralVerifier.verify in particular reads contract.outputs.head
+        // unconditionally. `injectCheckRule` calls this method for every
+        // plan Spark analyzes in the session, not just writes, so this
+        // guard belongs inside the write (and, below, state-changing-CALL)
+        // branch specifically - guarding the whole method crashed an
+        // unrelated plain read/transformation the moment an invalid
+        // contract was merely *active*, confirmed the hard way by a real
+        // test failure. ContractParser.parse never validates on its own (a
+        // caller must invoke ContractValidator explicitly), and nothing
+        // else on this path did either - exactly how a missing `outputs:`
+        // key used to crash verify() with an unguarded
+        // NoSuchElementException instead of a clean, actionable rejection.
+        requireValidContract(contract)
+
         // Collects every recognized *read* shape found anywhere in the
         // plan via `recognizedRead` above - LogicalRelation for batch V1
         // reads, StreamingRelation/StreamingRelationV2 for a legacy-V1 or
@@ -177,6 +192,9 @@ object ContractEnforcementRule {
         // FailClosedCommands, having no state a contract could ever check.
         StateChangingCallSupport.extract(plan) match {
           case Some(info) =>
+            // Same reasoning as the ir.Write branch above: verifyStateChange
+            // assumes a structurally sound contract too.
+            requireValidContract(contract)
             val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
             if (!result.passed) {
               // No ir.Plan translation exists for a state-changing CALL
@@ -204,6 +222,31 @@ object ContractEnforcementRule {
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }
+    }
+  }
+
+  /** Throws if `contract` itself is structurally unsound per
+    * `ContractValidator` (e.g. no declared outputs) - the same check every
+    * other rejection in `verifyOrThrow` assumes has already passed. Not
+    * called unconditionally by `verifyOrThrow` itself: see the call sites'
+    * own comments for why it's scoped to just the write and state-changing-
+    * CALL branches.
+    */
+  private def requireValidContract(contract: Contract): Unit = {
+    val validation = ContractValidator.validate(contract)
+    if (!validation.isValid) {
+      val contractRef = s"${contract.id}@${contract.version}"
+      val violations = validation.errors.map { issue =>
+        Violation(
+          ViolationType.InvalidContract,
+          s"contract '$contractRef' is invalid at '${issue.path}': ${issue.message}",
+          remediation = s"Fix the contract document (see the '${issue.path}' issue above) so it passes " +
+            "ContractValidator.validate before it's used to verify any write."
+        )
+      }
+      val result = VerificationResult.of(contractRef, violations)
+      val describedPlan = com.example.ir.Unsupported("(contract validation failed before any plan was checked)")
+      throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
   }
 

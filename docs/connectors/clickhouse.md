@@ -202,27 +202,37 @@ disposition each closed to).
   independently exercised this pass; noted as the row's own remaining
   next step below, distinct from the write-side finding above.)
 
-**A real bonus finding, out of scope to fix here: a malformed contract
-crashes instead of failing cleanly, and it's not ClickHouse-specific.**
-Investigating the type-mapping contract-verification path with a
-contract YAML missing its top-level `outputs:` key didn't produce a
-clean rejection — it crashed `StructuralVerifier.verify` with an
-unguarded `java.util.NoSuchElementException: head of empty list` at
+**A real bonus finding, found via this pass but not ClickHouse-specific —
+found and fixed, not left pinned.** Investigating the type-mapping
+contract-verification path with a contract YAML missing its top-level
+`outputs:` key didn't produce a clean rejection — it crashed
+`StructuralVerifier.verify` with an unguarded
+`java.util.NoSuchElementException: head of empty list` at
 `contract.outputs.head`. Root-caused precisely, not just observed:
 `ContractParser.parse` never calls `ContractValidator.validate` (a
 separate step a caller must invoke explicitly), and nothing on
-`ContractEnforcementRule`'s runtime enforcement path calls it either —
-even though `ContractValidator` already has an "outputs must be
-non-empty" check that would catch exactly this. This reproduces with
-*any* connector, since it's a `contract`/`spark-adapter` boundary gap,
-not a ClickHouse translation issue — deliberately left unfixed this pass
-(the same precedent as Avro's decimal contract-type-vocabulary gap: out
-of scope for a spark-adapter connector pass to change contract
-validation), pinned with a permanent test in `StructuralVerifierSpec`
-rather than left as a remembered probe result. **Next step**:
-`ContractEnforcementRule.verifyOrThrow` (or `StructuralVerifier.verify`
-itself) should run `ContractValidator.validate` first and surface its
-errors as a normal `VerificationResult` failure.
+`ContractEnforcementRule`'s runtime enforcement path called it either —
+even though `ContractValidator` already had an "outputs must be
+non-empty" check that would catch exactly this. Reproduced with *any*
+connector, since it was a `contract`/`spark-adapter` boundary gap, not a
+ClickHouse translation issue. **Fixed** by having
+`ContractEnforcementRule.verifyOrThrow` call `ContractValidator.validate`
+before checking a write or state-changing `CALL` against the contract,
+surfacing a clean `ContractViolationException` (a new
+`ViolationType.InvalidContract`) instead of the raw crash. Scoped
+carefully, not applied blanket: `verifyOrThrow` runs for *every* plan
+`injectCheckRule` sees, not just writes, so validating unconditionally at
+the top of the method broke ordinary reads/transformations the moment an
+invalid contract was merely active — caught by a real test failure
+before landing, not assumed safe. Fixed by moving the guard into just the
+two branches that actually consult the contract (the `ir.Write` case and
+the state-changing-CALL case). Real regression test in
+`ContractEnforcementRuleSpec`, not `StructuralVerifierSpec`
+(`StructuralVerifier.verify` itself still assumes a valid contract by
+design — validating one is `ContractEnforcementRule`'s job).
+Mutation-tested (100%, 45/45 non-excluded mutants killed, both files),
+`mimaReportBinaryIssues` clean, full `spark-adapter` suite and
+`./dev/build`/`./dev/test` all green.
 
 ## ClickHouse operation-surface coverage ledger
 
