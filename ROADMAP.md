@@ -946,75 +946,13 @@ catch it.
 #### Sub-phase: Delta Lake support (done)
 
 Closed a real, previously-unknown correctness gap: a Delta Lake write
-(`df.write.format("delta").save(path)`) translated to `ir.Unsupported`,
-not `ir.Write` — meaning `ContractEnforcementRule` silently treated it as
-a no-op and let it through completely unverified, contract or no
-contract. Found while answering a user question about what a Delta user
-would need to add to their `spark-submit` to use Invariant.
-
-- [x] **`SparkPlanAdapter` recognizes `SaveIntoDataSourceCommand`**, the
-      plan node Delta (and any other `CreatableRelationProvider`-based
-      `.save(...)` source) actually analyzes to, confirmed empirically
-      against a real Delta-enabled `SparkSession` rather than assumed from
-      documentation.
-    - The originally-proposed approach (a `provided`-scope `delta-spark`
-      dependency plus Delta-specific typed pattern matching, justified by
-      an empirically-verified JVM lazy-classloading argument) turned out
-      to be unnecessary: `SaveIntoDataSourceCommand` and
-      `DataSourceRegister` are both plain, public `spark-sql` classes
-      already on this module's existing `provided` Spark dependency.
-      `formatOf` (previously typed to `FileFormat` for the
-      `InsertIntoHadoopFsRelationCommand` case) was widened to `AnyRef`
-      and reused for both cases — Delta's `DeltaDataSource` implements
-      `DataSourceRegister` the same way every built-in format already
-      does (`shortName() == "delta"`).
-    - Net result: **zero added runtime or compile-time dependency** for
-      non-Delta users. `delta-spark` (pinned to 3.2.0, not the latest 3.x
-      — a confirmed real bug, `delta-io/delta#3737`, affects 3.2.1 on
-      Scala 2.12 + Spark 3.5.1) is `% "test"` only, to spin up a real
-      Delta-enabled session to test against. Confirmed via `unzip -l` on
-      the assembled jar that it's unchanged in size and contains zero
-      Delta classes.
-    - `.saveAsTable`/DataFrameWriterV2/SQL `MERGE INTO` writes are a
-      different, DataSourceV2-based plan shape, not covered by this and
-      not yet investigated — documented as a known limitation.
-- [x] **Two real bugs found and fixed, both via genuinely failing tests,
-      not inspection:**
-    - `ContractEnforcementRule.verifyOrThrow`'s output-schema derivation
-      special-cased only `InsertIntoHadoopFsRelationCommand`
-      (`cmd.query.schema`), falling back to the write command node's own
-      `.schema` for everything else — which is empty for a `Command`.
-      Caught by a Delta PASS test that instead threw
-      `MISSING_OUTPUT_FIELD` on fields that were genuinely present. Fixed
-      by adding the same `cmd.query.schema` handling for
-      `SaveIntoDataSourceCommand`.
-    - `SparkAdapterListener.onSuccess` had its own entirely independent
-      "is this a write" filter, also hardcoded to
-      `InsertIntoHadoopFsRelationCommand` only — meaning fixing
-      translation and enforcement alone was insufficient. Caught by a
-      test timeout (`eventually` never observed `listener.lastWrite`
-      populate for a real Delta write). Fixed the same way. Left as an
-      explicitly-documented design smell (three independent
-      "is this a write" checks scattered across the module) rather than
-      refactored now — tied to the still-outstanding fail-open-vs-closed
-      question for unrecognized writes generally (see "Scope (Future)"
-      below).
-- [x] **Verified end to end**, not just unit-tested in isolation: new
-      Delta translation test in `SparkPlanAdapterSpec` (via
-      `SparkAdapterListener`) and a Delta PASS/FAIL enforcement pair in
-      `ContractEnforcementRuleSpec` (mirroring the existing Parquet
-      pair), all against a real Delta-enabled `SparkSession`. Full suite
-      54/54 passing; mutation testing scoped to the 3 changed files
-      (`SparkPlanAdapter.scala`, `ContractEnforcementRule.scala`,
-      `SparkAdapterListener.scala`) scored 82.14%, clearing the 70% bar,
-      with all 5 survivors pre-existing/already-documented, none in the
-      new code; whole-module score unchanged at 91.53%; `mimaReportBinaryIssues`
-      clean (only new pattern-match arms were added, no public signature
-      changed); full local `./dev/build` + `./dev/test` + `./dev/regression`
-      all pass.
-    - Full detail, including the empirical investigation methodology
-      (throwaway `QueryExecutionListener`-based probes against a real
-      Delta session), in docs/connectors/delta.md.
+(`df.write.format("delta").save(path)`) translated to `ir.Unsupported`
+instead of `ir.Write`, so `ContractEnforcementRule` silently let it
+through completely unverified. Fixed by recognizing
+`SaveIntoDataSourceCommand` (zero added dependency for non-Delta users)
+plus two related output-schema bugs in enforcement and reporting, found
+via genuinely failing tests. Full investigation and verification detail:
+docs/connectors/delta.md.
 
 #### Sub-phase: Fail-closed on unverifiable writes (done)
 
@@ -1175,738 +1113,134 @@ itself. Fixed the foundation before layering more connectors onto it.
 
 #### Sub-phase: Delta Lake reads (done)
 
-Asked directly after the write-side registry work: does the read side
-have the same "recognition duplicated across independent sites" problem?
-Investigated with the `add-spark-connector` skill rather than guessed at.
-
-- [x] **Real investigation, not assumption**: probed `.load(path)` and a
-      catalog table reference (`spark.table(...)`/`SELECT * FROM tbl`/
-      `SELECT * FROM delta.\`path\``) against a real Delta-enabled session
-      via `injectCheckRule` (the same mechanism `ContractEnforcementRule`
-      uses). Both produce a `LogicalRelation` wrapping
-      `org.apache.spark.sql.delta.DeltaLog$$anon$2` — confirmed to be an
-      anonymous subclass of Spark's own `HadoopFsRelation`, not a distinct
-      relation type. The existing `locationOf`/`translatePlan` branches
-      already match it through ordinary subtyping and already extract the
-      precise physical path, for both read shapes.
-- [x] **Answer to the motivating question: no, not today, and here's
-      why.** The write bug was three sites recognizing *different*
-      concrete classes independently. Reads have exactly one type gate
-      (`LogicalRelation`), reused identically by both consumer sites
-      (`SparkPlanAdapter.translatePlan` and `ContractEnforcementRule.verifyOrThrow`'s
-      input-schema collection) — they cannot disagree by construction.
-      Explicitly *not* treated as "solved forever": a future connector
-      whose read produces something other than `LogicalRelation` (most
-      plausibly `DataSourceV2Relation`) would need a real second case in
-      both sites, and that's the actual trigger for a
-      `ReadRelationSupport`-style registry — building one now, for a
-      shape that doesn't exist yet, would be premature.
-- [x] **Zero production code changed.** Verified with tests, not left as
-      an inspection claim: a translation test (`SparkPlanAdapterSpec`)
-      confirms both read shapes produce a precise `ir.Read` with no
-      fallback diagnostic; a PASS/FAIL enforcement pair
-      (`ContractEnforcementRuleSpec`) confirms a contract's declared input
-      schema is genuinely checked against a real Delta read's actual
-      schema — surfacing a real, separate finding along the way (Delta
-      reports every column nullable on read-back regardless of what was
-      written), worked around in the test the same way a real contract
-      author would need to. Full suite 63/63 passing; `mimaReportBinaryIssues`
-      clean (no production code touched); full local
-      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
-    - Full detail in docs/SPARK_ADAPTER.md's new "Delta Lake reads"
-      section.
+Investigated whether reads shared the write side's "recognition
+duplicated across independent sites" bug. They don't: both consumer
+sites already match Delta's read shape (`LogicalRelation` wrapping
+`HadoopFsRelation`) through the same existing code path, so they can't
+disagree by construction — zero production code changed. Full detail:
+docs/connectors/delta.md.
 
 #### Sub-phase: Delta Lake operation-surface coverage ledger (done)
 
-Prompted directly by a user question ("so is Delta 100% supported?") that
-exposed a real process gap: `add-spark-connector` had been run for Delta
-twice (write, then read), each time declaring success on a narrower scope
-than "does Delta actually work end to end" — leaving several real
-operations (V2 `.saveAsTable`/`.insertInto`/`.writeTo`, time travel,
-streaming, CDC) never investigated at all, with no mechanism forcing that
-gap to be stated explicitly. Fixed at the process level first
-(docs/ADDING_A_SPARK_CONNECTOR.md's new "operation surface" checklist and
-mandatory "coverage ledger" — see that doc and
-`.claude/skills/add-spark-connector/SKILL.md`), then exercised against
-Delta specifically to close it.
-
-- [x] **Every row of the canonical operation surface probed empirically**,
-      not assumed: `.format("delta").saveAsTable()` (new table),
-      `.saveAsTable()`/`.insertInto()`/`.writeTo()` (existing table, every
-      sub-op), time-travel reads, streaming reads, streaming writes, and
-      CDC reads — all run against a real Delta-enabled `SparkSession` with
-      an `injectCheckRule` probe, the exact mechanism
-      `ContractEnforcementRule` uses.
-- [x] **V2 write commands (`AppendData`/`OverwriteByExpression`/
-      `ReplaceTableAsSelect`) confirmed to fail closed, not silently
-      pass.** `.saveAsTable()`/`.insertInto()`/`.writeTo()` against an
-      existing table, and `.format("delta").saveAsTable()` against a *new*
-      table, all correctly throw `ContractViolationException` with
-      `UnverifiableWrite` and write zero rows — verified with a new
-      `ContractEnforcementRuleSpec` test that asserts row content is
-      unchanged after every rejected attempt, not just that an exception
-      was thrown.
-- [x] **Time-travel reads need no new code**: `versionAsOf` produces the
-      same `LogicalRelation`-wrapping-`HadoopFsRelation` shape as an
-      ordinary read, already handled.
-- [x] **CDC reads are translated, with a caveat**: `readChangeFeed`
-      produces `LogicalRelation(relation=CDCReader$DeltaCDFRelation)`, a
-      class distinct from `HadoopFsRelation` — but `translatePlan`'s
-      generic `LogicalRelation` case (not a `HadoopFsRelation`-specific
-      one) already covers it, producing a correct `ir.Read`. Because that
-      relation has no populated `catalogTable` for a path-based read, it
-      takes the existing "fallback" branch and emits a location
-      diagnostic (uses the relation's `toString()` rather than a clean
-      physical path) — a precision gap, not a correctness one; schema
-      verification is unaffected.
-- [x] **Streaming write found to have zero enforcement touchpoint — since
-      closed (see the sub-phase immediately below).** At the time of this
-      investigation, a real streaming write to Delta produced 9 distinct
-      plans through `injectCheckRule`; confirmed via the probe's own
-      `Command`-shaped filter that zero of them were `Command`-shaped.
-      `WriteToStream`, the top-level plan, was separately confirmed via
-      `javap` on Spark's catalyst jar to implement `LogicalPlan`/
-      `UnaryNode` but not `Command` — so `ContractEnforcementRule`'s
-      fail-closed policy, which only gates `Command`-shaped plans, could
-      not structurally ever see it. Unlike every other row in this
-      ledger, this was not "fails closed but unverified" — it was
-      unenforced, full stop. A separate test confirmed the fail-closed
-      policy did not *wrongly* block an unrelated streaming query, ruling
-      out the opposite bug.
-- [x] **Maintenance operations already have a reasoned classification**,
-      not a gap: `FailClosedCommands.scala`'s `knownSafe` set already
-      includes Delta's `VacuumTableCommand`/`OptimizeTableCommand`
-      (file-level, doesn't change committed row content) and deliberately
-      excludes `RestoreTableCommand`/`CloneTableCommand`/
-      `ConvertToDeltaCommand` (row-content-changing) — built from a
-      class-by-class enumeration of all 164 `Command` subclasses across
-      Spark 3.5.1 + Delta 3.2.0, documented in that file's header. Not
-      re-probed individually this pass; the classification stands.
-- [x] **Full coverage ledger — all 5 read rows and 8 write rows disposed,
-      not left implicit** — see docs/SPARK_ADAPTER.md's new "Delta Lake
-      operation-surface coverage ledger" section for the complete table
-      with evidence per row. Two probe specs
-      (`RemainingDeltaOpsProbeSpec`, `StreamingWriteProbeSpec`,
-      `CdcReadProbeSpec`) were investigation scaffolding, deleted once
-      their findings were captured in tests/docs, per this repo's own
-      established methodology.
-- [x] Full suite passing; `./dev/build`/`./dev/test`/`./dev/regression`
-      all pass; `mimaReportBinaryIssues` clean (no production API surface
-      changed — only `ROADMAP.md`/`docs/SPARK_ADAPTER.md`/test files).
+Prompted by a user question ("is Delta 100% supported?") that exposed a
+real process gap: two prior Delta passes had each declared success on a
+narrower scope than "does Delta work end to end." Fixed at the process
+level first (docs/ADDING_A_SPARK_CONNECTOR.md's operation-surface
+checklist and mandatory coverage ledger), then closed every row for
+Delta specifically — V2 write commands confirmed to fail closed
+correctly, time-travel and CDC reads translated, and a real gap found:
+streaming writes had zero enforcement touchpoint at all (closed in the
+sub-phase below). Full ledger: docs/connectors/delta.md.
 
 #### Sub-phase: Streaming writes closed; fail-closed reframed as a
 #### stopgap, not a verdict (done)
 
-Two changes, prompted by a single user question after the ledger above
-shipped: "any way to close the streaming gap, and — the ledger's 🚫 rows
-read like 'not supported' is an acceptable resting state; that was never
-the point of fail-closed, was it?"
-
-- [x] **Streaming writes: closed, not just documented.** `WriteToStream`
-      reaches `injectCheckRule` (confirmed by the coverage-ledger pass
-      above — it just isn't `Command`-shaped). Rather than special-casing
-      it in `ContractEnforcementRule`'s fail-closed check, it was added as
-      a real `WriteCommandSupport` entry — the same registry every other
-      write shape goes through — so it's genuinely translated and
-      verified, not merely gated. `inputQuery.schema` gives the output
-      schema; location comes from a resolved `catalogTable`
-      (`.toTable(...)`, confirmed to carry `storage.locationUri`/
-      `provider`) or, for a path-based `.start(path)` write, from the
-      sink's `name()` when that doesn't throw, or — since Delta's
-      `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()`
-      unconditionally throw `IllegalStateException("should not be
-      called")`, confirmed empirically via a real probe — a reflective
-      call to its public `path()` accessor, the same
-      no-compile-time-dependency reflection technique `jdbcLocationOf`
-      already uses for `JDBCRelation`. Verified through real enforcement:
-      a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)`
-      (the `catalogTable`-populated path), a direct-inspection test
-      confirming format is detected as `"delta"` (StructuralVerifier only
-      checks format when the contract also declares one, so this
-      wouldn't otherwise surface as a PASS/FAIL failure), and a test
-      confirming a streaming write to a location unrelated to the active
-      contract is now correctly rejected (`OUTPUT_LOCATION_MISMATCH`) —
-      the same behavior batch writes have always had, no longer
-      special-cased by omission. Mutation testing scoped to
-      `WriteCommandSupport.scala`: first run found two survived mutants in
-      code added this pass (both in `streamSinkFormatOf`'s class-name
-      string match — `StructuralVerifier` only compares format when the
-      contract also declares one, so a wrong-format bug there wasn't
-      guaranteed to surface through the PASS/FAIL pair alone); killed by
-      adding the direct-inspection test above, confirmed by a second run:
-      90.77% overall (92.19% of covered code) — the remaining survived/
-      uncovered mutants are all in `unwrapWriteWrapper`/`SparkPlanAdapter`
-      code this pass didn't touch. Full suite passing;
-      `mimaReportBinaryIssues` clean; `./dev/build`/`./dev/test`/
-      `./dev/regression` all pass.
-- [x] **`add-spark-connector`'s "fails closed" framing corrected.** The
-      coverage ledger's 🚫 disposition was written (and, in the Delta
-      ledger above, applied) as if "not yet translated, verified to
-      abort" were a complete, acceptable answer on its own — no different
-      in spirit from ✅ Covered, just a different flavor of done. That's
-      backwards: fail-closed exists to catch operations Invariant *hasn't
-      gotten around to translating yet*, not to bless them as
-      out-of-scope forever. Fixed at the process level:
-      docs/ADDING_A_SPARK_CONNECTOR.md gained a "What 'fails closed'
-      means (and doesn't)" section, and both it and
-      `.claude/skills/add-spark-connector/SKILL.md` now require every 🚫
-      ledger row to carry a next step — either the real translation work
-      that would close it (the default assumption), or, rarely, a
-      specific documented reason it should never be translated. The
-      Delta ledger in docs/SPARK_ADAPTER.md was rewritten to match: every
-      remaining 🚫 row (`AppendData`, `OverwriteByExpression`,
-      `ReplaceTableAsSelect`, row-level DML) now states concretely what
-      would close it, not just that it's currently rejected.
+Two changes. Closed the streaming-write gap for real: `WriteToStream`
+became a genuine `WriteCommandSupport` entry (translated and verified,
+not merely gated), including a reflective fallback for `DeltaSink`'s
+path accessor since its `name()`/`schema()` throw unconditionally.
+Separately corrected the skill's own framing: a 🚫 "fails closed" ledger
+row had been treated as an acceptable resting state rather than a safety
+net for translation work not yet done — `docs/ADDING_A_SPARK_CONNECTOR.md`
+and the skill now require every such row to state a concrete next step.
+Full detail: docs/connectors/delta.md.
 
 #### Sub-phase: Remaining Delta write-side gaps closed; streaming reads
 #### recognized as contract inputs (done)
 
-Follow-up to the sub-phase above, closing every 🚫 row the corrected
-ledger could actually state a concrete next step for.
-
-- [x] **`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`: all
-      three now real `WriteCommandSupport` entries.** `AppendData` covers
-      `.saveAsTable()` append, `.insertInto()`, and `.writeTo().append()`
-      in one entry; `OverwriteByExpression` covers `.writeTo().overwrite(cond)`,
-      mapped to the contract's `saveMode: overwrite` uniformly (the
-      predicate itself needed no IR extension after all — contrary to
-      what the previous sub-phase assumed, `StructuralVerifier`'s
-      save-mode check never needed it); `ReplaceTableAsSelect` covers
-      `.format("delta").saveAsTable()` on a new table and
-      `.writeTo().createOrReplace()`. Location resolution for
-      `AppendData`/`OverwriteByExpression` prefers a resolved
-      `DataSourceV2Relation`'s `Table.properties()["location"]` (the
-      physical warehouse path, confirmed empirically), shared via a new
-      `SparkPlanAdapter.tableLocationAndFormat` helper. Verified via
-      PASS/FAIL pairs in `ContractEnforcementRuleSpec` for both the new-
-      and existing-table cases.
-- [x] **Found and fixed a real correctness trap along the way: atomic
-      CTAS/RTAS issues a second, nested write.** A single
-      `.saveAsTable()` on a *new* table produces two write-shaped plans
-      through `injectCheckRule` — the top-level `ReplaceTableAsSelect`
-      and an internal `AppendData` against a `StagedTable` (Spark's own
-      public 2-phase-commit protocol for atomic CTAS/RTAS) — both
-      genuinely visible to `ContractEnforcementRule.verifyOrThrow`. A
-      `StagedTable`'s `properties()` has no `"location"` yet, so the
-      naive translation gave the two plans two *different* location
-      strings for the same destination — a real PASS test failure, not
-      caught by inspection. Fixed via a shared `qualifiedIdentifier`
-      helper: `DataSourceV2Relation`'s own `catalog`/`identifier` fields
-      (confirmed populated even for a staged table) now produce the exact
-      same qualified form `ReplaceTableAsSelect`'s `ResolvedIdentifier`
-      case does, so the two agree by construction. Documented in
-      docs/SPARK_ADAPTER.md's new "A shared pitfall" subsection for
-      whichever connector hits this next.
-- [x] **Streaming reads recognized as contract inputs, closing a real
-      false-positive.** Neither `StreamingRelation` (the legacy V1 path
-      Delta's own streaming read uses, confirmed empirically — not
-      `StreamingRelationV2`) nor `StreamingRelationV2` (the modern
-      DataSourceV2 path — `rate`, Kafka, ...) was a `LogicalRelation`, so
-      a contract declaring a streaming source as a required `input`
-      always reported `MISSING_INPUT` even though data was genuinely
-      being read. Closed in both `SparkPlanAdapter`'s translation and
-      `ContractEnforcementRule`'s input-schema collection via two new
-      shared helpers (`streamingRelationLocationOf`/
-      `streamingRelationV2LocationOf`) rather than two independent
-      matches — the exact duplication risk the write side already
-      learned from. `StreamingRelation.dataSource.options`/`sourceName`
-      need no reflection (plain public spark-sql classes, unlike
-      `WriteToStream`'s sink); `StreamingRelationV2` reuses the same
-      `Table.properties()` lookup as the write-side V2 cases above.
-      Verified via a PASS/FAIL pair proving a contract's declared input
-      schema is genuinely checked against a real streaming Delta source.
-- [x] **Mutation testing scoped to all three changed files
-      (`WriteCommandSupport.scala`/`SparkPlanAdapter.scala`/
-      `ContractEnforcementRule.scala`): 88.57% overall (89.86% of covered
-      code)**, up from 84.29%/85.51% on the first run — two direct
-      translation-level tests added (asserting both location *and*
-      diagnostics, mirroring this file's existing Delta-read-translation
-      test) to kill mutants in the new `StreamingRelation`/
-      `StreamingRelationV2` fallback-diagnostic conditions. Two mutants
-      remain in new code, both in those same fallback-diagnostic
-      conditions (whether a *diagnostic message* gets attached, not
-      whether the translated location itself is correct — both directions
-      of that are already asserted correct by the new tests): killing
-      them fully would need a legacy V1 `StreamingRelation` source with no
-      path option, which isn't realistically constructible from the
-      sources available in this test environment (every built-in
-      no-physical-location source, `rate` included, is natively V2).
-      Left as an accepted mutant, the same category CLAUDE.md's own
-      "Mutation Testing Requirement" already carves out (a StringLiteral
-      mutant on human-readable message text) — this is a
-      ConditionalExpression mutant on whether that same kind of message
-      gets attached at all, not a correctness difference. Full suite
-      passing (76/76); `mimaReportBinaryIssues` clean;
-      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
+Closed every remaining 🚫 row the corrected ledger could state a next
+step for: `AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect` all
+became real `WriteCommandSupport` entries. Found and fixed a real
+correctness trap along the way — atomic CTAS/RTAS issues a second,
+nested write against a `StagedTable`, which reported no location,
+producing two disagreeing locations for one commit — documented as a
+shared pitfall for future connectors. Also recognized streaming reads
+(`StreamingRelation`/`StreamingRelationV2`) as contract inputs, closing a
+real false-positive `MISSING_INPUT`. Full detail: docs/connectors/delta.md.
 
 #### Sub-phase: Row-level DML — structural verification, the last
 #### coverage-ledger row closed (done)
 
-Closes the final 🚫 row in the Delta operation-surface ledger. Scoped
-deliberately after discussion: the fuller version (verifying the actual
-merge condition/update columns/delete predicate) needs both a new IR node
-and contract `rules` interpretation, neither of which exist — see the
-"Full semantic DML verification" item in "Scope (Future)" below for that
-larger, explicitly-deferred design, kept there specifically so it isn't
-lost. This sub-phase does the achievable, honest subset: structural
-verification only.
-
-- [x] **`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` recognized as
-      real `WriteCommandSupport` entries**, matched by reflection (all
-      three are Delta-internal classes, confirmed empirically via
-      `injectCheckRule` — not generic Spark API the way `AppendData`/
-      `OverwriteByExpression`/`ReplaceTableAsSelect` are), using their
-      public `target()`/`catalogTable()`/`source()` methods (confirmed
-      via `javap`, no `setAccessible` needed). Wrapped in `Try` (via
-      `Function.unlift`), unlike the stable-API write cases: reflecting
-      into undocumented, no-cross-version-guarantee Delta internals
-      needs to degrade to the pre-existing fail-closed default if a
-      future Delta version renames a method, not crash a real Spark job
-      with a raw `ReflectiveOperationException`.
-- [x] **What's checked, and what deliberately isn't, stated explicitly
-      in code and docs, not left implicit.** Checked: the operation's
-      *target* against the contract's declared output location and
-      current schema (a `MERGE`/`UPDATE`/`DELETE`'s own `output` is a
-      row-count summary, not data, confirmed empirically — there's no
-      "new schema" to check the usual way, but the target's *existing*
-      schema is still worth confirming still matches). Not checked, and
-      not yet checkable: the merge condition, which columns an `UPDATE`
-      touches, whether a `DELETE` is unconditional — no contract
-      vocabulary exists for that (see the "Full semantic DML
-      verification" item below).
-- [x] **MERGE's `source` recognized as a contract input — found and fixed
-      a real second correctness trap along the way.** Initially assumed
-      (documented as such, before verifying) that
-      `ContractEnforcementRule.verifyOrThrow`'s existing `plan.collect`
-      input-schema collection would reach MERGE's source automatically,
-      the same way it does for every other write shape. A real FAIL test
-      (asserting `intercept[ContractViolationException]`) proved that
-      assumption wrong: `plan.collect` walks `children`, and Delta's DML
-      commands are effectively leaf nodes in the tree-traversal sense —
-      `source`/`target` are ordinary case-class fields, never exposed as
-      children — so a plain `plan.collect` on the command finds nothing
-      inside it. Fixed by having `verifyOrThrow` also walk
-      `WriteCommandSupport`'s already-extracted `query` field (MERGE's
-      `source`) in addition to the raw plan. Documented in
-      docs/SPARK_ADAPTER.md's new second "shared pitfall" subsection.
-- [x] Verified through real enforcement, not translation in isolation: a
-      PASS/FAIL pair for MERGE (rows genuinely merged on PASS; aborted,
-      target genuinely untouched on FAIL, both for a target-schema
-      violation and, separately, a MERGE-source-input violation), plus a
-      PASS test each for `UPDATE`/`DELETE` (rows genuinely mutated), all
-      in `ContractEnforcementRuleSpec`. A dedicated direct-inspection
-      test also covers a path-based DML operation with no catalog table
-      at all (`UPDATE delta.\`path\``, confirmed empirically to leave
-      `catalogTable` as `None`, not just missing a location) — the
-      fallback branch every other DML test's catalog-backed target
-      doesn't reach.
-- [x] Mutation testing scoped to `WriteCommandSupport.scala`/
-      `ContractEnforcementRule.scala`: 85.71% overall (86.84%–89.19% of
-      covered code across runs). Two mutants remain in new code, both in
-      `deltaRowLevelDml`'s fallback-diagnostic-message branch
-      (`catalogTable.isDefined`, deciding which of two message strings to
-      use — the actual `location`/`format` computation doesn't re-branch
-      there, it's already been computed above) — the same category of
-      accepted mutant as this module's other message-wording-only cases
-      (formally equivalent in spirit to the already-excluded
-      `StringLiteral` mutator category). Full suite passing (81/81);
-      `mimaReportBinaryIssues` clean;
-      `./dev/build`/`./dev/test`/`./dev/regression` all pass.
-- [x] **Every row of the Delta operation-surface ledger is now ✅
-      Covered** — 5 read rows, 8 write rows, all 13. Full ledger in
-      docs/SPARK_ADAPTER.md's "Delta Lake operation-surface coverage
-      ledger" section.
+Closed the final 🚫 row in the Delta ledger with a deliberately scoped
+subset: `MergeIntoCommand`/`UpdateCommand`/`DeleteCommand` recognized via
+reflection into Delta's internal classes, with structural-only
+verification (target location/schema) — the merge condition, updated
+columns, and delete predicate itself remain unchecked, since neither the
+IR nor the contract model has vocabulary for them yet (tracked under
+"Scope (Future)" below). Found and fixed a real second correctness trap:
+MERGE's `source` wasn't reachable by the existing input-schema walk at
+all, since Delta's DML commands don't expose it as a plan child. Full
+detail: docs/connectors/delta.md.
 
 #### Sub-phase: Delta feature-by-feature confidence pass (done)
 
-The ledger above closing every write-command *shape* left a separate,
-previously-implicit gap: "expected to work" against Delta table
-*features* (schema evolution, generated columns, deletion vectors, column
-mapping, liquid clustering, CHECK constraints, identity columns) is not
-the same claim as "confirmed to work" — nothing had actually exercised
-most of them. This sub-phase tried each one for real, not from
-documentation, and turned every finding into either a fix or a permanent
-regression test — no more relying on throwaway probe evidence.
-
-- [x] **Schema evolution (`MERGE` + `autoMerge.enabled`) — real bug,
-      found and fixed.** `target.schema` at analysis time is the
-      *pre-merge* schema, confirmed empirically to not yet include
-      columns evolution is about to add — a contract requiring such a
-      field was wrongly `MISSING_OUTPUT_FIELD`-rejected. Fixed via
-      `MergeIntoCommand.schemaEvolutionEnabled()` (public, confirmed via
-      `javap`); the source's new fields are unioned into `target.schema`
-      as a best-effort approximation, with a diagnostic. A second finding
-      along the way: with `autoMerge` disabled, `INSERT *` silently drops
-      a source column the target doesn't have (confirmed empirically,
-      not assumed) — so the fix must gate strictly on
-      `schemaEvolutionEnabled()`, not just "does the source have extra
-      fields." Two PASS tests in `ContractEnforcementRuleSpec` cover both
-      directions.
-- [x] **Generated columns (`GENERATED ALWAYS AS (...)`) — real bug, found
-      and fixed.** Same false-rejection class: Delta computes these at
-      commit time, never supplied by the writer, so `AppendData`/
-      `OverwriteByExpression`'s `outputSchema` never included them.
-      Confirmed the hard way that no DataFrame-facing schema exposes the
-      `delta.generationExpression` metadata key Delta itself sets on a
-      generated column's `StructField` — not a read-back, not a catalog
-      table, not even the DSv2 `Table` handle's own `.schema()`
-      (`DeltaTableV2.schema()`, specifically) — only Delta's internal
-      `Snapshot.schema()` (`DeltaTableV2.initialSnapshot()`) does. Fixed
-      by reading that reflectively (`outputSchemaWithGeneratedColumns`/
-      `deltaGeneratedFields`, same no-compile-time-dependency, `Try`-wrapped
-      convention as `deltaRowLevelDml`) and unioning the target's
-      generated-only columns in — checking the metadata key directly
-      rather than reflecting into Delta's own
-      `GeneratedColumn.isGeneratedColumn` helper (a `/simplify` pass
-      finding: `StructField.metadata` needs no `Protocol` lookup or
-      overload resolution, and is already a plain public Spark type).
-      Verified with a PASS test (built via the
-      `io.delta.tables.DeltaTable` builder API — raw SQL DDL for
-      generated columns fails outright in this environment, confirmed
-      empirically, even with explicit reader/writer-version
-      `TBLPROPERTIES`).
-- [x] **Deletion vectors, column mapping mode (`'name'`), liquid
-      clustering (`CLUSTER BY`) — confirmed transparent.** Real writes/DML
-      against tables with each enabled are recognized exactly as they
-      would be without it — correct location, schema, no diagnostics. A
-      permanent PASS test added for each in `ContractEnforcementRuleSpec`
-      (previously only throwaway probe evidence existed).
-- [x] **CHECK constraints — confirmed orthogonal.** Delta enforces these
-      itself, independently, at commit time; Invariant has no rule
-      vocabulary for a row-level condition. A permanent test asserts
-      both halves: a violating write is recognized by `WriteCommandSupport`
-      identically to a satisfying one (no diagnostic from Invariant), and
-      is then rejected by Delta's own `DeltaInvariantViolationException`
-      before commit.
-- [x] **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
-      untestable in this environment, documented as such rather than
-      silently skipped.** Spark 3.5.1's own SQL parser rejects the syntax
-      (`[PARSE_SYNTAX_ERROR] ... extra input 'IDENTITY'`), confirmed via a
-      dedicated probe with no exception-masking `try`/`catch` — almost
-      certainly a Databricks Runtime-only grammar extension not present
-      in vanilla OSS Spark 3.5.1 at all, so there is no analyzed plan for
-      `WriteCommandSupport` to ever see. Recorded as ❓ Not investigated
-      in docs/SPARK_ADAPTER.md, not claimed as covered.
-- [x] Mutation testing scoped to `WriteCommandSupport.scala` (the only
-      file touched this sub-phase): **73.08%** (19/26 non-excluded
-      mutants killed). Every real survivor investigated, not just cited —
-      see docs/SPARK_ADAPTER.md's "Delta feature-by-feature confidence
-      pass" mutation-testing subsection for the per-mutant breakdown (one
-      killed with a new direct-inspection test, one accepted as
-      near-equivalent given the surrounding `Try`'s safety net, the rest
-      pre-existing from earlier sub-phases). Full suite passing (89/89);
-      `mimaReportBinaryIssues` clean.
-- [x] All throwaway probe specs used during this pass deleted once their
-      findings were captured as permanent tests/docs — no probe evidence
-      left standing in as a substitute for a real regression test.
+Every write-command *shape* being covered left a separate, previously-
+implicit gap: several Delta table *features* (schema evolution, generated
+columns, deletion vectors, column mapping, liquid clustering, CHECK
+constraints, identity columns) were "expected to work," never actually
+exercised. Tested each for real: found and fixed two genuine
+false-rejection bugs (schema evolution under `autoMerge`, generated
+columns' values never appearing in any DataFrame-facing schema);
+confirmed deletion vectors/column mapping/liquid clustering transparent
+and CHECK constraints orthogonal; identity columns confirmed untestable
+in this Spark version (parser rejects the syntax outright). Full detail:
+docs/connectors/delta.md.
 
 #### Sub-phase: Iceberg connector support (done)
 
 Second connector onboarded via the `add-spark-connector` skill's
-10-phase process. Pinned `org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.11.0`
-(test-scope only, after checking the connector's own issue tracker per
-Phase 0 — 1.10.0 had a confirmed Avro/Spark-3.5 compatibility bug, fixed
-before 1.11.0). Full findings, the operation-surface and feature-surface
-coverage ledgers, and the per-mutant mutation-testing breakdown are in
-docs/connectors/iceberg.md — summary here:
+10-phase process. Found and closed two real, connector-agnostic gaps
+that predate Iceberg entirely (batch `DataSourceV2Relation` reads had no
+translation case at all; `CreateTableAsSelect`/`OverwritePartitionsDynamic`
+had no write-recognition case). Row-level DML closed via Iceberg's
+standard `SupportsRowLevelOperations` API — no reflection needed, unlike
+Delta's proprietary classes, and connector-agnostic for any future
+connector using the same API. `CALL` procedures deliberately left
+unmodeled pending per-procedure classification (closed in later
+sub-phases below). Full findings, ledgers, and mutation-testing
+breakdown: docs/connectors/iceberg.md.
 
-- [x] **Two real, connector-agnostic gaps found and closed, that
-      predate Iceberg entirely.** Batch `DataSourceV2Relation` reads had
-      no `SparkPlanAdapter` translation case at all (fell to the generic
-      `Unsupported` fallback, meaning no pure-DSv2 connector's reads
-      could ever satisfy a contract's declared input) — Delta's own
-      reads never hit this because Delta's batch reads happen to be
-      `LogicalRelation`-wrapped V1 relations. `CreateTableAsSelect`
-      (explicit-create V2 CTAS) and `OverwritePartitionsDynamic` had no
-      `WriteCommandSupport` case — both Command-shaped, neither
-      translated nor safe-listed, so both were already failing closed;
-      closed with two new cases reusing existing helpers
-      (`v2CreateOrReplaceLocation`, shared with `ReplaceTableAsSelect`;
-      `namedRelationLocationAndFormat`, shared with `AppendData`/
-      `OverwriteByExpression`).
-- [x] **Row-level DML (`MERGE`/`UPDATE`/`DELETE`) closed via a
-      genuinely different, more standard mechanism than Delta's.**
-      Iceberg implements Spark's own `SupportsRowLevelOperations` API;
-      `MERGE`/`UPDATE`/`DELETE` rewrite to stable, public Spark classes
-      (`ReplaceData`/`WriteDelta`, sharing the `RowLevelWrite` trait) —
-      no reflection needed, unlike Delta's proprietary command classes.
-      New `dsv2RowLevelWrite` case is connector-agnostic: any future
-      DSv2 connector using this standard API is covered automatically.
-      Same structural-only scope as Delta's row-level DML (target schema
-      checked, merge condition/predicate not).
-- [x] **A second staged-table location trap found, in the opposite
-      direction from Delta's — the fix from the row-level-DML sub-phase
-      didn't generalize the way its own doc comment claimed.** Iceberg's
-      `StagedTable` (unlike Delta's) reports a real `"location"`
-      property pre-commit, so the existing "prefer physical location,
-      fall back to qualified identifier" logic produced two
-      *disagreeing* locations for one atomic CTAS/RTAS commit — caught
-      by a real `OUTPUT_LOCATION_MISMATCH` test failure, not assumed to
-      generalize from Delta. Fixed properly: `namedRelationLocationAndFormat`
-      now keys the qualified-identifier fallback on Spark's own
-      `StagedTable` marker interface, not on whether `properties()`
-      happens to omit `"location"` — a staged table's reported location
-      isn't trustworthy regardless of what a given connector populates.
-- [x] **`CALL <catalog>.system.<proc>(...)` (Iceberg's maintenance
-      mechanism) deliberately left unmodeled — a genuinely new
-      classification problem, not solved by extending
-      `FailClosedCommands`' existing per-class approach.** One shared
-      Spark class (`Call`) represents every system procedure
-      (`rewrite_data_files`/`expire_snapshots`/`rollback_to_snapshot`/...),
-      spanning genuinely safe to genuinely row-content-mutating with no
-      structural way to distinguish them by class identity. Safe-listing
-      would silently pass all of them; left off both lists, so every
-      `CALL` fails closed today (confirmed by a real test) — a
-      documented limitation with a next step (procedure-name-aware
-      classification), not an oversight. The other 13 Iceberg SQL-
-      extension commands found via the same reflective jar-scan Delta's
-      used (branch/tag ref management, partition-spec/identifier-field
-      evolution, write-ordering config, view management) are genuinely
-      metadata-only and are on the safe list.
-- [x] **A real gap found in Iceberg's own published Maven artifact, not
-      an Invariant bug.** `iceberg-spark-runtime-3.5_2.12:1.11.0`'s POM
-      doesn't declare `scala-collection-compat`, which its SQL-extensions
-      parser needs specifically for `CALL` syntax — confirmed via a real
-      `NoClassDefFoundError` escaping an existing `Try` wrapper
-      (`LinkageError` isn't `NonFatal`). Added as a `% "test"` dependency
-      so this module's own suite can exercise `CALL`-based operations; a
-      real user hitting this in their own job needs it on their runtime
-      classpath too, independent of `spark-adapter`.
-- [x] **Confirmed Iceberg's own path-based access pattern differs from
-      Delta/Parquet's**, not a gap: a bare `.format("iceberg").save(path)`/
-      `.load(path)` with no catalog qualification fails hard (defaults to
-      an unreachable `HiveCatalog`); Iceberg's real mechanism is a path
-      identifier under a named Hadoop-type catalog
-      (`` local.`/abs/path` ``), confirmed working through the same
-      `AppendData`/`DataSourceV2Relation` cases as any other table.
-- [x] New `IcebergConnectorSpec.scala` (separate SparkSession from
-      `ContractEnforcementRuleSpec` — Delta's and Iceberg's
-      `spark.sql.extensions`/catalog configs can't coexist in one
-      session): translation test for the new read case, PASS/FAIL pairs
-      for every new write case, a direct-inspection test for
-      `CreateTableAsSelect.saveMode`, a fail-closed test for `CALL`, a
-      regression test proving the 13 safe-listed metadata commands
-      aren't blocked, and a streaming-write test confirming
-      `WriteToStream` needed no Iceberg-specific handling. Plus a new
-      direct-construction test in `SparkPlanAdapterSpec.scala` proving
-      the batch-read fallback diagnostic actually fires (not just that
-      the happy path works).
-- [x] Mutation testing scoped to all four changed files
-      (`WriteCommandSupport.scala`, `SparkPlanAdapter.scala`,
-      `ContractEnforcementRule.scala`, `FailClosedCommands.scala`):
-      **80.65%** (of total) / **81.97%** (of covered code) — 50/61
-      non-excluded mutants killed. Both real survivors in this pass's own
-      new code (`CreateTableAsSelect.saveMode`'s `ignoreIfExists` branch;
-      the new batch-read no-location diagnostic) were killed with new
-      tests, not left — see docs/connectors/iceberg.md for the per-mutant
-      breakdown. The remaining 12 survivors
-      are all pre-existing, already-documented from earlier sub-phases
-      (Delta's `catalogTable.isDefined`/`DeltaTableV2` guards, the
-      `WriteFiles`/`DeltaSink`/`JDBCRelation` near-equivalents, the
-      Hive-metastore-unavailable gap) — none in code this pass touched.
-      Full suite passing (104/104); `mimaReportBinaryIssues` clean;
-      `./dev/build`/`./dev/test`/`./dev/regression` all pass, including a
-      real jar inspection confirming zero Iceberg classes bundled for
-      non-Iceberg users.
-- [x] `docs/ADDING_A_SPARK_CONNECTOR.md`'s "Known limitations" section —
-      found stale before starting (still described row-level DML/
-      streaming writes/DSv2 catalog writes as unsolved, all closed by
-      the prior Delta pass) — corrected first, so this pass's own
-      classification work was grounded in accurate information rather
-      than repeating a documentation-drift mistake.
-- [x] Both required coverage ledgers (operation surface, feature
-      surface) produced and written into docs/SPARK_ADAPTER.md, ROADMAP.md
-      (this entry), and CHANGELOG.md, per the `add-spark-connector`
-      skill's Phase 11.
+#### Sub-phase: Iceberg's own schema-evolution row closed, generalizing
+#### the Delta generated-columns fix (done)
 
-#### Sub-phase: Iceberg's own schema-evolution row closed, generalizing the Delta generated-columns fix (done)
+Follow-up on Iceberg's one remaining ❓ feature-surface row. The predicted
+bug didn't exist; the real one was the opposite direction — a narrower
+append accepted under `write.spark.accept-any-schema` wrongly rejected a
+contract-satisfying write. Generalized Delta's Delta-specific reflective
+generated-columns fix into a connector-agnostic
+`outputSchemaWithTargetOnlyFields`, since both were the same underlying
+situation (a target field the query doesn't supply) under two different
+mechanisms. Also includes a mutation-testing wall-clock investigation
+that tried two real Spark-config levers and found neither was the actual
+bottleneck (genuine per-commit table I/O is). Full detail:
+docs/connectors/iceberg.md.
 
-Follow-up investigation into the Iceberg feature-surface ledger's one
-remaining ❓ row. The predicted bug (newly-added columns invisible to
-`outputSchema`, the same shape as Delta's MERGE bug) turned out not to
-exist — confirmed empirically that `AppendData`'s `query.schema` already
-reflects a `mergeSchema`-evolving write's new columns correctly, since
-(unlike Delta's MERGE) the query *is* the writer-supplied data, not a
-re-derived plan that can go stale. The real bug was the *other*
-direction: with Iceberg's `write.spark.accept-any-schema` table property,
-a *narrower* append (missing a column the target already has) is
-accepted and NULL-fills the omitted column — `outputSchema` omitted that
-column entirely, wrongly `MISSING_OUTPUT_FIELD`-rejecting a write that
-actually satisfies the contract.
+#### Sub-phase: Iceberg's last two ❓ feature-surface rows closed —
+#### deletion vectors, identity/generated columns (done)
 
-- [x] **Found this generalizes Delta's existing generated-columns fix,
-      not just adds a parallel Iceberg-specific one.** Both are the same
-      underlying situation — a resolved target can have fields its
-      `query` doesn't supply that still exist in the committed row —
-      under two different connector-specific mechanisms. Confirmed
-      `cmd.table.columns()` (plain public API, no reflection) already
-      carries a Delta generated column's *name*, even without its
-      generation metadata — detecting *which* target-only fields exist
-      for a specific reason was never actually necessary. Replaced the
-      Delta-specific reflective `outputSchemaWithGeneratedColumns`/
-      `deltaGeneratedFields` outright with connector-agnostic
-      `outputSchemaWithTargetOnlyFields`, used by `AppendData`/
-      `OverwriteByExpression`/`OverwritePartitionsDynamic` alike.
-- [x] **Verified the safety argument directly, not just asserted it**:
-      a permanent test proves Spark's own analyzer rejects a genuinely-
-      unsanctioned narrower write (`accept-any-schema` off) with
-      `AnalysisException` before Invariant's check rule ever sees it —
-      so unioning in every target-only field can never silence a
-      genuinely-missing required field.
-- [x] Mutation testing rescoped to `WriteCommandSupport.scala` after the
-      simplification: **76.92%** (20/26 non-excluded mutants killed) —
-      zero survivors in the new code; the 6 remaining are pre-existing
-      and already documented from earlier sub-phases. Full suite passing
-      (106/106); `mimaReportBinaryIssues` clean.
-- [x] Removed a `Table.schema()` deprecation warning introduced along
-      the way by switching to `Table.columns()` (the non-deprecated
-      replacement) — "no new warnings" held, not just "tests pass."
-- [x] **A mutation-testing speed investigation, prompted mid-session**:
-      confirmed this module's ~5 test suites already share a single
-      `SparkSession` bootstrap via Spark's own `getOrCreate()` semantics
-      (config from later `.config(...)` calls merges into an already-active
-      session rather than requiring a fresh one — confirmed empirically,
-      not assumed, via log inspection: one `sparkDriver` service start
-      for the whole suite, zero `SparkContext` stops), so repeated
-      session bootstrap wasn't the mutation-testing bottleneck to begin
-      with. Tried two real levers: Stryker4s's `concurrency` config (2→4
-      test-runners on this environment's 4-core box) didn't take effect
-      via `stryker4s.conf` with this plugin version (the same class of
-      quirk already documented for `mutate`/`thresholds`, and no
-      build.sbt-level setting exists in this plugin version either);
-      `spark.sql.shuffle.partitions` (200 default, unset anywhere in this
-      suite) tuned to `2` across all five test `SparkSession` builders —
-      confirmed applied (`spark.conf.get` verified `"2"` directly) but
-      measured *zero* wall-clock change on a full suite run (131s before,
-      131s and 115s after, within normal variance) - the real cost is
-      genuine per-test Spark/table-commit work, not shuffle overhead, at
-      this suite's tiny data volumes. Kept the shuffle-partitions tuning
-      anyway (correct, zero-downside best practice) despite it not being
-      the fix; reverted nothing else, since neither lever cost anything
-      to try. A third lever, `spark.sql.codegen.wholeStage=false` (the
-      leading untried hypothesis — per-query-shape JIT/codegen
-      compilation cost across this suite's ~100+ distinct query shapes),
-      was tried and measured *worse*, not better: 106/106 tests still
-      passed, but wall-clock went from 109s (sbt-reported total time) to
-      149s — roughly 35-40s slower, real and reproducible, not noise.
-      Reverted immediately; disabling codegen apparently costs more in
-      slower interpreted execution than it saves in compilation time at
-      this suite's scale. No further Spark-config levers were pursued —
-      the honest remaining hypothesis is genuine Delta/Iceberg
-      table-commit I/O (`_delta_log`/Iceberg metadata JSON per commit),
-      which isn't a tunable config; it's the thing actually being tested.
+Closed with real probes and permanent tests, zero production code
+changes — both were genuine questions with genuine answers. Deletion
+vectors (Iceberg's V3 merge-on-read spec) still produce a plain
+`ReplaceData` node, already matched. Identity/generated columns have no
+Spark-SQL-reachable equivalent in this Iceberg integration at all
+(rejected outright by Spark's own analyzer). Both of Iceberg's
+feature-surface ledger rows now closed. Full detail:
+docs/connectors/iceberg.md.
 
-#### Sub-phase: Iceberg's last two ❓ feature-surface rows closed - deletion vectors, identity/generated columns (done)
+#### Sub-phase: Iceberg CALL procedure classification — 10 of 20
+#### procedures reclassified from wrongly-rejected to correctly-allowed
+#### (done)
 
-Targeted follow-up closing the two rows the initial Iceberg pass left
-`❓ Not investigated`. Both closed with real probes and permanent tests,
-**zero production code changes** — both were genuine questions with
-genuine answers, not gaps needing fixes.
-
-- [x] **Deletion vectors** (Iceberg's V3 merge-on-read spec): a real
-      probe against a genuine `format-version = 3` table confirmed a
-      `DELETE` still produces a plain `ReplaceData` node — the same
-      class `dsv2RowLevelWrite` already matches via the shared
-      `RowLevelWrite` trait. The deletion-vector-vs-position-delete-file
-      distinction is below the `LogicalPlan` level this adapter
-      translates at; nothing to special-case. Closed with one permanent
-      test in `IcebergConnectorSpec`, no code change.
-- [x] **Identity/generated columns**: two real probes (Spark's
-      `GENERATED ALWAYS AS` syntax, and a column `DEFAULT` value —
-      Iceberg V3's `initial-default`/`write-default` mechanism) both
-      confirmed `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`)
-      thrown by Spark's own analyzer before any plan is produced, and
-      that `write.spark.accept-any-schema` doesn't change the outcome
-      (tried explicitly). Unlike Delta, this Iceberg integration has no
-      generated/default-column concept reachable through Spark SQL at
-      all — nothing for `outputSchemaWithTargetOnlyFields` or anything
-      else to need to handle. Closed with two permanent tests asserting
-      the rejection.
-- [x] `IcebergConnectorSpec`: 17 → 19 tests, all passing (19/19). No
-      `spark-adapter` main source changed, so CLAUDE.md's
-      mutation-testing requirement (scoped to changed/added
-      `src/main/scala`) doesn't apply this pass; `mimaReportBinaryIssues`
-      confirmed clean regardless.
-- [x] Both of Iceberg's feature-surface ledger rows now closed — every
-      row in both the Iceberg operation-surface and feature-surface
-      ledgers has a disposition, none left `❓`.
-
-#### Sub-phase: Iceberg CALL procedure classification - 10 of 20 procedures reclassified from wrongly-rejected to correctly-allowed (done)
-
-Closed the one remaining Iceberg operation-surface row still marked
-`🚫 Fails closed, deliberately left unmodeled`: `CALL system.*`
-procedures. Every procedure shares the same Spark class (`Call`), so
-class-name matching alone can't distinguish them - but `Call.procedure()`
-is a real, distinct concrete class per procedure (confirmed via `javap`
-on `SparkProcedures`' builder registry, no dynamic proxy), reachable via
-reflection the same way `WriteCommandSupport`'s `deltaRowLevelDml`
-reflects into Delta's MERGE/UPDATE/DELETE. `FailClosedCommands.isKnownSafe`
-now special-cases `Call` and checks `procedure().getClass().getName()`
-against a 10-procedure safe list.
-
-- [x] Enumerated iceberg-spark-runtime 1.11.0's actual 20 concrete
-      procedure classes from the jar directly (not guessed), classified
-      each against its delegate action class (`javap`) and Iceberg's own
-      documentation. **10 reclassified safe** (`rewrite_data_files`,
-      `rewrite_manifests`, `rewrite_position_delete_files`,
-      `remove_orphan_files`, `expire_snapshots`, `register_table`,
-      `ancestors_of`, `compute_table_stats`, `compute_partition_stats`,
-      `create_changelog_view` - compaction/GC/stats/read-only, same
-      category as Delta's already-safe-listed `OPTIMIZE`/`VACUUM`).
-      **10 stay unmodeled/fail-closed, deliberately** (`rollback_to_snapshot`/
-      `rollback_to_timestamp`/`set_current_snapshot`/`cherrypick_snapshot`/
-      `publish_changes`/`fast_forward` - change what's "current";
-      `add_files`/`migrate` - genuinely add/reformat row content;
-      `snapshot`/`rewrite_table_path` - produce new persisted content
-      even though neither touches its *source* table).
-- [x] Updated `IcebergConnectorSpec`'s CALL fail-closed test to use
-      `rollback_to_snapshot` (genuinely unsafe) instead of
-      `rewrite_data_files` (now correctly allowed) as the fail-closed
-      proof - the reclassification changes what that test needed to
-      demonstrate, not just add to it. Added a regression test sampling
-      5 of the 10 newly-safe procedures, proving they run under a real,
-      otherwise-checking contract.
-- [x] Found and fixed a real coverage gap via mutation testing, not just
-      cited a score: `isKnownSafeIcebergProcedureCall`'s reflection
-      fallback (fails closed if `procedure()` reflection ever breaks -
-      the single highest-stakes line in this change) had zero coverage,
-      since a real Iceberg session's `Call` never actually fails that
-      reflection. Closed with a focused, session-free unit test
-      (`FailClosedCommandsSpec`) exercising the fallback directly.
-      Mutation testing rescoped to `FailClosedCommands.scala`: **88.42%**
-      (89.36% of covered code), zero survivors in the new code.
-      `mimaReportBinaryIssues` clean; full suite passing.
-- [x] **Explicitly scoped what this pass does NOT do**, per the user's
-      own sequencing decision: verify the 10 unmodeled procedures'
-      *actual effect* against a contract (e.g. checking a
-      `rollback_to_snapshot` target's schema before allowing it, instead
-      of rejecting outright). That needs new mechanisms this codebase
-      doesn't have yet - reading a schema from the catalog with no Spark
-      write involved, or from a table/path named in a CALL argument
-      (argument parsing/binding, never done here before) - tracked as
-      separate future work below, not attempted in this pass.
-- [x] **Found and fixed a real, pre-existing CI failure while checking
-      PR #3's checks**: `iceberg-spark-runtime-3.5_2.12:1.11.0`'s jar is
-      compiled to Java 17 class file version and can't load under this
-      repo's JDK-11 CI matrix leg - not caused by today's work, but
-      present since Iceberg support first landed, and cascading into
-      three unrelated `spark-adapter` suites sharing the same forked JVM.
-      A first attempt (a `Tests.Filter` skipping only `IcebergConnectorSpec`
-      at test-run time) turned out insufficient and was replaced before
-      landing: merely having the jar on the classpath is enough to break
-      JDK 11, since Spark's `ServiceLoader`-based `DataSourceRegister`
-      lookup scans every registered provider for *any* format-based read,
-      not just Iceberg's - confirmed via a real CI failure where a plain
-      CSV read in an unrelated suite aborted the same way. The actual fix
-      excludes the Iceberg dependency itself from `libraryDependencies`
-      under JDK <17, and excludes `IcebergConnectorSpec.scala`'s own
-      compilation under the same condition. Verified by simulating both
-      branches locally (not just trusting the sbt syntax): with Iceberg
-      forced out, all other suites compile and pass cleanly (91/91, zero
-      `ServiceLoader` aborts); with it present, all 111 tests including
-      `IcebergConnectorSpec` pass unchanged. Confirmed for real in CI
-      after pushing: `Test on ubuntu-latest / Java 11` went from failing
-      to passing.
+Closed the one remaining Iceberg operation-surface row
+(`🚫 Fails closed, deliberately left unmodeled`). Enumerated all 20 real
+procedure classes from the jar directly; 10 reclassified safe
+(compaction/GC/stats/read-only, the same category as Delta's `OPTIMIZE`/
+`VACUUM`), 10 stay deliberately unmodeled (change what's "current," or
+add/reformat row content). Found and closed a real mutation-testing
+coverage gap (the reflection fallback had zero coverage) and a real,
+pre-existing CI failure unrelated to this pass's own code (Iceberg's jar
+can't load under the JDK 11 CI leg — fixed by excluding the dependency
+under JDK <17). Full detail: docs/connectors/iceberg.md.
 
 #### Sub-phase: CI mutation-testing wall-clock cut via two real levers (done)
 
@@ -1938,677 +1272,130 @@ partitions, codegen), which found no real lever there.
       ARCHITECTURE.md estimate (`~1-5 min`) that never matched the real
       observed time, unrelated to today's split.
 
-#### Sub-phase: Verify `rollback_to_snapshot` against a contract - pilot, with a mid-course design correction (done)
+#### Sub-phase: Verify `rollback_to_snapshot` against a contract — pilot,
+#### with a mid-course design correction (done)
 
-Piloted contract verification for one of the 10 state-changing CALL
-procedures left fail-closed by the classification pass above, per the
-user's own decision to sequence this as a pilot rather than building all
-mechanisms at once.
+Piloted real contract verification for one of the 10 state-changing CALL
+procedures left fail-closed above. The original design (checking the
+rolled-back-to snapshot's own historical schema) was proven wrong by a
+real end-to-end test, not just buggy — corroborated against Iceberg's own
+open issue tracker (apache/iceberg#15165): rollback moves which
+snapshot's data is current but never reverts the schema. Corrected to
+check the table's *current* schema plus location as a scoping gate
+instead. Full detail: docs/connectors/iceberg.md.
 
-- [x] **Original design proven wrong, not just buggy, and corrected
-      honestly rather than patched around.** The first design read the
-      *target snapshot's own* historical schema (Iceberg's
-      `SparkTable.copyWithSnapshotId(id).schema()`) and checked that
-      against the contract. A real end-to-end test - not a mock - showed
-      the post-rollback schema unchanged even after `refreshTable()`;
-      investigated seriously rather than assumed to be a caching bug,
-      and corroborated against Apache Iceberg's own issue tracker
-      (apache/iceberg#15165, open/unresolved): `rollback_to_snapshot`
-      moves which snapshot's *data* is current but never reverts
-      `current-schema-id` - schema evolution and snapshot rollback are
-      independent in Iceberg's model, so the original design was
-      checking a question the operation can't actually answer.
-- [x] **Corrected design**, prompted by the user's own reframing ("both
-      file path and schema - not schema alone"): check the table's
-      *current* schema (which a rollback provably cannot change) plus
-      location as a scoping gate - a rollback on a table the active
-      contract doesn't govern is allowed, not swept into an unrelated
-      contract's rejection, mirroring how `StructuralVerifier.verify`'s
-      `Write` case already treats out-of-scope locations. New
-      `StateChangingCallSupport.extract` (2 reflection hops: `Call.procedure()`
-      to the concrete `RollbackToSnapshotProcedure`, then
-      `BaseProcedure.tableCatalog()` to a plain public `TableCatalog` -
-      down from 3 hops in the original design, and no Iceberg-specific
-      type needed at all). New `StructuralVerifier.verifyStateChange` and
-      a `ContractEnforcementRule.verifyOrThrow` branch consulting it
-      before falling through to `FailClosedCommands`' blanket rejection.
-- [x] **Mutation testing caught a real gap in the pilot's own test
-      rigor, not just the code.** The "unrelated table" scoping test's
-      contract only required an already-present field, so it would have
-      passed even with scoping completely broken (mutated to always
-      check schema); fixed by requiring a field the unrelated table
-      genuinely lacks, so a real schema check - if scoping had failed -
-      would provably fail. Mutation score went from 96.08% to **100%**
-      (51/51) as a result; `mimaReportBinaryIssues` clean.
-- [x] `IcebergConnectorSpec` PASS/FAIL/scoping tests for
-      `rollback_to_snapshot`, plus a new `cherrypick_snapshot` fail-closed
-      test taking over `rollback_to_snapshot`'s old role as the "some CALL
-      still fails closed" proof.
+#### Sub-phase: Extend state-changing CALL verification to the 5
+#### procedures sharing `rollback_to_snapshot`'s shape (done)
 
-#### Sub-phase: Extend state-changing CALL verification to the 5 procedures sharing `rollback_to_snapshot`'s shape (done)
+Investigated each procedure's real argument shape via `javap` and a live
+probe before generalizing rather than assuming — most share
+`rollback_to_snapshot`'s 2-arg shape, `set_current_snapshot` and
+`fast_forward` declare 3. Generalized the pilot's single hardcoded
+procedure-class check into a `Map[String, String]` rather than branching
+per procedure; extraction/verification/wiring stayed unchanged. Full
+detail: docs/connectors/iceberg.md.
 
-`rollback_to_timestamp`/`cherrypick_snapshot`/`publish_changes`/
-`set_current_snapshot`/`fast_forward`, closing the "small, mechanical
-extension" scope this work's original sequencing called out.
+#### Sub-phase: Verify the remaining 4 harder CALL procedures —
+#### `add_files`, `migrate`, `snapshot`, `rewrite_table_path` (done)
 
-- [x] **Investigated each procedure's real argument shape before
-      generalizing, not assumed from the pilot alone.** `javap` against
-      the real `iceberg-spark-runtime-3.5_2.12:1.11.0` jar confirmed each
-      procedure's declared parameters, followed by a real probe (since
-      deleted) against a live Iceberg session. `rollback_to_timestamp`/
-      `cherrypick_snapshot`/`publish_changes` share `rollback_to_snapshot`'s
-      exact 2-arg (table, value) shape. `set_current_snapshot` declares
-      **3** parameters (table, `snapshot_id`, `ref` - mutually exclusive,
-      confirmed via probe that `Call.args` is always 3-wide with exactly
-      one of `args(1)`/`args(2)` non-null). `fast_forward`
-      (`FastForwardBranchProcedure`) also declares 3 (table, `branch`,
-      `to`) and is genuinely different: confirmed via probe that
-      fast-forwarding `"main"` changes the table's default read, while
-      fast-forwarding any other named branch leaves it unchanged - looked
-      like it might need branch-aware special-casing, but doesn't: the
-      existing check only asserts an invariant (current schema can't
-      move) that holds regardless of which branch a call targets, proven
-      with a dedicated test rather than left as a documentation claim.
-- [x] **Generalized cleanly instead of branching per procedure.**
-      `StateChangingCallSupport`'s single hardcoded procedure-class check
-      became a `Map[String, String]` (procedure class → CALL-syntax
-      name, used only for the error message via a new
-      `StateChangeInfo.callName` field); extraction, verification, and
-      `ContractEnforcementRule` wiring stayed unchanged and already
-      generic.
-- [x] Nine new `IcebergConnectorSpec` tests: one PASS per newly-recognized
-      procedure (including both `set_current_snapshot` arg forms), a
-      `rollback_to_timestamp` FAIL proving the generalized FAIL path still
-      works, and the `fast_forward`-on-a-non-`"main"`-branch FAIL test
-      proving the branch-agnostic design concretely. Replaced the old
-      "`cherrypick_snapshot` still fails closed" test (no longer true)
-      with an `add_files` fail-closed test.
-- [x] Mutation testing scoped to both changed files:
-      `StateChangingCallSupport.scala` 80% (4/5 - the one survivor a
-      genuinely equivalent `Call`-class-name guard mutant, same category
-      already accepted for this pattern in the pilot);
-      `ContractEnforcementRule.scala` 100% (10/10). `mimaReportBinaryIssues`
-      clean (both touched types stay `private[sparkadapter]`). Full
-      `./dev/build`/`./dev/test`/`./dev/regression` passing.
-
-#### Sub-phase: Verify the remaining 4 harder CALL procedures - `add_files`, `migrate`, `snapshot`, `rewrite_table_path` (done)
-
-Closed the last operation-surface gap in Iceberg's CALL procedure
-coverage. The original scoping (above) assumed all 4 needed a materially
-harder mechanism (CALL-argument schema parsing); real investigation via
-`javap` on the real jar plus a live probe (since deleted) per procedure
-found that assumption wrong for 3 of the 4, in both directions.
-
-- [x] **`add_files`/`migrate` fit the existing 6-procedure mechanism
-      unchanged - zero new code beyond a map entry each.** Confirmed via
-      probe: `add_files` never changes its target's schema regardless of
-      the source's shape (an extra source column is silently dropped, a
-      missing one is NULL-filled - the same narrower-append behavior
-      already handled elsewhere), so `source_table` is never read at all.
-      `migrate` converts its table in place; probed using the actual
-      production code path (`TableCatalog.loadTable`, not a
-      `spark.table(...)` read) that it correctly resolves the
-      *pre*-migration schema, which Iceberg always preserves unchanged
-      anyway.
-- [x] **`snapshot` is the one procedure that's genuinely different**,
-      confirmed via probe: it creates a *new* table whose schema comes
-      from a *different, existing* source table - the opposite
-      schema/location pairing from every other procedure - and both
-      arguments can be qualified with a catalog other than the CALL's
-      own. Needed genuinely new resolution (`resolveIdentifier`,
-      re-implementing Iceberg's own `Spark3Util.catalogAndIdentifier`
-      algorithm) using `SparkSession.active`'s `CatalogManager` - fully
-      public Spark APIs, not reflection, unlike every other procedure's
-      `tableCatalogOf`. Hit one real Scala access-control surprise along
-      the way (`CatalogManager`'s type can't be named directly in this
-      module despite public bytecode - it's `private[sql]` at the Scala
-      level) - worked around by passing `SparkSession` itself instead.
-- [x] **`rewrite_table_path` needed no verification mechanism at all - a
-      real positive finding.** Confirmed via probe: never touches the
-      table's own catalog entry, schema, or snapshot, and registers no
-      new catalog table itself - joined `FailClosedCommands`' safe list
-      instead, the same disposition as the original 10 compaction/GC
-      procedures.
-- [x] **Solved a real environment obstacle without a new dependency.**
-      Testing `migrate`/`snapshot` needs a default catalog that resolves
-      both native and Iceberg tables; a Hadoop-type catalog rejects
-      `migrate` unconditionally (any table with a pre-existing "custom"
-      location, which every native table has - confirmed via probe, not
-      a path-format bug). A real Hive metastore would need a new
-      `spark-hive` test dependency; used Iceberg's `JdbcCatalog` against
-      H2 instead, already transitively present on the test classpath.
-- [x] Mutation testing found two real gaps (not just cited a score): a
-      `resolveIdentifier` boundary condition (multi-part identifier
-      without a catalog prefix) had no test distinguishing correct
-      catalog-fallback behavior from a mutant that mishandled it - closed
-      with a dedicated permanent test, which incidentally also proved
-      that exact resolution path for real. Final score:
-      `StateChangingCallSupport.scala` 85% (17/20 - 3 accepted
-      near-equivalents, each documented inline at the survived mutant);
-      `FailClosedCommands.scala` (`rewrite_table_path`'s new safe-list
-      entry) 100% (4/4). `mimaReportBinaryIssues` clean. All 20 Iceberg
-      CALL procedures now have a permanent, evidenced disposition - none
-      left unmodeled.
+Closed the last operation-surface gap in Iceberg's CALL coverage. Real
+investigation found the original scoping assumption (all 4 need harder
+argument-schema parsing) wrong for 3 of 4: `add_files`/`migrate` fit the
+existing mechanism unchanged; `rewrite_table_path` needed no
+verification at all and joined the safe list instead. `snapshot` is
+genuinely different — it creates a new table from a different source
+table — and needed real new catalog-identifier resolution. All 20
+Iceberg CALL procedures now have a permanent, evidenced disposition.
+Full detail: docs/connectors/iceberg.md.
 
 #### Sub-phase: Parquet connector support (done)
 
-Third connector onboarded via the `add-spark-connector` skill's process —
-a different shape than Delta/Iceberg, since Parquet is Spark's own
-built-in `FileFormat`, not a separate library: nothing added to
-`build.sbt`, not even a `% "test"` dependency. Full findings and both
-coverage ledgers are in docs/connectors/parquet.md — summary here:
+Third connector onboarded — a different shape than Delta/Iceberg, since
+Parquet is Spark's own built-in `FileFormat`: nothing added to
+`build.sbt`. Found and fixed a real bug affecting every plain-`FileFormat`
+streaming sink (Parquet, CSV, JSON, ORC, text): `FileStreamSink.path` is
+a private field with no public accessor, so every such streaming write
+fell through to an unreachable `toString` location, unconditionally
+failing enforcement — caught by a mutation-testing "equivalent mutant"
+signal prompting re-investigation of an initially-wrong first fix.
+Confirmed several operations (time travel, row-level DML, DSv2-catalog
+writes onto an existing table) are rejected by Spark itself for plain
+Parquet — the first connector where 🚫 rows are genuinely N/A rather than
+future work. Full findings and both ledgers: docs/connectors/parquet.md.
 
-- [x] **A real bug found and fixed: streaming writes to any plain
-      `FileFormat`-based sink (Parquet, but also CSV/JSON/ORC/text —
-      they all share Spark's built-in `FileStreamSink`) resolved to a
-      useless, non-matching location — plus a wrong first diagnosis,
-      corrected by a mutation-testing "equivalent mutant" signal, not
-      assumed correct on the first pass.** `WriteCommandSupport`'s
-      `WriteToStream` case (built for Delta) tries `sink.name()`, then a
-      reflective public `path()` method, then falls back to `toString`.
-      The first fix assumed `FileStreamSink.name()` doesn't throw
-      (unlike `DeltaSink.name()`) and returns a descriptive
-      `"FileSink[<path>]"` string taken at face value — but a manually
-      applied mutation of that guard produced no test failure, the
-      documented Stryker4s "equivalent mutant" symptom, prompting
-      re-investigation. A direct-construction probe (a real
-      `FileStreamSink` built by hand, no live query) confirmed
-      `FileStreamSink.name()` genuinely throws the same way `DeltaSink`'s
-      does — the real bug was one tier later: the reflective `path()`
-      lookup only ever tried a *public method*, and `FileStreamSink.path`
-      is a `private final` field with no public accessor at all, so every
-      plain-`FileFormat` streaming write fell through to `toString`,
-      unconditionally failing `OUTPUT_LOCATION_MISMATCH` against any
-      contract's real declared path. Caught by a real PASS test failing,
-      not inspection. Fixed by extending the reflective lookup itself to
-      also try the declared field, not by special-casing `FileStreamSink`
-      in the tier-2 guard — a genuine bonus beyond the location fix:
-      `streamSinkFormatOf` previously always returned `None` for any
-      non-Delta sink; now every `FileFormat`-based streaming write gets a
-      real, precise format too, via the same private-field reflection.
-- [x] **A genuinely new operation-surface finding, not a bug:
-      `.saveAsTable()` append onto an existing table is a third instance
-      of the "one call, two nested Command-shaped plans" pattern**
-      already known from Delta/Iceberg's `StagedTable` case, via a
-      different mechanism this time (`CreateDataSourceTableAsSelectCommand.run()`'s
-      own internal delegation to a nested `InsertIntoHadoopFsRelationCommand`
-      when it detects the target already exists). Confirmed via
-      `injectCheckRule` that `ContractEnforcementRule` runs twice for one
-      logical write — and, unlike the `StagedTable` case, confirmed this
-      needs **no fix**: both plans resolve to the identical physical
-      location, so a satisfying write passes both and a violating one is
-      rejected at the first, before the nested insert ever runs (verified
-      via a real PASS/FAIL pair, the FAIL half asserting the row count is
-      unchanged). A related, *unresolved* version of this same trap — a
-      brand-new table created without an explicit path option, where the
-      outer command's location falls back to the qualified catalog
-      identifier while the nested insert's is a real physical path — was
-      found but left out of scope for this pass (every existing
-      precedent test, this pass's own included, sidesteps it with an
-      explicit path) and documented as real next-step work, not silently
-      left implicit.
-- [x] **Confirmed, empirically, that Parquet's operation surface is
-      architecturally smaller than Delta/Iceberg's, not just less
-      explored.** Time travel, CDC/incremental reads, row-level DML
-      (`MERGE`/`UPDATE`/`DELETE`), and DataSourceV2-catalog writes against
-      an existing table (`.writeTo(...).append/overwrite/overwritePartitions()`)
-      or via `createOrReplace()`/`.replace()` are all genuinely rejected
-      by Spark itself for plain Parquet (`Cannot write into v1 table`,
-      `does not support REPLACE TABLE AS SELECT`, `MERGE INTO TABLE is
-      not supported temporarily`, or simply no SQL syntax exists) — real
-      architectural constraints, not "Invariant hasn't translated this
-      yet," the first connector where these rows are 🚫 **N/A** rather
-      than future work. Confirmed via real probes and permanent
-      regression tests, not assumed from the operations' absence.
-- [x] **Feature surface: the "every column nullable on read-back"
-      behavior this document previously attributed only to Delta (and
-      separately rediscovered for Iceberg) is confirmed to originate from
-      Parquet itself** — both connectors store data as Parquet under the
-      hood, so this was always Parquet's own reader behavior, not
-      something either connector does. Schema merging (`mergeSchema`) and
-      `partitionBy` column discovery both confirmed transparent (no
-      "generated columns"-style false-rejection gap); a corrupt file in
-      the read path confirmed to fail entirely within Spark's own
-      machinery, orthogonal to Invariant either way. Two feature-surface
-      items (legacy timestamp/date rebase mode, writer-side storage
-      optimizations) left ❓ **Not investigated**, honestly scoped out
-      rather than assumed transparent by analogy.
-- [x] Mutation testing scoped to the changed file
-      (`WriteCommandSupport.scala`, the only `src/main/scala` file this
-      pass touched): **80.0% (24/30 non-excluded mutants killed) — see
-      docs/SPARK_ADAPTER.md's "Mutation testing" section for the full
-      per-mutant reasoning.** All 6 survivors investigated, not just
-      cited: 4 are pre-existing, unrelated to this pass (`unwrapWriteWrapper`'s
-      already-documented no-wrapper branch, and two `deltaRowLevelDml`
-      guards untouched by this change); the 2 in code this pass actually
-      added are the `streamSinkFormatOf` `EqualityOperator`/`!=` mutant
-      (killed) and a `ConditionalExpression`-to-`true` mutant on its
-      `FileStreamSink` guard that survives because it's provably
-      equivalent — confirmed by hand, not asserted: for a real
-      `FileStreamSink`, forcing the guard to unconditionally `true`
-      produces the identical result the real guard already does; for any
-      other sink, the reflective `fileFormat` field lookup fails either
-      way, producing `None` either way. `mimaReportBinaryIssues` clean
-      (only private-method bodies changed, no public signature touched).
-      `./dev/build`/`./dev/test`/`./dev/regression` all pass against real
-      `spark-submit`. No new
-      dependency to verify the absence of (Parquet needed none).
+#### Sub-phase: Parquet's last two ❓ feature-surface rows closed —
+#### rebase mode, storage optimizations (done)
 
-#### Sub-phase: Parquet's last two ❓ feature-surface rows closed - rebase mode, storage optimizations (done)
-
-Same-day follow-up closing exactly the two rows the initial Parquet pass
-left ❓. Both closed with real probes and permanent tests, **zero
-production code changes** — both were real questions with real, testable
-answers, not gaps needing a fix.
-
-- [x] **Legacy timestamp/date rebase mode**: a pre-Gregorian-calendar
-      date/timestamp written under `LEGACY` and read back under
-      `CORRECTED` round-trips with its `DateType`/`TimestampType` schema
-      completely unchanged — confirmed directly, not assumed: rebase mode
-      only ever affects the encoded value, never a field's declared type
-      or nullability. Also confirmed the strictest setting (`EXCEPTION`)
-      never blocks analysis — it exists to guard genuinely ambiguous
-      files (no rebase metadata tag, i.e. written by pre-2.4.6 Spark),
-      never triggered by a file a modern Spark itself wrote.
-- [x] **Writer-side storage optimizations** (bloom filters, dictionary
-      encoding, summary metadata): zero effect on the analyzed column set
-      or on `streamSinkFormatOf`/`formatOf`'s format detection —
-      physical storage-layer decisions Parquet's reader resolves entirely
-      below the `LogicalPlan` level this adapter translates at.
-- [x] Both findings are new `ParquetConnectorSpec` tests (18 tests total
-      in that suite after this pass, up from 16). No `spark-adapter` main
-      source changed this pass, so CLAUDE.md's mutation-testing
-      requirement (scoped to changed/added `src/main/scala` files)
-      doesn't apply. Both of Parquet's coverage ledgers (operation
-      surface and feature surface) are now fully closed — no ❓ rows
-      remaining in either.
+Same-day follow-up. Both closed with real probes and permanent tests,
+zero production code changes: legacy timestamp/date rebase mode never
+affects a field's declared type or nullability; writer-side storage
+optimizations (bloom filters, dictionary encoding) are resolved entirely
+below the `LogicalPlan` level this adapter translates at. Both of
+Parquet's coverage ledgers now fully closed. Full detail:
+docs/connectors/parquet.md.
 
 #### Sub-phase: CSV connector support (done)
 
-Fourth connector onboarded via the `add-spark-connector` skill's process —
-same shape as Parquet's, since CSV is also Spark's own built-in
-`FileFormat`, not a separate library: nothing added to `build.sbt`. Full
-findings and both coverage ledgers are in docs/SPARK_ADAPTER.md's new
-"CSV support" section — summary here:
-
-- [x] **Empirically confirmed, not assumed by analogy, that CSV's
-      operation surface routes through the exact same generic mechanisms
-      Parquet's pass already proved out** — `InsertIntoHadoopFsRelationCommand`,
-      `CreateDataSourceTableAsSelectCommand`, and `WriteToStream`/
-      `FileStreamSink` (including the private-field-reflection fix from
-      Parquet's pass, confirmed to generalize to `CSVFileFormat`
-      specifically via a real direct-construction test, not just taken on
-      faith from that fix's own "connector-agnostic" doc comment). **No
-      bugs found, no new structural pattern, zero `src/main/scala`
-      changes** — a pure confirmatory audit on the operation surface.
-      Added one permanent test Parquet's own pass never had:
-      `.writeTo(...).createOrReplace()`/`.replace()` rejection, which
-      Parquet's ledger row only ever rested on probe-phase confirmation.
-- [x] **The real substance was the feature surface, not the operation
-      surface** — CSV is a plain text format with no native schema,
-      unlike self-describing Parquet. Six CSV-specific behaviors
-      confirmed with a real probe and codified into a permanent test:
-      schema-inference default (no `inferSchema` ⇒ every column reads
-      back as `StringType`, and a contract declaring a numeric type
-      against such a read is correctly rejected as
-      `OUTPUT_FIELD_TYPE_MISMATCH`), header handling (`header=false`
-      falls back to positional `_c0`/`_c1` names, ordinary column names
-      either way), malformed-record modes (`FAILFAST` fails only at
-      execution, never analysis — the same orthogonal pattern as
-      Parquet's corrupt-file case; `DROPMALFORMED` silently drops bad
-      rows without affecting the analyzed schema), `columnNameOfCorruptRecord`
-      (an ordinary extra `StringType` column, no special handling),
-      nullability on read-back (every field `nullable = true`
-      regardless of declared schema — confirmed independently for CSV's
-      own non-Parquet-based reader, not inherited from Parquet the way
-      Delta's/Iceberg's version of this finding was), and date parsing
-      with a custom `dateFormat` (an unparseable date becomes `null`
-      under `PERMISSIVE`, not a failure, schema stays `DateType`).
-- [x] **A real test-writing bug, caught and fixed before landing, not a
-      product bug**: the first draft of the two streaming tests declared
-      `type: long` for fields sourced from an `inferSchema=true` CSV
-      read, but CSV's inference actually resolves small whole numbers to
-      `IntegerType` — both tests correctly failed with a real
-      `ContractViolationException` on first run (the engine doing its
-      job), fixed by declaring `type: integer` to match CSV's real
-      inferred schema.
-- [x] No `spark-adapter` main source changed this pass, so CLAUDE.md's
-      mutation-testing requirement (scoped to changed/added
-      `src/main/scala` files) doesn't apply — confirmed via `git status`
-      before closing, not just assumed. `mimaReportBinaryIssues` is
-      unaffected for the same reason (no public signature, no signature
-      of any kind, touched). Full `spark-adapter` suite (163 tests, all 8
-      specs) passes; `CsvConnectorSpec` itself: 19 tests, all green.
-      Throwaway probe scaffolding (`CsvConnectorProbeSpec.scala`) deleted
-      before this pass ended, per the skill's own convention. Both of
-      CSV's coverage ledgers (operation surface, feature surface) are
-      fully closed — no ❓ rows remaining in either.
+Fourth connector onboarded — same shape as Parquet's (Spark's own
+built-in `FileFormat`, nothing added to `build.sbt`). Confirmed CSV's
+operation surface routes through the exact same generic mechanisms
+Parquet's pass proved out, with zero bugs and zero `src/main/scala`
+changes — a pure confirmatory audit. The real substance was the feature
+surface: six CSV-specific behaviors (schema-inference default to
+`StringType`, header handling, malformed-record modes, the corrupt-record
+column, always-nullable read-back, custom date parsing) confirmed with
+real probes and codified into permanent tests. Full findings and both
+ledgers: docs/connectors/csv.md.
 
 #### Sub-phase: Hive connector support (done)
 
-Fifth connector onboarded via the `add-spark-connector` skill's process,
-against a real Hive-enabled session (`enableHiveSupport()` with an
-embedded, per-test Derby metastore — no external Hive install needed).
-`org.apache.spark %% spark-hive % 3.5.1` added to `spark-adapter/build.sbt`
-as a `% "test"` dependency only. Unlike Parquet/CSV's confirmatory
-passes, this one found the operation surface genuinely under-covered.
-Full findings and both coverage ledgers are in docs/SPARK_ADAPTER.md's
-new "Hive support" section — summary here:
-
-- [x] **A real, previously-unknown read-side gap, worse than this
-      document's own prior "known limitations" note described it.**
-      `HiveTableRelation` (a genuinely Hive-native table's read shape —
-      any non-Parquet/ORC SerDe, or metastore conversion explicitly
-      disabled) is not `LogicalRelation`-wrapped the way Delta's read
-      shape turned out to be — it's its own top-level `LeafNode`,
-      confirmed via a real `injectCheckRule` probe's full `treeString`,
-      not assumed. Before this pass it had no translation case at all,
-      falling through to the fully generic `Unsupported` placeholder —
-      not merely an imprecise location (the fate of every other
-      unrecognized relation), but never counting as a read at all. Fixed
-      with **zero new dependency**: `HiveTableRelation` itself lives in
-      plain, already-`provided` `spark-catalyst`, not the separate
-      `spark-hive` artifact, so `SparkPlanAdapter` imports it directly —
-      no reflection needed, unlike every write-side Hive case below.
-- [x] **A reflective scan of `spark-hive`'s own jar (the same technique
-      that found Delta's `MergeIntoCommand`) found exactly three concrete
-      `Command` subclasses, all genuinely data-writing, none needing a
-      `FailClosedCommands` entry**: `CreateHiveTableAsSelectCommand`
-      (`.format("hive").saveAsTable(...)`/`CREATE TABLE ... STORED AS ...
-      AS SELECT`, used for both new AND existing-table appends — Hive's
-      own command doesn't distinguish the two the way the V1
-      `CreateDataSourceTableAsSelectCommand` does), `InsertIntoHiveTable`
-      (`.insertInto(...)`/`INSERT [OVERWRITE] TABLE`, and the nested write
-      the command above issues internally), and
-      `InsertIntoHiveDirCommand` (`INSERT ... DIRECTORY ... SELECT` —
-      found *only* by the reflective scan, since it isn't a catalog-table
-      write at all and none of the standard operation-surface probes
-      would ever trigger it, the same lesson `MergeIntoCommand` taught
-      the first time this process ran). All three matched by
-      fully-qualified class name + public-method reflection, the same
-      convention `deltaRowLevelDml` uses, for a related but distinct
-      reason: these are stable, documented Spark classes, just living in
-      an optional artifact this module deliberately keeps off its
-      `provided`/compile classpath.
-- [x] **A second real, found-and-fixed false-rejection bug: static-
-      partition `INSERT ... PARTITION(dt='...') SELECT ...` omits the
-      partition column from the query's own schema entirely** — the same
-      false-rejection class Delta's generated columns and DSv2's target-
-      only fields already taught this module to watch for, found again
-      under a third, independent mechanism. A **dynamic**-partition
-      insert doesn't have this problem (the value comes from the
-      `SELECT` itself). Fixed by reusing the existing `unionNewFields`
-      helper in `WriteCommandSupport.insertIntoHiveTable`, safe for the
-      same reason the DSv2 fix is: a genuinely missing *data* column
-      already fails Spark's own analysis before this rule ever runs. A
-      related finding surfaced fixing it: the unioned partition-column
-      field is always nullable (Hive's classic DDL has no `NOT NULL`
-      column constraint), so a contract declaring a static-partition
-      column `required: true` still (correctly) fails nullability
-      checking — a second, orthogonal instance of the "every field
-      nullable" finding this document already tracks for Parquet/CSV.
-- [x] **One real gap found and left open, not fixed — with a standing
-      regression test proving it's still there, not a silent
-      disclosure.** `CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri`
-      is populated with the real physical path only when appending onto
-      an *existing* table; it's `None` (falling back to the qualified
-      catalog identifier) both for a genuinely new table (the same
-      "no explicit path given" gap Parquet's own new-table CTAS test
-      already documents as out of scope — Hive's `.saveAsTable()` has no
-      `.option("path", ...)` equivalent to sidestep it with) **and**,
-      confirmed as a real Hive-specific surprise, for `.mode("overwrite")`
-      onto an *existing* table (overwrite is treated as replace-like, so
-      the analyzer never consults the existing catalog entry). The nested
-      `InsertIntoHiveTable` always resolves the real physical path, so
-      the two commands disagree in both of those cases — a contract
-      targeting the physical path is rejected at the outer check before
-      the inner, genuinely-correct one runs. Append mode is the one case
-      confirmed to agree by construction, and is what the "two nested
-      Command plans" PASS/FAIL pair uses. Next step, if ever closed:
-      thread a `SparkSession` reference through `WriteCommandSupport` (a
-      real API shape change) or treat the qualified identifier as an
-      equally valid declared `location` for this one write shape —
-      neither attempted here, consistent with the Parquet precedent of
-      documenting the analogous gap rather than widening scope to fix it.
-- [x] **Confirmed, not assumed, that Hive's own maintenance/DDL surface
-      needs zero new `FailClosedCommands` entries** — `CreateTableCommand`,
-      `AnalyzeTableCommand`, `ShowTables`, `RepairTableCommand`,
-      `AlterTableAddPartitionCommand` (already safe-listed),
-      `LoadDataCommand`/`TruncateTableCommand` (already correctly
-      excluded), and `MergeIntoTable`/`UpdateTable` (already correctly
-      excluded, and confirmed to be real `Command`-shaped plans for a
-      plain Hive table specifically, unlike Iceberg's DSv2 rewrite path)
-      all reuse Spark's own generic commands, classified during
-      Delta/Iceberg's onboarding — every one confirmed for real against
-      an actual Hive table this pass, not left as a theoretical
-      carryover. `DELETE FROM` against a Hive table is rejected by Spark
-      itself before producing any `Command`-shaped plan at all.
-- [x] **`.writeTo()` and streaming writes confirmed N/A by Spark itself**,
-      the same pattern already documented for Parquet/CSV — `Cannot write
-      into v1 table` and a data-source-provider mismatch respectively,
-      neither ever reaching an analyzable plan.
-- [x] **Feature surface**: bucketed tables (`CLUSTERED BY`) confirmed
-      transparent; a real Hive UDF (`GenericUDFUpper`, not Spark's own
-      `ScalaUDF`) confirmed to be correctly recognized by the existing
-      `isOpaqueUdf` suffix check, previously untested against a real Hive
-      UDF for lack of a metastore; read-back nullability confirmed always
-      `true`, independently of Parquet/CSV's own version of the same
-      finding, for a distinct reason (no `NOT NULL` constraint in classic
-      Hive DDL at all); the metastore-conversion toggle confirmed to
-      determine which operation-surface row applies (not a bug either
-      way).
-- [x] Mutation testing scoped to the three changed/added files
-      (`WriteCommandSupport.scala`, `SparkPlanAdapter.scala`,
-      `ContractEnforcementRule.scala`): **80.0% (of total) / 81.01% (of
-      covered code)** — see docs/SPARK_ADAPTER.md's new "Mutation
-      testing: Hive connector support" subsection for the full per-
-      mutant reasoning. `ContractEnforcementRule.scala` itself: zero
-      survivors. One real survivor found and closed along the way (an
-      `.insertInto()` append-mode saveMode assertion nothing exercised),
-      not just cited — see below. `mimaReportBinaryIssues` clean (no
-      public signature changed — the new read/write cases are additions
-      to existing private/module-private matchers and objects). Real
-      `unzip -l` jar inspection confirmed zero `spark-hive`/Hive classes
-      in the assembled `spark-adapter` jar. `./dev/build`/`./dev/test`/
-      `./dev/regression` all pass against real `spark-submit`. Full
-      `spark-adapter` suite: 189 tests, all 9 specs green (`HiveConnectorSpec`:
-      26 tests). Throwaway probe scaffolding (`HiveProbeSpec.scala`)
-      deleted before this pass ended, per the skill's own convention.
-      Both of Hive's coverage ledgers (operation surface, feature
-      surface) are fully closed — no ❓ rows remaining in either; one
-      row (`.saveAsTable()` on a new table) is ✅ Covered with a
-      documented, tested known limitation rather than fully closed.
-- [x] **A real cross-test flakiness bug found and fixed in the test suite
-      itself, not the product**: `SparkAdapterListener.onSuccess` fires
-      asynchronously, and a test's own setup write (creating a table just
-      before registering a fresh listener to observe the *next* write)
-      can still have its event in flight when that listener registers —
-      `eventually` could then accept the stray setup event instead of the
-      actual write under test, only visible when running the full 9-spec
-      suite together (each spec passed in isolation). Fixed by filtering
-      `awaitWriteTo` on the exact expected outcome (saveMode or location),
-      not just "any write to a matching location yet" — confirmed stable
-      across two full-suite runs after the fix.
+Fifth connector onboarded, against a real Hive-enabled session (embedded
+Derby metastore, no external Hive install). Unlike Parquet/CSV's
+confirmatory passes, found the operation surface genuinely under-covered:
+`HiveTableRelation` reads had no translation case at all (not just an
+imprecise location — never counted as a read), fixed with zero new
+dependency. A reflective jar scan found three genuinely new write
+commands, one (`InsertIntoHiveDirCommand`) findable only by the scan, not
+by exercising the standard operation-surface checklist. Found and fixed
+a static-partition `INSERT` false-rejection bug (a third, independent
+instance of the "target-only field" pattern). Left one real gap open,
+not fixed, with a standing regression test proving it: a path-less new
+Hive table's two nested write commands disagree on location. Full
+findings and both ledgers: docs/connectors/hive.md.
 
 #### Sub-phase: Avro connector support (done)
 
-Sixth connector onboarded via the `add-spark-connector` skill's process.
-`org.apache.spark %% spark-avro % 3.5.1` added to `spark-adapter/build.sbt`
-as a `% "test"` dependency only — the first real dependency addition since
-Delta/Iceberg/Hive (unlike Parquet/CSV, Avro isn't bundled into
-`spark-sql`). Full findings and both coverage ledgers are in
-docs/connectors/avro.md — summary here:
+Sixth connector onboarded. `spark-avro` added as the first real
+`% "test"` dependency since Delta/Iceberg/Hive (unlike Parquet/CSV, Avro
+isn't bundled into `spark-sql`). A reflective jar scan found zero
+`Command`-shaped classes — the whole operation surface routes through
+existing generic mechanisms. Found and fixed a real, general
+(not Avro-specific) `WriteCommandSupport` bug: path-less new-table
+creates computed two disagreeing locations, benefiting every V1-format
+connector. Also surfaced a real `contract`/`ir` type-vocabulary gap (no
+parametrized decimal type) via Avro's decimal logical type — deliberately
+left unfixed as out of scope for a spark-adapter connector pass,
+documented with a next step. Full findings and both ledgers:
+docs/connectors/avro.md.
 
-- [x] **A real reflective jar scan of `spark-avro` (the same technique
-      that found Delta's `MergeIntoCommand` and Hive's three write
-      commands) found zero `Command`-shaped classes** — no SQL-extension
-      commands at all, the first connector where this scan came back
-      empty. `AvroFileFormat` is a plain `FileFormat`, so the entire
-      operation surface routes through mechanisms Parquet/CSV's passes
-      already proved out, confirmed empirically via `injectCheckRule`
-      probes rather than assumed by analogy.
-- [x] **A real, general `WriteCommandSupport` bug found and fixed, not
-      Avro-specific** — the path-less new-table `.saveAsTable()`/
-      `.writeTo(...).create()` location-mismatch risk Parquet's own
-      coverage ledger had flagged but explicitly left unattempted.
-      Confirmed empirically (a direct `WriteCommandSupport.combined`
-      comparison on both captured plans, before any fix): the outer
-      `CreateDataSourceTableAsSelectCommand`'s location and the nested
-      `InsertIntoHadoopFsRelationCommand`'s location never agreed for a
-      `MANAGED` table with no explicit path, since Spark only populates
-      `table.storage.locationUri` when the command actually runs. Fixed
-      by computing the identical `SessionCatalog.defaultTablePath` Spark
-      itself uses internally (via `SparkSession.active`, the same
-      technique `StateChangingCallSupport.resolveIdentifier` already uses
-      for Iceberg's `CALL` procedures) — the two now agree by
-      construction. Benefits every V1-format connector's path-less
-      new-table create (Parquet/CSV/Hive/Avro alike), not just Avro.
-- [x] **A real, pre-existing `contract`/`StructuralVerifier` type-
-      vocabulary gap found via Avro's decimal logical type, but not
-      Avro-specific** — `ContractValidator`'s bare `"decimal"` keyword can
-      never match `StructuralVerifier`'s `DataType.typeName` comparison
-      (always precision/scale-qualified, e.g. `"decimal(10,2)"`), and
-      there's no parametrized form to declare instead. True for every
-      connector; never previously exercised by any existing connector's
-      tests. **Deliberately left unfixed this pass** — it's a
-      `contract`/`ir` module design change (a parametrized decimal
-      contract type), out of scope for a spark-adapter connector pass.
-      Documented with a next step and a permanent test pinning the
-      current (mismatching) behavior, not silently worked around.
-- [x] **Feature surface**: `avroSchema` explicit external reader schema,
-      logical types (`decimal`/`date`/`timestamp`) round-trip,
-      `recordName`/`recordNamespace` write options, and compression codec
-      options all confirmed transparent; nullability-on-read-back
-      confirmed independently (Avro's `["null", T]` union representation,
-      not inherited from any other connector's reader);
-      `ignoreExtension` confirmed as a genuinely Avro-specific read-time
-      filtering behavior with no effect on schema/verification.
-- [x] Mutation testing scoped to the one changed file
-      (`WriteCommandSupport.scala`, the only `src/main/scala` change this
-      pass needed): **76.74%** (33/43 non-excluded mutants killed),
-      clearing the 70% break threshold — see docs/SPARK_ADAPTER.md's new
-      "Mutation testing: Avro connector support" subsection; all 10
-      survivors confirmed to fall outside the code this pass actually
-      changed (re-surfaced pre-existing survivors already documented in
-      Hive's own mutation-testing subsection), zero real survivors in the
-      new `defaultTablePath` fallback itself. `mimaReportBinaryIssues`
-      clean (no public signature changed — the fix is internal to an
-      existing private match case). Real `unzip -l` jar inspection
-      confirmed zero `spark-avro`/Avro classes in the assembled
-      `spark-adapter` jar. `./dev/build`/`./dev/test`/`./dev/regression`
-      all pass against real `spark-submit`. Full `spark-adapter` suite:
-      212 tests, all 10 specs
-      green (`AvroConnectorSpec`: 23 tests). Throwaway probe scaffolding
-      (`AvroConnectorProbeSpec.scala`) deleted before this pass ended, per
-      the skill's own convention. Both of Avro's coverage ledgers
-      (operation surface, feature surface) are fully closed — no ❓ rows
-      remaining in either.
+#### Sub-phase: ClickHouse connector support (done, with real remaining
+#### ❓ rows)
 
-#### Sub-phase: ClickHouse connector support (done, with real remaining ❓ rows)
-
-Seventh connector onboarded via the `add-spark-connector` skill's
-process. Originally scoped as BigQuery; redirected to ClickHouse at
-Phase 0 before any code was written, because BigQuery has no local/
-offline testing mode (a real GCP project, billing, and credentials would
-be required, unavailable in the onboarding session and incompatible with
-this repo's real-execution testing philosophy) while ClickHouse *is*
-genuinely testable without a cloud account. Full findings and both
-coverage ledgers are in docs/connectors/clickhouse.md — summary here:
-
-- [x] **A genuinely new test-infrastructure mechanism**: `ClickHouseTestServer`
-      launches a real, standalone `clickhouse` server binary as a
-      subprocess (downloaded once from ClickHouse's own GitHub releases,
-      cached locally) rather than Docker/testcontainers — confirmed
-      directly that Docker's daemon could not be started in the
-      onboarding sandbox (`ulimit: error setting limit (Operation not
-      permitted)`), so testcontainers-based tests could only ever be
-      hoped to pass in CI, never actually run and confirmed locally.
-      Linux fully verified (real queries against a real started server);
-      macOS provisioning implemented (real release-asset URLs confirmed
-      to exist) but not independently runtime-verified — no macOS
-      environment was available this pass. Windows excluded entirely (a
-      hard platform constraint — ClickHouse has no native Windows server
-      build), both the test class and the `clickhouse-spark-runtime`
-      dependency itself, the same "exclude the dependency, not just the
-      test class" pattern Iceberg's JDK<17 exclusion already established.
-- [x] **A second real environment fix, general beyond ClickHouse**: JDK 21
-      changed `DirectByteBuffer`'s private constructor signature, breaking
-      Arrow 12.0.1 (Spark 3.5.1's bundled version) via a confirmed
-      external bug (apache/arrow#35053, fixed in 13.0.0) — the first
-      connector in this module to actually exercise Arrow-based
-      serialization. Not fixable via `--add-opens` (both relevant flags
-      were already present); fixed via a `dependencyOverrides` pin to
-      Arrow 14.0.1 for the test classpath only, confirmed to not affect
-      the shipped jar (Arrow is never a compile/runtime dependency here).
-- [x] **A real reflective jar scan of `clickhouse-spark-runtime` (6,181
-      classes) found zero `Command`-shaped classes** — the second
-      connector (after Avro) with no SQL-extension commands at all.
-      `AppendData`/`OverwriteByExpression`/`CreateTableAsSelect`/
-      `ReplaceTableAsSelect` (already generic from Iceberg's pass) and
-      `CreateNamespace`/`CreateTable`/`AnalyzeTable`/`ShowTables`
-      (already safe-listed generically) all confirmed to cover
-      ClickHouse "for free," zero new `FailClosedCommands` entries.
-- [x] **One genuinely new, connector-agnostic `WriteCommandSupport` case:
-      `DeleteFromTable`.** Confirmed empirically that a real predicate-
-      based `DELETE FROM ... WHERE ...` executes successfully against
-      ClickHouse (unlike Parquet/CSV/Avro's plain tables), via Spark's
-      plain `SupportsDelete` mechanism rather than the
-      `SupportsRowLevelOperations`/`RewriteRowLevelOperation` path
-      Iceberg's row-level DML uses — a structurally different, simpler,
-      previously-unrecognized write shape (`FailClosedCommands.scala`
-      had explicitly documented it as "deliberately not listed" since
-      Delta's own onboarding). Structural verification only (target
-      location/schema), matching the Delta/Iceberg row-level DML
-      precedent — the delete predicate itself isn't checked.
-- [x] **A real, found-but-deliberately-undebugged finding**: `MERGE INTO`
-      against ClickHouse fails at analysis time
-      (`UNRESOLVED_COLUMN.WITH_SUGGESTION`) before ever producing a
-      `Command`-shaped plan at all, consistent with the connector's own
-      "not supported" documentation. Root cause not chased further — the
-      practical conclusion (no translatable plan) doesn't depend on it.
-- [x] **A real, confirmed read/write location-format asymmetry**, not an
-      Invariant bug: writes resolve to a computed 3-part qualified
-      identifier (`catalog.namespace.table`); reads resolve to
-      `ClickHouseTable`'s own `Table.name()`, a backtick-quoted 2-part
-      `` `namespace`.`table` `` with no catalog prefix. A contract's
-      declared input `location` for a ClickHouse table must use the
-      quoted 2-part form — confirmed and exercised directly in
-      `ClickHouseConnectorSpec`'s read test. A possible future
-      unification (connector-agnostic, affecting every DSv2 connector's
-      read-side location resolution) is noted as a next step, not
-      attempted this pass.
-- [x] **Feature surface**: ClickHouse's own `ORDER BY`/sorting-key
-      nullability constraint (`allow_nullable_key`) confirmed genuinely
-      orthogonal to Invariant, the same "confirmed orthogonal" pattern as
-      Delta's `CHECK` constraints — a source DataFrame's correct
-      `nullable = false` isn't propagated by `DataFrameWriterV2.create()`
-      into the generated DDL, so ClickHouse enforces its own constraint
-      independently of whatever a contract declares.
-- [ ] **Real, honestly-recorded ❓ rows, unlike every prior connector's
-      pass**: ClickHouse's operation and feature surfaces are
-      substantially larger than any connector onboarded so far (a real
-      second network service with its own SQL dialect, storage engines,
-      and type system). Left ❓ this pass, each with a stated next step
-      in docs/connectors/clickhouse.md's coverage ledgers: streaming *read*
-      (only streaming *write* was investigated), `.saveAsTable()` onto
-      an *existing* table specifically (the identical `AppendData` shape
-      was confirmed via `.insertInto()`/`.writeTo().append()` instead),
-      server-side maintenance operations (`OPTIMIZE`/TTL-driven expiry/
-      etc.), and ClickHouse's richer type system (`LowCardinality`,
-      `Array`, `Map`, `Tuple`, `Nested` — every test this pass used only
-      `BIGINT` columns).
-- [x] Mutation testing scoped to the one changed file
-      (`WriteCommandSupport.scala`) — see docs/SPARK_ADAPTER.md's
-      "Mutation testing: ClickHouse connector support" subsection for
-      the cited score. `mimaReportBinaryIssues` clean (no public
-      signature changed — the new case is an addition inside an
-      existing private matcher). Real `unzip -l` jar inspection
-      confirmed zero `clickhouse-spark-runtime`/ClickHouse classes in
-      the assembled `spark-adapter` jar. `./dev/build`/`./dev/test`
-      pass against real `spark-submit`. Full `spark-adapter` suite: 227
-      tests, all 11 specs green (`ClickHouseConnectorSpec`: 15 tests).
-      Throwaway probe scaffolding deleted before this pass ended, per
-      the skill's own convention.
+Seventh connector onboarded. Originally scoped as BigQuery; redirected to
+ClickHouse at Phase 0 since BigQuery has no local/offline testing mode.
+Built a novel test-infrastructure mechanism — a real standalone
+`clickhouse` server binary launched as a subprocess, since Docker
+couldn't run in the onboarding sandbox — Linux fully verified, macOS
+provisioned but not runtime-verified, Windows excluded (no native
+server). Fixed a JDK 21/Arrow 12.0.1 incompatibility (general beyond
+ClickHouse) via a test-scope dependency override. Added one genuinely
+new, connector-agnostic write case (`DeleteFromTable`, via Spark's
+`SupportsDelete` mechanism). Found and documented a real read/write
+location-format asymmetry as a next step rather than a bug to fix this
+pass. Unlike every prior connector, left real ❓ rows honestly recorded
+(streaming read, existing-table `.saveAsTable()`, maintenance operations,
+richer type system) given ClickHouse's substantially larger surface. Full
+findings and both ledgers: docs/connectors/clickhouse.md.
 
 #### Scope (Future)
 
