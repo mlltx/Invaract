@@ -2433,6 +2433,80 @@ new "Hive support" section — summary here:
       not just "any write to a matching location yet" — confirmed stable
       across two full-suite runs after the fix.
 
+#### Sub-phase: Avro connector support (done)
+
+Sixth connector onboarded via the `add-spark-connector` skill's process.
+`org.apache.spark %% spark-avro % 3.5.1` added to `spark-adapter/build.sbt`
+as a `% "test"` dependency only — the first real dependency addition since
+Delta/Iceberg/Hive (unlike Parquet/CSV, Avro isn't bundled into
+`spark-sql`). Full findings and both coverage ledgers are in
+docs/SPARK_ADAPTER.md's new "Avro support" section — summary here:
+
+- [x] **A real reflective jar scan of `spark-avro` (the same technique
+      that found Delta's `MergeIntoCommand` and Hive's three write
+      commands) found zero `Command`-shaped classes** — no SQL-extension
+      commands at all, the first connector where this scan came back
+      empty. `AvroFileFormat` is a plain `FileFormat`, so the entire
+      operation surface routes through mechanisms Parquet/CSV's passes
+      already proved out, confirmed empirically via `injectCheckRule`
+      probes rather than assumed by analogy.
+- [x] **A real, general `WriteCommandSupport` bug found and fixed, not
+      Avro-specific** — the path-less new-table `.saveAsTable()`/
+      `.writeTo(...).create()` location-mismatch risk Parquet's own
+      coverage ledger had flagged but explicitly left unattempted.
+      Confirmed empirically (a direct `WriteCommandSupport.combined`
+      comparison on both captured plans, before any fix): the outer
+      `CreateDataSourceTableAsSelectCommand`'s location and the nested
+      `InsertIntoHadoopFsRelationCommand`'s location never agreed for a
+      `MANAGED` table with no explicit path, since Spark only populates
+      `table.storage.locationUri` when the command actually runs. Fixed
+      by computing the identical `SessionCatalog.defaultTablePath` Spark
+      itself uses internally (via `SparkSession.active`, the same
+      technique `StateChangingCallSupport.resolveIdentifier` already uses
+      for Iceberg's `CALL` procedures) — the two now agree by
+      construction. Benefits every V1-format connector's path-less
+      new-table create (Parquet/CSV/Hive/Avro alike), not just Avro.
+- [x] **A real, pre-existing `contract`/`StructuralVerifier` type-
+      vocabulary gap found via Avro's decimal logical type, but not
+      Avro-specific** — `ContractValidator`'s bare `"decimal"` keyword can
+      never match `StructuralVerifier`'s `DataType.typeName` comparison
+      (always precision/scale-qualified, e.g. `"decimal(10,2)"`), and
+      there's no parametrized form to declare instead. True for every
+      connector; never previously exercised by any existing connector's
+      tests. **Deliberately left unfixed this pass** — it's a
+      `contract`/`ir` module design change (a parametrized decimal
+      contract type), out of scope for a spark-adapter connector pass.
+      Documented with a next step and a permanent test pinning the
+      current (mismatching) behavior, not silently worked around.
+- [x] **Feature surface**: `avroSchema` explicit external reader schema,
+      logical types (`decimal`/`date`/`timestamp`) round-trip,
+      `recordName`/`recordNamespace` write options, and compression codec
+      options all confirmed transparent; nullability-on-read-back
+      confirmed independently (Avro's `["null", T]` union representation,
+      not inherited from any other connector's reader);
+      `ignoreExtension` confirmed as a genuinely Avro-specific read-time
+      filtering behavior with no effect on schema/verification.
+- [x] Mutation testing scoped to the one changed file
+      (`WriteCommandSupport.scala`, the only `src/main/scala` change this
+      pass needed): **76.74%** (33/43 non-excluded mutants killed),
+      clearing the 70% break threshold — see docs/SPARK_ADAPTER.md's new
+      "Mutation testing: Avro connector support" subsection; all 10
+      survivors confirmed to fall outside the code this pass actually
+      changed (re-surfaced pre-existing survivors already documented in
+      Hive's own mutation-testing subsection), zero real survivors in the
+      new `defaultTablePath` fallback itself. `mimaReportBinaryIssues`
+      clean (no public signature changed — the fix is internal to an
+      existing private match case). Real `unzip -l` jar inspection
+      confirmed zero `spark-avro`/Avro classes in the assembled
+      `spark-adapter` jar. `./dev/build`/`./dev/test`/`./dev/regression`
+      all pass against real `spark-submit`. Full `spark-adapter` suite:
+      212 tests, all 10 specs
+      green (`AvroConnectorSpec`: 23 tests). Throwaway probe scaffolding
+      (`AvroConnectorProbeSpec.scala`) deleted before this pass ended, per
+      the skill's own convention. Both of Avro's coverage ledgers
+      (operation surface, feature surface) are fully closed — no ❓ rows
+      remaining in either.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

@@ -52,11 +52,27 @@ val icebergVersion = "1.11.0"
 // Delta/Iceberg are.
 val sparkHiveVersion = sparkVersion
 
+// Avro support, unlike Parquet/CSV (Spark's own bundled FileFormat
+// implementations), is a separate first-party artifact Spark splits out
+// of spark-sql - a job that never touches Avro doesn't need Avro's own
+// (org.apache.avro) dependency footprint on its classpath. Same
+// test-scope-only reasoning as spark-hive above: needed only to spin up
+// a real Avro-enabled read/write session to test against; the actual
+// write-command shape it produces is the exact same generic
+// InsertIntoHadoopFsRelationCommand/CreateDataSourceTableAsSelectCommand/
+// WriteToStream family already recognized for Parquet/CSV, requiring no
+// Avro-specific type in WriteCommandSupport.scala at all. Pinned to the
+// exact same sparkVersion as spark-core/spark-sql/spark-hive above -
+// spark-avro ships per-Spark-release, not on its own version line the
+// way Delta/Iceberg are.
+val sparkAvroVersion = sparkVersion
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
   "io.delta" %% "delta-spark" % deltaVersion % "test",
   "org.apache.spark" %% "spark-hive" % sparkHiveVersion % "test",
+  "org.apache.spark" %% "spark-avro" % sparkAvroVersion % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",

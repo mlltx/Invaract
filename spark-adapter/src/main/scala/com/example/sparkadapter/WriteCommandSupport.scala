@@ -122,14 +122,39 @@ private[sparkadapter] object WriteCommandSupport {
   // from both shapes above. `table.provider` is already the clean format
   // string `formatOf` derives from `DataSourceRegister` elsewhere - no
   // lookup needed here.
+  //
+  // A path-less new-table create (no explicit `.option("path", ...)`) is a
+  // real, previously-documented-but-unfixed gap (see Parquet's own "shared
+  // pitfall" write-up in docs/SPARK_ADAPTER.md): `cmd.table.storage.locationUri`
+  // is unset at analysis time for a MANAGED table - Spark only populates it
+  // when `CreateDataSourceTableAsSelectCommand.run()` actually executes,
+  // via `SessionCatalog.defaultTablePath`. Falling back to the bare
+  // qualified identifier (as this used to) produces a location that can
+  // never agree with the nested `InsertIntoHadoopFsRelationCommand`'s real
+  // physical path - confirmed empirically (not assumed) via the Avro
+  // connector pass: `spark_catalog.default.t` vs.
+  // `file:/warehouse/t`, unconditionally unequal, so no single contract
+  // `location` value could ever satisfy both checks for the exact same
+  // logical write. Fixed by computing the identical
+  // `SessionCatalog.defaultTablePath` Spark itself will use - the same
+  // "ask the active session's own resolution logic" technique
+  // `StateChangingCallSupport.resolveIdentifier` already uses for Iceberg's
+  // `CALL` procedures - so the two now agree by construction, the same
+  // guarantee the DSv2 `StagedTable` fix below already gives the V2 side.
   private val createDataSourceTableAsSelect: PartialFunction[LogicalPlan, WriteCommandInfo] = {
     case cmd: CreateDataSourceTableAsSelectCommand =>
       val (location, diagnostic) = cmd.table.storage.locationUri match {
         case Some(uri) => (uri.toString, None)
         case None =>
-          val msg = s"No storage location on new table '${cmd.table.identifier}'; " +
-            "using its table identifier as a best-effort location"
-          (cmd.table.identifier.unquotedString, Some(Diagnostic("CreateDataSourceTableAsSelectCommand", msg)))
+          scala.util.Try(
+            org.apache.spark.sql.SparkSession.active.sessionState.catalog.defaultTablePath(cmd.table.identifier)
+          ) match {
+            case scala.util.Success(uri) => (uri.toString, None)
+            case scala.util.Failure(_) =>
+              val msg = s"No storage location on new table '${cmd.table.identifier}', and its default " +
+                "warehouse path could not be resolved; using its table identifier as a best-effort location"
+              (cmd.table.identifier.unquotedString, Some(Diagnostic("CreateDataSourceTableAsSelectCommand", msg)))
+          }
       }
       WriteCommandInfo(
         location = location,

@@ -1016,6 +1016,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests. See docs/SPARK_ADAPTER.md's new "Hive support" section (both
   coverage ledgers) and ROADMAP.md for full details. `HiveConnectorSpec`:
   26 tests. Full `spark-adapter` suite: 189 tests, all 9 specs green.
+- **Avro connector support**: sixth connector onboarded via the
+  `add-spark-connector` skill's process. `org.apache.spark %% spark-avro
+  % 3.5.1` added to `spark-adapter/build.sbt` as a `% "test"` dependency
+  only — the first real dependency addition since Delta/Iceberg/Hive
+  (unlike Parquet/CSV, Avro isn't bundled into `spark-sql`). A reflective
+  jar scan found **zero `Command`-shaped classes** in `spark-avro` — the
+  first connector where this scan came back empty — so the entire
+  operation surface routes through the same generic mechanisms
+  Parquet/CSV's passes already proved out, confirmed empirically rather
+  than assumed. This pass also closed a real, **general** (not
+  Avro-specific) `WriteCommandSupport` bug that Parquet's own coverage
+  ledger had flagged but explicitly left unattempted: a path-less
+  new-table `.saveAsTable()`/`.writeTo(...).create()` produced two
+  Command-shaped plans whose translated locations could never agree
+  (the outer command fell back to the bare qualified identifier, the
+  nested one resolved the real physical path) — fixed by computing the
+  same `SessionCatalog.defaultTablePath` Spark itself uses internally,
+  benefiting every V1-format connector's path-less new-table create, not
+  just Avro. Also found, and deliberately left unfixed as out of scope
+  for a connector pass: a pre-existing `contract`/`StructuralVerifier`
+  type-vocabulary gap where a contract can never declare a matching type
+  for *any* decimal field, from any connector (`ContractValidator`'s bare
+  `"decimal"` keyword can't match `StructuralVerifier`'s
+  precision/scale-qualified `DataType.typeName` comparison) — documented
+  with a next step and a permanent test pinning the current behavior.
+  Feature surface: `avroSchema` explicit external reader schema, logical
+  types (`decimal`/`date`/`timestamp`) round-trip, `recordName`/
+  `recordNamespace` write options, and compression codec options all
+  confirmed transparent; nullability-on-read-back and `ignoreExtension`
+  (Avro's own read-time file-filtering option) both confirmed with
+  permanent tests. See docs/SPARK_ADAPTER.md's new "Avro support" section
+  (both coverage ledgers) and ROADMAP.md for full details.
+  `AvroConnectorSpec`: 23 tests. Full `spark-adapter` suite: 212 tests,
+  all 10 specs green.
 
 ### Deprecated
 
