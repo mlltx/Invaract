@@ -2,9 +2,11 @@
 
 This is the reusable process for giving `spark-adapter` full read/write
 support for a data source it doesn't yet understand — Delta Lake today
-(see docs/SPARK_ADAPTER.md's "Delta Lake support" and "Fail-closed on
-unverifiable writes" sections), Iceberg, ClickHouse, Avro, or anything
-else a future contributor wants to add.
+(see docs/connectors/delta.md and docs/SPARK_ADAPTER.md's "Fail-closed on
+unverifiable writes" section), Iceberg, ClickHouse, Avro, or anything
+else a future contributor wants to add. Per-connector write-ups and
+coverage ledgers live under docs/connectors/ — see
+docs/SPARK_ADAPTER.md's "Connector support" section for the index.
 
 It exists because Delta support was built twice: once for `.save(...)`
 writes, then again — separately — for `.saveAsTable(...)` and the

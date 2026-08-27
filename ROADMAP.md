@@ -1015,8 +1015,7 @@ would need to add to their `spark-submit` to use Invariant.
       all pass.
     - Full detail, including the empirical investigation methodology
       (throwaway `QueryExecutionListener`-based probes against a real
-      Delta session), in docs/SPARK_ADAPTER.md's "Delta Lake support"
-      section.
+      Delta session), in docs/connectors/delta.md.
 
 #### Sub-phase: Fail-closed on unverifiable writes (done)
 
@@ -1610,7 +1609,7 @@ Second connector onboarded via the `add-spark-connector` skill's
 Phase 0 — 1.10.0 had a confirmed Avro/Spark-3.5 compatibility bug, fixed
 before 1.11.0). Full findings, the operation-surface and feature-surface
 coverage ledgers, and the per-mutant mutation-testing breakdown are in
-docs/SPARK_ADAPTER.md's "Iceberg support" section — summary here:
+docs/connectors/iceberg.md — summary here:
 
 - [x] **Two real, connector-agnostic gaps found and closed, that
       predate Iceberg entirely.** Batch `DataSourceV2Relation` reads had
@@ -1700,8 +1699,8 @@ docs/SPARK_ADAPTER.md's "Iceberg support" section — summary here:
       non-excluded mutants killed. Both real survivors in this pass's own
       new code (`CreateTableAsSelect.saveMode`'s `ignoreIfExists` branch;
       the new batch-read no-location diagnostic) were killed with new
-      tests, not left — see docs/SPARK_ADAPTER.md's "Iceberg support"
-      section for the per-mutant breakdown. The remaining 12 survivors
+      tests, not left — see docs/connectors/iceberg.md for the per-mutant
+      breakdown. The remaining 12 survivors
       are all pre-existing, already-documented from earlier sub-phases
       (Delta's `catalogTable.isDefined`/`DeltaTableV2` guards, the
       `WriteFiles`/`DeltaSink`/`JDBCRelation` near-equivalents, the
@@ -2098,8 +2097,7 @@ Third connector onboarded via the `add-spark-connector` skill's process —
 a different shape than Delta/Iceberg, since Parquet is Spark's own
 built-in `FileFormat`, not a separate library: nothing added to
 `build.sbt`, not even a `% "test"` dependency. Full findings and both
-coverage ledgers are in docs/SPARK_ADAPTER.md's new "Parquet support"
-section — summary here:
+coverage ledgers are in docs/connectors/parquet.md — summary here:
 
 - [x] **A real bug found and fixed: streaming writes to any plain
       `FileFormat`-based sink (Parquet, but also CSV/JSON/ORC/text —
@@ -2440,7 +2438,7 @@ Sixth connector onboarded via the `add-spark-connector` skill's process.
 as a `% "test"` dependency only — the first real dependency addition since
 Delta/Iceberg/Hive (unlike Parquet/CSV, Avro isn't bundled into
 `spark-sql`). Full findings and both coverage ledgers are in
-docs/SPARK_ADAPTER.md's new "Avro support" section — summary here:
+docs/connectors/avro.md — summary here:
 
 - [x] **A real reflective jar scan of `spark-avro` (the same technique
       that found Delta's `MergeIntoCommand` and Hive's three write
@@ -2516,8 +2514,7 @@ offline testing mode (a real GCP project, billing, and credentials would
 be required, unavailable in the onboarding session and incompatible with
 this repo's real-execution testing philosophy) while ClickHouse *is*
 genuinely testable without a cloud account. Full findings and both
-coverage ledgers are in docs/SPARK_ADAPTER.md's new "ClickHouse support"
-section — summary here:
+coverage ledgers are in docs/connectors/clickhouse.md — summary here:
 
 - [x] **A genuinely new test-infrastructure mechanism**: `ClickHouseTestServer`
       launches a real, standalone `clickhouse` server binary as a
@@ -2593,7 +2590,7 @@ section — summary here:
       substantially larger than any connector onboarded so far (a real
       second network service with its own SQL dialect, storage engines,
       and type system). Left ❓ this pass, each with a stated next step
-      in docs/SPARK_ADAPTER.md's coverage ledgers: streaming *read*
+      in docs/connectors/clickhouse.md's coverage ledgers: streaming *read*
       (only streaming *write* was investigated), `.saveAsTable()` onto
       an *existing* table specifically (the identical `AppendData` shape
       was confirmed via `.insertInto()`/`.writeTo().append()` instead),

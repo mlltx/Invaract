@@ -133,6 +133,16 @@ a human read of its actual SQL semantics in Phase 5.
 Delete the scan test once you have the class list; it's investigation
 scaffolding.
 
+Phase 2's probing and this reflective scan are both self-contained: each
+starts from a known Spark/connector version and produces a bounded
+finding (a list of plan shapes, a list of class names) that doesn't
+depend on anything else in the session. Where that's true, consider
+running the phase in a background agent instead of inline — the sbt
+compile/test noise and reflection output stay out of the main
+conversation, and only the finding comes back. Phase 4's classification
+still needs to happen with full context and the user in the loop; don't
+delegate that one.
+
 ## Phase 4 — Classify every class found
 
 For each concrete `Command` class from Phase 2 + Phase 3, decide one of:
@@ -199,6 +209,11 @@ registry" for the full reasoning before editing this.
   `SparkPlanAdapter.locationOf` where the shape matches; extend them only
   if the connector's format/location can't be derived through
   `DataSourceRegister`/`HadoopFsRelation`/`catalogTable`.
+  `WriteCommandSupport.scala` only grows over time (one `PartialFunction`
+  per connector-specific write shape, chained via `orElse`) — grep for
+  the existing case closest to the new shape rather than reading the
+  whole file; a scoped Read around that anchor is enough context for the
+  edit.
 - **Nothing else needs a matching write-recognition change.**
   `SparkPlanAdapter.Translator.translatePlan`, `ContractEnforcementRule.verifyOrThrow`,
   and `SparkAdapterListener.onSuccess` all already consult
@@ -296,20 +311,35 @@ check — not a tight poll loop, and not a status update every time you
 look. Narrate a result when a command actually finishes, not the wait
 itself.
 
+sbt test/stryker output and CI job logs are large and mostly noise. Pull
+them through a filter (`grep -A5 -i 'error\|fail\|survived'`, or a
+`tail`/`head_limit` on the read) before they land in context, rather than
+reading the raw output and finding the failure by eye — this applies
+whether the command ran locally or its log was fetched from CI.
+
 ## Phase 10 — Document
 
 Three places, each stating **precisely** what is and isn't covered
 (read/write/DML/streaming/maintenance — operation by operation, the way
-`docs/SPARK_ADAPTER.md`'s "Delta Lake support" and "Fail-closed on
-unverifiable writes" sections do), never a blanket "full support" claim.
+`docs/connectors/delta.md` and `docs/SPARK_ADAPTER.md`'s "Fail-closed on
+unverifiable writes" section do), never a blanket "full support" claim.
 Include the feature-surface findings from Phase 8, not just the
 operation-surface ones from Phase 7 — a fixed bug and a confirmed-
 transparent feature are both worth stating explicitly, the way
-docs/SPARK_ADAPTER.md's "Delta feature-by-feature confidence pass"
-subsection does:
+`docs/connectors/delta.md`'s "Delta feature-by-feature confidence pass"
+section does:
 
-- A new "`<Connector>` support" section in `docs/SPARK_ADAPTER.md`.
-- A `ROADMAP.md` sub-phase under Phase 1c.
+- A new `docs/connectors/<connector>.md` file (see the existing files
+  there for the shape — findings, both coverage ledgers, and any
+  bugs found/fixed), plus one row added to the index table in
+  `docs/SPARK_ADAPTER.md`'s "Connector support" section. Don't write the
+  full section inline into `docs/SPARK_ADAPTER.md` itself — that file is
+  cross-cutting architecture content shared by every connector, and
+  inlining kept it growing by a few hundred lines on every single pass
+  until the split that introduced `docs/connectors/`.
+- A `ROADMAP.md` sub-phase under Phase 1c — a short summary plus a link
+  to the new `docs/connectors/<connector>.md` file, not a restatement of
+  its content.
 - A `CHANGELOG.md` entry under `[Unreleased]`.
 
 ## Phase 11 — Coverage ledger and close-out
