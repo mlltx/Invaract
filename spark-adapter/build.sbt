@@ -31,10 +31,32 @@ val deltaVersion = "3.2.0"
 // Iceberg section for the citation.
 val icebergVersion = "1.11.0"
 
+// Hive support, unlike Delta/Iceberg above, is not an external connector
+// library - it's Spark's own first-party integration module, split out of
+// spark-sql into a separate artifact (`spark-hive`) precisely so a job
+// that never touches Hive doesn't need Hive's metastore-client dependency
+// footprint on its classpath. Same test-scope-only reasoning applies for
+// the same reason: `enableHiveSupport()` needs this to spin up a real
+// Hive-enabled session (an embedded Derby metastore, no external Hive
+// install needed for local/test use - the same "no external service
+// needed" property Iceberg's Hadoop-catalog test setup has), but the
+// actual write-command classes this module recognizes
+// (`InsertIntoHiveTable`/`CreateHiveTableAsSelectCommand`, both in
+// `org.apache.spark.sql.hive.execution`) are matched by reflection/class-
+// name string, the same convention `WriteCommandSupport.deltaRowLevelDml`
+// uses for Delta's internal command classes - so no compile-time or
+// runtime dependency on spark-hive is needed for a job that never enables
+// Hive support. Pinned to the exact same sparkVersion as spark-core/
+// spark-sql above (not a separately-versioned artifact) - Spark ships
+// spark-hive per-Spark-release, not on its own version line the way
+// Delta/Iceberg are.
+val sparkHiveVersion = sparkVersion
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
   "io.delta" %% "delta-spark" % deltaVersion % "test",
+  "org.apache.spark" %% "spark-hive" % sparkHiveVersion % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",

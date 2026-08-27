@@ -946,6 +946,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   format detection. `ParquetConnectorSpec`: 16 → 18 tests. Both of
   Parquet's coverage ledgers are now fully closed, no `❓` rows
   remaining.
+- **CSV connector support**: fourth connector onboarded via the
+  `add-spark-connector` skill's process — same shape as Parquet's, since
+  CSV is also Spark's own built-in `FileFormat`, not a separate library
+  (nothing added to `build.sbt`). Empirically confirmed, not assumed by
+  analogy, that CSV's operation surface routes through the exact same
+  generic mechanisms Parquet's pass already proved out, including a real
+  direct-construction test confirming the `FileStreamSink` reflection fix
+  generalizes to `CSVFileFormat` specifically. No bugs found, no new
+  structural pattern, zero `src/main/scala` changes — a pure confirmatory
+  audit on the operation surface, plus one permanent test Parquet's own
+  pass never had (`.writeTo(...).createOrReplace()`/`.replace()`
+  rejection, previously only probe-confirmed). The real substance was the
+  feature surface: CSV is a plain text format with no native schema,
+  unlike self-describing Parquet. Six CSV-specific behaviors confirmed
+  and codified into permanent tests: schema-inference default (no
+  `inferSchema` ⇒ every column reads back as `StringType`, correctly
+  rejected as a type mismatch against a contract declaring a numeric
+  type), header handling (positional `_c0`/`_c1` fallback is just an
+  ordinary column name), malformed-record modes (`FAILFAST` fails only at
+  execution, `DROPMALFORMED` silently drops bad rows), the
+  `columnNameOfCorruptRecord` column (an ordinary extra field), read-back
+  nullability (confirmed independently for CSV's own reader, not
+  inherited from Parquet), and date parsing with a custom `dateFormat`
+  (an unparseable date becomes `null` under `PERMISSIVE`, not a failure).
+  Also caught and fixed a real test-writing bug before landing: the first
+  draft of the streaming tests declared `type: long` for
+  `inferSchema=true`-sourced fields, but CSV infers small whole numbers
+  as `IntegerType` — both tests correctly failed with a real contract
+  violation on first run, fixed to declare `type: integer`. See
+  docs/SPARK_ADAPTER.md's new "CSV support" section (both coverage
+  ledgers) and ROADMAP.md for full details. `CsvConnectorSpec`: 19 tests.
+  Full `spark-adapter` suite: 163 tests, all 8 specs green.
+- **Hive connector support**: fifth connector onboarded via the
+  `add-spark-connector` skill's process, against a real embedded-Derby
+  Hive-enabled session (`enableHiveSupport()`, no external metastore
+  needed). `org.apache.spark %% spark-hive % 3.5.1` added to
+  `spark-adapter/build.sbt` as a `% "test"` dependency only. Unlike
+  Delta/Iceberg/Parquet/CSV's onboarding, this pass found the operation
+  surface genuinely under-covered, not just confirmed by analogy: a
+  reflective jar scan found three real, previously-unhandled
+  `spark-hive` `Command` classes (`CreateHiveTableAsSelectCommand`,
+  `InsertIntoHiveTable`, `InsertIntoHiveDirCommand` — the last found only
+  by the scan, not by trying standard `.save`/`.saveAsTable`/`.insertInto`
+  operations), all now translated writes. Two real, found-and-fixed
+  false-rejection bugs: (1) `HiveTableRelation`, the read-side shape for
+  a genuinely Hive-native table, had **no translation case at all**
+  (worse than previously documented — it isn't `LogicalRelation`-wrapped
+  the way Delta's read shape is, so it fell to the fully generic
+  `Unsupported` fallback, not even an imprecise-location one), fixed with
+  **zero new dependency** since `HiveTableRelation` turned out to live in
+  plain, already-`provided` `spark-catalyst`; (2) a static-partition
+  `INSERT INTO t PARTITION(dt='...') SELECT ...` omits the partition
+  column from the query's own schema entirely, the same false-rejection
+  class as Delta's generated columns/DSv2's target-only fields, fixed by
+  reusing the existing `unionNewFields` helper. One known, documented,
+  *unfixed* limitation found and given a standing regression test rather
+  than silently left implicit: `CreateHiveTableAsSelectCommand`'s outer
+  command has no resolved physical location for a genuinely new table or
+  for `.mode("overwrite")` onto an existing one (only append mode is
+  confirmed to agree with its nested `InsertIntoHiveTable`'s location),
+  the same class of gap Parquet's own new-table CTAS test already
+  documents as out of scope. Confirmed the existing generic fail-closed
+  policy already correctly covers Hive's `LOAD DATA INPATH`/`TRUNCATE
+  TABLE`/`MERGE INTO`/`UPDATE` with zero new `FailClosedCommands`
+  entries needed. Feature surface: bucketed tables, a real Hive UDF
+  (`GenericUDFUpper`), and read-back nullability (always nullable — Hive
+  DDL has no `NOT NULL` column constraint) all confirmed with permanent
+  tests. See docs/SPARK_ADAPTER.md's new "Hive support" section (both
+  coverage ledgers) and ROADMAP.md for full details. `HiveConnectorSpec`:
+  26 tests. Full `spark-adapter` suite: 189 tests, all 9 specs green.
 
 ### Deprecated
 

@@ -46,6 +46,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Union,
   Window
 }
+import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
@@ -158,6 +159,26 @@ private[sparkadapter] object SparkPlanAdapter {
     case other                =>
       jdbcLocationOf(other).getOrElse(lr.catalogTable.map(_.identifier.toString).getOrElse(lr.relation.toString))
   }
+
+  /** The physical location a `HiveTableRelation` (a real Hive-format
+    * catalog table read - a text/sequence-file/custom-SerDe table, or any
+    * Hive table with `spark.sql.hive.convertMetastore{Parquet,Orc}` turned
+    * off; a Parquet/ORC Hive table with conversion on, the default,
+    * resolves to `LogicalRelation`/`HadoopFsRelation` instead, already
+    * covered by `locationOf` above) should be identified by.
+    *
+    * Unlike every other Hive-specific case in this module
+    * (`WriteCommandSupport`'s `createHiveTableAsSelect`/`insertIntoHiveTable`/
+    * `insertIntoHiveDir`), this needs no reflection and no `spark-hive`
+    * dependency at all: confirmed empirically (not assumed from the class
+    * name alone) that `HiveTableRelation` itself lives in
+    * `org.apache.spark.sql.catalyst.catalog`, part of plain `spark-catalyst`
+    * - already on this module's `provided` Spark dependency, not the
+    * separate `spark-hive` artifact `WriteCommandSupport`'s write-side
+    * cases need reflection to avoid depending on.
+    */
+  private[sparkadapter] def hiveTableRelationLocationOf(htr: HiveTableRelation): String =
+    htr.tableMeta.storage.locationUri.map(_.toString).getOrElse(htr.tableMeta.identifier.unquotedString)
 
   /** `JDBCRelation` is `private[sql]` in Spark, so it can't be named as a
     * pattern-match type outside `org.apache.spark.sql` — but the
@@ -303,6 +324,31 @@ private[sparkadapter] object SparkPlanAdapter {
             s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
           )
         ir.Read(ir.DatasetRef(SparkPlanAdapter.locationOf(lr)))
+
+      // A real Hive-format catalog table read - confirmed empirically (a
+      // real embedded-Derby Hive session, not assumed) to be a genuine,
+      // previously-unrecognized read shape, and a worse gap than it first
+      // looked: HiveTableRelation is NOT a LogicalRelation-wrapped relation
+      // the way Delta's read shape turned out to be (see "Delta Lake
+      // reads" in docs/SPARK_ADAPTER.md) - it's its own top-level
+      // LeafNode - so before this case existed it fell all the way through
+      // to the generic Unsupported fallback below, meaning a Hive-native
+      // table (any non-Parquet/ORC SerDe, or a Parquet/ORC table with
+      // spark.sql.hive.convertMetastoreParquet/Orc explicitly disabled)
+      // could never satisfy a contract's declared input at all - not
+      // merely an imprecise location the way the generic LogicalRelation
+      // fallback gives other unrecognized relations. A Parquet/ORC Hive
+      // table with conversion ON (the default) resolves to
+      // LogicalRelation/HadoopFsRelation instead, confirmed via the same
+      // probe, already covered by the case above - this case is only
+      // reached for the genuinely Hive-native path.
+      case htr: HiveTableRelation =>
+        if (htr.tableMeta.storage.locationUri.isEmpty)
+          report(
+            "HiveTableRelation",
+            s"No storage location on Hive table '${htr.tableMeta.identifier}'; using its table identifier as a best-effort location"
+          )
+        ir.Read(ir.DatasetRef(SparkPlanAdapter.hiveTableRelationLocationOf(htr)))
 
       // A streaming source's top-level plan - confirmed empirically (not
       // assumed) to be one of two shapes depending on whether the

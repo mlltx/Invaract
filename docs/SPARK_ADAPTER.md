@@ -1442,6 +1442,426 @@ by analogy to Delta/Iceberg's own storage-layer rows, each converted to a
 permanent test before its probe was deleted. Every row of both ledgers now
 has a real disposition: no ❓ remaining in either.
 
+## CSV support
+
+Fourth connector onboarded via the `add-spark-connector` skill's process
+(docs/ADDING_A_SPARK_CONNECTOR.md). Like Parquet, CSV is not a separate
+connector library at all: `org.apache.spark.sql.execution.datasources.csv.CSVFileFormat`
+is Spark's own built-in `FileFormat`, already on this module's `provided`
+`spark-sql` dependency — nothing added to `build.sbt`, not even as a
+`% "test"` dependency. It shares Parquet's exact operation-surface
+architecture (default `spark_catalog`, no catalog of its own, no
+row-level DML, no versioning, no SQL-extension `Command` classes, the
+same `FileStreamSink` streaming-sink class), so this pass empirically
+confirmed — not assumed by analogy — that every operation-surface row
+routes through the exact same generic mechanisms Parquet's pass already
+proved out (`InsertIntoHadoopFsRelationCommand`,
+`CreateDataSourceTableAsSelectCommand`, `WriteToStream`/`FileStreamSink`,
+including the private-field-reflection fix from Parquet's pass — a real
+direct-construction test confirms it generalizes to `CSVFileFormat`
+specifically, not just assumed connector-agnostic from its own doc
+comment). **No bugs found, no new structural patterns, zero
+`src/main/scala` changes** — this pass is a pure confirmatory audit of
+the operation surface plus real, substantive new ground on the feature
+surface, since CSV — unlike Parquet — is a plain text format with no
+native schema.
+
+**What's genuinely new for CSV: the feature surface, not the operation
+surface.** CSV has real, CSV-specific behaviors with no Parquet analog,
+each confirmed with a real probe and codified into a permanent test:
+
+- **Schema inference default.** Without `inferSchema=true` (or an
+  explicit schema), every column reads back as `StringType` — confirmed
+  directly, and confirmed to have the correct practical consequence: a
+  contract declaring a numeric type for a field sourced from a plain
+  (no-inferSchema) CSV read is correctly rejected as
+  `OUTPUT_FIELD_TYPE_MISMATCH`, not silently passed. With
+  `inferSchema=true`, real types (`IntegerType` for small whole numbers,
+  not `LongType` — a real gotcha this pass's own tests initially got
+  wrong, see below) are resolved and satisfy a contract declaring them.
+- **Header handling.** `header=true`/`header=false` is transparent:
+  without a header, CSV falls back to positional `_c0`/`_c1`/... column
+  names, which are just ordinary column names as far as translation and
+  verification are concerned — a contract can declare and satisfy them
+  like any other field name.
+- **Malformed-record modes.** `FAILFAST` confirmed to fail only at
+  execution (task/job failure reading the bad record), never at
+  analysis — the same "orthogonal to Invariant's structural check"
+  pattern already confirmed for Parquet's corrupt-file case.
+  `DROPMALFORMED` confirmed to silently exclude bad rows from what's
+  written, with the analyzed schema unaffected, so a contract is
+  satisfied against the remaining good rows.
+- **`columnNameOfCorruptRecord`.** Confirmed to be transparent: declaring
+  it just adds an ordinary extra `StringType` column to the analyzed
+  schema — Invariant sees it like any other field, no special handling
+  needed, and a contract that declares it is satisfied normally.
+- **Nullability on read-back.** Every field reports `nullable = true`
+  after a CSV write+read round-trip, regardless of the original schema's
+  nullability — confirmed independently for CSV specifically (not
+  inherited from Parquet's reader the way Delta's/Iceberg's own version
+  of this finding was, since CSV is a genuinely separate text-based
+  reader, not built on Parquet under the hood). Same practical
+  consequence for contract authors as Parquet's/Delta's/Iceberg's own
+  version of this finding.
+- **Date/timestamp parsing with a custom `dateFormat`.** Confirmed
+  transparent under `PERMISSIVE` mode: an unparseable date becomes
+  `null` in the row, not a thrown exception or an analysis-time failure —
+  the schema stays `DateType` either way, and a contract declaring it is
+  satisfied.
+
+**A real test-writing bug, caught and fixed before landing, not a product
+bug.** The first draft of this pass's two streaming tests declared
+`type: long` in their contracts for fields sourced from an
+`inferSchema=true` CSV read — but CSV's schema inference resolves small
+whole numbers to `IntegerType`, not `LongType` (confirmed directly by
+the dedicated inferSchema test, which correctly declares `type:
+integer`). Both streaming tests failed on first run with a real
+`ContractViolationException` (`INPUT_FIELD_TYPE_MISMATCH`/
+`OUTPUT_FIELD_TYPE_MISMATCH`, expected `integer` got `long`) — correctly
+caught by the engine doing its job, not a false pass. Fixed by declaring
+`type: integer` in both tests' contracts, matching what CSV's real
+inferred schema actually produces.
+
+### CSV operation-surface coverage ledger
+
+| Operation | Status | Evidence / next step |
+|---|---|---|
+| `.read.format("csv").load(path)`/`.csv(path)` | ✅ Covered | Same generic `LogicalRelation`+`HadoopFsRelation` handling as Parquet, confirmed for CSV specifically. `SparkPlanAdapterSpec`'s existing CSV read-format test; `CsvConnectorSpec`'s tests throughout exercise real CSV reads. |
+| Catalog table reference (`spark.table(...)`/`SELECT * FROM t`) | ✅ Covered | Same `LogicalRelation` shape via the default `spark_catalog`, confirmed via `injectCheckRule` probe and `CsvConnectorSpec`'s `.insertInto()` test (which reads the target table back through the catalog). |
+| Time travel / snapshot reads | 🚫 **N/A, not a real gap** | Plain CSV (`USING csv`, no table-format layer) has no versioning concept at all — the same architectural constraint as Parquet. Nothing to translate. |
+| Streaming read (`readStream`) | ✅ Covered | Generic `StreamingRelation`/`FileSource` handling, confirmed empirically for CSV. `CsvConnectorSpec`'s "PASS: a streaming CSV source satisfies a contract's declared input schema." |
+| Change-data-feed / incremental read | 🚫 **N/A, not a real gap** | No CDC mechanism exists for plain CSV — a table-format-only feature, the same constraint as Parquet. Nothing to translate. |
+| `.save(path)`, all four save modes | ✅ Covered | `InsertIntoHadoopFsRelationCommand`, confirmed for CSV via real probe (all four modes: `append`/`overwrite`/`ignore`/`error`) during Phase 3's operation-surface probe. |
+| `.saveAsTable(...)`, new table | ✅ Covered | `CreateDataSourceTableAsSelectCommand`, `table.provider = "csv"`. Confirmed via probe; exercised throughout `CsvConnectorSpec`'s setup code. |
+| `.saveAsTable(...)`, existing table (append) | ✅ Covered | Same nested-double-write pattern Parquet's pass documented (`CreateDataSourceTableAsSelectCommand` delegating to a nested `InsertIntoHadoopFsRelationCommand`), confirmed independently for CSV via a real PASS/FAIL pair — not assumed to generalize from Parquet. `CsvConnectorSpec`'s PASS/FAIL pair (the FAIL half also asserts the nested insert never ran). |
+| `.insertInto(...)` | ✅ Covered | Same `InsertIntoHadoopFsRelationCommand` shape. `CsvConnectorSpec`'s translation test via `SparkAdapterListener`. |
+| `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)` against an *existing* table | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Confirmed empirically for CSV specifically: `AnalysisException: Cannot write into v1 table` — the same V1/V2 architectural constraint as Parquet (plain CSV never implements the V2 `SupportsWrite` capability under the default `useV1SourceList`). `CsvConnectorSpec`'s test proving rejection and zero committed rows. |
+| `.writeTo(...).create()`, new table | ✅ Covered | With the format made explicit (`.using("csv")`), reuses the exact same `CreateDataSourceTableAsSelectCommand` path `.saveAsTable()` already uses — confirmed via `injectCheckRule`, no new plan shape. `CsvConnectorSpec`'s translation test. |
+| `.writeTo(...).createOrReplace()`/`.replace()` | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Confirmed empirically for CSV, for both new and existing tables, format made explicit: `AnalysisException: ... does not support REPLACE TABLE AS SELECT` — the default `spark_catalog` is not a `StagingTableCatalog` for V1-provider-backed tables. Unlike Parquet's pass (which only confirmed this via probe), `CsvConnectorSpec` has a dedicated permanent test for this row. |
+| Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **N/A — not a CSV capability at all** | Confirmed empirically: Spark itself rejects all three against a plain CSV table, the same messages as Parquet's (`MERGE INTO TABLE is not supported temporarily`/`UPDATE TABLE is not supported temporarily`/`AnalysisException` for `DELETE`). `CsvConnectorSpec`'s regression test proving rejection and an unchanged row count. |
+| Streaming write | ✅ Covered | `WriteToStream`/`FileStreamSink`, using the exact fix Parquet's pass made to `WriteCommandSupport.reflectiveSinkPath`/`streamSinkFormatOf` — confirmed to generalize to CSV specifically via a direct-construction test (`FileStreamSink` built with a real `CSVFileFormat`, translated synchronously), not assumed from the fix's own "connector-agnostic" doc comment. `CsvConnectorSpec`'s direct-construction test plus its streaming PASS/FAIL pair. |
+| Maintenance operations that touch data | 🚫 **N/A — no such mechanism exists** | Plain CSV has no connector-level maintenance command, the same constraint as Parquet. Nothing to classify. |
+
+### CSV feature-surface coverage ledger
+
+| Feature | Status | Evidence / next step |
+|---|---|---|
+| Schema inference default (no `inferSchema`, no explicit schema) | ✅ Confirmed — genuinely CSV-specific | Every column defaults to `StringType` when `inferSchema` is left off — a real gotcha with no Parquet analog (Parquet is self-describing). Confirmed a contract declaring a numeric type against such a read is correctly rejected as `OUTPUT_FIELD_TYPE_MISMATCH`. `CsvConnectorSpec`'s two tests (StringType default + rejection; `inferSchema=true` resolving real types and satisfying a typed contract). |
+| Header handling (`header=true`/`false`) | ✅ Confirmed transparent | Without a header, CSV falls back to positional `_c0`/`_c1`/... names — ordinary column names as far as translation/verification are concerned, no special handling needed. `CsvConnectorSpec`'s test. |
+| Malformed-record modes (`PERMISSIVE`/`DROPMALFORMED`/`FAILFAST`) | ✅ Confirmed orthogonal | `FAILFAST` fails only at execution, never at analysis — the same pattern as Parquet's corrupt-file case. `DROPMALFORMED` silently excludes bad rows; the analyzed schema is unaffected, and a contract is satisfied against the remaining rows. `CsvConnectorSpec`'s two tests. |
+| `columnNameOfCorruptRecord` | ✅ Confirmed transparent | An ordinary extra `StringType` column in the analyzed schema — no special handling needed, a contract declaring it is satisfied normally. `CsvConnectorSpec`'s test. |
+| Nullability on read-back | ✅ Confirmed — independently, not inherited from Parquet | Every field reports `nullable = true` after a CSV write+read round-trip regardless of declared nullability — confirmed directly for CSV's own (non-Parquet-based) reader, the same practical consequence as Parquet's/Delta's/Iceberg's own version of this finding. `CsvConnectorSpec`'s test. |
+| Date/timestamp parsing with a custom `dateFormat` | ✅ Confirmed transparent | An unparseable date under `PERMISSIVE` mode becomes `null` in the row, not a thrown exception or analysis-time failure — schema stays `DateType`, contract satisfied. `CsvConnectorSpec`'s test. |
+
+Net assessment: like Parquet, CSV's operation surface is fully enumerated
+with no ❓ rows — every row is either ✅ Covered (via mechanisms Parquet's
+pass already proved out and this pass independently confirmed generalize
+to CSV) or a genuinely reasoned 🚫 N/A, the second connector where the
+whole row-level-DML and DataSourceV2-catalog-write axes are
+architecturally inapplicable rather than future work. No bugs found and
+no `src/main/scala` changes were needed — CLAUDE.md's mutation-testing
+requirement (scoped to changed/added `src/main/scala` files) doesn't
+apply to this pass. The real substance was on the feature surface: six
+CSV-specific behaviors (schema-inference default, header handling,
+malformed-record modes, the corrupt-record column, nullability, and
+date parsing), each confirmed with a real probe and codified into a
+permanent test, plus one `createOrReplace()`/`.replace()` row given a
+dedicated permanent test where Parquet's own pass had only probed it.
+`CsvConnectorSpec`: 19 tests.
+
+## Hive support
+
+Added via the `add-spark-connector` skill's process
+(docs/ADDING_A_SPARK_CONNECTOR.md), against a real Hive-enabled session —
+`SparkSession.Builder.enableHiveSupport()` with an embedded, per-test
+Derby metastore (`javax.jdo.option.ConnectionURL` pointed at a temp
+directory), no external Hive install or metastore service needed.
+`org.apache.spark %% spark-hive % 3.5.1` was added to `spark-adapter/build.sbt`
+as a `% "test"` dependency only — Spark's own first-party Hive
+integration module, not an external connector library, but split out of
+`spark-sql` into its own artifact for exactly the reason every other
+connector in this document stays test-scoped: a job that never enables
+Hive support shouldn't carry its metastore-client dependency footprint.
+
+Unlike Delta/Iceberg's onboarding, this pass found the operation surface
+genuinely under-covered rather than confirmed-by-analogy — a reflective
+scan of `spark-hive`'s own jar for `Command` subclasses (the same
+technique that found Delta's `MergeIntoCommand`) found exactly three
+classes, and Phase 2's operation-surface probing against a real session
+found a fourth real gap on the *read* side that predates this pass
+entirely.
+
+### `HiveTableRelation` reads — zero new dependency, one real bug fixed
+
+The single most consequential finding: `HiveTableRelation` (the read-side
+shape for a genuinely Hive-native table — any non-Parquet/ORC SerDe, or a
+Parquet/ORC table with `spark.sql.hive.convertMetastore{Parquet,Orc}`
+explicitly disabled) is **not** `LogicalRelation`-wrapped the way Delta's
+read shape turned out to be (see "Delta Lake reads" above) — it's its own
+top-level `LeafNode`, confirmed empirically via a real `injectCheckRule`
+probe's full `treeString` output, not assumed from the class name. Before
+this pass, `SparkPlanAdapter.Translator.translatePlan` had no case for
+it at all, so it fell all the way through to the generic `Unsupported`
+fallback — worse than an imprecise location (the fate of every other
+unrecognized relation kind wrapped in `LogicalRelation`): a Hive-native
+table could never satisfy a contract's declared input, full stop. This
+corrects this document's own previous "Known limitations" bullet, which
+described the fallback mechanism slightly wrong (it named the
+`LogicalRelation`/`catalogTable` fallback) while correctly flagging the
+gap as real and untested.
+
+**Zero new dependency needed to fix it.** `HiveTableRelation` itself
+lives in `org.apache.spark.sql.catalyst.catalog` — plain, public
+`spark-catalyst`, already on this module's `provided` Spark dependency,
+not the separate `spark-hive` artifact. `SparkPlanAdapter` now imports it
+directly and pattern-matches on it like any other Catalyst type, no
+reflection needed (unlike every Hive-specific case on the write side
+below). `hiveTableRelationLocationOf` resolves
+`tableMeta.storage.locationUri`, falling back to the table's qualified
+identifier with a diagnostic if unset (not observed in practice — every
+real Hive table has a resolved storage location by the time it's
+readable). `ContractEnforcementRule.recognizedRead` got the matching
+case, so a Hive-native table now also satisfies a contract's declared
+`input` the same way every other read shape does.
+
+A Parquet/ORC Hive table with metastore conversion **on** (the default)
+was confirmed, separately, to still resolve to the pre-existing
+`LogicalRelation`/`HadoopFsRelation` case — the conversion setting, not
+the on-disk file format, determines which shape appears; both are tested
+in `HiveConnectorSpec`.
+
+### Write shapes — three real classes, all newly translated
+
+The reflective jar scan found exactly three concrete `Command` subclasses
+in `spark-hive`, all genuinely data-writing, none needing a
+`FailClosedCommands` safe-list entry (they're translated writes instead —
+see "Write command recognition: a single registry" below):
+
+- **`CreateHiveTableAsSelectCommand`** — `.format("hive").saveAsTable(...)`
+  and `CREATE TABLE ... STORED AS ... AS SELECT ...`. Confirmed
+  empirically to be used for *both* a genuinely new table and an append
+  onto an existing one (Hive's own command doesn't distinguish the two
+  the way `CreateDataSourceTableAsSelectCommand` does) — its `run()`
+  internally creates or verifies the table, then issues a second, nested
+  `InsertIntoHiveTable` to perform the actual write, the same
+  "one logical call, two Command-shaped plans" pitfall Parquet/Delta/
+  Iceberg's CTAS already document (see "A shared pitfall" below Delta's
+  ledger). `format` comes from `tableDesc.provider` (`"hive"`); location
+  from `tableDesc.storage.locationUri`.
+- **`InsertIntoHiveTable`** — `.insertInto(...)`, `INSERT [OVERWRITE]
+  [INTO] TABLE ...` against an existing table, and the nested write the
+  command above issues internally. `overwrite: Boolean` maps directly to
+  the contract's `append`/`overwrite` save modes — confirmed via a real
+  `INSERT OVERWRITE` test.
+- **`InsertIntoHiveDirCommand`** — `INSERT [OVERWRITE] [LOCAL] DIRECTORY
+  '<path>' [ROW FORMAT ...] SELECT ...`, Hive's directory-export write.
+  Found *only* by the reflective scan — it isn't a catalog-table write at
+  all, so none of the standard `.save`/`.saveAsTable`/`.insertInto` probes
+  in Phase 2 would ever have triggered it, the same lesson Delta's
+  `MergeIntoCommand` taught the first time this process was run. Writes
+  to an arbitrary filesystem path outside the catalog; `format` is
+  reported as `"hive"` uniformly (there's no `CatalogTable` to read a
+  provider string from).
+
+All three are matched by fully-qualified class name and read via public-
+method reflection — the same convention `WriteCommandSupport.deltaRowLevelDml`
+uses, for a related but distinct reason: these three *are* stable,
+documented Spark classes (not undocumented internals the way Delta's
+`MergeIntoCommand` is), it's just that `spark-hive` is a separate,
+optional, and much heavier artifact this module deliberately keeps off
+its `provided`/compile classpath, so a hard import isn't available.
+
+### A real, found-and-fixed false-rejection bug: static-partition INSERT
+
+The same false-rejection bug class Delta's generated columns and DSv2's
+target-only fields already taught this module to watch for, found again
+under a third, independent mechanism: `INSERT INTO t PARTITION(dt=
+'2024-01-01') SELECT ...` supplies the partition value as a literal in
+the `PARTITION` clause — confirmed empirically (not assumed) that this
+column **never appears in the query's own schema at all** (`InsertIntoHiveTable.query.schema`
+is missing it entirely, and `outputColumnNames` excludes it too). A
+contract requiring that column would have been falsely rejected with
+`MISSING_OUTPUT_FIELD` for a write that genuinely produces it.
+
+A **dynamic**-partition insert (`INSERT INTO t SELECT ..., dt`) does
+*not* have this problem — confirmed separately that the value comes from
+the `SELECT` itself, already part of `query.schema`, so the fix below is
+a no-op there.
+
+Fixed in `WriteCommandSupport.insertIntoHiveTable` by reusing the
+existing `unionNewFields` helper (previously private to the DSv2 target-
+only-fields fix and Delta's schema-evolution fix) to union any of
+`table.schema`'s fields not already present in `query.schema` into
+`outputSchema`, with a diagnostic. Safe for the same reason the DSv2 fix
+is safe: by the time this command reaches the check rule at all, Spark's
+own analyzer has already validated the write's column count/types
+against the target (a genuinely missing *data* column fails analysis
+before any plan is produced here) — the union can only ever add a field
+Spark itself has already endorsed as legitimately absent from the query.
+
+A related, second finding surfaced fixing this: the unioned partition-
+column field comes from `CatalogTable.schema`, whose columns
+(partition columns included) are always reported nullable — Hive's
+classic DDL has no `NOT NULL` column constraint to preserve in the first
+place, the same "every field nullable" finding independently confirmed
+for Hive's ordinary data columns below. A contract declaring a static-
+partition column `required: true` would still (correctly) fail
+`OUTPUT_FIELD_NULLABILITY_MISMATCH` — not a bug, a second, orthogonal
+instance of a finding this document already tracks for Parquet/CSV.
+
+Both directions verified in `HiveConnectorSpec`: a PASS test proving the
+static-partition case is no longer falsely rejected, a second PASS
+proving the (already-correct) dynamic-partition case, and a FAIL test
+proving a genuinely missing *data* field is still correctly caught
+alongside the partition-column fix.
+
+### Known limitation: CTAS with no pre-existing physical path
+
+**Found, not fixed** — the same class of gap Parquet's own `.saveAsTable()`-
+on-a-brand-new-table test already documents as out of scope, confirmed
+here to also apply to Hive, plus one Hive-specific extension of it.
+
+`CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri` is
+populated with the table's real physical path only when **appending
+onto an existing table** — the analyzer resolves `tableDesc` by looking
+up the existing catalog entry. It is `None`, falling back to the
+qualified catalog identifier (`spark_catalog.default.<table>`), both for
+a genuinely **new** table (nothing to look up yet — the same "no explicit
+path given" gap `CreateDataSourceTableAsSelectCommand` has, which
+Parquet's tests sidestep via `.option("path", ...)`, a knob Hive's
+`.saveAsTable()` has no equivalent of) **and**, confirmed empirically as
+a real, Hive-specific surprise, for `.mode("overwrite")` onto an
+**existing** table — overwrite is treated as replace-like, so the
+analyzer builds `tableDesc` fresh rather than consulting the existing
+entry, even though the table (and its real location) already exists.
+
+The nested `InsertIntoHiveTable`, built during `run()` after the table
+has been created or verified, always resolves the real physical path —
+so for both the new-table and overwrite-onto-existing cases, the outer
+and inner commands disagree on location, and a contract targeting the
+real physical path is rejected at the *outer* check before the inner,
+genuinely-correct one ever runs.
+
+**Append mode is the one case confirmed to agree by construction** — the
+PASS/FAIL pair in `HiveConnectorSpec` for the "two nested Command plans"
+scenario deliberately uses append, matching the one case verified safe.
+The overwrite-mode gap has its own dedicated test
+(`HiveConnectorSpec`'s "known limitation" test) proving the outer
+command's location really is the qualified identifier, not the physical
+path — a standing regression check on the gap itself, not just a
+disclosed limitation. **Next step, if closed later**: no `SparkSession`
+reference is threaded through `WriteCommandSupport` today (it's a pure
+`LogicalPlan → WriteCommandInfo` function), so resolving this would need
+either passing one through (a real API shape change) or accepting the
+qualified-identifier form as an equally valid contract `location` for
+this one write shape — neither attempted here, consistent with the
+Parquet precedent of leaving the analogous gap as documented future work
+rather than a scope-widening fix.
+
+### Feature surface
+
+- **Bucketed tables (`CLUSTERED BY ... INTO n BUCKETS`)** — confirmed
+  transparent, no fix needed. Bucketing metadata lives entirely in
+  `InsertIntoHiveTable.bucketSpec`, never touches the translated schema,
+  location, or format on either the read or write side.
+  `HiveConnectorSpec`'s permanent test.
+- **A real Hive UDF** (not Spark's own `ScalaUDF`) — confirmed
+  transparent. `isOpaqueUdf`'s existing `n.endsWith("HiveGenericUDF")`
+  check (already in the codebase, previously untested against a real
+  Hive UDF for lack of a metastore) correctly recognizes
+  `org.apache.hadoop.hive.ql.udf.generic.GenericUDFUpper`, translating it
+  as an opaque `FunctionCall` with a diagnostic — no fix needed, just the
+  first real confirmation. `HiveConnectorSpec`'s permanent test.
+- **Nullability on read-back** — confirmed, the same practical
+  consequence as Parquet's/CSV's own version of this finding, for an
+  independent reason: classic Hive DDL has no `NOT NULL` column
+  constraint at all, so every column — data or partition — is always
+  nullable in the catalog's own schema, regardless of what's actually
+  written. `HiveConnectorSpec`'s PASS/FAIL pair (a `required: false`
+  contract passes; `required: true` is correctly rejected as
+  `OUTPUT_FIELD_NULLABILITY_MISMATCH`).
+
+### Fail-closed policy — confirmed, not extended
+
+No `FailClosedCommands` changes were needed. Hive's own maintenance/DDL
+surface reuses generic Spark commands this module already classified
+during Delta/Iceberg's onboarding — confirmed for real against a Hive
+table, not left as a theoretical carryover:
+
+- `CreateTableCommand` (plain `CREATE TABLE`, no `AS SELECT`) — already
+  safe-listed, confirmed safe for a Hive-format table too.
+- `AnalyzeTableCommand`, `ShowTables`, `RepairTableCommand` (`MSCK REPAIR
+  TABLE`), `AlterTableAddPartitionCommand` — already safe-listed,
+  confirmed for real against a partitioned Hive table.
+- `LoadDataCommand` (`LOAD DATA [LOCAL] INPATH ... INTO TABLE`) and
+  `TruncateTableCommand` — already correctly *excluded* (documented as
+  genuinely data-mutating, deliberately unmodeled) — confirmed for real:
+  both are rejected, and the target table's data is left unchanged.
+- `MergeIntoTable`/`UpdateTable` — confirmed empirically to be real,
+  `Command`-shaped plans for a plain Hive table's `MERGE INTO`/`UPDATE`
+  (unlike Iceberg, which rewrites these into `ReplaceData`/`WriteDelta`
+  before they'd ever reach this point — Hive tables don't implement
+  `SupportsRowLevelOperations`, so the rewrite never applies). Already
+  correctly excluded from the safe list (this document's own exclusion
+  list already named both). Confirmed for real: Invariant's own
+  `UnverifiableWrite` rejection fires *before* Spark's own `MERGE INTO
+  TABLE is not supported temporarily`/`UPDATE TABLE is not supported
+  temporarily` error ever would. `DELETE FROM` against a plain Hive table
+  is rejected by Spark itself before producing any `Command`-shaped plan
+  at all — genuinely nothing for this policy to classify.
+
+### `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
+
+Both confirmed to be rejected by Spark before producing any analyzable
+plan Invariant could see, the same pattern already documented for
+Parquet/CSV: `.writeTo(...).append()` against a Hive table fails with
+`Cannot write into v1 table` (the default `spark_catalog` isn't a
+`SupportsWrite`-capable V2 catalog for V1-provider-backed tables); a
+streaming `.writeStream...toTable(...)` against a Hive table fails with
+`The input source(...) is different from the table ...'s data source
+provider(hive)` — Hive isn't a valid streaming sink format at all.
+`HiveConnectorSpec`'s two tests.
+
+### Hive operation-surface coverage ledger
+
+| Operation | Status | Evidence / next step |
+|---|---|---|
+| `.read.format("hive").load(path)` | 🚫 **N/A — no such mechanism exists** | Hive is catalog-only; there is no path-based `.load()` form for it (Hive tables are always addressed by catalog identifier). Nothing to translate. |
+| Catalog table read (`spark.table(...)`/`SELECT * FROM t`) | ✅ **Covered — closed this pass** | `HiveTableRelation`, a real, previously-untranslated read shape — see above. `HiveConnectorSpec`'s translation test and PASS enforcement test. Parquet/ORC-with-conversion reads confirmed to still use the pre-existing `LogicalRelation` case, also tested. |
+| Time travel / snapshot reads | 🚫 **N/A — no such mechanism exists** | Hive tables have no versioning/snapshot concept. Nothing to translate. |
+| Streaming read (`readStream`) | 🚫 **N/A — no such mechanism exists** | No streaming source implementation exists for the Hive table format. Not attempted; genuinely nothing to test against. |
+| Change-data-feed / incremental read | 🚫 **N/A — no such mechanism exists** | No CDC mechanism exists for Hive tables. Nothing to translate. |
+| `.save(path)` | 🚫 **N/A — rejected by Spark itself** | `df.write.format("hive").save(path)` is rejected outright by Spark (`Hive data source can only be used with tables`) — confirmed via the Spark documentation this module's Phase 0 investigation checked; Hive is `.saveAsTable()`-only by design. Not a translation gap. |
+| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. Translation-level test passes; enforcement has a documented, tested gap when no physical path pre-exists — see "Known limitation" above. Next step: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change) or accept the qualified identifier as an equally valid declared `location`, neither attempted here. |
+| `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Same two commands, confirmed to agree on the real physical path for append mode specifically. `HiveConnectorSpec`'s PASS/FAIL pair. |
+| `.insertInto(...)` | ✅ **Covered — closed this pass** | `InsertIntoHiveTable`. `HiveConnectorSpec`'s PASS/FAIL pair, plus a dedicated translation test confirming `INSERT OVERWRITE`'s save mode. |
+| `.writeTo(...)` (DataFrameWriterV2) | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | `Cannot write into v1 table` — the default `spark_catalog` isn't a `SupportsWrite` V2 catalog for Hive tables. `HiveConnectorSpec`'s test. |
+| Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **Fails closed (MERGE/UPDATE), N/A (DELETE)** | `MergeIntoTable`/`UpdateTable` are real `Command`-shaped plans, correctly rejected by the existing generic exclusion (no new code needed) — `HiveConnectorSpec`'s enforcement test. `DELETE FROM` is rejected by Spark itself before any plan is produced. Next step, if ever pursued: would need the same kind of structural-only treatment `deltaRowLevelDml`/`dsv2RowLevelWrite` give Delta/DSv2 MERGE — not attempted, since plain Hive tables have no ACID/row-level-mutation storage layer in vanilla OSS Spark to make this meaningful. |
+| Streaming write | 🚫 **N/A — rejected by Spark itself** | No valid streaming sink format for Hive tables — confirmed via a real rejected `.toTable()` call. `HiveConnectorSpec`'s test. |
+| Maintenance operations that touch data | ✅ **Covered by policy classification** | `LoadDataCommand` (`LOAD DATA INPATH`) and `TruncateTableCommand` confirmed, for real against a Hive table, to already be correctly excluded from `FailClosedCommands`' safe list — both fail closed, with a dedicated test proving the target table's data is left unchanged. `INSERT ... DIRECTORY` (`InsertIntoHiveDirCommand`) is a real, translated write, not a maintenance op — see above. |
+
+### Hive feature-surface coverage ledger
+
+| Feature | Status | Evidence / next step |
+|---|---|---|
+| Static-partition `INSERT ... PARTITION(...)` | 🔧 **Found and fixed** | The partition column is missing from the query's own schema entirely — real false-rejection bug, fixed via `unionNewFields` in `WriteCommandSupport.insertIntoHiveTable`. `HiveConnectorSpec`'s PASS test (the fix) and FAIL test (a genuinely missing data field is still caught). |
+| Dynamic-partition `INSERT ... SELECT ..., col` | ✅ Confirmed — already correct | The partition column comes from the `SELECT` itself, already part of `query.schema` — no fix needed. `HiveConnectorSpec`'s PASS test. |
+| Bucketed tables (`CLUSTERED BY ... INTO n BUCKETS`) | ✅ Confirmed transparent | Bucketing metadata never affects the translated schema/location/format on either read or write. `HiveConnectorSpec`'s test. |
+| Real Hive UDFs (`HiveSimpleUDF`/`HiveGenericUDF`) | ✅ Confirmed transparent | The existing `isOpaqueUdf` suffix check, previously untested against a real Hive UDF, correctly recognizes `GenericUDFUpper`. `HiveConnectorSpec`'s test. |
+| Nullability on read-back | ✅ Confirmed — independently, same practical consequence as Parquet/CSV | Every Hive column (data or partition) is always nullable in the catalog schema — classic Hive DDL has no `NOT NULL` constraint to preserve. `HiveConnectorSpec`'s PASS/FAIL pair. |
+| Metastore-conversion toggle (`spark.sql.hive.convertMetastoreParquet`) | ✅ Confirmed — determines which operation-surface row applies, not a bug | With conversion on (default), a Parquet/ORC Hive table's reads/writes use the pre-existing `LogicalRelation`/`InsertIntoHadoopFsRelationCommand` cases; with it off, the same table uses `HiveTableRelation`/`InsertIntoHiveTable` instead. Both confirmed correct. `HiveConnectorSpec`'s tests for both settings. |
+
+Net assessment: Hive is not "100% supported," the same honest framing
+every other connector in this document gets — but every operation-surface
+row has a disposition and every disposition but one is ✅ Covered, and
+that one row's gap is a tested, documented limitation with a concrete
+next step, not a silent one. Two real bugs were found and fixed (the
+`HiveTableRelation` read gap, the static-partition schema gap); one real
+gap was found and left open with a standing regression test proving it's
+still there (CTAS/overwrite location resolution); everything else was a
+genuine confirmation, not an assumption carried over from Delta/Iceberg/
+Parquet's own onboarding. `HiveConnectorSpec`: 26 tests.
+
 ## Fail-closed on unverifiable writes
 
 Every translation gap above — `.saveAsTable()` before
@@ -1612,14 +2032,19 @@ undetected — see "Mutation testing" below for the resulting score.
   `Diagnostic`, rather than inventing a generic aliased-subplan IR node for
   a case that didn't come up in practice (see the IR's own *Known
   limitations* in TRANSFORMATION_IR.md).
-- **Hive relations are untested.** `HiveTableRelation` has no dedicated
-  case (this environment has no Hive metastore to verify against); it
-  falls through to the generic `LogicalRelation` handling's
-  `catalogTable`-based fallback, unverified against a real Hive session.
-  (`JDBCRelation` previously shared this fallback too — a real gap, since
-  the fallback's location has no reliable relationship to what a contract
-  would declare for a JDBC source — but now gets its own precise
-  `url`/`table`-based location; see the Translation coverage table above.)
+- **Hive support is closed — see "Hive support" below.** This bullet
+  previously said `HiveTableRelation` fell through to the generic
+  `LogicalRelation` handling's `catalogTable`-based fallback; verified
+  against a real embedded-Derby Hive session, that turned out to be
+  imprecise about the mechanism (worse than described, in fact —
+  `HiveTableRelation` is not `LogicalRelation`-wrapped at all, so it fell
+  all the way through to the fully generic `Unsupported` translation, not
+  even the `catalogTable` fallback) but correct about the conclusion (a
+  real, previously-untested gap). Both the read side and two real write-
+  side false-rejection bugs are now fixed; one known, documented,
+  unfixed location-resolution gap remains for CTAS with no pre-existing
+  physical path — see "Hive support" for the full writeup and both
+  coverage ledgers.
 - **DataFrameWriterV2/SQL `MERGE INTO`/`DELETE`/`UPDATE` writes are not
   recognized** — `.save(path)`-style writes (`SaveIntoDataSourceCommand`)
   and `.saveAsTable(...)` against a new V1 table
@@ -2025,10 +2450,19 @@ was the write-shape translation, not these three), two moved into
   (`SparkPlanAdapter.scala:168`) — the `Try`/`toOption` fallback this
   guard feeds absorbs either outcome, so there's no test that could
   distinguish true divergence in behavior from equivalence here.
-- **`lr.catalogTable.isEmpty` and `usedFallback`'s Hive-relation branch**
-  (`SparkPlanAdapter.scala:247` and `:249`) — no Hive metastore is
-  available in this environment to construct a `LogicalRelation` that
-  takes this path (see *Known limitations* above).
+- **`lr.catalogTable.isEmpty`, the `LogicalRelation` fallback's final
+  catch-all branch** (`SparkPlanAdapter.scala:319`) — previously
+  attributed to "no Hive metastore available to exercise it"; re-checked
+  against a real Hive-enabled session once "Hive support" (above) added
+  one, and it's still `NoCoverage`, for a different and more precise
+  reason now confirmed rather than assumed: a genuine Hive-native table
+  read never reaches this branch at all — it takes the dedicated
+  `HiveTableRelation` case instead (`HiveTableRelation` is its own
+  top-level `LeafNode`, not `LogicalRelation`-wrapped). This branch is
+  for some *other*, non-`HadoopFsRelation`/non-`JDBCRelation`/non-Hive
+  `BaseRelation` wrapped in a `LogicalRelation` with no populated
+  `catalogTable` — no such relation kind is exercised anywhere in this
+  module's test suite, Hive included.
 - **`unwrapWriteWrapper`'s no-wrapper branch**
   (`WriteCommandSupport.scala:155`, two mutants) — Spark 3.4+ always
   inserts the `WriteFiles` wrapper this adapter targets, so the "no
@@ -2089,6 +2523,74 @@ which is what prompted re-diagnosing the bug's real location (see
 "Parquet support" above) rather than writing a test to force a kill of
 what turned out to be dead code. Removed outright rather than kept and
 documented as equivalent: the correct fix needed no such guard at all.
+
+#### Mutation testing: Hive connector support
+
+Scoped to the three files this pass changed (`WriteCommandSupport.scala`,
+`SparkPlanAdapter.scala`, `ContractEnforcementRule.scala`): **80.0%** (of
+total) / **81.01%** (of covered code). `ContractEnforcementRule.scala`
+has zero survivors — its new `HiveTableRelation` case in `recognizedRead`
+is fully killed. Every survivor investigated by hand, not just cited by
+percentage; ten predate this pass entirely (re-surfaced only because
+scoping covers the whole file, not because this pass touched them):
+
+- **9 pre-existing, untouched by this pass**: `deltaRowLevelDml`'s class-
+  name guard and its `catalogTable.isDefined` diagnostic branch (×2),
+  `unwrapWriteWrapper`'s no-wrapper branch (×2), `streamSinkFormatOf`'s
+  `FileStreamSink` guard, and — in `SparkPlanAdapter.scala` —
+  `StreamingRelation`'s path-option check, `StreamingRelationV2`'s no-
+  location branch, and the `JDBCRelation` near-equivalent. All already
+  documented above; none touched by this pass's actual changes.
+- **1 pre-existing, but its own documented *reasoning* corrected**:
+  `lr.catalogTable.isEmpty` (`SparkPlanAdapter.scala:319`, `NoCoverage`)
+  was previously attributed to "no Hive metastore available to exercise
+  it" — now that one exists (this pass's own test session), it's
+  confirmed to still be `NoCoverage`, for the real reason: a genuine Hive
+  table read never reaches this branch at all, since it takes the new
+  dedicated `HiveTableRelation` case instead. This branch is for some
+  *other* relation kind (non-`HadoopFsRelation`/`JDBCRelation`/Hive)
+  wrapped in a `LogicalRelation` with no `catalogTable` — genuinely not
+  exercised by anything in this suite. See the corrected bullet earlier
+  in this section.
+- **1 real, closed mutant, found then killed, not left**: `insertIntoHiveTable`'s
+  `saveMode = Some(if (overwrite) "overwrite" else "append")` ternary —
+  every test that reached this code exercised the `overwrite` branch
+  (`INSERT OVERWRITE`, or a `.saveAsTable()` append that happens to
+  default to it); nothing asserted the `append` case explicitly. Killed
+  by adding a dedicated translation test for a plain `.insertInto()`
+  asserting `saveMode.contains("append")`.
+- **3 confirmed genuinely equivalent, same reasoning as the pre-existing
+  `JDBCRelation`/`deltaRowLevelDml` guards above**: `createHiveTableAsSelect`'s,
+  `insertIntoHiveTable`'s, and `insertIntoHiveDir`'s own
+  `plan.getClass.getName != <expected>` type guards. Each feeds a
+  `scala.util.Try { ... }.toOption` block reflectively calling methods
+  that only exist on the expected class — mutating the guard to always
+  proceed makes the reflection throw for any other plan (caught by
+  `Try`, producing `None`, the same result the guard's own `if (...)
+  None` branch already gives). No test could ever distinguish the two.
+- **1 confirmed unreachable via any real Spark SQL, not just untested**:
+  `insertIntoHiveDir`'s own `saveMode = Some(if (overwrite) "overwrite"
+  else "append")` ternary. Unlike `InsertIntoHiveTable` (where plain
+  `INSERT INTO` genuinely sets `overwrite = false`), Hive/Spark SQL's
+  grammar has only one form of this statement — `INSERT OVERWRITE
+  [LOCAL] DIRECTORY ...` — there is no `INSERT INTO ... DIRECTORY`
+  syntax to parse `overwrite = false` from, so the `else` branch has no
+  real caller to write a test against.
+- **1 new, real, and left — a defensive guard genuinely unreachable in
+  this environment**: `SparkPlanAdapter`'s new `htr.tableMeta.storage.locationUri.isEmpty`
+  check (mirrors every other "no precise location" diagnostic guard in
+  this file). Every real Hive table created via `CREATE TABLE` in a live
+  session already has a resolved storage location by the time it's
+  readable — the same practical unreachability `CreateDataSourceTableAsSelectCommand`'s
+  and `SaveIntoDataSourceCommand`'s analogous "no location" diagnostics
+  already have, just never previously exercised for Hive specifically.
+
+Net: every survivor in code this pass actually added or changed is
+either a confirmed equivalent mutant, a confirmed real gap that's now
+closed, or a confirmed environment-unreachable defensive branch — none
+left uninvestigated. `mimaReportBinaryIssues` is clean (no public
+signature changed — the new write/read cases are additions inside
+existing private matchers and one new `private[sparkadapter]` helper).
 
 #### Delta feature-by-feature confidence pass
 

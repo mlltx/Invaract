@@ -18,6 +18,7 @@ import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
 /** Everything needed to represent one Spark write command as `ir.Write`:
@@ -760,6 +761,164 @@ private[sparkadapter] object WriteCommandSupport {
       )
   }
 
+  // Hive support (org.apache.spark.sql.hive.execution package, part of the
+  // separate `spark-hive` artifact - see build.sbt's comment for why this
+  // module has no compile-time dependency on it, unlike HiveTableRelation
+  // on the read side, which SparkPlanAdapter imports directly since it
+  // turned out to live in plain, already-`provided` spark-catalyst). All
+  // three classes below were found by the same reflective jar-scan
+  // technique used for Delta/Iceberg (see docs/ADDING_A_SPARK_CONNECTOR.md)
+  // - a real Hive-enabled session (embedded Derby metastore, no external
+  // Hive install needed) confirmed spark-hive's own Command hierarchy has
+  // exactly these three concrete classes, nothing more. Matched by fully-
+  // qualified class name and read via public-method reflection, the same
+  // convention deltaRowLevelDml uses - the difference here is these ARE
+  // stable, documented Spark classes (not undocumented internals), it's
+  // just that spark-hive is a separate, optional, and much heavier
+  // artifact this module deliberately keeps off its provided/compile
+  // classpath.
+  private val createHiveTableAsSelectClassName = "org.apache.spark.sql.hive.execution.CreateHiveTableAsSelectCommand"
+  private val insertIntoHiveTableClassName = "org.apache.spark.sql.hive.execution.InsertIntoHiveTable"
+  private val insertIntoHiveDirClassName = "org.apache.spark.sql.hive.execution.InsertIntoHiveDirCommand"
+
+  // `.format("hive").saveAsTable(...)` on a NEW table, and
+  // `CREATE TABLE ... STORED AS ... AS SELECT ...` - confirmed empirically
+  // (a real embedded-Derby Hive session, not assumed) to always analyze to
+  // this command, for both a genuinely new table AND an append onto an
+  // EXISTING one (`.mode("append").format("hive").saveAsTable(existing)`
+  // produces the identical top-level CreateHiveTableAsSelectCommand,
+  // confirmed via injectCheckRule) - unlike the V1 CreateDataSourceTableAsSelectCommand
+  // case above, Hive's own command doesn't distinguish new-vs-existing at
+  // the plan-shape level at all. Its own run() method internally creates
+  // the table (or verifies compatibility with the existing one) and then
+  // issues a SECOND, nested InsertIntoHiveTable to perform the actual
+  // write - both visible to injectCheckRule for one logical call, the same
+  // "shared pitfall" class already documented for Delta/Iceberg/Parquet's
+  // atomic CTAS (see docs/SPARK_ADAPTER.md) - confirmed via a real PASS/
+  // FAIL pair that the two agree on location (both resolve the same
+  // catalog table's storage.locationUri once it exists), so no fix was
+  // needed here the way the DSv2 StagedTable case needed one.
+  private val createHiveTableAsSelect: PartialFunction[LogicalPlan, WriteCommandInfo] =
+    Function.unlift { (plan: LogicalPlan) =>
+      if (plan.getClass.getName != createHiveTableAsSelectClassName) None
+      else
+        scala.util.Try {
+          val tableDesc = plan.getClass.getMethod("tableDesc").invoke(plan).asInstanceOf[SparkCatalogTable]
+          val query = plan.getClass.getMethod("query").invoke(plan).asInstanceOf[LogicalPlan]
+          val mode = plan.getClass.getMethod("mode").invoke(plan).asInstanceOf[SaveMode]
+          val (location, diagnostic) = tableDesc.storage.locationUri match {
+            case Some(uri) => (uri.toString, None)
+            case None =>
+              val msg = s"No storage location on new Hive table '${tableDesc.identifier}'; " +
+                "using its table identifier as a best-effort location"
+              (tableDesc.identifier.unquotedString, Some(Diagnostic("CreateHiveTableAsSelectCommand", msg)))
+          }
+          WriteCommandInfo(
+            location = location,
+            query = query,
+            format = Some(tableDesc.provider.getOrElse("hive")),
+            saveMode = SparkPlanAdapter.saveModeOf(mode),
+            outputSchema = query.schema,
+            diagnostic = diagnostic
+          )
+        }.toOption
+    }
+
+  // `.insertInto(...)`, `INSERT [OVERWRITE] [INTO] TABLE ...` against an
+  // EXISTING Hive-format table, and the nested write CreateHiveTableAsSelectCommand
+  // above issues internally - all confirmed empirically to be this single
+  // command, carrying its own `overwrite: Boolean` (append vs. overwrite,
+  // read directly rather than inferred).
+  private val insertIntoHiveTable: PartialFunction[LogicalPlan, WriteCommandInfo] =
+    Function.unlift { (plan: LogicalPlan) =>
+      if (plan.getClass.getName != insertIntoHiveTableClassName) None
+      else
+        scala.util.Try {
+          val table = plan.getClass.getMethod("table").invoke(plan).asInstanceOf[SparkCatalogTable]
+          val query = plan.getClass.getMethod("query").invoke(plan).asInstanceOf[LogicalPlan]
+          val overwrite = plan.getClass.getMethod("overwrite").invoke(plan).asInstanceOf[Boolean]
+          val (location, locationDiagnostic) = table.storage.locationUri match {
+            case Some(uri) => (uri.toString, None)
+            case None =>
+              val msg = s"No storage location for Hive table '${table.identifier}'; " +
+                "using its table identifier as a best-effort location"
+              (table.identifier.unquotedString, Some(Diagnostic("InsertIntoHiveTable", msg)))
+          }
+          // A real, found-and-fixed false-rejection bug (the same class as
+          // Delta's generated columns/DSv2's target-only fields, see
+          // outputSchemaWithTargetOnlyFields above): confirmed empirically
+          // that a STATIC-partition insert (`INSERT INTO t PARTITION(dt=
+          // '2024-01-01') SELECT ...`) supplies the partition value as a
+          // literal in the PARTITION clause, so it never appears in
+          // query.schema at all - a contract requiring that column would
+          // otherwise be falsely rejected with MISSING_OUTPUT_FIELD for a
+          // write that genuinely produces it. A DYNAMIC-partition insert
+          // (`INSERT INTO t SELECT ..., dt`) does NOT have this problem -
+          // confirmed the value comes from the SELECT itself, already part
+          // of query.schema - so this union is a no-op there (unionNewFields
+          // finds nothing new to add). table.schema (CatalogTable's data +
+          // partition columns) is the field of fields the query might be
+          // missing; safe for the same reason outputSchemaWithTargetOnlyFields
+          // is safe - by the time this command reaches the check rule at
+          // all, Spark's own analyzer has already validated the write's
+          // column count/types against the target (a genuinely missing
+          // DATA column fails analysis before any plan is produced here).
+          val (outputSchema, evolutionDiagnostic) = unionNewFields(query.schema, table.schema.fields.toSeq) match {
+            case (_, Nil) => (query.schema, None)
+            case (unioned, newFields) =>
+              val msg = s"Hive table has field(s) not present in the write's own query " +
+                s"(${newFields.map(_.name).mkString(", ")}) - most likely static partition value(s) supplied via " +
+                "the PARTITION clause rather than selected by the query; unioned into outputSchema as a " +
+                "best-effort approximation of the committed schema"
+              (unioned, Some(Diagnostic("InsertIntoHiveTable", msg)))
+          }
+          WriteCommandInfo(
+            location = location,
+            query = query,
+            format = Some(table.provider.getOrElse("hive")),
+            saveMode = Some(if (overwrite) "overwrite" else "append"),
+            outputSchema = outputSchema,
+            diagnostic = locationDiagnostic.orElse(evolutionDiagnostic)
+          )
+        }.toOption
+    }
+
+  // `INSERT [OVERWRITE] [LOCAL] DIRECTORY '<path>' [ROW FORMAT ...] SELECT
+  // ...` - Hive's directory-export write, confirmed via the same
+  // reflective jar-scan to be a real, previously-unknown Command class
+  // (not found by Phase 2's operation-surface probing alone - it isn't a
+  // catalog-table write at all, so none of the standard .save/.saveAsTable/
+  // .insertInto probes would ever trigger it). Fits ir.Write's "write a
+  // dataset to a location" shape directly: writes to an arbitrary
+  // filesystem path, not a registered table, so there's no CatalogTable to
+  // read a provider string from - format is reported as "hive" uniformly,
+  // consistent with every other Hive-routed write in this file.
+  private val insertIntoHiveDir: PartialFunction[LogicalPlan, WriteCommandInfo] =
+    Function.unlift { (plan: LogicalPlan) =>
+      if (plan.getClass.getName != insertIntoHiveDirClassName) None
+      else
+        scala.util.Try {
+          val storage = plan.getClass.getMethod("storage").invoke(plan)
+            .asInstanceOf[org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat]
+          val query = plan.getClass.getMethod("query").invoke(plan).asInstanceOf[LogicalPlan]
+          val overwrite = plan.getClass.getMethod("overwrite").invoke(plan).asInstanceOf[Boolean]
+          val (location, diagnostic) = storage.locationUri match {
+            case Some(uri) => (uri.toString, None)
+            case None =>
+              val msg = "INSERT ... DIRECTORY has no resolved storage location; using its toString as a best-effort location"
+              (plan.toString, Some(Diagnostic("InsertIntoHiveDirCommand", msg)))
+          }
+          WriteCommandInfo(
+            location = location,
+            query = query,
+            format = Some("hive"),
+            saveMode = Some(if (overwrite) "overwrite" else "append"),
+            outputSchema = query.schema,
+            diagnostic = diagnostic
+          )
+        }.toOption
+    }
+
   /** Every recognized write shape, combined into one lookup —
     * `SparkPlanAdapter.Translator.translatePlan`,
     * `ContractEnforcementRule.verifyOrThrow`, and
@@ -773,7 +932,8 @@ private[sparkadapter] object WriteCommandSupport {
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
     insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
       appendData orElse overwriteByExpression orElse overwritePartitionsDynamic orElse replaceTableAsSelect orElse
-      createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite
+      createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite orElse
+      createHiveTableAsSelect orElse insertIntoHiveTable orElse insertIntoHiveDir
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write
     * command and its query in the optimized/analyzed plan (confirmed

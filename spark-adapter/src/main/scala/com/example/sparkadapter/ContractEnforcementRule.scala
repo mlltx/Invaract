@@ -7,6 +7,7 @@ import com.example.contract.Contract
 import com.example.ir.PlanPrinter
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
 import org.apache.spark.sql.catalyst.plans.logical.{Command, LogicalPlan}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -97,6 +98,13 @@ object ContractEnforcementRule {
     // to the generic Unsupported translation and so could never satisfy a
     // contract's declared input).
     case dsv2: DataSourceV2Relation => SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name) -> dsv2.schema
+    // A real Hive-format catalog table read - see SparkPlanAdapter's own
+    // HiveTableRelation case for why this is needed at all (a genuinely
+    // Hive-native table, e.g. non-Parquet/ORC or with metastore conversion
+    // disabled, previously fell through to the generic Unsupported
+    // translation, so a contract declaring one as a required `input`
+    // always reported MISSING_INPUT even though data was genuinely read).
+    case htr: HiveTableRelation => SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.schema
   }
 
   /** The check logic itself, exposed directly for tests and for callers
