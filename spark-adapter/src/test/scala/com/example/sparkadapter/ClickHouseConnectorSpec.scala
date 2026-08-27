@@ -655,4 +655,130 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
       try src.mkString.trim finally src.close()
     } finally conn.disconnect()
   }
+
+  /** Issues a raw statement directly against the real ClickHouse server,
+    * bypassing Spark entirely - the only way to create a genuinely
+    * ClickHouse-native construct (e.g. a true `Nested` column) this
+    * connector's own Spark-side DDL has no syntax to request, and the
+    * only way to confirm a `CREATE TABLE ... TBLPROPERTIES(...)` option
+    * was actually applied rather than silently accepted as opaque,
+    * unvalidated metadata (see `chColumnType` above for the same
+    * "confirm against the real server, don't assume" principle, applied
+    * to a column's type rather than a table's full DDL). POST, not GET -
+    * ClickHouse's HTTP interface rejects any modifying statement
+    * (CREATE/INSERT) issued via GET as read-only, confirmed empirically.
+    */
+  private def chExec(sql: String): String = {
+    val conn = new java.net.URL(s"http://127.0.0.1:$httpPort/").openConnection().asInstanceOf[java.net.HttpURLConnection]
+    conn.setRequestMethod("POST")
+    conn.setDoOutput(true)
+    try {
+      val out = conn.getOutputStream
+      try out.write(sql.getBytes("UTF-8")) finally out.close()
+      val stream = if (conn.getResponseCode >= 400) conn.getErrorStream else conn.getInputStream
+      val src = scala.io.Source.fromInputStream(stream)
+      try src.mkString.trim finally src.close()
+    } finally conn.disconnect()
+  }
+
+  private def createTableQuery(table: String): String =
+    chExec(s"SELECT create_table_query FROM system.tables WHERE database = 'probe_db' AND name = '$table' FORMAT TSVRaw")
+
+  // --- Second follow-up pass closing the last 3 ❓ feature-surface rows:
+  // compression/PARTITION BY/replicated engines/materialized views, TTL,
+  // and whether reading a genuinely pre-existing Nested column
+  // round-trips. Zero spark-adapter/src/main/scala changes - every
+  // finding is a confirmed-transparent behavior or a confirmed real
+  // limitation. See docs/connectors/clickhouse.md. ---
+
+  test("PARTITION BY: Spark's native PARTITIONED BY clause, not a TBLPROPERTIES key") {
+    spark.sql("CREATE TABLE ch.probe_db.partitioned_tbl (id BIGINT NOT NULL, dt STRING NOT NULL) " +
+      "USING ClickHouse PARTITIONED BY (dt) " +
+      "TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id', 'settings.allow_nullable_key' = '1')")
+    assert(createTableQuery("partitioned_tbl").contains("PARTITION BY dt"))
+  }
+
+  test("primary_key and sample_by TBLPROPERTIES both apply for real, confirmed against the server") {
+    spark.sql("CREATE TABLE ch.probe_db.pk_tbl (id BIGINT NOT NULL, value BIGINT NOT NULL) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id, value', primary_key = 'id')")
+    assert(createTableQuery("pk_tbl").contains("PRIMARY KEY id"))
+
+    // SAMPLE BY requires an unsigned-integer sampling column in real
+    // ClickHouse; cityHash64(id) is ClickHouse's own standard idiom for
+    // sampling on a key that isn't naturally unsigned (Spark's BIGINT is
+    // signed Int64) - a real ClickHouse constraint, not an Invariant one.
+    spark.sql("CREATE TABLE ch.probe_db.sample_tbl (id BIGINT NOT NULL, value BIGINT NOT NULL) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'cityHash64(id), id', " +
+      "sample_by = 'cityHash64(id)')")
+    assert(createTableQuery("sample_tbl").contains("SAMPLE BY cityHash64(id)"))
+  }
+
+  test("replicated engines: genuinely supported by the connector, but not verifiable end to end without Keeper/shard-macro config in this environment") {
+    // A dedicated ReplicatedMergeTreeEngineSpec class exists in the
+    // connector's own jar (confirmed via decompilation, not assumed from
+    // its name alone) - this is real, first-class support, not just an
+    // opaque `engine` string passed through. The rejection below is this
+    // single-node standalone-binary test server having no {shard}/{replica}
+    // macros or Keeper coordination configured, not a connector or
+    // Invariant limitation - the same class of environment gap already
+    // documented for Docker/testcontainers in this connector's onboarding.
+    val ex = intercept[Exception] {
+      spark.sql("CREATE TABLE ch.probe_db.replicated_tbl (id BIGINT NOT NULL, value BIGINT) " +
+        "USING ClickHouse TBLPROPERTIES (engine = " +
+        "\"ReplicatedMergeTree('/clickhouse/tables/{shard}/replicated_tbl', '{replica}')\", order_by = 'id')")
+    }
+    assert(ex.getMessage.contains("shard") || ex.getMessage.contains("NO_ELEMENTS_IN_CONFIG"))
+  }
+
+  test("materialized views: unreachable through Spark SQL with this connector") {
+    createTable("mv_source_tbl")
+    intercept[org.apache.spark.sql.catalyst.parser.ParseException] {
+      spark.sql("CREATE MATERIALIZED VIEW ch.probe_db.mv_tbl AS SELECT id, value FROM ch.probe_db.mv_source_tbl")
+    }
+  }
+
+  test("TTL: not requestable from Spark - the ttl TBLPROPERTIES key is silently ignored, confirmed against the real server") {
+    spark.sql("CREATE TABLE ch.probe_db.ttl_tbl (id BIGINT NOT NULL, created_at TIMESTAMP) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id', " +
+      "ttl = 'created_at + INTERVAL 1 DAY')")
+    assert(!createTableQuery("ttl_tbl").contains("TTL"))
+  }
+
+  test("compression codec write option affects wire transfer only, not ClickHouse-side column storage") {
+    createTable("codec_tbl")
+    df().write.mode("append").option("compression_codec", "lz4").insertInto("ch.probe_db.codec_tbl")
+    assert(spark.table("ch.probe_db.codec_tbl").count() == 2)
+    // No CODEC(...) clause on any column - spark.clickhouse.write.compression.codec
+    // (confirmed via the connector's own ClickHouseSQLConf, decompiled directly)
+    // controls Spark<->ClickHouse wire-transfer compression only, a session/write
+    // concern, never a column's real storage-layer codec.
+    assert(!createTableQuery("codec_tbl").contains("CODEC"))
+  }
+
+  test("reading a genuinely pre-existing Nested column: flattens to dotted Array columns, not a true nested Spark type") {
+    // Created via raw SQL passthrough, bypassing Spark entirely - Spark's
+    // own DDL (ARRAY<STRUCT<...>>, see the test above) has no syntax to
+    // request a true ClickHouse Nested column at all.
+    chExec("CREATE TABLE probe_db.real_nested_tbl (id Int64, items Nested(name String, count Int64)) ENGINE = MergeTree() ORDER BY id")
+    chExec("INSERT INTO probe_db.real_nested_tbl (id, items.name, items.count) VALUES (1, ['a','b'], [1,2])")
+
+    // ClickHouse itself already stores a Nested column as separate
+    // parallel arrays under dotted names - confirmed via the real
+    // create_table_query, not assumed from ClickHouse's own docs.
+    assert(createTableQuery("real_nested_tbl").contains("`items.name` Array(String)"))
+    assert(createTableQuery("real_nested_tbl").contains("`items.count` Array(Int64)"))
+
+    // The connector reads that flattened representation as-is: two
+    // ordinary top-level Spark columns literally named "items.name" and
+    // "items.count" (dots included), each a plain ArrayType - not a
+    // single "items" column of ArrayType(StructType(name, count)) the
+    // way a real Nested read might be assumed to surface. A contract
+    // declaring a genuinely pre-existing Nested column must account for
+    // this flattened shape, not assume it reads back as a nested struct.
+    val df = spark.table("ch.probe_db.real_nested_tbl")
+    assert(df.schema.fieldNames.contains("items.name"))
+    assert(df.schema.fieldNames.contains("items.count"))
+    assert(df.schema("items.name").dataType.isInstanceOf[org.apache.spark.sql.types.ArrayType])
+    assert(df.collect().head.getAs[Long]("id") == 1L)
+  }
 }

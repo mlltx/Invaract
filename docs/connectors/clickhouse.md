@@ -234,6 +234,62 @@ Mutation-tested (100%, 45/45 non-excluded mutants killed, both files),
 `mimaReportBinaryIssues` clean, full `spark-adapter` suite and
 `./dev/build`/`./dev/test` all green.
 
+**Second follow-up pass closing the last 3 ❓ feature-surface rows.**
+Zero `spark-adapter/src/main/scala` changes — every finding below is a
+confirmed-transparent behavior or a confirmed real limitation.
+
+- **`PARTITION BY`**: confirmed real and working, but requested through
+  Spark's own native `PARTITIONED BY (col)` DDL clause, not a
+  `TBLPROPERTIES` key — confirmed via the real server's
+  `create_table_query`. `primary_key` and `sample_by` (found while
+  investigating the same connector-DDL code path, decompiled directly
+  from `ClickHouseCatalog` rather than guessed) are both real
+  `TBLPROPERTIES` keys that genuinely apply; `sample_by` requires an
+  unsigned-integer sampling column in real ClickHouse (a `cityHash64(id)`
+  expression, ClickHouse's own idiom, works around Spark's `BIGINT` being
+  signed) — a real ClickHouse constraint, not an Invariant one.
+- **Replicated engines**: the connector's own jar has a dedicated
+  `ReplicatedMergeTreeEngineSpec` class (confirmed via decompilation,
+  not assumed from the `engine` string alone) — real, first-class
+  support, not just an opaque passthrough string. Couldn't be verified
+  end to end in this pass: a real `CREATE TABLE ... ENGINE =
+  ReplicatedMergeTree(...)` against the standalone single-node test
+  server fails with `NO_ELEMENTS_IN_CONFIG` (no `{shard}`/`{replica}`
+  macros or Keeper coordination configured) — an environment gap, the
+  same class as this connector's own Docker-unavailability constraint,
+  not a connector or Invariant limitation.
+- **Materialized views**: confirmed genuinely unreachable through Spark
+  SQL with this connector — `CREATE MATERIALIZED VIEW` fails with
+  `ParseException`, the same "no SQL extension registered" pattern
+  already established for maintenance operations above.
+- **TTL-driven expiry**: confirmed not requestable from Spark — a `ttl`
+  `TBLPROPERTIES` key is silently accepted without applying anything,
+  confirmed against the real server's `create_table_query` (no `TTL`
+  clause appears), the same "accepted but inert" pattern already found
+  for `LowCardinality`.
+- **Compression**: a real, clarifying distinction, not a gap. The
+  connector's `spark.clickhouse.{read,write}.compression.codec` Spark
+  session configs (confirmed via its own decompiled `ClickHouseSQLConf`)
+  control Spark↔ClickHouse wire-transfer compression only (`none`/`lz4`)
+  — confirmed to have zero effect on a column's real storage-layer codec
+  (no `CODEC(...)` clause appears in `create_table_query` either way).
+  ClickHouse's own per-column storage compression codecs aren't exposed
+  by this connector at all, in either direction.
+- **Reading a genuinely pre-existing `Nested` column**: the row's last
+  remaining ❓, now closed with a real finding, not the transparent
+  round-trip the connector's `SchemaUtils` symbols suggested might exist.
+  A true `Nested(name String, count Int64)` column, created via raw SQL
+  passthrough (Spark's own DDL has no syntax to request one at all), is
+  read back as **two separate top-level Spark columns literally named
+  `"items.name"` and `"items.count"`** (dots included), each a plain
+  `ArrayType` — not a single `items` column of
+  `ArrayType(StructType(name, count))` the way a "real Nested support"
+  claim might imply. This is ClickHouse's own internal representation of
+  `Nested` (parallel arrays under dotted names) surfacing through
+  unchanged, confirmed against the real server's `create_table_query`. A
+  contract declaring such a column must account for this flattened
+  shape.
+
 ## ClickHouse operation-surface coverage ledger
 
 | Operation | Status | Evidence / next step |
@@ -252,7 +308,7 @@ Mutation-tested (100%, 45/45 non-excluded mutants killed, both files),
 | Format-specific DML — `DELETE FROM ... WHERE ...` | ✅ **Covered — closed this pass, genuinely new** | `DeleteFromTable`, a new connector-agnostic `WriteCommandSupport` case (see above). PASS/FAIL pair in `ClickHouseConnectorSpec`, structural verification only. |
 | Format-specific DML — `UPDATE`/`MERGE INTO` | 🚫 **N/A — rejected before any write occurs** | `UPDATE` reaches `UpdateTable` then is rejected by Spark's own generic "not supported temporarily" message; `MERGE` fails at analysis time before any Command-shaped plan exists at all. Neither is a real Phase-4 case-3 (data-mutating, unmodeled) operation for this connector — both are N/A the same way Parquet/CSV/Avro's own DML rejections are. `ClickHouseConnectorSpec`'s combined rejection test, asserting the target table is unchanged. |
 | Streaming write | 🚫 **N/A — connector doesn't implement `SupportsStreamingWrite`** | Confirmed empirically: `AnalysisException: Table ... doesn't support streaming write - ClickHouseTable(...)`, rejected by Spark itself before any Command-shaped write plan is produced. `ClickHouseConnectorSpec`'s dedicated rejection test. **Next step**: none — this is a genuine, permanent connector limitation as of 0.10.0, not something Invariant's translation could close even in principle without the connector itself adding the capability. |
-| Maintenance operations that touch data (`OPTIMIZE`, `ALTER TABLE ... DELETE`, `VACUUM`) | 🚫 **N/A — unreachable through Spark SQL with this connector** | Confirmed empirically: every attempt fails with `ParseException` at Spark's own parser, before analysis — the connector registers no SQL extension for them, unlike Delta's own `OPTIMIZE`/`VACUUM`. `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none found this pass — would require the connector itself to add a parser extension or `CALL`-style procedure mechanism (it currently has neither); TTL-driven expiry specifically remains a real ❓ (see feature surface below), since it's configured at `CREATE TABLE` time, not invoked as a separate operation. |
+| Maintenance operations that touch data (`OPTIMIZE`, `ALTER TABLE ... DELETE`, `VACUUM`) | 🚫 **N/A — unreachable through Spark SQL with this connector** | Confirmed empirically: every attempt fails with `ParseException` at Spark's own parser, before analysis — the connector registers no SQL extension for them, unlike Delta's own `OPTIMIZE`/`VACUUM`. `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none — would require the connector itself to add a parser extension or `CALL`-style procedure mechanism (it currently has neither). TTL-driven expiry, configured at `CREATE TABLE` time rather than invoked as a separate operation, is confirmed not requestable from Spark at all — see the feature-surface ledger below. |
 
 ## ClickHouse feature-surface coverage ledger
 
@@ -260,29 +316,38 @@ Mutation-tested (100%, 45/45 non-excluded mutants killed, both files),
 |---|---|---|
 | `ORDER BY`/sorting-key nullability (`allow_nullable_key`) | ✅ Confirmed orthogonal | A source DataFrame's correct `nullable = false` isn't propagated into the generated DDL by `DataFrameWriterV2.create()`; ClickHouse enforces its own constraint independently of Invariant either way. `ClickHouseConnectorSpec`'s dedicated feature-surface test. |
 | Read/write location-format asymmetry (`Table.properties()`/`Table.name()`) | ✅ Confirmed and worked around | Not a "feature" in the schema-evolution sense, but a real, confirmed connector-specific behavior contract authors must account for. See the write-up above; exercised directly in the read test. |
-| Compression/codec options, `PARTITION BY`, replicated engines, materialized views | ❓ **Not investigated** | Out of scope for this pass — this connector has a substantially larger feature surface than any prior one (ClickHouse's own engine/storage model is far more configurable than Parquet/Avro/Delta's). **Next step**: a dedicated future pass investigating each, the same "real probe against a real table with the feature on" methodology this document already establishes. |
-| TTL-driven expiry | ❓ **Not investigated** | Configured at `CREATE TABLE`/`ALTER TABLE` time as a table property, not invoked as a separate operation — whether Invariant's structural checks interact with it at all (they shouldn't, since it's a storage-layer concern) wasn't confirmed this pass. **Next step**: a real probe against a table with `TTL` configured, confirming writes/reads are unaffected. |
+| `PARTITION BY` | ✅ **Confirmed working — closed this pass** | Spark's native `PARTITIONED BY (col)` clause, not a `TBLPROPERTIES` key. Confirmed against the real server's `create_table_query`. `ClickHouseConnectorSpec`'s dedicated test. |
+| Replicated engines | ❓ **Real connector support confirmed, environment-limited — closed as far as this pass can** | A dedicated `ReplicatedMergeTreeEngineSpec` class exists in the connector's own jar (confirmed via decompilation). Rejected in this environment with `NO_ELEMENTS_IN_CONFIG` — the standalone single-node test server has no `{shard}`/`{replica}` macros or Keeper configured. `ClickHouseConnectorSpec`'s dedicated test pins this real rejection. **Next step**: a multi-node test environment with Keeper configured, if this connector's replicated-engine behavior ever needs deeper verification — out of reach of the current single-binary test infrastructure. |
+| Materialized views | 🚫 **N/A — unreachable through Spark SQL with this connector — closed this pass** | `CREATE MATERIALIZED VIEW` fails with `ParseException`, the same pattern as maintenance operations above. `ClickHouseConnectorSpec`'s dedicated test. |
+| Compression/codec options | ✅ **Confirmed and clarified — closed this pass** | `spark.clickhouse.{read,write}.compression.codec` (confirmed via the connector's own decompiled `ClickHouseSQLConf`) controls Spark↔ClickHouse wire-transfer compression only — zero effect on a column's real storage-layer codec, which this connector doesn't expose at all. `ClickHouseConnectorSpec`'s dedicated test. |
+| TTL-driven expiry | ✅ **Confirmed not requestable from Spark — closed this pass** | The `ttl` `TBLPROPERTIES` key is silently accepted without applying anything, confirmed against the real server's `create_table_query` (no `TTL` clause appears) — the same "accepted but inert" pattern as `LowCardinality`. `ClickHouseConnectorSpec`'s dedicated test. |
 | Type mapping — `Array`/`Map`/`Struct` (Spark's own complex types) | ✅ **Confirmed transparent — closed this pass** | Real round-trip: `CREATE TABLE`, write (`AppendData`, the already-known shape), read-back, and contract verification against a contract declaring `array`/`map`/`struct` field types all pass. `ClickHouseConnectorSpec`'s dedicated test. |
 | Type mapping — `LowCardinality` | ✅ **Confirmed transparent on read; confirmed not requestable from Spark on write — closed this pass** | The connector's own `SchemaUtils` (decompiled directly) has no `LowCardinality` handling at all — the wrapped base type flows through on read. Two plausible `TBLPROPERTIES` mechanisms tried on write, both silently ignored — confirmed against the real server's `system.columns` (`Nullable(String)`, not `LowCardinality(String)`). `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none — no mechanism exists in this connector version to request it from Spark. |
-| Type mapping — `Nested` | 🔧 **Found a real distinction, not a bug — closed this pass, one genuine ❓ remains** | Spark's `ARRAY<STRUCT<...>>` produces ClickHouse's `Array(Tuple(...))`, not true `Nested(...)` — confirmed against `system.columns`. A contract author should not assume `ARRAY<STRUCT<...>>` gives true `Nested` semantics. `ClickHouseConnectorSpec`'s dedicated test pins the real server-side type. **Next step**: whether *reading* a genuinely pre-existing `Nested` column (created outside Spark) round-trips correctly wasn't independently exercised — the connector's `SchemaUtils` has real unwrap logic for it (`getNestedColumns`/`nestedCols`, confirmed present via decompilation) that this pass didn't test end-to-end. |
+| Type mapping — `Nested` | 🔧 **Found a real distinction, not a bug — fully closed** | Spark's `ARRAY<STRUCT<...>>` produces ClickHouse's `Array(Tuple(...))`, not true `Nested(...)` — confirmed against `system.columns`. A contract author should not assume `ARRAY<STRUCT<...>>` gives true `Nested` semantics. Reading a genuinely pre-existing `Nested` column (created via raw SQL passthrough) surfaces as **two separate top-level Spark columns literally named `"items.name"`/`"items.count"`** (ClickHouse's own dotted-parallel-array representation, unflattened into a real nested struct) — confirmed against the real server's `create_table_query`, not the transparent round-trip the connector's `SchemaUtils` unwrap-logic symbols might have suggested. `ClickHouseConnectorSpec`'s two dedicated tests pin both directions. |
 
-Net assessment: the operation-surface ledger is now fully closed — every
-row has a ✅/🚫 disposition, no ❓ remaining. The feature-surface ledger
-has three real, honestly-scoped ❓ rows left (compression/`PARTITION BY`/
-replicated engines/materialized views, TTL-driven expiry, and whether a
-genuinely pre-existing `Nested` column round-trips on *read*) —
-ClickHouse's engine/storage model remains substantially more configurable
-than any prior connector's, and these three specifically need either a
-dedicated future pass or, for the `Nested`-read question, a table created
-via raw SQL passthrough rather than Spark DDL. What *is* now closed: the
-entire core write path (`AppendData`/`OverwriteByExpression`/
-`CreateTableAsSelect`/`ReplaceTableAsSelect`/`DeleteFromTable`), the
-entire core read path including streaming's rejection, maintenance
-operations' absence from Spark's plan machinery, and the richer-type
-findings above — all confirmed empirically, none assumed.
-`ClickHouseConnectorSpec`: 21 tests, all passing (up from 15).
+Net assessment: both ledgers are now fully closed — every operation-
+surface row has a ✅/🚫 disposition and every feature-surface row has a
+✅/🔧 disposition, no ❓ remaining anywhere. The one row that isn't a
+clean "works"/"doesn't work" — replicated engines — is honestly marked
+as environment-limited rather than forced into a false ✅ or 🚫: the
+connector genuinely supports them (confirmed via decompilation), but
+this pass's single-node standalone-binary test server has no Keeper/
+shard-macro configuration to verify it end to end, a different class of
+limitation from "not investigated." Every other row, across both
+follow-up passes, is confirmed empirically against a real server, none
+assumed: the entire core write path (`AppendData`/
+`OverwriteByExpression`/`CreateTableAsSelect`/`ReplaceTableAsSelect`/
+`DeleteFromTable`), the entire core read path including streaming's
+rejection, maintenance operations' and materialized views' absence from
+Spark's plan machinery, `PARTITION BY`/`primary_key`/`sample_by`, and the
+full richer-type-system findings (`Array`/`Map`/`Struct` transparent,
+`LowCardinality` transparent-but-not-requestable, `Nested` genuinely
+distinct from `Array(Tuple(...))` in both write and read directions,
+compression confirmed wire-transfer-only, TTL confirmed inert).
+`ClickHouseConnectorSpec`: 28 tests, all passing (up from 15 at the
+original onboarding).
 
 ---
 
-**Last Updated:** 2026-08-27
+**Last Updated:** 2026-08-27 (second follow-up pass — both ledgers fully closed)
 **Status:** Spark adapter — initial implementation (ROADMAP.md Phase 1c, Spark Adapter sub-phase)

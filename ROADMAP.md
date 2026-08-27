@@ -1432,6 +1432,52 @@ tests (up from 15), full `spark-adapter` suite 234/234 passing,
 real `spark-submit`. Full findings and both ledgers:
 docs/connectors/clickhouse.md.
 
+#### Sub-phase: fixed the bonus contract-validation finding; closed ClickHouse's last 3 feature-surface ❓ rows (done)
+
+Two follow-ups to the sub-phase above. **Fixed, not left pinned**: a
+contract missing `outputs:` now fails cleanly instead of crashing
+`StructuralVerifier` with an unguarded `NoSuchElementException` —
+`ContractEnforcementRule.verifyOrThrow` now calls
+`ContractValidator.validate` before checking a write or state-changing
+`CALL`, throwing a clean `ContractViolationException` (new
+`ViolationType.InvalidContract`) instead. Scoped to just the two
+branches that actually consult the contract, not the top of the method:
+`verifyOrThrow` runs for every plan `injectCheckRule` sees, not just
+writes, so an unconditional guard broke ordinary reads/transformations
+the moment an invalid contract was merely active — caught by a real test
+failure before landing, not assumed safe. Mutation-tested scoped to both
+changed files: 100% (45/45 non-excluded mutants killed).
+
+**Closed ClickHouse's last 3 ❓ feature-surface rows**, zero further
+`src/main/scala` changes: `PARTITION BY` confirmed real via Spark's
+native `PARTITIONED BY` clause (not a `TBLPROPERTIES` key), with
+`primary_key`/`sample_by` found and confirmed working the same way, both
+decompiled directly from `ClickHouseCatalog` rather than guessed.
+Replicated engines confirmed genuinely supported by the connector (a
+dedicated `ReplicatedMergeTreeEngineSpec` class exists in its jar) but
+not verifiable end to end in this single-node standalone-binary test
+environment (`NO_ELEMENTS_IN_CONFIG` — no Keeper/shard-macro config) —
+marked environment-limited, not forced into a false ✅ or 🚫. Materialized
+views confirmed unreachable through Spark SQL, the same pattern as
+maintenance operations. Compression clarified: the connector's
+`spark.clickhouse.{read,write}.compression.codec` configs (decompiled
+from `ClickHouseSQLConf`) control wire-transfer compression only, never
+a column's real storage codec. TTL confirmed inert, the same
+"accepted-but-not-applied" pattern as `LowCardinality`. Reading a
+genuinely pre-existing `Nested` column (created via raw SQL passthrough)
+confirmed to surface as two separate top-level dotted-name `ArrayType`
+Spark columns (`"items.name"`/`"items.count"`), not a real nested
+struct — ClickHouse's own internal Nested representation passing through
+unflattened.
+
+Both operation-surface and feature-surface ledgers are now **fully
+closed** — no ❓ rows remaining in either, the only connector so far to
+reach that state on both axes. `ClickHouseConnectorSpec`: 28 tests (up
+from 21), full `spark-adapter` suite 241/241 passing,
+`mimaReportBinaryIssues` clean, `./dev/build`/`./dev/test` pass against
+real `spark-submit`. Full findings and both ledgers:
+docs/connectors/clickhouse.md.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
