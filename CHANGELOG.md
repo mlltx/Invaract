@@ -1050,6 +1050,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (both coverage ledgers) and ROADMAP.md for full details.
   `AvroConnectorSpec`: 23 tests. Full `spark-adapter` suite: 212 tests,
   all 10 specs green.
+- **ClickHouse connector support**: seventh connector onboarded via the
+  `add-spark-connector` skill's process. Originally scoped as BigQuery;
+  redirected to ClickHouse at Phase 0 before any code was written,
+  because BigQuery has no local/offline testing mode (requires a real GCP
+  project, billing, and credentials, unavailable in the onboarding
+  session), while ClickHouse is genuinely testable without a cloud
+  account. `com.clickhouse.spark %% clickhouse-spark-runtime-3.5 % 0.10.0`
+  added to `spark-adapter/build.sbt` as a `% "test"` dependency,
+  Linux/macOS-only. A new test-infrastructure mechanism,
+  `ClickHouseTestServer`, launches a real standalone `clickhouse` server
+  binary as a subprocess rather than Docker/testcontainers (Docker's
+  daemon could not be started in the onboarding sandbox). A reflective
+  jar scan found zero `Command`-shaped classes in `clickhouse-spark-runtime`
+  — the entire operation surface routes through Spark's own generic DSv2
+  commands, all already recognized from Iceberg's pass, confirmed to
+  cover ClickHouse "for free." One genuinely new, connector-agnostic
+  `WriteCommandSupport` case: `DeleteFromTable`, since ClickHouse
+  implements plain `SupportsDelete` rather than
+  `SupportsRowLevelOperations` the way Iceberg's row-level DML does —
+  confirmed empirically that a real predicate-based `DELETE FROM ...
+  WHERE ...` executes successfully, a shape no prior connector's pass had
+  recognized. Also fixed, general beyond ClickHouse: a real JDK 21/Arrow
+  12.0.1 incompatibility (apache/arrow#35053) via a test-scope-only Arrow
+  dependency override. Found and documented (not fixed, as genuinely
+  connector-specific and orthogonal to Invariant): a real read/write
+  location-format asymmetry (writes resolve a 3-part qualified
+  identifier, reads resolve `Table.name()`'s backtick-quoted 2-part
+  form), and ClickHouse's own `ORDER BY`/sorting-key nullability
+  constraint. Unlike every prior connector's pass, this one closes with
+  real, honestly-recorded ❓ rows on both coverage ledgers — ClickHouse's
+  operation and feature surfaces are substantially larger than any
+  connector onboarded so far, and this pass's scope was deliberately
+  bounded given the added complexity of provisioning a real server
+  without Docker. See docs/SPARK_ADAPTER.md's new "ClickHouse support"
+  section (both coverage ledgers, including the ❓ rows and their next
+  steps) and ROADMAP.md for full details. `ClickHouseConnectorSpec`: 15
+  tests. Full `spark-adapter` suite: 227 tests, all 11 specs green.
 
 ### Deprecated
 

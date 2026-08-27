@@ -67,6 +67,20 @@ val sparkHiveVersion = sparkVersion
 // way Delta/Iceberg are.
 val sparkAvroVersion = sparkVersion
 
+// ClickHouse support, unlike every prior connector, needs a real ClickHouse
+// *server* to test against - not just a session extension/embedded
+// metastore. Test-scope-only for the same reason as Delta/Iceberg above:
+// spinning up a real clickhouse-spark-runtime-backed catalog session to
+// test against, never compiled or run by the main translation code.
+// Pinned to 0.10.0 - confirmed the latest release on Maven Central for
+// exactly this Spark/Scala combination (clickhouse-spark-runtime-3.5_2.12)
+// at onboarding time, per Phase 0's "any known compatibility issues" step
+// (no blocking issue found against this exact combination). The real
+// ClickHouse *server* itself (not this library) is provisioned by
+// `ClickHouseTestServer` (test sources) as a standalone binary subprocess,
+// not Docker/testcontainers - see that file's own doc comment for why.
+val clickhouseVersion = "0.10.0"
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
@@ -115,6 +129,48 @@ libraryDependencies ++= {
   else Seq.empty
 }
 
+// Same "exclude the dependency itself, not just the test class" reasoning
+// as Iceberg's block above, for a different underlying constraint: this
+// module's own ClickHouseTestServer provisions a real ClickHouse *server*
+// binary with no supported native Windows build (see that file's doc
+// comment), not a JDK-version issue. Excluding clickhouse-spark-runtime
+// itself on Windows, not just ClickHouseConnectorSpec.scala's own run,
+// avoids the same Iceberg-taught risk: Spark's ServiceLoader-based
+// DataSourceRegister lookup scans every provider resolvable on the
+// classpath for *any* format-based read, so simply having this jar
+// resolvable could affect unrelated tests if it behaves at all
+// differently on Windows - not observed, but not worth risking given the
+// precedent.
+libraryDependencies ++= {
+  if (scala.util.Properties.isWin) Seq.empty
+  else Seq("com.clickhouse.spark" %% "clickhouse-spark-runtime-3.5" % clickhouseVersion % "test")
+}
+
+// The ClickHouse connector's .writeTo(...) path serializes batches via
+// Arrow (its own bulk-load mechanism, not a generic Spark one - Delta/
+// Iceberg's own .writeTo() tests never hit this). Spark 3.5.1 bundles
+// arrow-vector/arrow-memory-* 12.0.1 (confirmed via the resolved test
+// classpath), which predates a real, external JDK 21 incompatibility:
+// JDK 21 changed DirectByteBuffer's private constructor signature from
+// (long, int) to (long, long), and Arrow's MemoryUtil.directBuffer()
+// reflectively depends on the old one - confirmed via a real
+// UnsupportedOperationException on this exact combination, not assumed
+// (apache/arrow#35053, fixed in Arrow 13.0.0). Not fixable via
+// --add-opens (both java.base/java.nio and jdk.unsupported/sun.misc are
+// already open below; the failure is a missing constructor overload, not
+// a reflective-access denial). Overridden to 14.0.1 for the *test*
+// classpath only - confirmed compatible with Spark 3.5.1's own Arrow use
+// elsewhere in this suite (every other spec exercising Arrow-adjacent
+// code paths still passes). This does not affect the shipped
+// spark-adapter jar's runtime behavior for real users: Arrow itself is
+// never a compile/runtime dependency of this module, only pulled in
+// transitively by Spark's `provided`/test dependencies.
+dependencyOverrides ++= Seq(
+  "org.apache.arrow" % "arrow-vector" % "14.0.1",
+  "org.apache.arrow" % "arrow-memory-core" % "14.0.1",
+  "org.apache.arrow" % "arrow-memory-netty" % "14.0.1"
+)
+
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invariant-ir-0.1.0.jar")
 unmanagedJars in Compile += file("../contract/target/scala-2.12/invariant-contract-0.1.0.jar")
 
@@ -148,8 +204,17 @@ Test / parallelExecution := false
 // a test-only dependency's own runtime floor, not a product
 // compatibility change.
 Test / unmanagedSources / excludeFilter := {
-  if (scala.util.Properties.isJavaAtLeast("17")) (Test / unmanagedSources / excludeFilter).value
-  else (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala"
+  val icebergExcluded =
+    if (scala.util.Properties.isJavaAtLeast("17")) (Test / unmanagedSources / excludeFilter).value
+    else (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala"
+  // ClickHouse has no supported native Windows server build (a hard
+  // platform constraint, unlike Iceberg's JDK-version one above) -
+  // ClickHouseTestServer/ClickHouseConnectorSpec.scala are excluded on
+  // Windows only. Every other test file is dependency-free of ClickHouse
+  // (only these two reference it), so nothing else needs excluding.
+  if (scala.util.Properties.isWin)
+    icebergExcluded || "ClickHouseTestServer.scala" || "ClickHouseConnectorSpec.scala" || "ClickHouseConnectorProbeSpec.scala"
+  else icebergExcluded
 }
 
 // Spark reflectively accesses JDK-internal classes (e.g.
@@ -174,7 +239,15 @@ Test / javaOptions ++= Seq(
   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
   "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
   "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-  "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+  "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+  // ClickHouse's Spark connector serializes writes via Apache Arrow
+  // (ClickHouseArrowStreamWriter), whose MemoryUtil needs reflective
+  // access to sun.misc.Unsafe/DirectByteBuffer's package-private
+  // constructor - confirmed empirically (a real
+  // UnsupportedOperationException on this forked JDK 21 test JVM, not
+  // assumed): sun.misc.Unsafe lives in the jdk.unsupported module, which
+  // none of the java.base opens above reach.
+  "--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED"
 )
 
 scalacOptions ++= Seq(

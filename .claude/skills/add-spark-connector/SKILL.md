@@ -286,6 +286,16 @@ For each feature found:
   real `spark-submit` (per CLAUDE.md's "Critical Requirement"), not just
   `sbt test`.
 
+Each of these is a long-running background command — mutation testing and
+the real-server-backed suites especially. Run them via a single
+backgrounded shell invocation per step (e.g. one `nohup ... &` per
+command above, or chain sequential sbt tasks like
+`stryker && mimaReportBinaryIssues` into one invocation where the repo's
+own tooling allows it) and wait for each with one long-running-aware
+check — not a tight poll loop, and not a status update every time you
+look. Narrate a result when a command actually finishes, not the wait
+itself.
+
 ## Phase 10 — Document
 
 Three places, each stating **precisely** what is and isn't covered

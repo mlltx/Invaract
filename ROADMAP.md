@@ -2507,6 +2507,113 @@ docs/SPARK_ADAPTER.md's new "Avro support" section — summary here:
       (operation surface, feature surface) are fully closed — no ❓ rows
       remaining in either.
 
+#### Sub-phase: ClickHouse connector support (done, with real remaining ❓ rows)
+
+Seventh connector onboarded via the `add-spark-connector` skill's
+process. Originally scoped as BigQuery; redirected to ClickHouse at
+Phase 0 before any code was written, because BigQuery has no local/
+offline testing mode (a real GCP project, billing, and credentials would
+be required, unavailable in the onboarding session and incompatible with
+this repo's real-execution testing philosophy) while ClickHouse *is*
+genuinely testable without a cloud account. Full findings and both
+coverage ledgers are in docs/SPARK_ADAPTER.md's new "ClickHouse support"
+section — summary here:
+
+- [x] **A genuinely new test-infrastructure mechanism**: `ClickHouseTestServer`
+      launches a real, standalone `clickhouse` server binary as a
+      subprocess (downloaded once from ClickHouse's own GitHub releases,
+      cached locally) rather than Docker/testcontainers — confirmed
+      directly that Docker's daemon could not be started in the
+      onboarding sandbox (`ulimit: error setting limit (Operation not
+      permitted)`), so testcontainers-based tests could only ever be
+      hoped to pass in CI, never actually run and confirmed locally.
+      Linux fully verified (real queries against a real started server);
+      macOS provisioning implemented (real release-asset URLs confirmed
+      to exist) but not independently runtime-verified — no macOS
+      environment was available this pass. Windows excluded entirely (a
+      hard platform constraint — ClickHouse has no native Windows server
+      build), both the test class and the `clickhouse-spark-runtime`
+      dependency itself, the same "exclude the dependency, not just the
+      test class" pattern Iceberg's JDK<17 exclusion already established.
+- [x] **A second real environment fix, general beyond ClickHouse**: JDK 21
+      changed `DirectByteBuffer`'s private constructor signature, breaking
+      Arrow 12.0.1 (Spark 3.5.1's bundled version) via a confirmed
+      external bug (apache/arrow#35053, fixed in 13.0.0) — the first
+      connector in this module to actually exercise Arrow-based
+      serialization. Not fixable via `--add-opens` (both relevant flags
+      were already present); fixed via a `dependencyOverrides` pin to
+      Arrow 14.0.1 for the test classpath only, confirmed to not affect
+      the shipped jar (Arrow is never a compile/runtime dependency here).
+- [x] **A real reflective jar scan of `clickhouse-spark-runtime` (6,181
+      classes) found zero `Command`-shaped classes** — the second
+      connector (after Avro) with no SQL-extension commands at all.
+      `AppendData`/`OverwriteByExpression`/`CreateTableAsSelect`/
+      `ReplaceTableAsSelect` (already generic from Iceberg's pass) and
+      `CreateNamespace`/`CreateTable`/`AnalyzeTable`/`ShowTables`
+      (already safe-listed generically) all confirmed to cover
+      ClickHouse "for free," zero new `FailClosedCommands` entries.
+- [x] **One genuinely new, connector-agnostic `WriteCommandSupport` case:
+      `DeleteFromTable`.** Confirmed empirically that a real predicate-
+      based `DELETE FROM ... WHERE ...` executes successfully against
+      ClickHouse (unlike Parquet/CSV/Avro's plain tables), via Spark's
+      plain `SupportsDelete` mechanism rather than the
+      `SupportsRowLevelOperations`/`RewriteRowLevelOperation` path
+      Iceberg's row-level DML uses — a structurally different, simpler,
+      previously-unrecognized write shape (`FailClosedCommands.scala`
+      had explicitly documented it as "deliberately not listed" since
+      Delta's own onboarding). Structural verification only (target
+      location/schema), matching the Delta/Iceberg row-level DML
+      precedent — the delete predicate itself isn't checked.
+- [x] **A real, found-but-deliberately-undebugged finding**: `MERGE INTO`
+      against ClickHouse fails at analysis time
+      (`UNRESOLVED_COLUMN.WITH_SUGGESTION`) before ever producing a
+      `Command`-shaped plan at all, consistent with the connector's own
+      "not supported" documentation. Root cause not chased further — the
+      practical conclusion (no translatable plan) doesn't depend on it.
+- [x] **A real, confirmed read/write location-format asymmetry**, not an
+      Invariant bug: writes resolve to a computed 3-part qualified
+      identifier (`catalog.namespace.table`); reads resolve to
+      `ClickHouseTable`'s own `Table.name()`, a backtick-quoted 2-part
+      `` `namespace`.`table` `` with no catalog prefix. A contract's
+      declared input `location` for a ClickHouse table must use the
+      quoted 2-part form — confirmed and exercised directly in
+      `ClickHouseConnectorSpec`'s read test. A possible future
+      unification (connector-agnostic, affecting every DSv2 connector's
+      read-side location resolution) is noted as a next step, not
+      attempted this pass.
+- [x] **Feature surface**: ClickHouse's own `ORDER BY`/sorting-key
+      nullability constraint (`allow_nullable_key`) confirmed genuinely
+      orthogonal to Invariant, the same "confirmed orthogonal" pattern as
+      Delta's `CHECK` constraints — a source DataFrame's correct
+      `nullable = false` isn't propagated by `DataFrameWriterV2.create()`
+      into the generated DDL, so ClickHouse enforces its own constraint
+      independently of whatever a contract declares.
+- [ ] **Real, honestly-recorded ❓ rows, unlike every prior connector's
+      pass**: ClickHouse's operation and feature surfaces are
+      substantially larger than any connector onboarded so far (a real
+      second network service with its own SQL dialect, storage engines,
+      and type system). Left ❓ this pass, each with a stated next step
+      in docs/SPARK_ADAPTER.md's coverage ledgers: streaming *read*
+      (only streaming *write* was investigated), `.saveAsTable()` onto
+      an *existing* table specifically (the identical `AppendData` shape
+      was confirmed via `.insertInto()`/`.writeTo().append()` instead),
+      server-side maintenance operations (`OPTIMIZE`/TTL-driven expiry/
+      etc.), and ClickHouse's richer type system (`LowCardinality`,
+      `Array`, `Map`, `Tuple`, `Nested` — every test this pass used only
+      `BIGINT` columns).
+- [x] Mutation testing scoped to the one changed file
+      (`WriteCommandSupport.scala`) — see docs/SPARK_ADAPTER.md's
+      "Mutation testing: ClickHouse connector support" subsection for
+      the cited score. `mimaReportBinaryIssues` clean (no public
+      signature changed — the new case is an addition inside an
+      existing private matcher). Real `unzip -l` jar inspection
+      confirmed zero `clickhouse-spark-runtime`/ClickHouse classes in
+      the assembled `spark-adapter` jar. `./dev/build`/`./dev/test`
+      pass against real `spark-submit`. Full `spark-adapter` suite: 227
+      tests, all 11 specs green (`ClickHouseConnectorSpec`: 15 tests).
+      Throwaway probe scaffolding deleted before this pass ended, per
+      the skill's own convention.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
