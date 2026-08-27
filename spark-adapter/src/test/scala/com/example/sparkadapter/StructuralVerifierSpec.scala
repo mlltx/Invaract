@@ -643,4 +643,40 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     val outputViolation = result.violations.find(_.violationType == ViolationType.MissingOutputField).get
     assert(outputViolation.remediation.contains("to the output,"), outputViolation.remediation)
   }
+
+  // --- Found via the ClickHouse connector pass's Phase 8, but not
+  // ClickHouse-specific - reproduces with any connector, since it's a
+  // contract/spark-adapter boundary gap, not a translation issue. Pinned
+  // here, not fixed: out of scope for a connector pass to change contract
+  // validation. See docs/connectors/clickhouse.md. ---
+
+  test("PINS A KNOWN GAP: a contract with no 'outputs' key parses without error, then crashes verify() instead of failing cleanly") {
+    import com.example.contract.{Contract, ContractVersion}
+    import com.example.ir.{DatasetRef, Read, Write}
+
+    // ContractParser.parse never calls ContractValidator.validate - a
+    // caller must invoke it explicitly, and ContractEnforcementRule's
+    // runtime path doesn't. ContractValidator itself *would* catch this
+    // (its "outputs" check flags an empty list as ValidationSeverity.Error),
+    // but nothing on the write-verification path ever asks it to.
+    val contractWithNoOutputs = Contract(
+      id = "malformed",
+      version = ContractVersion.parse("1.0.0"),
+      status = "active",
+      inputs = Nil,
+      outputs = Nil, // what a YAML with no top-level "outputs:" key parses to
+      rules = Nil,
+      extensions = Map.empty
+    )
+    val plan = Write(DatasetRef("out"), Read(DatasetRef("in")))
+
+    // Next step, if ever fixed: ContractEnforcementRule.verifyOrThrow (or
+    // StructuralVerifier.verify itself) should run ContractValidator.validate
+    // first and surface its errors as a normal VerificationResult failure,
+    // not let `contract.outputs.head` throw an unguarded
+    // NoSuchElementException past the module boundary.
+    intercept[NoSuchElementException] {
+      StructuralVerifier.verify(contractWithNoOutputs, plan, inputSchemas = Nil, outputSchema = new StructType())
+    }
+  }
 }

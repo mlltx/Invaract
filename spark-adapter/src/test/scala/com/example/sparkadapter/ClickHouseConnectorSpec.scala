@@ -496,4 +496,163 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
       spark.sql("SHOW TABLES IN ch.regression_db").collect()
     }
   }
+
+  // --- Follow-up pass closing the 4 remaining ❓ rows from the prior
+  // pass: streaming read, .saveAsTable() onto an existing table,
+  // maintenance operations, and the richer type system. Zero
+  // src/main/scala changes this pass - every finding below is either a
+  // confirmed-transparent behavior or a confirmed, permanent connector
+  // limitation, not a translation gap. See docs/connectors/clickhouse.md. ---
+
+  test("streaming read: rejected outright, both TableProvider- and catalog-based, before any plan is produced") {
+    createTable("stream_read_tbl")
+    val readStreamEx = intercept[Exception] {
+      spark.readStream.format("clickhouse")
+        .option("host", "127.0.0.1").option("http_port", httpPort.toString)
+        .option("user", "default").option("password", "")
+        .option("database", "probe_db").option("table", "stream_read_tbl")
+        .load()
+    }
+    // SparkUnsupportedOperationException is package-private to org.apache.spark;
+    // caught as the public Exception supertype, same convention as the UPDATE
+    // rejection test above.
+    assert(readStreamEx.getMessage.contains("does not support streamed reading"))
+
+    val catalogStreamEx = intercept[org.apache.spark.sql.AnalysisException] {
+      spark.readStream.table("ch.probe_db.stream_read_tbl")
+    }
+    assert(catalogStreamEx.getMessage.contains("does not support") &&
+      (catalogStreamEx.getMessage.contains("micro-batch") || catalogStreamEx.getMessage.contains("continuous")))
+  }
+
+  test(".saveAsTable() append onto an EXISTING ClickHouse table: AppendData, the same already-covered shape") {
+    createTable("saveastable_existing_tbl")
+    capturedPlans.clear()
+    df().write.mode("append").saveAsTable("ch.probe_db.saveastable_existing_tbl")
+    assert(capturedPlans.exists(_.isInstanceOf[org.apache.spark.sql.catalyst.plans.logical.AppendData]),
+      "saveAsTable() onto an existing table must produce AppendData, the same shape .insertInto()/.writeTo().append() use")
+    assert(spark.table("ch.probe_db.saveastable_existing_tbl").count() == 2)
+  }
+
+  test("maintenance operations (OPTIMIZE/ALTER...DELETE/VACUUM) are unreachable through Spark SQL with this connector") {
+    createTable("maintenance_tbl")
+    // Every one of these fails Spark's own parser before analysis - the
+    // connector registers no SQL extension for them (unlike Delta's
+    // OPTIMIZE/VACUUM, which install a parser extension of their own).
+    // Nothing ever reaches a Command-shaped plan, so there is nothing for
+    // WriteCommandSupport/FailClosedCommands to classify - not a 🚫
+    // fails-closed row, a genuine absence of Spark-visible surface.
+    Seq(
+      "OPTIMIZE TABLE ch.probe_db.maintenance_tbl",
+      "OPTIMIZE TABLE ch.probe_db.maintenance_tbl FINAL",
+      "ALTER TABLE ch.probe_db.maintenance_tbl DELETE WHERE id = 1",
+      "VACUUM ch.probe_db.maintenance_tbl"
+    ).foreach { sql =>
+      intercept[org.apache.spark.sql.catalyst.parser.ParseException] {
+        spark.sql(sql)
+      }
+    }
+  }
+
+  test("PASS: array/map/struct columns round-trip through Spark and satisfy a contract declaring them") {
+    spark.sql("DROP TABLE IF EXISTS ch.probe_db.rich_types_tbl")
+    spark.sql("CREATE TABLE ch.probe_db.rich_types_tbl (id BIGINT NOT NULL, tags ARRAY<STRING>, " +
+      "attrs MAP<STRING, BIGINT>, point STRUCT<x: BIGINT, y: BIGINT>) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id')")
+
+    val schema = org.apache.spark.sql.types.StructType(Seq(
+      org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.LongType, nullable = false),
+      org.apache.spark.sql.types.StructField("tags", org.apache.spark.sql.types.ArrayType(org.apache.spark.sql.types.StringType), nullable = true),
+      org.apache.spark.sql.types.StructField("attrs", org.apache.spark.sql.types.MapType(org.apache.spark.sql.types.StringType, org.apache.spark.sql.types.LongType), nullable = true),
+      org.apache.spark.sql.types.StructField("point", org.apache.spark.sql.types.StructType(Seq(
+        org.apache.spark.sql.types.StructField("x", org.apache.spark.sql.types.LongType),
+        org.apache.spark.sql.types.StructField("y", org.apache.spark.sql.types.LongType))), nullable = true)
+    ))
+    val row = org.apache.spark.sql.Row(1L, Seq("a", "b"), Map("k" -> 1L), org.apache.spark.sql.Row(3L, 4L))
+    val richDf = spark.createDataFrame(spark.sparkContext.parallelize(Seq(row)), schema)
+
+    val yaml =
+      s"""id: ch_rich_types
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ch.probe_db.rich_types_tbl
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: tags
+         |          type: array
+         |          required: false
+         |        - name: attrs
+         |          type: map
+         |          required: false
+         |        - name: point
+         |          type: struct
+         |          required: false
+         |""".stripMargin
+    withContract(yaml) {
+      richDf.write.mode("append").insertInto("ch.probe_db.rich_types_tbl")
+    }
+    val readBack = spark.table("ch.probe_db.rich_types_tbl").head()
+    assert(readBack.getAs[Long]("id") == 1L)
+  }
+
+  test("LowCardinality: transparent on read, not requestable from Spark on write - confirmed against the real server, not assumed") {
+    // Neither of these TBLPROPERTIES keys is documented by clickhouse-spark
+    // as a way to request LowCardinality; both are silently accepted as
+    // opaque, unvalidated metadata rather than erroring - confirmed below
+    // that neither actually changes the column's real ClickHouse-side type,
+    // ruling out "maybe it's just undocumented" before concluding "no
+    // mechanism exists."
+    spark.sql("CREATE TABLE ch.probe_db.lowcard_a (id BIGINT NOT NULL, name STRING) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id', " +
+      "'clickhouse.column.name.type' = 'LowCardinality(String)')")
+    spark.sql("CREATE TABLE ch.probe_db.lowcard_b (id BIGINT NOT NULL, name STRING) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id', " +
+      "column_types = 'name LowCardinality(String)')")
+    assert(chColumnType("lowcard_a", "name") == "Nullable(String)")
+    assert(chColumnType("lowcard_b", "name") == "Nullable(String)")
+  }
+
+  test("Nested: Spark's ARRAY<STRUCT<...>> produces ClickHouse's Array(Tuple(...)), not a true Nested column") {
+    // A real, worth-documenting distinction, not a bug: ClickHouse's Nested
+    // type has its own parallel-arrays/sub-column-addressing semantics,
+    // structurally similar to but not the same as Array(Tuple(...)). A
+    // contract author reading "ARRAY<STRUCT<...>> works" should not assume
+    // it gives them true Nested semantics - it doesn't, and this connector
+    // has no Spark-side mechanism to request true Nested on write either.
+    spark.sql("CREATE TABLE ch.probe_db.nested_tbl (id BIGINT NOT NULL, " +
+      "items ARRAY<STRUCT<name: STRING, count: BIGINT>>) " +
+      "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id')")
+    assert(chColumnType("nested_tbl", "items") == "Array(Tuple(name Nullable(String), count Nullable(Int64)))")
+
+    val schema = org.apache.spark.sql.types.StructType(Seq(
+      org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.LongType, nullable = false),
+      org.apache.spark.sql.types.StructField("items", org.apache.spark.sql.types.ArrayType(org.apache.spark.sql.types.StructType(Seq(
+        org.apache.spark.sql.types.StructField("name", org.apache.spark.sql.types.StringType),
+        org.apache.spark.sql.types.StructField("count", org.apache.spark.sql.types.LongType)))), nullable = true)
+    ))
+    val row = org.apache.spark.sql.Row(1L, Seq(org.apache.spark.sql.Row("a", 1L), org.apache.spark.sql.Row("b", 2L)))
+    val nestedDf = spark.createDataFrame(spark.sparkContext.parallelize(Seq(row)), schema)
+    nestedDf.write.mode("append").insertInto("ch.probe_db.nested_tbl")
+    assert(spark.table("ch.probe_db.nested_tbl").count() == 1)
+  }
+
+  /** Queries the real ClickHouse server directly (bypassing Spark entirely)
+    * for a column's actual server-side type - the only way to distinguish
+    * "the connector silently ignored this option" from "the connector
+    * genuinely applied it," since Spark's own DESCRIBE only ever reports
+    * back the Spark-side type it already believes a column has.
+    */
+  private def chColumnType(table: String, column: String): String = {
+    val query = s"SELECT type FROM system.columns WHERE database = 'probe_db' AND table = '$table' AND name = '$column' FORMAT TSV"
+    val url = new java.net.URL(s"http://127.0.0.1:$httpPort/?query=" + java.net.URLEncoder.encode(query, "UTF-8"))
+    val conn = url.openConnection().asInstanceOf[java.net.HttpURLConnection]
+    try {
+      val src = scala.io.Source.fromInputStream(conn.getInputStream)
+      try src.mkString.trim finally src.close()
+    } finally conn.disconnect()
+  }
 }

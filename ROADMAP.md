@@ -1397,6 +1397,41 @@ pass. Unlike every prior connector, left real ❓ rows honestly recorded
 richer type system) given ClickHouse's substantially larger surface. Full
 findings and both ledgers: docs/connectors/clickhouse.md.
 
+#### Sub-phase: ClickHouse's 4 remaining ❓ operation-surface rows closed (done)
+
+Follow-up pass closing streaming read, existing-table `.saveAsTable()`,
+maintenance operations, and the richer type system — zero
+`spark-adapter/src/main/scala` changes, every finding a confirmed-
+transparent behavior or a confirmed permanent connector limitation.
+Streaming read and maintenance operations (`OPTIMIZE`/`ALTER TABLE ...
+DELETE`/`VACUUM`) both confirmed genuinely unreachable through Spark SQL
+with this connector — the latter fails at Spark's own parser, since the
+connector installs no SQL extension for them, unlike Delta's. Existing-
+table `.saveAsTable()` confirmed to produce the already-covered
+`AppendData` shape. Type system split into three real findings:
+`Array`/`Map`/`Struct` fully transparent (round-trip write/read/contract
+verification all pass); `LowCardinality` confirmed transparent on read
+and confirmed not requestable from Spark on write (verified against the
+connector's own decompiled `SchemaUtils` class and the real server's
+`system.columns`, not assumed); `Nested` — Spark's `ARRAY<STRUCT<...>>`
+produces `Array(Tuple(...))`, a distinct type from ClickHouse's own
+`Nested`, a real distinction worth documenting rather than a bug. A
+bonus finding, deliberately left unfixed as out of scope for a connector
+pass: a contract missing `outputs:` crashes `StructuralVerifier` with an
+unguarded `NoSuchElementException` instead of failing cleanly —
+root-caused to `ContractEnforcementRule`'s runtime path never calling
+the `ContractValidator.validate` check that already exists and would
+catch it, pinned with a permanent test in `StructuralVerifierSpec`
+rather than left as conversation history. Operation-surface ledger now
+fully closed (no ❓ rows remaining); feature surface has three remaining,
+honestly-scoped ❓ rows (compression/`PARTITION BY`/replicated engines/
+materialized views, TTL-driven expiry, whether reading a genuinely
+pre-existing `Nested` column round-trips). `ClickHouseConnectorSpec`: 21
+tests (up from 15), full `spark-adapter` suite 234/234 passing,
+`mimaReportBinaryIssues` clean, `./dev/build`/`./dev/test` pass against
+real `spark-submit`. Full findings and both ledgers:
+docs/connectors/clickhouse.md.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`

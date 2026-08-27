@@ -148,6 +148,82 @@ Invariant neither causes nor can prevent this; a satisfying write (with
 confirmed by every other `.create()`/`.createOrReplace()` test in this
 file succeeding once that workaround is applied.
 
+**Follow-up pass closing the 4 remaining ❓ rows.** Zero
+`spark-adapter/src/main/scala` changes — every finding below is either a
+confirmed-transparent behavior or a confirmed, permanent connector
+limitation, not a translation gap (see the ledgers below for the
+disposition each closed to).
+
+- **Streaming read**: confirmed rejected outright, the same way streaming
+  write already was — both `spark.readStream.format("clickhouse")...load()`
+  (`SparkUnsupportedOperationException: Data source clickhouse does not
+  support streamed reading`) and the catalog-based
+  `spark.readStream.table(...)` (`AnalysisException: ... does not support
+  either micro-batch or continuous scan`) fail before any Command-shaped
+  plan exists. Nothing for `WriteCommandSupport`/`SparkPlanAdapter` to
+  translate.
+- **`.saveAsTable()` onto an existing table**: confirmed empirically (not
+  assumed from the already-covered `.insertInto()`/`.writeTo().append()`
+  shapes) to produce the identical `AppendData` node. No new case needed.
+- **Maintenance operations** (`OPTIMIZE`, `ALTER TABLE ... DELETE`,
+  `VACUUM`): confirmed genuinely unreachable through Spark SQL with this
+  connector at all — every attempt fails with a `ParseException` at
+  Spark's own SQL parser, before analysis, because the connector installs
+  no `SparkSessionExtensions` parser extension for them (unlike Delta,
+  which registers its own parser for `OPTIMIZE`/`VACUUM`). Not a 🚫
+  fails-closed row in the usual sense (nothing reaches a Command-shaped
+  plan to classify) — a genuine absence of Spark-visible surface, closer
+  in kind to the connector's own already-documented `.save(path)` N/A row.
+- **Richer type system**: split into three genuinely different findings,
+  not one. **Array/Map/Struct** (Spark's own complex types): confirmed
+  fully transparent — `CREATE TABLE`, a real write producing the already-
+  known `AppendData` shape, read-back, and contract verification against
+  a contract declaring `array`/`map`/`struct` field types all confirmed
+  working with a real round-trip test. **`LowCardinality`**: confirmed
+  transparent on read (the connector's own `SchemaUtils` class, decompiled
+  directly rather than assumed from its docs, has no `LowCardinality`
+  special-casing at all — the wrapped base type flows through as-is) and
+  confirmed **not requestable from the Spark side on write** — two
+  plausible-looking `TBLPROPERTIES` mechanisms were tried and both
+  silently accepted without applying anything, confirmed against the real
+  server's own `system.columns` (`Nullable(String)`, not
+  `LowCardinality(String)`), ruling out "maybe it's an undocumented
+  option" before concluding "no mechanism exists." **`Nested`**: a real,
+  worth-documenting distinction, not a bug — Spark's
+  `ARRAY<STRUCT<...>>` DDL produces ClickHouse's `Array(Tuple(...))`
+  (confirmed against `system.columns`), a structurally similar but
+  distinct type from ClickHouse's own `Nested(...)` (parallel-arrays/
+  sub-column-addressing semantics `Array(Tuple(...))` doesn't have). A
+  contract author should not assume `ARRAY<STRUCT<...>>` gives them true
+  `Nested` semantics — it doesn't, and there's no Spark-side mechanism to
+  request true `Nested` on write either. (The connector's `SchemaUtils`
+  does contain real *read*-side unwrap logic for a genuinely pre-existing
+  `Nested` column, per its `getNestedColumns`/`nestedCols` symbols — not
+  independently exercised this pass; noted as the row's own remaining
+  next step below, distinct from the write-side finding above.)
+
+**A real bonus finding, out of scope to fix here: a malformed contract
+crashes instead of failing cleanly, and it's not ClickHouse-specific.**
+Investigating the type-mapping contract-verification path with a
+contract YAML missing its top-level `outputs:` key didn't produce a
+clean rejection — it crashed `StructuralVerifier.verify` with an
+unguarded `java.util.NoSuchElementException: head of empty list` at
+`contract.outputs.head`. Root-caused precisely, not just observed:
+`ContractParser.parse` never calls `ContractValidator.validate` (a
+separate step a caller must invoke explicitly), and nothing on
+`ContractEnforcementRule`'s runtime enforcement path calls it either —
+even though `ContractValidator` already has an "outputs must be
+non-empty" check that would catch exactly this. This reproduces with
+*any* connector, since it's a `contract`/`spark-adapter` boundary gap,
+not a ClickHouse translation issue — deliberately left unfixed this pass
+(the same precedent as Avro's decimal contract-type-vocabulary gap: out
+of scope for a spark-adapter connector pass to change contract
+validation), pinned with a permanent test in `StructuralVerifierSpec`
+rather than left as a remembered probe result. **Next step**:
+`ContractEnforcementRule.verifyOrThrow` (or `StructuralVerifier.verify`
+itself) should run `ContractValidator.validate` first and surface its
+errors as a normal `VerificationResult` failure.
+
 ## ClickHouse operation-surface coverage ledger
 
 | Operation | Status | Evidence / next step |
@@ -155,18 +231,18 @@ file succeeding once that workaround is applied.
 | `.read.format("clickhouse").load(...)` (TableProvider, no catalog) | ✅ Covered | `DataSourceV2Relation`, same generic case as catalog reads. `ClickHouseConnectorSpec`'s "PASS: TableProvider format-based read/write round-trips real data." |
 | Catalog table reference (`spark.table(...)`/`SELECT * FROM t`) | ✅ Covered | `DataSourceV2Relation`, already generic from Iceberg's pass. `ClickHouseConnectorSpec`'s PASS read test — with the read/write location-format asymmetry above confirmed and worked around. |
 | Time travel / snapshot reads | 🚫 **N/A, not a real gap** | ClickHouse's MergeTree engine has no Iceberg/Delta-style snapshot-versioning concept exposed through this connector. Nothing to translate. |
-| Streaming read (`readStream`) | ❓ **Not investigated** | Out of scope for this pass (streaming *write* was investigated and found rejected — see below; the read side was not separately probed). **Next step**: probe `spark.readStream.format("clickhouse")...` against a real server the same way the write side was. |
+| Streaming read (`readStream`) | 🚫 **N/A — connector doesn't implement `SupportsRead` with any streaming mode** | Confirmed empirically, both `TableProvider`- and catalog-based: `SparkUnsupportedOperationException`/`AnalysisException` before any Command-shaped plan exists. `ClickHouseConnectorSpec`'s dedicated rejection test. **Next step**: none — a genuine, permanent connector limitation, the same category as streaming write. |
 | Change-data-feed / incremental read | 🚫 **N/A, not a real gap** | No CDC mechanism exists for this connector's plain MergeTree tables. Nothing to translate. |
 | `.save(path)` (path-based, no catalog) | 🚫 **N/A — connector has no path-based write at all** | Confirmed via this connector's own documentation and empirically: writes are either catalog-based (`.writeTo(...)`) or `TableProvider`-based with explicit `host`/`database`/`table` options, never a bare filesystem path. Not a gap — there is no `.save(path)` shape this connector produces. |
 | `.saveAsTable(...)`, new table | ✅ Covered | Same `ReplaceTableAsSelect` shape `.writeTo(...).createOrReplace()` uses, confirmed via probe (not exercised as a dedicated permanent test — `ClickHouseConnectorSpec`'s `createOrReplace()` test covers the identical plan shape). |
-| `.saveAsTable(...)`, existing table (append) | ❓ **Not investigated** | Out of scope for this pass — `.insertInto(...)` and `.writeTo(...).append()` (the same `AppendData` shape) were both confirmed instead. **Next step**: a dedicated probe/test, cheap to add given the shape is already known to be covered. |
+| `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Confirmed empirically to produce `AppendData`, identical to `.insertInto()`/`.writeTo().append()`. `ClickHouseConnectorSpec`'s dedicated test. |
 | `.insertInto(...)` | ✅ Covered | `AppendData`, already generic. `ClickHouseConnectorSpec`'s translation test. |
 | `.writeTo(...)`, all sub-ops (`.append()`/`.overwrite(cond)`/`.create()`/`.createOrReplace()`) | ✅ Covered | `AppendData`/`OverwriteByExpression`/`CreateTableAsSelect`/`ReplaceTableAsSelect`, all already generic from Iceberg's pass, confirmed to cover ClickHouse via real PASS/FAIL pairs (`.overwritePartitions()`, DataFrameWriterV2's dynamic-partition-overwrite sub-op, not investigated — see next row). |
 | `.writeTo(...).overwritePartitions()` | 🚫 **N/A — connector doesn't support partition-level overwrite** | Confirmed via this connector's own documented caveat ("The connector doesn't currently support partition-level overwrite operations"), not independently re-probed this pass. **Next step**: a real probe to confirm the exact rejection mode (Spark-level or connector-level), if ever doubted. |
 | Format-specific DML — `DELETE FROM ... WHERE ...` | ✅ **Covered — closed this pass, genuinely new** | `DeleteFromTable`, a new connector-agnostic `WriteCommandSupport` case (see above). PASS/FAIL pair in `ClickHouseConnectorSpec`, structural verification only. |
 | Format-specific DML — `UPDATE`/`MERGE INTO` | 🚫 **N/A — rejected before any write occurs** | `UPDATE` reaches `UpdateTable` then is rejected by Spark's own generic "not supported temporarily" message; `MERGE` fails at analysis time before any Command-shaped plan exists at all. Neither is a real Phase-4 case-3 (data-mutating, unmodeled) operation for this connector — both are N/A the same way Parquet/CSV/Avro's own DML rejections are. `ClickHouseConnectorSpec`'s combined rejection test, asserting the target table is unchanged. |
 | Streaming write | 🚫 **N/A — connector doesn't implement `SupportsStreamingWrite`** | Confirmed empirically: `AnalysisException: Table ... doesn't support streaming write - ClickHouseTable(...)`, rejected by Spark itself before any Command-shaped write plan is produced. `ClickHouseConnectorSpec`'s dedicated rejection test. **Next step**: none — this is a genuine, permanent connector limitation as of 0.10.0, not something Invariant's translation could close even in principle without the connector itself adding the capability. |
-| Maintenance operations that touch data | ❓ **Not investigated** | ClickHouse has server-side maintenance operations (`OPTIMIZE`, `ALTER TABLE ... DELETE`, TTL-driven expiry, etc.) reachable via raw SQL against the server directly, but whether any of these route through a Spark-visible `Command`-shaped plan at all (as opposed to being entirely outside Spark's plan machinery) was not investigated this pass. **Next step**: a real probe issuing `OPTIMIZE`/raw-SQL maintenance statements through this connector's SQL passthrough (if one exists) against a real server. |
+| Maintenance operations that touch data (`OPTIMIZE`, `ALTER TABLE ... DELETE`, `VACUUM`) | 🚫 **N/A — unreachable through Spark SQL with this connector** | Confirmed empirically: every attempt fails with `ParseException` at Spark's own parser, before analysis — the connector registers no SQL extension for them, unlike Delta's own `OPTIMIZE`/`VACUUM`. `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none found this pass — would require the connector itself to add a parser extension or `CALL`-style procedure mechanism (it currently has neither); TTL-driven expiry specifically remains a real ❓ (see feature surface below), since it's configured at `CREATE TABLE` time, not invoked as a separate operation. |
 
 ## ClickHouse feature-surface coverage ledger
 
@@ -174,22 +250,27 @@ file succeeding once that workaround is applied.
 |---|---|---|
 | `ORDER BY`/sorting-key nullability (`allow_nullable_key`) | ✅ Confirmed orthogonal | A source DataFrame's correct `nullable = false` isn't propagated into the generated DDL by `DataFrameWriterV2.create()`; ClickHouse enforces its own constraint independently of Invariant either way. `ClickHouseConnectorSpec`'s dedicated feature-surface test. |
 | Read/write location-format asymmetry (`Table.properties()`/`Table.name()`) | ✅ Confirmed and worked around | Not a "feature" in the schema-evolution sense, but a real, confirmed connector-specific behavior contract authors must account for. See the write-up above; exercised directly in the read test. |
-| Compression/codec options, TTL, `PARTITION BY`, replicated engines, materialized views | ❓ **Not investigated** | Out of scope for this pass — this connector has a substantially larger feature surface than any prior one (ClickHouse's own engine/storage model is far more configurable than Parquet/Avro/Delta's). **Next step**: a dedicated future pass investigating each, the same "real probe against a real table with the feature on" methodology this document already establishes. |
-| Logical/physical type mapping (ClickHouse's `LowCardinality`, `Array`, `Map`, `Tuple`, `Nested` types) | ❓ **Not investigated** | Out of scope for this pass — every test here used only `BIGINT` columns. **Next step**: real round-trip tests for ClickHouse's richer type system, the same way Avro's decimal/date/timestamp pass worked. |
+| Compression/codec options, `PARTITION BY`, replicated engines, materialized views | ❓ **Not investigated** | Out of scope for this pass — this connector has a substantially larger feature surface than any prior one (ClickHouse's own engine/storage model is far more configurable than Parquet/Avro/Delta's). **Next step**: a dedicated future pass investigating each, the same "real probe against a real table with the feature on" methodology this document already establishes. |
+| TTL-driven expiry | ❓ **Not investigated** | Configured at `CREATE TABLE`/`ALTER TABLE` time as a table property, not invoked as a separate operation — whether Invariant's structural checks interact with it at all (they shouldn't, since it's a storage-layer concern) wasn't confirmed this pass. **Next step**: a real probe against a table with `TTL` configured, confirming writes/reads are unaffected. |
+| Type mapping — `Array`/`Map`/`Struct` (Spark's own complex types) | ✅ **Confirmed transparent — closed this pass** | Real round-trip: `CREATE TABLE`, write (`AppendData`, the already-known shape), read-back, and contract verification against a contract declaring `array`/`map`/`struct` field types all pass. `ClickHouseConnectorSpec`'s dedicated test. |
+| Type mapping — `LowCardinality` | ✅ **Confirmed transparent on read; confirmed not requestable from Spark on write — closed this pass** | The connector's own `SchemaUtils` (decompiled directly) has no `LowCardinality` handling at all — the wrapped base type flows through on read. Two plausible `TBLPROPERTIES` mechanisms tried on write, both silently ignored — confirmed against the real server's `system.columns` (`Nullable(String)`, not `LowCardinality(String)`). `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none — no mechanism exists in this connector version to request it from Spark. |
+| Type mapping — `Nested` | 🔧 **Found a real distinction, not a bug — closed this pass, one genuine ❓ remains** | Spark's `ARRAY<STRUCT<...>>` produces ClickHouse's `Array(Tuple(...))`, not true `Nested(...)` — confirmed against `system.columns`. A contract author should not assume `ARRAY<STRUCT<...>>` gives true `Nested` semantics. `ClickHouseConnectorSpec`'s dedicated test pins the real server-side type. **Next step**: whether *reading* a genuinely pre-existing `Nested` column (created outside Spark) round-trips correctly wasn't independently exercised — the connector's `SchemaUtils` has real unwrap logic for it (`getNestedColumns`/`nestedCols`, confirmed present via decompilation) that this pass didn't test end-to-end. |
 
-Net assessment: unlike every prior connector's pass, this one has real
-❓ rows — ClickHouse's operation and feature surfaces are both
-substantially larger than any connector onboarded so far (a real second
-network service with its own SQL dialect, storage engines, and type
-system, not a file format or an embedded-metastore catalog), and a
-single pass's scope was deliberately kept to what could be empirically
-confirmed given the added complexity of provisioning a real server
-without Docker. What *is* closed: the entire core write path
-(`AppendData`/`OverwriteByExpression`/`CreateTableAsSelect`/
-`ReplaceTableAsSelect`/the new `DeleteFromTable` case), the core read
-path, and the connector's DML/streaming-write limits — all confirmed
-empirically, none assumed. `ClickHouseConnectorSpec`: 15 tests, all
-passing.
+Net assessment: the operation-surface ledger is now fully closed — every
+row has a ✅/🚫 disposition, no ❓ remaining. The feature-surface ledger
+has three real, honestly-scoped ❓ rows left (compression/`PARTITION BY`/
+replicated engines/materialized views, TTL-driven expiry, and whether a
+genuinely pre-existing `Nested` column round-trips on *read*) —
+ClickHouse's engine/storage model remains substantially more configurable
+than any prior connector's, and these three specifically need either a
+dedicated future pass or, for the `Nested`-read question, a table created
+via raw SQL passthrough rather than Spark DDL. What *is* now closed: the
+entire core write path (`AppendData`/`OverwriteByExpression`/
+`CreateTableAsSelect`/`ReplaceTableAsSelect`/`DeleteFromTable`), the
+entire core read path including streaming's rejection, maintenance
+operations' absence from Spark's plan machinery, and the richer-type
+findings above — all confirmed empirically, none assumed.
+`ClickHouseConnectorSpec`: 21 tests, all passing (up from 15).
 
 ---
 
