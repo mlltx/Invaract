@@ -572,7 +572,16 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // arbitrary filesystem path, outside the catalog entirely. ---
 
   test("translates INSERT OVERWRITE DIRECTORY via InsertIntoHiveDirCommand") {
-    val outDir = scratchDir.resolve("hive_insert_dir_out").toString
+    // Forward-slash form for the SQL string literal: on Windows, Hive's
+    // INSERT OVERWRITE DIRECTORY location parsing (unlike a plain
+    // java.nio.file.Path) can't round-trip a raw backslash-separated path
+    // embedded in a single-quoted SQL string, which surfaces downstream as
+    // Hadoop's RawLocalFileSystem deriving an empty-string Path and
+    // throwing "Can not create a Path from an empty string" - the same
+    // convention already used everywhere else in this module a location is
+    // interpolated into a SQL string (see StructuralVerifier.scala,
+    // ContractEnforcementRuleSpec).
+    val outDir = scratchDir.resolve("hive_insert_dir_out").toString.replace('\\', '/')
     df().createOrReplaceTempView("hive_insert_dir_src")
     val listener = new SparkAdapterListener
     spark.listenerManager.register(listener)
@@ -589,7 +598,8 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("FAIL: INSERT OVERWRITE DIRECTORY at a location that doesn't match the contract is rejected") {
-    val outDir = scratchDir.resolve("hive_insert_dir_fail_out").toString
+    // See the sibling PASS test above for why this needs forward slashes.
+    val outDir = scratchDir.resolve("hive_insert_dir_fail_out").toString.replace('\\', '/')
     df().createOrReplaceTempView("hive_insert_dir_fail_src")
 
     val yaml =
