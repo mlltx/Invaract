@@ -3,12 +3,8 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractParser
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 
 /** ClickHouse-specific coverage, added via the `add-spark-connector`
   * skill's process (docs/ADDING_A_SPARK_CONNECTOR.md). Unlike every prior
@@ -32,18 +28,12 @@ import org.scalatest.funsuite.AnyFunSuite
   * mechanism rather than the `SupportsRowLevelOperations`/
   * `RewriteRowLevelOperation` path Iceberg's MERGE/UPDATE/DELETE use - a
   * structurally different, simpler write shape. See
-  * docs/SPARK_ADAPTER.md's "ClickHouse support" section for the full
-  * coverage ledger.
+  * docs/connectors/clickhouse.md for the full coverage ledger.
   */
-class ClickHouseConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
-  private var spark: SparkSession = _
+class ClickHouseConnectorSpec extends ConnectorSpecBase {
   private var server: ClickHouseTestServer = _
   private val httpPort = 28423
   private val tcpPort = 29300
-
-  @volatile private var activeContract: Option[com.example.contract.Contract] = None
-  @volatile private var activeOptions: VerificationOptions = VerificationOptions()
-  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
     server = new ClickHouseTestServer(httpPort, tcpPort)
@@ -62,12 +52,7 @@ class ClickHouseConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.catalog.ch.database", "default")
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
-      .withExtensions { ext =>
-        ext.injectCheckRule { _ => (plan: LogicalPlan) =>
-          capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
-        }
-      }
+      .withExtensions(injectContractCheck)
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     spark.sql("CREATE DATABASE IF NOT EXISTS ch.probe_db")
@@ -77,17 +62,6 @@ class ClickHouseConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
     if (spark != null) spark.stop()
     if (server != null) server.stop()
   }
-
-  private def parseContract(yaml: String) = ContractParser.parse(yaml)
-
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
-    activeContract = Some(parseContract(yaml))
-    activeOptions = options
-    try body
-    finally activeContract = None
-  }
-
-  private def df() = spark.createDataFrame(Seq((1L, 10L), (2L, 20L))).toDF("id", "value")
 
   private def createTable(name: String): Unit =
     spark.sql(s"CREATE TABLE IF NOT EXISTS ch.probe_db.$name (id BIGINT NOT NULL, value BIGINT) " +
@@ -408,8 +382,8 @@ class ClickHouseConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // conventions for the identical table, not an Invariant bug (the same
   // "does Table.properties() expose 'location'?" fallback chain other
   // DSv2 connectors already use, ClickHouse just answers differently on
-  // each side). See "ClickHouse support" in docs/SPARK_ADAPTER.md for the
-  // next step (a possible future unification, out of scope for this pass).
+  // each side). See docs/connectors/clickhouse.md for the next step (a
+  // possible future unification, out of scope for this pass).
   test("PASS: a contract's declared input schema is satisfied by a catalog table reference read") {
     createTable("read_catalog_tbl")
     df().writeTo("ch.probe_db.read_catalog_tbl").append()
