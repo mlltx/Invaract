@@ -405,6 +405,314 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
   }
 
+  // --- DML rule verification (RuleVerifier/RowMutationSupport), against
+  // real Iceberg MERGE/UPDATE/DELETE - see docs/SPARK_ADAPTER.md's "DML
+  // rule verification" section. merge_condition/forbid_unconditional_delete
+  // work identically to Delta's (RowLevelWrite.condition/operation.command()
+  // are stable public fields, confirmed empirically via a real probe, since
+  // deleted - see RowMutationSupport's class doc); allowed_update_columns
+  // is confirmed for copy-on-write (this table's default write mode) but
+  // deliberately not attempted for merge-on-read - see the "unverifiable"
+  // tests below.
+
+  test("PASS: a MERGE INTO an Iceberg table satisfying its contract's merge_condition rule executes normally") {
+    val tableName = "local.db.rule_merge_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as id, 198L as doubled) s
+           |ON t.id = s.id
+           |WHEN MATCHED THEN UPDATE SET *
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin).collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
+  test("FAIL: a MERGE INTO an Iceberg table whose ON condition doesn't match its contract's merge_condition rule is aborted before touching the table") {
+    val tableName = "local.db.rule_merge_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id, region]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled) s
+             |ON t.id = s.id
+             |WHEN MATCHED THEN UPDATE SET *
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleMergeConditionViolation && v.message.contains("region")),
+      s"expected a RULE_MERGE_CONDITION_VIOLATION naming 'region', got ${ex.result.violations}"
+    )
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the MERGE must be aborted before touching the table")
+  }
+
+  test("PASS: a DELETE with a filtering predicate satisfies its contract's forbid_unconditional_delete rule (Iceberg)") {
+    val tableName = "local.db.rule_delete_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: forbid_unconditional_delete
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  test("FAIL: an unconditional DELETE against an Iceberg table violates its contract's forbid_unconditional_delete rule and is aborted before touching the table") {
+    val tableName = "local.db.rule_delete_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: forbid_unconditional_delete
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"DELETE FROM $tableName").collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleUnconditionalDelete))
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the DELETE must be aborted before touching the table")
+  }
+
+  test("PASS: an UPDATE against a copy-on-write Iceberg table assigning only allowed columns satisfies its contract's allowed_update_columns rule") {
+    val tableName = "local.db.rule_update_pass_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: allowed_update_columns
+         |    columns: [doubled]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).where("id = 3").collect().head.getLong(1) == 7)
+  }
+
+  test("FAIL: an UPDATE against a copy-on-write Iceberg table assigning a disallowed column violates its contract's allowed_update_columns rule and is aborted before touching the table") {
+    val tableName = "local.db.rule_update_fail_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: allowed_update_columns
+         |    columns: [doubled]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"UPDATE $tableName SET id = id + 100 WHERE id > 2").collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleDisallowedUpdateColumn && v.message.contains("id")),
+      s"expected a RULE_DISALLOWED_UPDATE_COLUMN naming 'id', got ${ex.result.violations}"
+    )
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the UPDATE must be aborted before touching the table")
+  }
+
+  // --- Unverifiable DML: loud, not silent ---
+  //
+  // Merge-on-read's WriteDelta rewrites an UPDATE to a structurally
+  // different plan than copy-on-write's ReplaceData (an Expand-based delta
+  // of insert/delete rows, confirmed via a real probe, since deleted - see
+  // RowMutationSupport.updatedColumnsOfReplaceData's own doc), with no
+  // per-column before/after pairing this module can compare. Before this
+  // fail-closed check existed, a contract's allowed_update_columns rule
+  // would have silently never been checked against such an UPDATE - the
+  // write executes, no violation reported, no protection. Now it's a real,
+  // loud rejection instead.
+
+  test("FAIL: an UPDATE against a merge-on-read Iceberg table is unverifiable against an allowed_update_columns rule, not silently passed") {
+    val tableName = "local.db.rule_update_mor_unverifiable_tbl"
+    spark.sql(
+      s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg
+         |TBLPROPERTIES ('write.update.mode' = 'merge-on-read', 'format-version' = '2')
+         |""".stripMargin)
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val beforeRows = spark.table(tableName).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: allowed_update_columns
+         |    columns: [doubled]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(_.violationType == ViolationType.RuleUnverifiableDml),
+      s"expected a RULE_UNVERIFIABLE_DML violation, got ${ex.result.violations}"
+    )
+    assert(spark.table(tableName).collect().toSet == beforeRows, "the UPDATE must be aborted before touching the table")
+  }
+
+  test("PASS: an UPDATE against a merge-on-read Iceberg table executes normally when no allowed_update_columns rule is declared") {
+    val tableName = "local.db.rule_update_mor_no_rule_tbl"
+    spark.sql(
+      s"""CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg
+         |TBLPROPERTIES ('write.update.mode' = 'merge-on-read', 'format-version' = '2')
+         |""".stripMargin)
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tableName
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).where("id = 3").collect().head.getLong(1) == 7)
+  }
+
   // --- Feature surface: deletion vectors (format-version=3 merge-on-read deletes) ---
   //
   // Confirmed empirically (throwaway probe, since deleted) that a real

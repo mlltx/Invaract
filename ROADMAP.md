@@ -1608,6 +1608,89 @@ these three types (governance, compatibility, richer transformation
 checks) — all still tracked below, now with one fewer prerequisite
 blocking them.
 
+#### Sub-phase: Iceberg DML rule support, and failing closed on an
+#### unverifiable rule instead of silently skipping it (done)
+
+Two follow-ups to "Interpreting `rules`" above, both prompted directly by
+a user question about what the three DML rules could and couldn't cover
+yet: Iceberg was a real, named gap (`RowMutationSupport` covered only
+Delta's command classes and DSv2's plain `DeleteFromTable`), and the
+existing design had a real silent-failure mode — a contract declaring a
+DML rule against an operation this module recognized as a write but
+couldn't extract DML-specific facts for would execute with no violation
+and no protection, indistinguishable from "the rule doesn't apply here."
+
+- [x] **Real investigation before writing extraction code, not
+      assumption.** A throwaway probe (since deleted) against a live
+      Iceberg 1.11.0 session, capturing real `ReplaceData`/`WriteDelta`
+      plans for MERGE/UPDATE/DELETE under both copy-on-write and
+      merge-on-read, plus reading Spark 3.5.1's own
+      `RewriteDeleteFromTable`/`RewriteUpdateTable`/`RewriteMergeIntoTable`
+      source. Found the original "not a form that carries a clean fact to
+      extract" judgment was too pessimistic for two of the three rules:
+      `RowLevelWrite.condition` (a real, stable, public field — no
+      reflection needed, unlike Delta) is exactly the original predicate
+      for both DELETE and MERGE, confirmed against real captured plans,
+      not assumed from the doc comments. `RowLevelWrite.operation.command()`
+      reliably reports MERGE/UPDATE/DELETE, letting classification stay
+      accurate even where extraction isn't (see the fail-closed item
+      below). UPDATE's assigned columns *are* extractable for
+      copy-on-write's `ReplaceData` (every target column is wrapped
+      `If(matchCondition, assignedExpr, originalAttr)`, confirmed via the
+      same probe — a column changed iff its `If`'s branches aren't
+      semantically equal) but genuinely not for merge-on-read's
+      `WriteDelta` (an `Expand`-based rewrite with no equivalent
+      per-column pairing) — a real, permanent gap, not a shortcut taken
+      to save time.
+- [x] **`merge_condition`/`forbid_unconditional_delete`: full Iceberg
+      support, both write strategies.** `allowed_update_columns`:
+      copy-on-write UPDATE supported; merge-on-read UPDATE deliberately
+      unextractable — see the fail-closed item below for what happens
+      instead of a silent pass.
+- [x] **Fail closed on "recognized as DML, but unverifiable" instead of
+      silently skipping the rule.** `RowMutationSupport.classify` now
+      returns one of three things, not two: `None` (not row-level DML at
+      all — a rule is genuinely inapplicable, the common case), `Extracted(kind,
+      mutation)` (the existing path), or `Unverifiable(kind)` — genuinely
+      `kind`-shaped DML this module couldn't extract facts for. Two real
+      cases reach it: Delta's reflection failing on a hypothetical future
+      version-renamed method (already existing, only now distinguished
+      from "not a rule this module checks" instead of being silently
+      swallowed alongside every other reason `combined` used to return
+      `None`), and Iceberg's merge-on-read UPDATE, above. A new
+      `RULE_UNVERIFIABLE_DML` violation type gets the same
+      abort-before-any-data-is-written treatment as every other
+      violation — `ContractEnforcementRule.verifyOrThrow` only raises it
+      when `RuleVerifier.appliesTo(rule, kind)` says the active contract
+      actually declares a rule relevant to `kind`, so an operation kind a
+      contract simply doesn't constrain (e.g. a merge-on-read UPDATE under
+      a contract that only declares `forbid_unconditional_delete`) is
+      never spuriously rejected — proven by a real test, not just argued.
+- [x] 11 new tests: 8 real-Iceberg PASS/FAIL pairs in
+      `IcebergConnectorSpec` (`merge_condition`, `forbid_unconditional_delete`,
+      `allowed_update_columns` against copy-on-write, plus the
+      merge-on-read `RULE_UNVERIFIABLE_DML` case and its no-rule-declared
+      counterpart proving no over-rejection) and 3 pure-Scala
+      `RuleVerifier.appliesTo` truth-table tests in `RuleVerifierSpec`.
+      Full `spark-adapter` suite: 270/270 passing (up from 259), zero
+      regressions across all 7 connectors including a real ClickHouse
+      subprocess server.
+- [x] `mimaReportBinaryIssues` clean; `./dev/build`/`./dev/test`/
+      `./dev/regression` all pass against real `spark-submit` (270/270
+      spark-adapter tests, demo pipeline PASS, regression pack 2/2).
+- [~] Mutation testing scoped to the 4 changed files
+      (`RowMutationSupport.scala`, `RuleVerifier.scala`,
+      `ContractEnforcementRule.scala`, `StructuralVerifier.scala`; 60
+      non-excluded mutants) was started, not completed — stopped partway
+      (~20/60 tested, zero survivors up to that point) at an explicit
+      user decision to stop re-running the full check per change and
+      instead write mutation-resistant tests up front (every PASS/FAIL
+      pair above already asserts on both sides of each conditional this
+      session's code introduces — kind dispatch, extraction success/
+      failure, appliesTo's per-rule-type matrix), per CLAUDE.md's updated
+      "Mutation Testing Requirement" section. Not run to a final score;
+      recorded here rather than silently presented as a completed check.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1633,23 +1716,27 @@ blocking them.
       only, not interpreted.
 - [ ] **Full semantic DML verification** (row-level `MERGE`/`UPDATE`/
       `DELETE`), continued. Structural verification (target location/
-      schema, MERGE's source as an input) and a first rule-based slice
-      (merge match columns, forbidding an unconditional delete, allowed
-      update columns — checked structurally, not by predicate logic) are
-      both done — see the "Delta Lake operation-surface coverage ledger"
-      sub-phase and "Interpreting `rules`" above. What's still
+      schema, MERGE's source as an input) and a rule-based slice covering
+      both Delta and any DSv2 `SupportsRowLevelOperations` connector
+      (Iceberg's mechanism) — merge match columns, forbidding an
+      unconditional delete, allowed update columns for copy-on-write
+      UPDATE, all checked structurally rather than by predicate logic,
+      failing closed rather than silently skipping the rule when this
+      module recognizes an operation as DML but can't extract what a
+      declared rule needs — are all done; see the "Delta Lake
+      operation-surface coverage ledger", "Interpreting `rules`", and
+      "Iceberg DML rule support" sub-phases above. What's still
       unverified, deliberately:
       - The merge condition's actual predicate logic — `merge_condition`
         today checks that declared columns are *referenced*, not that
         they form the operation's only or exact equality pairing.
       - Which specific rows an `UPDATE` touches, and whether a `DELETE`'s
         predicate (when present) is trivially satisfiable.
-      - Iceberg's (or any DSv2 `SupportsRowLevelOperations` connector's)
-        MERGE/UPDATE/DELETE — `RowMutationSupport` deliberately covers
-        only Delta's command classes and DSv2's plain `DeleteFromTable`;
-        `ReplaceData`/`WriteDelta` are Spark's own *rewritten* form of the
-        operation, with no clean condition/assigned-columns fact to
-        extract the way Delta's own commands have.
+      - `allowed_update_columns` against an Iceberg merge-on-read
+        UPDATE — genuinely unextractable from `WriteDelta`'s rewritten
+        `Expand`-based plan (see "Iceberg DML rule support" above); fails
+        closed (`RULE_UNVERIFIABLE_DML`) rather than silently passing,
+        but isn't verified.
       A richer rule vocabulary (row-level conditions expressed as actual
       boolean logic against contract-declared fields, not just "which
       columns does it touch") would be needed for the predicate-logic

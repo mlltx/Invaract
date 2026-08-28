@@ -736,50 +736,108 @@ mirroring `StateChangingCallSupport`'s existing relationship to
   `RowMutationSupport.deleteScopeOf` normalizes both into the same
   `DeleteScope`.
 
-**Scope, deliberately not attempted here:** Iceberg's (or any DSv2
-`SupportsRowLevelOperations` connector's) MERGE/UPDATE/DELETE.
-`WriteCommandSupport.dsv2RowLevelWrite`'s `ReplaceData`/`WriteDelta`
-nodes are Spark's own *rewritten* form of the operation — a copy-on-write
-scan-and-replace, or a merge-on-read delta write — not a form that still
-carries a clean "the match condition"/"the columns an UPDATE assigns"
-fact the way Delta's own command classes do. Recovering those from the
-rewritten plan is real, unstarted work; see ROADMAP.md's "Full semantic
-DML verification" item, which also covers what's out of scope even for
-Delta: the merge condition's actual predicate logic, the specific rows an
-UPDATE touches, and whether a DELETE's predicate is trivially satisfiable
-— `RuleVerifier`'s `merge_condition` check is a structural approximation
-(declared columns must be *referenced*, not that they're the operation's
-only or exact equality pairing), documented as such in its own class doc.
+**Iceberg (and any DSv2 `SupportsRowLevelOperations` connector) is now
+covered too, for two of the three rules unconditionally and the third
+for its common case.** `WriteCommandSupport.dsv2RowLevelWrite`'s
+`ReplaceData`/`WriteDelta` nodes are Spark's own *rewritten* form of the
+operation, not the original command — a first pass judged them not to
+carry a clean fact to extract and deferred this deliberately (see
+ROADMAP.md's "Full semantic DML verification" item's history). A real
+investigation (a throwaway probe against a live Iceberg 1.11.0 session,
+since deleted, plus reading Spark 3.5.1's
+`RewriteDeleteFromTable`/`RewriteUpdateTable`/`RewriteMergeIntoTable`
+source) found it was more extractable than assumed:
+
+- **`RowLevelWrite.condition`** (present on both `ReplaceData` and
+  `WriteDelta`, copy-on-write and merge-on-read alike) is, per Spark's
+  own rewrite rules, exactly the original predicate — a MERGE's `ON`
+  clause, or a DELETE/UPDATE's `WHERE` clause (`Literal.TrueLiteral` if
+  absent). No reflection needed, unlike Delta: `RowLevelWrite`/
+  `ReplaceData`/`WriteDelta`/`RowLevelOperation` are real, stable, public
+  Spark connector-API types.
+- **`RowLevelWrite.operation.command()`** (`org.apache.spark.sql.connector.write.RowLevelOperation.Command`)
+  reliably reports which of MERGE/UPDATE/DELETE a plan represents,
+  confirmed against real captured plans for all three, both write
+  strategies — this is what lets `merge_condition`/
+  `forbid_unconditional_delete` be checked identically to Delta's, and is
+  also what makes the UPDATE gap below precise rather than a guess.
+- **UPDATE's assigned columns are extractable for copy-on-write
+  (`ReplaceData`) only.** Its rewritten `query` is a `Project` where
+  *every* target column is wrapped `Alias(If(matchCondition, assignedExpr,
+  originalAttr), name)` — confirmed empirically: an untouched column
+  produces `if (cond) id else id AS id` (the identical attribute on both
+  branches), a genuinely reassigned one `if (cond) (doubled + 1) else
+  doubled AS doubled`. So a column changed iff its `If`'s two branches
+  aren't semantically equal (`RowMutationSupport.updatedColumnsOfReplaceData`).
+  Merge-on-read's `WriteDelta` rewrites UPDATE to a structurally
+  different `Expand`-based plan (one row-operation-tagged output row per
+  insert/delete, confirmed via the same probe) with no equivalent
+  per-column pairing — deliberately not attempted, see the fail-closed
+  behavior below for what happens instead of silently reporting zero
+  changed columns.
+
+**Recognized-but-unextractable is not the same as inapplicable — fail
+closed, don't silently skip.** `RowMutationSupport.classify` returns one
+of three things: `None` (`plan` isn't row-level DML at all — most
+writes; a DML rule is simply inapplicable, same as before), `Some(Extracted(kind,
+mutation))` (recognized and successfully extracted — the normal path,
+above), or `Some(Unverifiable(kind))` — genuinely `kind`-shaped DML (a
+real MERGE/UPDATE/DELETE) that this module could not extract facts for.
+Two concrete cases reach `Unverifiable` today: a future Delta version
+renaming a reflected method (this already fell through to the general
+`UnverifiableWrite` fail-closed policy for the *write as a whole*; now
+distinguished for rule-checking specifically), and Iceberg's
+merge-on-read UPDATE, above. Before this existed, a contract's
+`allowed_update_columns` rule against a merge-on-read UPDATE would
+execute, report no violation, and provide no protection — the exact
+silent gap this closes. `ContractEnforcementRule.verifyOrThrow` checks
+`RuleVerifier.appliesTo(rule, kind)` before treating an `Unverifiable`
+classification as a problem, so an operation kind the active contract
+declares no rule for still passes normally — a merge-on-read UPDATE
+under a contract that only declares `forbid_unconditional_delete` isn't
+spuriously rejected. The new `RULE_UNVERIFIABLE_DML` violation type gets
+the same abort-before-any-data-is-written treatment as every other
+violation.
 
 **Each rule only constrains the DML shape it names.** A `merge_condition`
 rule is silently inapplicable (not violated) to a mutation with no match
 condition; `forbid_unconditional_delete` to one with no delete;
 `allowed_update_columns` to one that updates no columns — the same
 "declared but not every check is always relevant" relationship
-`StructuralVerifier`'s own `VerificationOptions` toggles have.
+`StructuralVerifier`'s own `VerificationOptions` toggles have. This is
+distinct from `Unverifiable` above: `Extracted(kind, mutation)` with a
+kind-mismatched rule is *inapplicable* (nothing to check); `Unverifiable`
+with a kind-matched rule is a real gap that fails closed.
 
 **Wired into `ContractEnforcementRule.verifyOrThrow` alongside, not
 instead of, `StructuralVerifier`.** In the `ir.Write` branch,
-`RowMutationSupport.combined.lift(plan)` is `None` for every write shape
-that isn't a standalone DML op — a no-op for the vast majority of writes
-a contract governs — and `Some(mutation)` feeds `RuleVerifier.verify`,
-whose violations are appended to `StructuralVerifier`'s before the
-combined pass/fail decision, so a rule violation gets the exact same
-abort-before-any-data-is-written guarantee and four-part `explain()`
-treatment every other violation type gets.
+`RowMutationSupport.classify(plan)` is `None` for every write shape that
+isn't row-level DML — a no-op for the vast majority of writes a contract
+governs — `Extracted` feeds `RuleVerifier.verify`, and `Unverifiable`
+feeds the `appliesTo` check above. Either way, any resulting violations
+are appended to `StructuralVerifier`'s before the combined pass/fail
+decision, so a rule violation (or an unverifiable one) gets the exact
+same abort-before-any-data-is-written guarantee and four-part
+`explain()` treatment every other violation type gets.
 
-**Live-tested against real Delta, PASS and FAIL, per rule type**
-(`ContractEnforcementRuleSpec`): a MERGE matching on the declared column
-executes normally, one missing a declared column is aborted before
-touching the table; a filtered DELETE executes normally, an unconditional
-one is aborted; an UPDATE assigning only allowed columns executes
-normally, one assigning a disallowed column is aborted. Every FAIL case
+**Live-tested against real Delta and real Iceberg (both copy-on-write and
+merge-on-read), PASS and FAIL, per rule type**
+(`ContractEnforcementRuleSpec`, `IcebergConnectorSpec`): a MERGE matching
+on the declared column executes normally, one missing a declared column
+is aborted before touching the table; a filtered DELETE executes
+normally, an unconditional one is aborted; a copy-on-write UPDATE
+assigning only allowed columns executes normally, one assigning a
+disallowed column is aborted; a merge-on-read UPDATE under an
+`allowed_update_columns` rule is aborted with `RULE_UNVERIFIABLE_DML`
+(and, distinctly, executes normally when no such rule is declared —
+proving the fail-closed check doesn't over-reject). Every FAIL case
 asserts the target table's rows are byte-identical before and after the
-aborted attempt, the same discipline every other enforcement test in this
-file uses. `RuleVerifierSpec` covers the pure-Scala logic directly (no
-Spark session needed, since `RowMutation`/`ContractRule` are both plain
-data) — every rule type's inapplicable case, PASS, and FAIL, plus an
-unrecognized/malformed rule contributing no violations.
+aborted attempt, the same discipline every other enforcement test in
+this file uses. `RuleVerifierSpec` covers the pure-Scala logic directly
+(no Spark session needed, since `RowMutation`/`ContractRule` are both
+plain data) — every rule type's inapplicable case, PASS, and FAIL, an
+unrecognized/malformed rule contributing no violations, and
+`RuleVerifier.appliesTo`'s kind-matching truth table.
 
 ## Testing
 

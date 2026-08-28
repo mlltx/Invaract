@@ -115,6 +115,28 @@ call it done. Before considering such a feature complete, you MUST:
    message text — see docs/SPARK_ADAPTER.md's "Mutation testing" section
    for what's already been judged not worth chasing).
 
+**Write mutation-resistant tests the first time — don't use repeated
+Stryker runs as your discovery process.** A full `spark-adapter` run
+against real Delta/Iceberg/Hive/etc. sessions takes tens of minutes; a
+scoped run against a handful of files still takes several minutes to
+tens of minutes, since Stryker reruns the real suite per mutant. Treating
+that loop ("run it, see what survived, patch a test, run it again") as
+the normal way to reach 70% burns that wall-clock repeatedly for
+something a careful first pass avoids. Before writing a test, look at the
+logic you just wrote and ask what Stryker will actually try — every
+comparison flipped (`<` ↔ `<=`, `==` ↔ `!=`), every boolean negated or
+forced to a constant, every boundary shifted by one, every `&&`/`||`
+swapped, every `exists`/`forall`/`isEmpty` inverted — and write assertions
+that would fail under each mutation, not just assertions that exercise
+the happy path. Concretely: for an `if (x > 0)`, assert behavior on both
+sides *and* at the boundary (`x == 0`); for a filter/exists over a
+collection, assert on an empty collection and a collection where no/all
+elements match, not just a typical one; for a conjunction, assert a case
+where only one side is true. Run the scoped Stryker check once near the
+end to confirm the bar is met and to catch anything genuinely
+non-obvious — not as the first draft of your test suite. Only iterate
+further if that single run turns up a real survivor.
+
 This is a manual, PR-scoped check — Stryker4s has no incremental/diff
 mode, so CI cannot enforce "the new code specifically" on its own. (It
 *is* automated for PRs: see `.github/workflows/test.yml`'s

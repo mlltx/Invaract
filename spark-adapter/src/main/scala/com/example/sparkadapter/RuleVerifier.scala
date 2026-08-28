@@ -33,6 +33,20 @@ import com.example.ir.{DeleteScope, RowMutation}
   */
 private[sparkadapter] object RuleVerifier {
 
+  /** Whether `rule` is the kind of rule `RowMutationSupport.Classification.Unverifiable(kind)`
+    * would need to check — used by `ContractEnforcementRule` to decide
+    * whether an operation this module recognized as DML-shaped but
+    * couldn't extract facts for is actually a problem for *this*
+    * contract, or just an operation kind it happens not to declare any
+    * rule for (in which case there's nothing to fail closed over).
+    */
+  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = (rule, kind) match {
+    case (_: InterpretedRule.MergeCondition, RowMutationSupport.Kind.Merge)         => true
+    case (InterpretedRule.ForbidUnconditionalDelete, RowMutationSupport.Kind.Delete) => true
+    case (_: InterpretedRule.AllowedUpdateColumns, RowMutationSupport.Kind.Update)   => true
+    case _                                                                          => false
+  }
+
   def verify(rules: List[ContractRule], mutation: RowMutation): List[Violation] =
     rules.flatMap(_.interpret).flatMap {
       case InterpretedRule.MergeCondition(columns)       => checkMergeCondition(columns, mutation)

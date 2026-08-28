@@ -3,7 +3,7 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractRule
+import com.example.contract.{ContractRule, InterpretedRule}
 import com.example.ir.{ColumnReference, ColumnRef, DeleteScope, FunctionCall, RowMutation}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -101,5 +101,30 @@ class RuleVerifierSpec extends AnyFunSuite {
     )
     val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")), updatedColumns = List("anything"))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  // --- appliesTo: decides whether an Unverifiable(kind) classification
+  // is actually a problem for a given contract (RULE_UNVERIFIABLE_DML),
+  // or an operation kind the contract simply declares no rule for. ---
+
+  test("appliesTo: merge_condition applies only to Kind.Merge") {
+    val rule = InterpretedRule.MergeCondition(List("id"))
+    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
+  }
+
+  test("appliesTo: forbid_unconditional_delete applies only to Kind.Delete") {
+    val rule = InterpretedRule.ForbidUnconditionalDelete
+    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
+  }
+
+  test("appliesTo: allowed_update_columns applies only to Kind.Update") {
+    val rule = InterpretedRule.AllowedUpdateColumns(List("status"))
+    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
   }
 }
