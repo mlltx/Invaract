@@ -162,6 +162,73 @@ class ContractParserTest extends AnyFunSuite {
     assert(contract.extensions.get("domain").contains("sales"))
   }
 
+  test("parse should decode a well-formed merge_condition rule via interpret") {
+    val yaml =
+      """id: dml_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |rules:
+        |  - type: merge_condition
+        |    columns: [customer_id, order_id]
+        |  - type: forbid_unconditional_delete
+        |  - type: allowed_update_columns
+        |    columns: [status, updated_at]
+        |""".stripMargin
+
+    val rules = ContractParser.parse(yaml).rules
+    assert(rules.size == 3)
+    assert(rules(0).interpret.contains(InterpretedRule.MergeCondition(List("customer_id", "order_id"))))
+    assert(rules(1).interpret.contains(InterpretedRule.ForbidUnconditionalDelete))
+    assert(rules(2).interpret.contains(InterpretedRule.AllowedUpdateColumns(List("status", "updated_at"))))
+  }
+
+  test("interpret should be None for a known rule type with malformed properties") {
+    val yaml =
+      """id: dml_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |rules:
+        |  - type: merge_condition
+        |  - type: allowed_update_columns
+        |    columns: []
+        |""".stripMargin
+
+    val rules = ContractParser.parse(yaml).rules
+    assert(rules(0).interpret.isEmpty)
+    assert(rules(1).interpret.isEmpty)
+  }
+
+  test("interpret should be None for an unrecognized rule type") {
+    val yaml =
+      """id: dml_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |rules:
+        |  - type: compatibility
+        |    mode: backward
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).rules.head.interpret.isEmpty)
+  }
+
   test("parseFile should raise ContractParseException for a missing file") {
     val ex = intercept[ContractParseException] {
       ContractParser.parseFile(fixture("does_not_exist.yaml"))

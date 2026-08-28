@@ -117,6 +117,34 @@ metadata. A grouping key that should appear in the output needs its own
 `NamedExpr` in `aggregates` — exactly as SQL requires the grouping column to
 also appear in the `SELECT` list.
 
+### Row-level DML (`RowMutation.scala`)
+
+`Write`'s "replace/append the output of a query" shape has no vocabulary
+for a row-level DML operation — MERGE, UPDATE, DELETE — since those
+mutate existing rows in place rather than producing a fresh output
+dataset. `RowMutation(matchCondition, delete, updatedColumns)` captures
+exactly the structural facts a contract's DML rules need (see
+docs/CONTRACT_MODEL.md's "Interpreted rules"): a MERGE's `ON` condition
+as a full `Expr` (so a verifier can read the columns it references),
+whether/how an operation deletes rows (`DeleteScope`: `NotApplicable` /
+`Unconditional` / `Conditional(condition)` — a sealed trait rather than
+`Option[Expr]`, since "no delete happens" and "deletes unconditionally"
+are both real states a bare `Option` can't distinguish), and the column
+names a standalone UPDATE assigns.
+
+Deliberately **not** a `Plan` node: it doesn't consume/produce datasets
+the way `Plan`'s `children: List[Plan]` traversal assumes, and adding a
+field to the existing `Write` case class to carry it would have broken
+binary compatibility with already-compiled callers (case class
+constructors are exact-arity). It's a plain, standalone value produced
+by a front-end translator *alongside* the ordinary `Write` node the same
+command already translates to — `spark-adapter`'s `RowMutationSupport`
+is the Spark-specific extractor; `RuleVerifier` is the consumer. See
+that module's own docs (docs/SPARK_ADAPTER.md) for the full story,
+including why this deliberately covers only a *standalone* UPDATE/DELETE/
+MERGE, not a DSv2 `SupportsRowLevelOperations` connector's rewritten
+`ReplaceData`/`WriteDelta` form.
+
 ## Worked example
 
 The example from this phase's spec:
@@ -250,15 +278,17 @@ cd ir
 sbt test
 ```
 
-38 tests across `PlanSpec` (10 — construction, `children`,
+42 tests across `PlanSpec` (10 — construction, `children`,
 `Expr.references`), `LineageSpec` (16 — the worked example verbatim, a
 full `GROUP BY` stage, `Filter`/`Sort` passthrough, `Join` attribution —
 both unambiguous and ambiguous, including mixed aggregation status —
 `Window`/`Aggregate`/`Union` resolution when a `Project` sits directly on
-top of them, literal- and multi-argument-function-derived outputs), and
+top of them, literal- and multi-argument-function-derived outputs),
 `PlanPrinterSpec` (12 — rendering of each node kind, exact branch/
 continuation-prefix structure at nested depth, `DISTINCT`, empty
-`GROUP BY`, `Sort` direction, and `Window`'s `PARTITION BY`/`ORDER BY`).
+`GROUP BY`, `Sort` direction, and `Window`'s `PARTITION BY`/`ORDER BY`),
+and `RowMutationSpec` (4 — default shape, `matchCondition` carrying a
+full `Expr`, `DeleteScope`'s three distinct states, `updatedColumns`).
 All run against real constructed plans, not mocks.
 
 ### Mutation testing
@@ -324,17 +354,21 @@ gap).
 
 ### API compatibility
 
-`Plan`, `Expr`, and every case class in `Identifiers.scala` (`DatasetRef`,
-`ColumnRef`, ...), plus `Lineage.trace` and `PlanPrinter.render`'s
-signatures, are this module's binary API surface — the engine-independent
-algebra any future front-end (SQL, dbt) is meant to translate into, per
-this doc's "Critical principle" above, so keeping it stable release-to-
-release matters more here than almost anywhere else in the codebase.
-Checked by [MiMa](https://github.com/lightbend/mima) via
+`Plan`, `Expr`, every case class in `Identifiers.scala` (`DatasetRef`,
+`ColumnRef`, ...), `RowMutation`/`DeleteScope`, plus `Lineage.trace` and
+`PlanPrinter.render`'s signatures, are this module's binary API surface —
+the engine-independent algebra any future front-end (SQL, dbt) is meant
+to translate into, per this doc's "Critical principle" above, so keeping
+it stable release-to-release matters more here than almost anywhere else
+in the codebase. Checked by [MiMa](https://github.com/lightbend/mima) via
 `sbt mimaReportBinaryIssues`, CI-enforced on every PR — see CLAUDE.md's
-"API Compatibility Requirement" for the full mechanism.
+"API Compatibility Requirement" for the full mechanism. `RowMutation` was
+added as a wholly new, standalone case class rather than a new field on
+the existing `Write` — adding a field to a case class already in the
+0.1.0 baseline changes its constructor's arity, which breaks every
+already-compiled caller; a new class has no such history to break.
 
 ---
 
-**Last Updated:** 2026-08-22
+**Last Updated:** 2026-08-28
 **Status:** Phase 2 — Transformation IR, initial implementation

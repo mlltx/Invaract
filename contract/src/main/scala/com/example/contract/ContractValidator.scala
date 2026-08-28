@@ -76,6 +76,12 @@ object ContractValidator {
     contract.rules.zipWithIndex.foreach { case (rule, idx) =>
       if (rule.ruleType.trim.isEmpty) {
         issues += ValidationIssue(ValidationSeverity.Error, s"rules[$idx]", "Rule type must not be empty")
+      } else if (RuleType.All.contains(rule.ruleType) && rule.interpret.isEmpty) {
+        issues += ValidationIssue(
+          ValidationSeverity.Error,
+          s"rules[$idx]",
+          s"Rule type '${rule.ruleType}' has malformed or missing properties for its shape" + ruleHint(rule.ruleType)
+        )
       }
     }
 
@@ -142,6 +148,12 @@ object ContractValidator {
     }
 
     issues.result()
+  }
+
+  private def ruleHint(ruleType: String): String = ruleType match {
+    case RuleType.MergeCondition        => " (expected a non-empty 'columns' list of column names)"
+    case RuleType.AllowedUpdateColumns  => " (expected a non-empty 'columns' list of column names)"
+    case _                              => ""
   }
 
   private def duplicateNames(names: List[String]): Set[String] =

@@ -82,6 +82,72 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("Duplicate output dataset name 'out'")))
   }
 
+  test("validate should error when a merge_condition rule has no 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.MergeCondition, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("merge_condition")))
+  }
+
+  test("validate should error when an allowed_update_columns rule has an empty 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.AllowedUpdateColumns, Map("columns" -> new java.util.ArrayList[String]()))),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("allowed_update_columns")))
+  }
+
+  test("validate should accept a well-formed forbid_unconditional_delete rule with no properties") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "good_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.ForbidUnconditionalDelete, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+  }
+
+  test("validate should not flag an unrecognized rule type as malformed") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "custom_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule("compatibility", Map("mode" -> "backward"))),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+  }
+
   test("validate should recurse into nested struct fields") {
     val nested = Field("zip", "unknown_type", required = false, nullable = true)
     val struct = Field("address", "struct", required = false, nullable = true, properties = List(nested))

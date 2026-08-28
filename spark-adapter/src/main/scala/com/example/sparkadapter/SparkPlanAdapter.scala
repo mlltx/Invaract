@@ -277,6 +277,22 @@ private[sparkadapter] object SparkPlanAdapter {
     case SaveMode.Ignore        => Some("ignore")
   }
 
+  /** Translates one standalone Catalyst expression via the same
+    * `Translator.translateExpr` every plan translation already uses,
+    * without needing a full plan to translate around it. Used by
+    * `RowMutationSupport` to translate a MERGE's `ON` condition — a bare
+    * `Expression` reachable only via reflection off a Delta-internal
+    * command, never part of any `LogicalPlan.children` this module's
+    * ordinary `translatePlan` traversal would otherwise reach. `Translator`
+    * itself is `private` to this object (not just `private[sparkadapter]`),
+    * so this is the one sanctioned way another file in this package can
+    * reach its expression translation; a throwaway instance is created
+    * per call since `Translator`'s only per-translation state is a
+    * diagnostics buffer this caller doesn't consume (see `RowMutation`'s
+    * own doc for why it carries no diagnostic channel of its own).
+    */
+  private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator().translateExpr(expr)
+
   private class Translator {
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList

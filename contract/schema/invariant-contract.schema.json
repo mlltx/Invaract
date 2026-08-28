@@ -37,7 +37,7 @@
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/rule" },
-      "description": "Declarative rules attached to the contract (e.g. compatibility mode). Invariant records these in Phase 1 but does not yet verify a transformation against their semantics - see ROADMAP.md."
+      "description": "Declarative rules attached to the contract. Most rule types (e.g. compatibility mode) are recorded but not yet verified against a transformation - see ROADMAP.md. Three types ARE interpreted and enforced during verification (com.example.contract.RuleType/ContractRule.interpret, checked by spark-adapter's RuleVerifier against a real Spark row-level DML operation): 'merge_condition' (columns: a MERGE's ON clause must reference these), 'forbid_unconditional_delete' (no properties: a DELETE may never omit a filtering predicate), and 'allowed_update_columns' (columns: an UPDATE may only assign these). A known rule type with malformed properties for its shape is a ContractValidator Error, not silently ignored."
     },
     "extensions": {
       "type": "object",
@@ -125,7 +125,7 @@
         "type": {
           "type": "string",
           "minLength": 1,
-          "description": "Rule kind, e.g. \"compatibility\". Every other key on a rule object is rule-specific and captured verbatim (ContractRule.properties) - Invariant does not yet interpret rule semantics (see ROADMAP.md)."
+          "description": "Rule kind, e.g. \"compatibility\", \"merge_condition\", \"forbid_unconditional_delete\", \"allowed_update_columns\". Every other key on a rule object is rule-specific and captured verbatim (ContractRule.properties). Only the latter three are interpreted and enforced today (see RuleType/ContractRule.interpret) - every other rule type is recorded but not yet verified (see ROADMAP.md)."
         }
       }
     }

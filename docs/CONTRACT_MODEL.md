@@ -93,7 +93,7 @@ extensions:
 | `status` | no | Defaults to `active`. Free-form (e.g. `active`, `deprecated`, `draft`). |
 | `inputs` | no | List of datasets the transformation reads. |
 | `outputs` | yes | List of datasets the transformation produces. At least one required. |
-| `rules` | no | List of `{type, ...properties}`. Recorded, not yet interpreted (verification is future work). |
+| `rules` | no | List of `{type, ...properties}`. Most types are recorded, not yet interpreted (verification is future work) — three are interpreted and enforced today, see "Interpreted rules" below. |
 | `extensions` | no | Free-form map, merged with any unrecognized top-level keys. |
 
 Each dataset (`inputs[]` / `outputs[]`) has:
@@ -309,12 +309,57 @@ pointing at the schema, so an editor with the
 [YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
 extension validates and autocompletes them live while editing.
 
+## Interpreted rules
+
+Beyond `rules`' general "recorded but not verified" role, `ContractRule`
+decodes three specific `type`s into `InterpretedRule` (both in
+`ContractModel.scala`) — the first slice of ROADMAP.md's "Full semantic
+DML verification" item, checked by `spark-adapter`'s `RuleVerifier`
+against a real Spark row-level DML operation (`ir.RowMutation`, extracted
+by `RowMutationSupport` — see docs/TRANSFORMATION_IR.md and
+docs/SPARK_ADAPTER.md):
+
+```yaml
+rules:
+  - type: merge_condition
+    columns: [customer_id]
+  - type: forbid_unconditional_delete
+  - type: allowed_update_columns
+    columns: [status, updated_at]
+```
+
+- **`merge_condition`** (`columns: List[String]`) — a MERGE's `ON`
+  condition must reference every listed column. Deliberately `columns`,
+  not `on`: SnakeYAML's default (YAML 1.1) resolver treats the bare key
+  `on` as the boolean `true` (the "Norway problem" — `on`/`off`/`yes`/`no`
+  all resolve to booleans), confirmed the hard way by a real failing test
+  before this was caught.
+- **`forbid_unconditional_delete`** (no properties) — a DELETE (or a
+  DSv2 `DELETE FROM ... WHERE`) may never omit a filtering predicate.
+- **`allowed_update_columns`** (`columns: List[String]`) — an UPDATE may
+  only assign to the listed columns.
+
+`ContractRule.interpret: Option[InterpretedRule]` decodes a rule's
+`properties` into one of these three shapes, or `None` for a rule type
+Invariant doesn't interpret *or* a known type with malformed properties
+(e.g. `merge_condition` with no `columns`) — `ContractValidator` reports
+the latter as an `Error` (`"Rule type '...' has malformed or missing
+properties for its shape"`), so a contract reaching enforcement with an
+interpretable rule type is guaranteed well-formed. Each rule only
+constrains the DML *shape* it names — a `merge_condition` rule is
+silently inapplicable (not violated) to an operation that isn't a MERGE,
+and likewise for the other two — see `RuleVerifier`'s class doc in
+`spark-adapter` for the full reasoning, including why the merge-condition
+check is a structural approximation (checks the declared columns are
+*referenced*, not that they form the operation's only or exact equality
+pairing) rather than full predicate-logic verification.
+
 ## API compatibility
 
-`Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, and
-`ContractRule` (all in `ContractModel.scala`), plus `ContractParser`,
-`ContractValidator`, and `ContractCompatibility`'s public methods, are
-this module's binary API surface — checked by
+`Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule`,
+`RuleType`, and `InterpretedRule` (all in `ContractModel.scala`), plus
+`ContractParser`, `ContractValidator`, and `ContractCompatibility`'s
+public methods, are this module's binary API surface — checked by
 [MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
 CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
 for the full mechanism (why there's no Maven Central release to compare
@@ -323,7 +368,14 @@ to do when it fails). The case classes here are exactly the shape most likely to
 break by accident: adding a field to `Field` or `Dataset` without putting
 it last, or reordering `Contract`'s constructor parameters, breaks every
 already-compiled caller even though nothing in this repository's own
-build would show a compile error for it.
+build would show a compile error for it. A subtler real example found
+while adding `ContractRule.interpret`: giving an existing case class its
+first hand-written companion object (to hold `interpret` and a helper)
+silently dropped the compiler-synthesized `extends AbstractFunction2` —
+and with it, `tupled`/`curried` — that a case class with no user-written
+companion gets for free. `mimaReportBinaryIssues` caught it; the fix is
+declaring that same `extends AbstractFunction2[...]` explicitly on the
+companion, not a `ProblemFilters` exclusion.
 
 ## What Phase 1 Does *Not* Do Yet
 
@@ -331,8 +383,9 @@ This is the contract **model**, not the verification **engine**. Out of
 scope for this deliverable, tracked in [ROADMAP.md](../ROADMAP.md):
 
 - Analyzing a Spark logical plan and checking it against a contract
-- Interpreting `rules` (compatibility mode, quality expectations) beyond
-  recording them
+- Interpreting `rules` beyond the three DML rule types described in
+  "Interpreted rules" above (compatibility mode, quality expectations,
+  and everything else `rules` can carry are still recorded only)
 - Column-level lineage extraction
 - A contract registry or versioned storage (Phase 3)
 

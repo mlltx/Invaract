@@ -75,6 +75,37 @@ object ViolationType {
     * `contract.outputs.head`, rather than a clean, actionable rejection.
     */
   val InvalidContract = "INVALID_CONTRACT"
+
+  /** Produced by `RuleVerifier`, not `StructuralVerifier` — a MERGE's `ON`
+    * condition doesn't reference every column a `merge_condition` rule
+    * declares.
+    */
+  val RuleMergeConditionViolation = "RULE_MERGE_CONDITION_VIOLATION"
+
+  /** Produced by `RuleVerifier` — a DELETE (or DSv2 `DeleteFromTable`)
+    * deletes every row it reaches, with no filtering predicate, under a
+    * contract declaring `forbid_unconditional_delete`.
+    */
+  val RuleUnconditionalDelete = "RULE_UNCONDITIONAL_DELETE"
+
+  /** Produced by `RuleVerifier` — a standalone UPDATE assigns a column
+    * outside an `allowed_update_columns` rule's declared list.
+    */
+  val RuleDisallowedUpdateColumn = "RULE_DISALLOWED_UPDATE_COLUMN"
+
+  /** Not produced by `RuleVerifier` — `ContractEnforcementRule`'s
+    * fail-closed response when a plan is genuinely row-level DML of a
+    * kind the active contract declares a rule for (`merge_condition`/
+    * `forbid_unconditional_delete`/`allowed_update_columns`), but
+    * `RowMutationSupport` couldn't extract the fact that rule needs to
+    * check (`RowMutationSupport.Classification.Unverifiable`) — a future
+    * Delta version renaming a reflected method, or Iceberg's
+    * merge-on-read UPDATE, whose rewritten plan has no per-column
+    * before/after pairing to compare. Mirrors `UnverifiableWrite`'s
+    * "unverifiable, not passed" principle, scoped to DML rule checking
+    * specifically rather than the write as a whole.
+    */
+  val RuleUnverifiableDml = "RULE_UNVERIFIABLE_DML"
 }
 
 /** The two "unexpected X can be rejected" toggles from the check list —

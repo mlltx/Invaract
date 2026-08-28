@@ -178,7 +178,30 @@ object ContractEnforcementRule {
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
         val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
-        val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+        val structuralResult = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+        // Checked alongside (never instead of) StructuralVerifier's own
+        // checks: RowMutationSupport.classify is a separate, independent
+        // classifier over the same `plan` (see its class doc for why it
+        // isn't folded into WriteCommandInfo itself) - `None` for every
+        // write shape that isn't row-level DML, a no-op for the vast
+        // majority of writes a contract governs. `Extracted` runs the
+        // normal rule check; `Unverifiable` (this module recognized the
+        // plan as DML of a given kind but couldn't extract what a rule of
+        // that kind needs - see RowMutationSupport's class doc) fails
+        // closed instead of silently skipping the rule, but only when the
+        // contract actually declares a rule that kind is relevant to -
+        // RuleVerifier.appliesTo decides that, so an UPDATE this module
+        // can't fully verify doesn't spuriously fail a contract that only
+        // declares forbid_unconditional_delete, say.
+        val ruleViolations = RowMutationSupport.classify(plan) match {
+          case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
+            RuleVerifier.verify(contract.rules, mutation)
+          case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
+            val declaredRules = contract.rules.flatMap(_.interpret)
+            if (declaredRules.exists(RuleVerifier.appliesTo(_, kind))) List(unverifiableDmlViolation(kind)) else Nil
+          case None => Nil
+        }
+        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
@@ -289,4 +312,21 @@ object ContractEnforcementRule {
     fields
       .map(f => s"${f.name}: ${f.fieldType}" + (if (f.required) "" else " (optional)"))
       .mkString(", ")
+
+  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind): Violation = {
+    val kindName = kind match {
+      case RowMutationSupport.Kind.Merge  => "MERGE"
+      case RowMutationSupport.Kind.Update => "UPDATE"
+      case RowMutationSupport.Kind.Delete => "DELETE"
+    }
+    Violation(
+      ViolationType.RuleUnverifiableDml,
+      s"this operation is a $kindName the active contract declares a rule for, but Invariant could not " +
+        "extract the structural fact that rule needs to check, so it was never actually verified.",
+      remediation =
+        "This is likely a genuine gap in Invariant's support for this operation's exact shape (e.g. an " +
+          "Iceberg merge-on-read UPDATE, whose rewritten plan doesn't expose which columns changed) - open " +
+          "an issue/PR. If the rule doesn't need to apply to this operation, remove it from the contract."
+    )
+  }
 }

@@ -132,6 +132,66 @@ pack inside it — useful for verifying the guarantee on a machine that
 hasn't set up JDK/sbt/Spark at all. This same pack runs in CI on every
 push, so the abort path is checked automatically, not just the happy path.
 
+## Contract Rules
+
+Beyond schema/format/location checks, a contract can declare rules that
+constrain a table's row-level DML (`MERGE`/`UPDATE`/`DELETE`) — checked
+against a real Spark plan the same way everything else is, aborting the
+write before anything is committed if violated. Three rule types are
+interpreted and enforced today (see
+[docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)'s "Interpreted rules"
+and [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)'s "DML rule
+verification" for the full design):
+
+```yaml
+rules:
+  - type: merge_condition
+    columns: [customer_id, region]
+  - type: forbid_unconditional_delete
+  - type: allowed_update_columns
+    columns: [status, updated_at]
+```
+
+- **`merge_condition`** — a `MERGE`'s `ON` clause must reference every
+  listed column. Catches the real, common bug this exists for: a MERGE
+  silently missing a match key (e.g. matching only on `customer_id` in a
+  table that should also match on `region`).
+- **`forbid_unconditional_delete`** — a `DELETE` may never omit a
+  filtering predicate (`DELETE FROM t` with no `WHERE`).
+- **`allowed_update_columns`** — an `UPDATE` may only assign to the
+  listed columns.
+
+**Works today against Delta and Iceberg**, both copy-on-write and
+merge-on-read for `merge_condition`/`forbid_unconditional_delete`;
+`allowed_update_columns` covers Delta fully and Iceberg's copy-on-write
+UPDATE. Where a rule genuinely can't be checked — Iceberg's
+merge-on-read UPDATE has no per-column before/after fact this module can
+extract — the write is **aborted with `RULE_UNVERIFIABLE_DML`**, not
+silently allowed through with no protection. This only fires for an
+operation kind the contract actually declares a rule for; an unrelated
+DML rule never blocks an operation it doesn't apply to.
+
+**Not yet handled**, listed here so expectations are set correctly, not
+implied by omission:
+
+- The merge condition's actual predicate logic — `merge_condition` checks
+  that declared columns are *referenced* by the `ON` clause, not that
+  they're its only columns or a genuine equality pairing.
+- Which specific rows an `UPDATE` touches, or whether a non-empty
+  `DELETE` predicate is trivially satisfiable (e.g. `WHERE 1=1`).
+- Row-level DML on connectors other than Delta/Iceberg (Parquet, CSV,
+  JDBC, and similar don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL
+  at all — Spark itself rejects them before any plan reaches Invariant).
+- Governance rules (field-level masking, residency, purpose limitation),
+  transformation-semantic rules (join/aggregation/filter shape), and
+  compatibility rules (a transformation against a contract version, as
+  opposed to `ContractCompatibility`'s existing version-to-version diff)
+  — no rule vocabulary exists for any of these yet.
+
+A documentation strategy for this (where examples like these ultimately
+live, how deep each doc goes) is still being worked out — this section is
+a snapshot of what's real right now, not the final shape.
+
 ## Example Integration
 
 `plugin/`'s `InvariantPlugin` is a small, illustrative transformation
