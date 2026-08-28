@@ -1478,6 +1478,136 @@ from 21), full `spark-adapter` suite 241/241 passing,
 real `spark-submit`. Full findings and both ledgers:
 docs/connectors/clickhouse.md.
 
+#### Sub-phase: Interpreting `rules` — first slice, DML rule verification
+#### (done)
+
+Closed the first item of the two the "Full semantic DML verification"
+scope item below used to require together before either could start:
+`rules` was recorded since Phase 1a but never interpreted. Rather than
+build the full row-level-DML semantic model (merge condition predicate
+logic, which specific rows an UPDATE touches) in one pass, this closes a
+concrete, narrower slice: three rule types checked against a real Spark
+MERGE/UPDATE/DELETE, chosen because the connector work above (Delta's row-
+level DML, "structural verification, the last coverage-ledger row closed"
+sub-phase) already left exactly this gap open, named and documented, not
+discovered fresh.
+
+- [x] **`contract`: typed rule vocabulary.** `RuleType`
+      (`merge_condition`/`forbid_unconditional_delete`/
+      `allowed_update_columns`) and `InterpretedRule`, plus
+      `ContractRule.interpret: Option[InterpretedRule]` — decodes a raw
+      `ContractRule`'s `properties` bag into one of the three shapes when
+      well-formed, `None` for an unrecognized type or a known type with
+      malformed properties (`ContractValidator` reports the latter as an
+      `Error`, so an interpretable rule reaching enforcement is guaranteed
+      well-formed). `Contract.rules: List[ContractRule]` itself is
+      unchanged — additive, not a redesign.
+    - Found and fixed a real bug before it ever shipped, not assumed
+      correct: the rule vocabulary's own example (`on: [customer_id]`)
+      hits YAML's "Norway problem" — SnakeYAML's default (YAML 1.1)
+      resolver treats the bare key `on` as the boolean `true`, so
+      `properties.get("on")` silently returned `None` for every contract
+      authored with an unquoted `on:` key, confirmed by a real failing
+      test. Fixed by using `columns` instead (matching
+      `allowed_update_columns`'s own key), not by fighting the resolver.
+    - Found and fixed a real MiMa binary-compatibility break, not
+      pre-empted by guessing: giving `ContractRule` its first hand-written
+      companion object (to hold `interpret`) silently dropped the
+      compiler-synthesized `extends AbstractFunction2` — and with it,
+      `tupled`/`curried` — that a case class with no user-written
+      companion gets automatically. `mimaReportBinaryIssues` caught it
+      against the 0.1.0 baseline; fixed by declaring that exact
+      `extends AbstractFunction2[...]` explicitly, not a
+      `ProblemFilters` exclusion.
+    - 7 new tests (`ContractParserTest`/`ContractValidatorTest`, 45 total
+      up from 38): a well-formed rule of each of the three types decodes
+      correctly; a known type with malformed/missing properties decodes to
+      `None` and is a `ContractValidator` `Error`; an unrecognized rule
+      type is untouched (still recorded, not flagged).
+- [x] **`ir`: `RowMutation`/`DeleteScope`, a wholly new standalone type,
+      not a field on `Write`.** Captures exactly what the three rules
+      need: a MERGE's `ON` condition as a full `Expr` (so a verifier can
+      read the columns it references), whether/how an operation deletes
+      rows (`DeleteScope`: `NotApplicable`/`Unconditional`/
+      `Conditional(condition)` — a sealed trait, not `Option[Expr]`, since
+      "no delete" and "deletes unconditionally" are both real states a
+      bare `Option` can't distinguish), and a standalone UPDATE's assigned
+      column names. Deliberately not a new field on the existing `Write`
+      case class — adding one would change its constructor's arity, a
+      binary-incompatible change to an already-published signature;
+      `RowMutation` has no such history to break. 4 new tests
+      (`RowMutationSpec`, `ir` module 42 total up from 38); 0 Stryker
+      mutants generated for the file (pure data — no conditionals to
+      mutate — not a coverage gap).
+- [x] **`spark-adapter`: `RowMutationSupport` + `RuleVerifier`, wired into
+      `ContractEnforcementRule`.** `RowMutationSupport` is a separate,
+      parallel extractor over the same Delta
+      `UpdateCommand`/`DeleteCommand`/`MergeIntoCommand` classes (plus
+      DSv2's `DeleteFromTable`) `WriteCommandSupport` already recognizes —
+      not a change to it, mirroring `StateChangingCallSupport`'s existing
+      relationship to `WriteCommandSupport`, for the identical MiMa
+      reason `RowMutation` itself is standalone. `RuleVerifier` checks the
+      three rule types against the extraction; violations are appended to
+      `StructuralVerifier`'s inside `ContractEnforcementRule.verifyOrThrow`,
+      so a rule violation gets the same abort-before-any-data-is-written
+      guarantee and four-part `explain()` treatment every other violation
+      type gets.
+    - `updatedColumns` detection is grounded in Delta 3.2.0's own source
+      (`PreprocessTableUpdate.toCommand`/
+      `UpdateExpressionsSupport.generateUpdateExpressions`), not assumed:
+      confirmed that an untouched column's `updateExpressions` entry is
+      literally Delta's own `target.output` attribute passed through
+      unchanged, so comparing each pair via `semanticEquals` is exactly
+      "did this column's value expression change."
+    - `merge_condition`'s check is a documented structural approximation,
+      not full predicate-logic verification: it checks that every
+      declared column is *referenced* by the MERGE's `ON` condition, not
+      that those are its only columns or that each forms a genuine
+      `target.col = source.col` equality pair — enough to catch the real
+      bug this rule guards against (a MERGE silently missing a match key)
+      without false-rejecting a condition with additional legitimate
+      predicate terms.
+    - Deliberately does **not** cover Iceberg's (or any DSv2
+      `SupportsRowLevelOperations` connector's) MERGE/UPDATE/DELETE —
+      `ReplaceData`/`WriteDelta` are Spark's own *rewritten* form of the
+      operation, not a shape that still carries a clean condition/
+      assigned-columns fact the way Delta's own command classes do;
+      recovering those is real, unstarted work, not attempted here.
+    - 18 new tests: `RuleVerifierSpec` (12, pure Scala, no Spark session —
+      every rule type's inapplicable/PASS/FAIL case, plus an unrecognized/
+      malformed rule contributing no violations) and 6 new
+      `ContractEnforcementRuleSpec` cases (a real PASS and a real FAIL per
+      rule type against a live Delta session — every FAIL case asserts
+      the target table's rows are byte-identical before and after the
+      aborted attempt, the same discipline every other enforcement test
+      in this file uses). Full `spark-adapter` suite (all 7 connectors,
+      including a real ClickHouse subprocess server): 259/259 passing, up
+      from 241, zero regressions.
+    - Mutation testing scoped to the 5 changed/added files
+      (`RowMutationSupport.scala`, `RuleVerifier.scala`,
+      `StructuralVerifier.scala`, `ContractEnforcementRule.scala`,
+      `SparkPlanAdapter.scala`): **94.38%** (of total) / **95.45%** (of
+      covered code) — 84/89 non-excluded mutants killed. All 5 survivors
+      are the same pre-existing, already-documented `SparkPlanAdapter.scala`
+      survivors this repo's mutation-testing history already names (JDBC
+      near-equivalence, an unreachable branch under this Spark version,
+      the no-metastore-available Hive fallback) — none in any new code
+      this sub-phase added.
+- [x] `mimaReportBinaryIssues` clean for all three modules (after the
+      `ContractRule` fix above); `./dev/build`/`./dev/test`/
+      `./dev/regression` all pass against real `spark-submit` — the demo
+      pipeline's own `PASSED (invariant_demo_output@1.0.0)`, and the
+      regression pack's 2/2 cases, both unaffected by this change.
+
+Deliberately still open, not attempted here: the merge condition's actual
+predicate logic (only *referenced* columns are checked, not a genuine
+equality pairing), which specific rows an UPDATE touches, whether a
+DELETE's predicate is trivially satisfiable, Iceberg/DSv2
+`SupportsRowLevelOperations` connectors, and any rule vocabulary beyond
+these three types (governance, compatibility, richer transformation
+checks) — all still tracked below, now with one fewer prerequisite
+blocking them.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1495,41 +1625,35 @@ docs/connectors/clickhouse.md.
       categories above as they're implemented — its `{status, contract,
       violations}` shape (matching the Phase 4 spec) is general enough to
       carry them; only the structural violation types exist today
-- [ ] Interpreting `rules` from the contract model — see the item
-      immediately below for the concrete feature this unblocks first
+- [x] Interpreting `rules` from the contract model — a first, narrow
+      slice (three DML rule types) done; see the "Interpreting `rules`"
+      sub-phase above. Everything beyond those three types (compatibility
+      mode, quality expectations, and any richer rule vocabulary the
+      other `Scope (Future)` items below would need) is still recorded
+      only, not interpreted.
 - [ ] **Full semantic DML verification** (row-level `MERGE`/`UPDATE`/
-      `DELETE`). Structural verification of these three (target location/
-      schema, MERGE's source as an input) is done — see the "Delta Lake
-      operation-surface coverage ledger" sub-phase below. What's still
-      unverified, deliberately: the operation's actual row-level logic -
-      the merge condition, which columns an `UPDATE` touches, whether a
-      `DELETE` is unconditional. This needs **two** things together, not
-      one:
-      1. An IR extension modeling the operation itself (`ir.Write` only
-         models "replace/append the output of a query" - something like
-         `ir.Merge`/`ir.RowMutation` capturing condition/matched-clauses/
-         not-matched-clauses would be needed).
-      2. Interpreting contract `rules` (the item above) - without this,
-         an `ir.Merge` node would hold structure nothing could check,
-         since `StructuralVerifier` only compares schema/format/location/
-         save-mode, and a contract has no vocabulary yet for constraining
-         a merge condition or which columns an update may touch.
-      Concrete example of the rule vocabulary this would need (not
-      hypothetical - discussed and explicitly deferred, not forgotten):
-      ```yaml
-      rules:
-        - type: merge_condition
-          on: [customer_id]
-        - type: forbid_unconditional_delete
-        - type: allowed_update_columns
-          columns: [status, updated_at]
-      ```
-      Building the IR node before the rule vocabulary exists to consume
-      it would be speculative API surface in a MiMa-checked module - the
-      two should be designed together, not the IR first. Not started;
-      deliberately scoped out of the structural-DML pass below, per an
-      explicit user decision to keep this session's DML work structural-
-      only and document the fuller version here instead of losing it.
+      `DELETE`), continued. Structural verification (target location/
+      schema, MERGE's source as an input) and a first rule-based slice
+      (merge match columns, forbidding an unconditional delete, allowed
+      update columns — checked structurally, not by predicate logic) are
+      both done — see the "Delta Lake operation-surface coverage ledger"
+      sub-phase and "Interpreting `rules`" above. What's still
+      unverified, deliberately:
+      - The merge condition's actual predicate logic — `merge_condition`
+        today checks that declared columns are *referenced*, not that
+        they form the operation's only or exact equality pairing.
+      - Which specific rows an `UPDATE` touches, and whether a `DELETE`'s
+        predicate (when present) is trivially satisfiable.
+      - Iceberg's (or any DSv2 `SupportsRowLevelOperations` connector's)
+        MERGE/UPDATE/DELETE — `RowMutationSupport` deliberately covers
+        only Delta's command classes and DSv2's plain `DeleteFromTable`;
+        `ReplaceData`/`WriteDelta` are Spark's own *rewritten* form of the
+        operation, with no clean condition/assigned-columns fact to
+        extract the way Delta's own commands have.
+      A richer rule vocabulary (row-level conditions expressed as actual
+      boolean logic against contract-declared fields, not just "which
+      columns does it touch") would be needed for the predicate-logic
+      piece specifically — not started.
 
 #### Dependencies
 
