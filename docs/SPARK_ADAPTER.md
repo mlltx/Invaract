@@ -680,6 +680,107 @@ still fed from a write that only proceeded because it already passed
 verification) supplies `demo/output/report.json`'s human-facing
 `transformationIR` summary.
 
+## DML rule verification
+
+Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s
+row-level-DML structural checks — target location/schema, MERGE's source
+as an input) verifies the *shape* of what's written. It has never checked
+a contract's `rules` — recorded by `contract` since Phase 1a, never
+interpreted (see docs/CONTRACT_MODEL.md's "What Phase 1 Does *Not* Do
+Yet"). `RuleVerifier`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/RuleVerifier.scala`)
+closes the first slice of that gap: the three DML rule types
+`ContractRule.interpret` decodes (see docs/CONTRACT_MODEL.md's
+"Interpreted rules") — `merge_condition`, `forbid_unconditional_delete`,
+`allowed_update_columns` — checked against a real Spark MERGE/UPDATE/
+DELETE.
+
+**Extraction is a separate, parallel path from `WriteCommandSupport`, not
+a change to it.** `RowMutationSupport`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/RowMutationSupport.scala`)
+matches the exact same Delta `UpdateCommand`/`DeleteCommand`/
+`MergeIntoCommand` classes (plus DSv2's plain `DeleteFromTable`)
+`WriteCommandSupport.deltaRowLevelDml`/`deleteFromTable` already
+recognize, but extracts a different fact: `ir.RowMutation`, not
+`WriteCommandInfo`. This was a deliberate design choice, not an
+oversight — adding a field to `WriteCommandInfo` (or to `ir.Write`
+itself) to carry this would have been a binary-incompatible change to an
+already-published case class constructor; a second, independent
+extractor is the MiMa-safe way to add a new fact these commands carry,
+mirroring `StateChangingCallSupport`'s existing relationship to
+`WriteCommandSupport`.
+
+**What's extracted, confirmed empirically, not assumed:**
+
+- **MERGE's `ON` condition** (`MergeIntoCommand.condition()`, a plain
+  `Expression`, always present) — translated via a new
+  `SparkPlanAdapter.translateExprStandalone` entry point (a throwaway
+  `Translator` instance; the only public/package-private way another file
+  in this module can reach `Translator.translateExpr`, which is otherwise
+  `private` to `SparkPlanAdapter`'s object body, not just
+  `private[sparkadapter]`).
+- **UPDATE's assigned columns.** `UpdateCommand.updateExpressions()` is
+  always aligned 1:1 with `target.output` — confirmed by reading Delta
+  3.2.0's own source
+  (`PreprocessTableUpdate.toCommand`/`UpdateExpressionsSupport.generateUpdateExpressions`),
+  not assumed: a column the SQL `SET` clause doesn't mention gets back
+  its *original* `target.output` attribute (Delta's own `defaultExpr`
+  fallback) as that column's entry. So `updatedColumns` is exactly the
+  columns where `updateExpressions(i)` is not `semanticEquals` to
+  `target.output(i)` — genuinely changed, not Delta's own passthrough.
+- **Whether a DELETE is unconditional.** Delta's `DeleteCommand.condition()`
+  is `Option[Expression]` (`None` = unconditional). DSv2's plain
+  `DeleteFromTable.condition` is different — confirmed via Spark 3.5.1's
+  own parser (`AstBuilder.visitDeleteFromTable`): a bare `DELETE FROM t`
+  with no `WHERE` sets `condition` to `Literal.TrueLiteral`, never `None`.
+  `RowMutationSupport.deleteScopeOf` normalizes both into the same
+  `DeleteScope`.
+
+**Scope, deliberately not attempted here:** Iceberg's (or any DSv2
+`SupportsRowLevelOperations` connector's) MERGE/UPDATE/DELETE.
+`WriteCommandSupport.dsv2RowLevelWrite`'s `ReplaceData`/`WriteDelta`
+nodes are Spark's own *rewritten* form of the operation — a copy-on-write
+scan-and-replace, or a merge-on-read delta write — not a form that still
+carries a clean "the match condition"/"the columns an UPDATE assigns"
+fact the way Delta's own command classes do. Recovering those from the
+rewritten plan is real, unstarted work; see ROADMAP.md's "Full semantic
+DML verification" item, which also covers what's out of scope even for
+Delta: the merge condition's actual predicate logic, the specific rows an
+UPDATE touches, and whether a DELETE's predicate is trivially satisfiable
+— `RuleVerifier`'s `merge_condition` check is a structural approximation
+(declared columns must be *referenced*, not that they're the operation's
+only or exact equality pairing), documented as such in its own class doc.
+
+**Each rule only constrains the DML shape it names.** A `merge_condition`
+rule is silently inapplicable (not violated) to a mutation with no match
+condition; `forbid_unconditional_delete` to one with no delete;
+`allowed_update_columns` to one that updates no columns — the same
+"declared but not every check is always relevant" relationship
+`StructuralVerifier`'s own `VerificationOptions` toggles have.
+
+**Wired into `ContractEnforcementRule.verifyOrThrow` alongside, not
+instead of, `StructuralVerifier`.** In the `ir.Write` branch,
+`RowMutationSupport.combined.lift(plan)` is `None` for every write shape
+that isn't a standalone DML op — a no-op for the vast majority of writes
+a contract governs — and `Some(mutation)` feeds `RuleVerifier.verify`,
+whose violations are appended to `StructuralVerifier`'s before the
+combined pass/fail decision, so a rule violation gets the exact same
+abort-before-any-data-is-written guarantee and four-part `explain()`
+treatment every other violation type gets.
+
+**Live-tested against real Delta, PASS and FAIL, per rule type**
+(`ContractEnforcementRuleSpec`): a MERGE matching on the declared column
+executes normally, one missing a declared column is aborted before
+touching the table; a filtered DELETE executes normally, an unconditional
+one is aborted; an UPDATE assigning only allowed columns executes
+normally, one assigning a disallowed column is aborted. Every FAIL case
+asserts the target table's rows are byte-identical before and after the
+aborted attempt, the same discipline every other enforcement test in this
+file uses. `RuleVerifierSpec` covers the pure-Scala logic directly (no
+Spark session needed, since `RowMutation`/`ContractRule` are both plain
+data) — every rule type's inapplicable case, PASS, and FAIL, plus an
+unrecognized/malformed rule contributing no violations.
+
 ## Testing
 
 **Cross-platform assertions — a real CI failure, not a hypothetical.**
@@ -730,14 +831,20 @@ sbt test
   independently rather than requiring universal agreement; an absent
   optional field producing no violation; and violation
   messages/remediations naming the correct side.
-- **`ContractEnforcementRuleSpec`** (8) — PASS executes and creates
-  output; FAIL aborts before any data is written; the explanation contains
-  all four required sections; the same violation produces byte-identical
-  explanations across three repeated attempts; non-write queries never
-  trigger verification even under an always-failing contract;
-  `VerificationOptions` thread through the enforcement path;
-  `forContract`'s public entry point works directly; `explain` pluralizes
-  the violation count and marks optional fields distinctly.
+- **`ContractEnforcementRuleSpec`** (this list of counts predates most of
+  the connector work below and is stale on the total — see each
+  connector's own doc, e.g. docs/connectors/delta.md, for what's actually
+  covered today) — PASS executes and creates output; FAIL aborts before
+  any data is written; the explanation contains all four required
+  sections; the same violation produces byte-identical explanations
+  across repeated attempts; non-write queries never trigger verification
+  even under an always-failing contract; `VerificationOptions` thread
+  through the enforcement path; `forContract`'s public entry point works
+  directly; `explain` pluralizes the violation count and marks optional
+  fields distinctly; and, per rule type (`merge_condition`/
+  `forbid_unconditional_delete`/`allowed_update_columns`), a real PASS and
+  a real FAIL against a live Delta session — see "DML rule verification"
+  above.
 - **`SparkPlanAdapterFuzzSpec`** (1 property, ~200 generated cases per run)
   — random chains of the operations `SparkPlanAdapterSpec` tests
   individually (filter, recomputed columns, sort, aggregate, self-join,

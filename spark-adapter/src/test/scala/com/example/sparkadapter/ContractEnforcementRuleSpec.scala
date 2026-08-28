@@ -1053,6 +1053,233 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
   }
 
+  // RuleVerifier: the three DML rule types (com.example.contract.RuleType)
+  // checked against RowMutationSupport's extraction, per PASS/FAIL pair -
+  // exercised against real Delta MERGE/UPDATE/DELETE, the same "must
+  // actually execute, or must be aborted before touching the table"
+  // discipline as every other DML test in this file.
+
+  test("PASS: a MERGE INTO satisfying its contract's merge_condition rule executes normally") {
+    val tablePath = scratchDir.resolve("rule_merge_pass_target").toString
+    val tableName = "rule_merge_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as id, 198L as doubled) s
+           |ON t.id = s.id
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin).collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
+  test("FAIL: a MERGE INTO whose ON condition doesn't match its contract's merge_condition rule is aborted before touching the table") {
+    val tablePath = scratchDir.resolve("rule_merge_fail_target").toString
+    val tableName = "rule_merge_fail_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id, region]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled) s
+             |ON t.id = s.id
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleMergeConditionViolation && v.message.contains("region")),
+      s"expected a RULE_MERGE_CONDITION_VIOLATION naming 'region', got ${ex.result.violations}"
+    )
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  test("PASS: a DELETE with a filtering predicate satisfies its contract's forbid_unconditional_delete rule") {
+    val tablePath = scratchDir.resolve("rule_delete_pass_target").toString
+    val tableName = "rule_delete_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: forbid_unconditional_delete
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 3, "the DELETE must actually have run, leaving only id <= 2")
+  }
+
+  test("FAIL: an unconditional DELETE violates its contract's forbid_unconditional_delete rule and is aborted before touching the table") {
+    val tablePath = scratchDir.resolve("rule_delete_fail_target").toString
+    val tableName = "rule_delete_fail_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: forbid_unconditional_delete
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"DELETE FROM $tableName").collect()
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleUnconditionalDelete))
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the DELETE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  test("PASS: an UPDATE assigning only allowed columns satisfies its contract's allowed_update_columns rule") {
+    val tablePath = scratchDir.resolve("rule_update_pass_target").toString
+    val tableName = "rule_update_pass_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: allowed_update_columns
+         |    columns: [doubled]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 5, "the UPDATE must actually have run against all 5 original rows")
+  }
+
+  test("FAIL: an UPDATE assigning a disallowed column violates its contract's allowed_update_columns rule and is aborted before touching the table") {
+    val tablePath = scratchDir.resolve("rule_update_fail_target").toString
+    val tableName = "rule_update_fail_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: allowed_update_columns
+         |    columns: [doubled]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(s"UPDATE $tableName SET id = id + 100 WHERE id > 2").collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleDisallowedUpdateColumn && v.message.contains("id")),
+      s"expected a RULE_DISALLOWED_UPDATE_COLUMN naming 'id', got ${ex.result.violations}"
+    )
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the UPDATE must be aborted before touching the table, not merely reported as failed")
+  }
+
   // Closes the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
   // coverage ledger flagged: .format("delta").saveAsTable() on a NEW
   // table, .saveAsTable()/.insertInto() appending to an EXISTING table,

@@ -75,6 +75,23 @@ object ViolationType {
     * `contract.outputs.head`, rather than a clean, actionable rejection.
     */
   val InvalidContract = "INVALID_CONTRACT"
+
+  /** Produced by `RuleVerifier`, not `StructuralVerifier` — a MERGE's `ON`
+    * condition doesn't reference every column a `merge_condition` rule
+    * declares.
+    */
+  val RuleMergeConditionViolation = "RULE_MERGE_CONDITION_VIOLATION"
+
+  /** Produced by `RuleVerifier` — a DELETE (or DSv2 `DeleteFromTable`)
+    * deletes every row it reaches, with no filtering predicate, under a
+    * contract declaring `forbid_unconditional_delete`.
+    */
+  val RuleUnconditionalDelete = "RULE_UNCONDITIONAL_DELETE"
+
+  /** Produced by `RuleVerifier` — a standalone UPDATE assigns a column
+    * outside an `allowed_update_columns` rule's declared list.
+    */
+  val RuleDisallowedUpdateColumn = "RULE_DISALLOWED_UPDATE_COLUMN"
 }
 
 /** The two "unexpected X can be rejected" toggles from the check list —

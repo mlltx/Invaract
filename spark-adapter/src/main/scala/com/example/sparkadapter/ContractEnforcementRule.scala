@@ -178,7 +178,17 @@ object ContractEnforcementRule {
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
         val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
-        val result = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+        val structuralResult = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+        // Checked alongside (never instead of) StructuralVerifier's own
+        // checks: RowMutationSupport.combined is a separate, independent
+        // extractor over the same `plan` (see its class doc for why it
+        // isn't folded into WriteCommandInfo itself), populated only for
+        // a standalone UPDATE/DELETE/MERGE — `.lift(plan)` is None for
+        // every other write shape, so this is a no-op for the vast
+        // majority of writes a contract governs.
+        val ruleViolations =
+          RowMutationSupport.combined.lift(plan).toList.flatMap(RuleVerifier.verify(contract.rules, _))
+        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
