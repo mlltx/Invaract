@@ -2,9 +2,11 @@
 
 This is the reusable process for giving `spark-adapter` full read/write
 support for a data source it doesn't yet understand — Delta Lake today
-(see docs/SPARK_ADAPTER.md's "Delta Lake support" and "Fail-closed on
-unverifiable writes" sections), Iceberg, ClickHouse, Avro, or anything
-else a future contributor wants to add.
+(see docs/connectors/delta.md and docs/SPARK_ADAPTER.md's "Fail-closed on
+unverifiable writes" section), Iceberg, ClickHouse, Avro, or anything
+else a future contributor wants to add. Per-connector write-ups and
+coverage ledgers live under docs/connectors/ — see
+docs/SPARK_ADAPTER.md's "Connector support" section for the index.
 
 It exists because Delta support was built twice: once for `.save(...)`
 writes, then again — separately — for `.saveAsTable(...)` and the
@@ -211,11 +213,10 @@ coverage ledger this section ends with is complete.
       including once with the new connector's dependency present and once
       without, to prove the "zero added dependency for non-users" claim
       isn't just asserted.
-- [ ] A "`<Connector>` support" section exists in docs/SPARK_ADAPTER.md
-      (mirroring "Delta Lake support"), a ROADMAP.md sub-phase, and a
-      CHANGELOG.md entry — each stating plainly what *is* and *isn't*
-      covered, the same way this document's own retrospective does for
-      Delta.
+- [ ] A `docs/connectors/<connector>.md` file exists (mirroring
+      `docs/connectors/delta.md`), plus a ROADMAP.md sub-phase — each
+      stating plainly what *is* and *isn't* covered, the same way this
+      document's own retrospective does for Delta.
 
 If any box can't be checked, the connector isn't done — it's a partial
 read or partial write shape, and the honest thing to do is say so in
@@ -272,10 +273,10 @@ cite a deleted probe's remembered output, rather than a live test in the
 suite, does not satisfy this — see "The feature surface" above for why a
 probe alone was ruled out as sufficient evidence.
 
-A "done" connector's docs/SPARK_ADAPTER.md section, ROADMAP.md sub-phase,
-and CHANGELOG.md entry (below) are exactly these two ledgers, formatted
-for their audience — never a blanket "full support" sentence standing in
-for either.
+A "done" connector's docs/connectors/<connector>.md file and ROADMAP.md
+sub-phase (below) are exactly these two ledgers, formatted for their
+audience — never a blanket "full support" sentence standing in for
+either.
 
 ## The investigation methodology
 

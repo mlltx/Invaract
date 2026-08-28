@@ -643,4 +643,14 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     val outputViolation = result.violations.find(_.violationType == ViolationType.MissingOutputField).get
     assert(outputViolation.remediation.contains("to the output,"), outputViolation.remediation)
   }
+
+  // A contract with no declared outputs is now rejected before it ever
+  // reaches this method at all - see ContractEnforcementRule.verifyOrThrow's
+  // ContractValidator.validate guard, and ContractEnforcementRuleSpec's
+  // "FAIL: a contract missing 'outputs' is rejected cleanly..." test for
+  // the real, end-to-end regression test. StructuralVerifier.verify itself
+  // still assumes a structurally valid contract on input, by design -
+  // validating one is ContractEnforcementRule's responsibility, not this
+  // method's, the same single-responsibility split every other caller of
+  // this method (StateChangingCallSupport's tests included) already relies on.
 }

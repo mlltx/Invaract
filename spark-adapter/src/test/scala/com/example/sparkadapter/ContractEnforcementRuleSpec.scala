@@ -134,6 +134,35 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
   }
 
+  // Found via the ClickHouse connector pass's Phase 8, but not
+  // ClickHouse-specific - reproduces with any connector, since it's a
+  // contract/spark-adapter boundary issue, not a translation one. A
+  // contract YAML missing its top-level 'outputs:' key used to parse
+  // without error (ContractParser.parse never validates on its own) and
+  // then crash verifyOrThrow with an unguarded
+  // NoSuchElementException("head of empty list") at contract.outputs.head,
+  // instead of a clean, actionable rejection - even though
+  // ContractValidator already has an "outputs must be non-empty" check
+  // that would have caught it. Fixed by validating the contract first.
+  test("FAIL: a contract missing 'outputs' is rejected cleanly, not with an unguarded crash") {
+    val outputPath = scratchDir.resolve("invalid_contract_no_outputs.parquet").toString
+    val yaml =
+      s"""id: invalid_contract
+         |version: "1.0.0"
+         |""".stripMargin // deliberately no 'outputs:' key at all
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(v =>
+      v.violationType == ViolationType.InvalidContract && v.message.contains("outputs")))
+  }
+
   // Closes the enforcement half of the gap SparkPlanAdapterSpec's Delta
   // translation test documents: before SparkPlanAdapter recognized
   // SaveIntoDataSourceCommand, a Delta write translated to Unsupported,

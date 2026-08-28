@@ -3,13 +3,9 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractParser
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.streaming.Trigger
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 
 import java.nio.file.{Files, Path}
@@ -27,16 +23,10 @@ import java.nio.file.{Files, Path}
   * text format with no native schema, so schema inference, header
   * handling, malformed-record modes, and text-based date/timestamp
   * parsing are all real, CSV-specific behaviors with no Parquet analog.
-  * See docs/SPARK_ADAPTER.md's "CSV support" section for the full
-  * coverage ledger.
+  * See docs/connectors/csv.md for the full coverage ledger.
   */
-class CsvConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
-  private var spark: SparkSession = _
+class CsvConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
-
-  @volatile private var activeContract: Option[com.example.contract.Contract] = None
-  @volatile private var activeOptions: VerificationOptions = VerificationOptions()
-  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invariant-csv-test")
@@ -48,28 +38,10 @@ class CsvConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
-      .withExtensions { ext =>
-        ext.injectCheckRule { _ => (plan: LogicalPlan) =>
-          capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
-        }
-      }
+      .withExtensions(injectContractCheck)
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }
-
-  override def afterAll(): Unit = spark.stop()
-
-  private def parseContract(yaml: String) = ContractParser.parse(yaml)
-
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
-    activeContract = Some(parseContract(yaml))
-    activeOptions = options
-    try body
-    finally activeContract = None
-  }
-
-  private def df() = spark.createDataFrame(Seq((1L, 10L), (2L, 20L))).toDF("id", "value")
 
   // --- .insertInto(...): same InsertIntoHadoopFsRelationCommand shape as
   // Parquet, confirmed empirically for CSV specifically. ---

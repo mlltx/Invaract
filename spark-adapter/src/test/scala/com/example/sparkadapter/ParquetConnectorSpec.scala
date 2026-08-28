@@ -3,13 +3,9 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractParser
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.streaming.Trigger
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 
 import java.nio.file.{Files, Path}
@@ -28,16 +24,11 @@ import java.sql.Date
   * confirmation pass - real evidence that those generic mechanisms cover
   * Parquet specifically, not just assumed from the Delta/Iceberg
   * precedent - plus permanent tests for the real, Parquet-specific
-  * findings the investigation surfaced (see docs/SPARK_ADAPTER.md's
-  * "Parquet support" section for the full coverage ledger).
+  * findings the investigation surfaced (see docs/connectors/parquet.md
+  * for the full coverage ledger).
   */
-class ParquetConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
-  private var spark: SparkSession = _
+class ParquetConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
-
-  @volatile private var activeContract: Option[com.example.contract.Contract] = None
-  @volatile private var activeOptions: VerificationOptions = VerificationOptions()
-  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invariant-parquet-test")
@@ -49,28 +40,10 @@ class ParquetConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
-      .withExtensions { ext =>
-        ext.injectCheckRule { _ => (plan: LogicalPlan) =>
-          capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
-        }
-      }
+      .withExtensions(injectContractCheck)
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }
-
-  override def afterAll(): Unit = spark.stop()
-
-  private def parseContract(yaml: String) = ContractParser.parse(yaml)
-
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
-    activeContract = Some(parseContract(yaml))
-    activeOptions = options
-    try body
-    finally activeContract = None
-  }
-
-  private def df() = spark.createDataFrame(Seq((1L, 10L), (2L, 20L))).toDF("id", "value")
 
   // --- .insertInto(...) against an existing table: same InsertIntoHadoopFsRelationCommand
   // shape .save(path) uses, confirmed empirically (not assumed) rather than
@@ -104,7 +77,7 @@ class ParquetConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // to perform the actual insert - both visible to ContractEnforcementRule,
   // meaning it runs TWICE for one logical write. The same general shape as the
   // Delta/Iceberg "atomic CTAS/RTAS issues a second, nested write" pitfall
-  // (docs/SPARK_ADAPTER.md), but via a different mechanism (a V1 command's own
+  // (docs/connectors/delta.md), but via a different mechanism (a V1 command's own
   // internal delegation, not Spark's StagedTable protocol) - and, unlike that
   // case, this one needed no fix: both plans resolve to the identical location
   // (the existing table's real storage path), so a satisfying write passes both
@@ -453,8 +426,8 @@ class ParquetConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   // --- Feature surface: Parquet always reports every column nullable on
   // read-back, regardless of what was written. This is NOT a Delta-specific
-  // quirk (docs/SPARK_ADAPTER.md previously documented it only under "Delta
-  // Lake reads") - confirmed here directly against plain Parquet, with no
+  // quirk (docs/connectors/delta.md previously documented it only under
+  // "Delta Lake reads") - confirmed here directly against plain Parquet, with no
   // Delta/Iceberg involved at all, meaning Delta's (and Iceberg's) own
   // instance of this behavior was inherited from their underlying Parquet
   // storage layer all along, not something either connector does itself. ---

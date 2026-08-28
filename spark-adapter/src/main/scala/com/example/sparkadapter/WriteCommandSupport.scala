@@ -8,6 +8,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable => SparkCatalogTable}
 import org.apache.spark.sql.catalyst.plans.logical.{
   AppendData,
   CreateTableAsSelect,
+  DeleteFromTable,
   LogicalPlan,
   OverwriteByExpression,
   OverwritePartitionsDynamic,
@@ -786,6 +787,58 @@ private[sparkadapter] object WriteCommandSupport {
       )
   }
 
+  /** `DELETE FROM <v2-table> WHERE <predicate>` against a connector that
+    * implements plain `SupportsDelete` (predicate pushdown truncate/delete)
+    * rather than `SupportsRowLevelOperations` - confirmed empirically for
+    * ClickHouse (`add-spark-connector`'s onboarding pass): a real
+    * `DELETE FROM ch.db.tbl WHERE id = 1` against a live ClickHouse-backed
+    * catalog table executes successfully, staying as a plain
+    * `DeleteFromTable` node - Spark's `RewriteRowLevelOperation` optimizer
+    * rule never touches it, since that rewrite only fires for connectors
+    * implementing `SupportsRowLevelOperations` (`RowLevelWrite`'s own
+    * case above). A genuinely different, simpler write shape from
+    * `RowLevelWrite`, not a special case of it - `DeleteFromTable.table`
+    * is a plain `LogicalPlan` (possibly `SubqueryAlias`-wrapped), not a
+    * `NamedRelation` directly, so the underlying relation is located by
+    * `collectFirst` rather than passed straight to
+    * `namedRelationLocationAndFormat`.
+    *
+    * Same scope as `deltaRowLevelDml`/`dsv2RowLevelWrite`: structural only
+    * - the delete predicate itself has no IR representation and isn't
+    * checked, only the target's location/schema (catching the
+    * wrong-table mistake). `query`/`outputSchema` both use the target's
+    * own schema since a DELETE has no separate "query being written" the
+    * way INSERT/MERGE do; `saveMode = None` for the same reason
+    * `dsv2RowLevelWrite` uses it - in-place mutation isn't append/
+    * overwrite/ignore/error.
+    */
+  private val deleteFromTable: PartialFunction[LogicalPlan, WriteCommandInfo] = {
+    case cmd: DeleteFromTable =>
+      cmd.table.collectFirst { case r: NamedRelation => r } match {
+        case Some(relation) =>
+          val (location, format, diagnostic) = namedRelationLocationAndFormat(relation)
+          WriteCommandInfo(
+            location = location,
+            query = relation,
+            format = format,
+            saveMode = None,
+            outputSchema = relation.schema,
+            diagnostic = diagnostic
+          )
+        case None =>
+          val msg = s"No NamedRelation found under DeleteFromTable's target; " +
+            "using its own toString as a best-effort location"
+          WriteCommandInfo(
+            location = cmd.table.toString,
+            query = cmd.table,
+            format = None,
+            saveMode = None,
+            outputSchema = cmd.table.schema,
+            diagnostic = Some(Diagnostic("DeleteFromTable", msg))
+          )
+      }
+  }
+
   // Hive support (org.apache.spark.sql.hive.execution package, part of the
   // separate `spark-hive` artifact - see build.sbt's comment for why this
   // module has no compile-time dependency on it, unlike HiveTableRelation
@@ -957,7 +1010,7 @@ private[sparkadapter] object WriteCommandSupport {
   val combined: PartialFunction[LogicalPlan, WriteCommandInfo] =
     insertIntoHadoopFsRelation orElse saveIntoDataSource orElse createDataSourceTableAsSelect orElse writeToStream orElse
       appendData orElse overwriteByExpression orElse overwritePartitionsDynamic orElse replaceTableAsSelect orElse
-      createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite orElse
+      createTableAsSelect orElse deltaRowLevelDml orElse dsv2RowLevelWrite orElse deleteFromTable orElse
       createHiveTableAsSelect orElse insertIntoHiveTable orElse insertIntoHiveDir
 
   /** Spark 3.4+ inserts an internal `WriteFiles` wrapper between a write

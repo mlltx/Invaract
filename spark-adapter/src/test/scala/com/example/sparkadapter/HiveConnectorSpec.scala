@@ -3,13 +3,9 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractParser
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 
 import java.nio.file.{Files, Path}
 
@@ -18,8 +14,8 @@ import java.nio.file.{Files, Path}
   * external connector library - it's Spark's own first-party integration
   * module (`spark-hive`, `enableHiveSupport()`), tested here against a real
   * embedded-Derby metastore (no external Hive install needed). See
-  * docs/SPARK_ADAPTER.md's "Hive support" section for the full
-  * investigation and coverage ledger.
+  * docs/connectors/hive.md for the full investigation and coverage
+  * ledger.
   *
   * Two real findings drove this suite, neither assumed from documentation:
   *
@@ -36,13 +32,8 @@ import java.nio.file.{Files, Path}
   *     Delta's generated columns/DSv2's target-only fields, fixed in
   *     `WriteCommandSupport.insertIntoHiveTable`.
   */
-class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
-  private var spark: SparkSession = _
+class HiveConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
-
-  @volatile private var activeContract: Option[com.example.contract.Contract] = None
-  @volatile private var activeOptions: VerificationOptions = VerificationOptions()
-  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invariant-hive-test")
@@ -57,28 +48,10 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
       .enableHiveSupport()
-      .withExtensions { ext =>
-        ext.injectCheckRule { _ => (plan: LogicalPlan) =>
-          capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
-        }
-      }
+      .withExtensions(injectContractCheck)
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
   }
-
-  override def afterAll(): Unit = spark.stop()
-
-  private def parseContract(yaml: String) = ContractParser.parse(yaml)
-
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
-    activeContract = Some(parseContract(yaml))
-    activeOptions = options
-    try body
-    finally activeContract = None
-  }
-
-  private def df() = spark.createDataFrame(Seq((1L, 10L), (2L, 20L))).toDF("id", "value")
 
   /** `SparkAdapterListener.onSuccess` fires asynchronously on Spark's own
     * listener-bus thread, with no ordering guarantee relative to when a
@@ -241,8 +214,7 @@ class HiveConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // `ParquetConnectorSpec`'s own `.saveAsTable()`-on-a-brand-new-table test
   // already documents and leaves out of scope (there, a V1 `.option("path",
   // ...)` sidesteps it; Hive's `.saveAsTable()` has no equivalent knob) -
-  // see docs/SPARK_ADAPTER.md's "Hive support" section for the full
-  // writeup and next step. ---
+  // see docs/connectors/hive.md for the full writeup and next step. ---
 
   test("PASS: .format(hive).saveAsTable() append onto an existing table - both nested Command plans see a satisfying write") {
     df().write.format("hive").saveAsTable("hive_ctas_append_pass_tbl")

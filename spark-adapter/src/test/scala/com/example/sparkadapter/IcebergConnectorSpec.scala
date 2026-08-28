@@ -3,13 +3,9 @@
 
 package com.example.sparkadapter
 
-import com.example.contract.ContractParser
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions._
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
 
 import java.nio.file.{Files, Path}
 
@@ -23,15 +19,10 @@ import java.nio.file.{Files, Path}
   * `OverwriteByExpression`/`ReplaceTableAsSelect`/`WriteToStream` were
   * already generic and are confirmed here to cover Iceberg "for free",
   * not just assumed from the Delta precedent. See
-  * docs/SPARK_ADAPTER.md's Iceberg section for the full investigation.
+  * docs/connectors/iceberg.md for the full investigation.
   */
-class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
-  private var spark: SparkSession = _
+class IcebergConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
-
-  @volatile private var activeContract: Option[com.example.contract.Contract] = None
-  @volatile private var activeOptions: VerificationOptions = VerificationOptions()
-  private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invariant-iceberg-test")
@@ -64,25 +55,9 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
       // reasoning, and this suite's MERGE/UPDATE/DELETE tests shuffle too.
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
-      .withExtensions { ext =>
-        ext.injectCheckRule { _ => (plan: LogicalPlan) =>
-          capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
-        }
-      }
+      .withExtensions(injectContractCheck)
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
-  }
-
-  override def afterAll(): Unit = spark.stop()
-
-  private def parseContract(yaml: String) = ContractParser.parse(yaml)
-
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
-    activeContract = Some(parseContract(yaml))
-    activeOptions = options
-    try body
-    finally activeContract = None
   }
 
   // --- Read: batch DataSourceV2Relation (SparkPlanAdapter's new case) ---
@@ -495,7 +470,7 @@ class IcebergConnectorSpec extends AnyFunSuite with BeforeAndAfterAll {
   // (outputSchemaWithTargetOnlyFields, plain cmd.table.schema() - no
   // reflection at all) once this investigation confirmed the field NAME
   // was already present there all along, just not its Delta-specific
-  // generation metadata - see docs/SPARK_ADAPTER.md's Iceberg section.
+  // generation metadata - see docs/connectors/iceberg.md.
   test("PASS: an append narrower than an Iceberg table's schema, under accept-any-schema, satisfies a contract requiring the omitted column") {
     val tableName = "local.db.narrow_evo_pass_tbl"
     val expectedLocation = scratchDir.resolve("warehouse").resolve("db").resolve("narrow_evo_pass_tbl").toString

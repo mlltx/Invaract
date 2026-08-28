@@ -65,6 +65,16 @@ object ViolationType {
     * writes" doc.
     */
   val UnverifiableWrite = "UNVERIFIABLE_WRITE"
+
+  /** Not produced by `StructuralVerifier` itself — `ContractEnforcementRule`
+    * produces this when `ContractValidator.validate` finds the contract
+    * itself structurally unsound (e.g. no declared outputs) before any
+    * plan is even checked against it. Found via a real crash: a contract
+    * missing `outputs` entirely used to reach `StructuralVerifier.verify`
+    * unvalidated and fail with an unguarded `NoSuchElementException` at
+    * `contract.outputs.head`, rather than a clean, actionable rejection.
+    */
+  val InvalidContract = "INVALID_CONTRACT"
 }
 
 /** The two "unexpected X can be rejected" toggles from the check list —
