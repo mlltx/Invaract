@@ -3,153 +3,131 @@
   <img src="assets/logo-light.svg" alt="Invaract" height="56">
 </picture>
 
-A framework for verifying data transformations against machine-readable
-data contracts — parse a contract, translate a real Spark job's logical
-plan into an engine-independent IR, verify it against the contract, and
-abort the write if it fails. Ships with a mobile-first Codespaces
-environment for exercising the whole thing against a real Spark job from
-a phone.
+**Your Spark job says it writes X. Does it actually write X?**
 
-📖 **[Read the full user documentation →](https://mlltx.github.io/Invaract/)**
-— installation, a guided quick start, contract-writing guides, concepts,
-and complete reference material. This README stays a concise entry
-point; the docs site is where the deeper user journey lives.
+Invaract checks a Spark job's real write — the actual Catalyst plan, not
+what the code claims — against a machine-readable data contract, and
+aborts the write before it happens if they don't match. No silent bad
+data. No finding out from a downstream dashboard.
 
-**The product is the verification engine — `contract/`, `ir/`, and
-`spark-adapter/`.** `plugin/`, `runner/`, `demo/`, and `web/` are an
-example integration and test harness that prove the engine works against
-a real Spark job, not something a real user imports. See
-[ARCHITECTURE.md](ARCHITECTURE.md) and [CLAUDE.md](CLAUDE.md) for the full
-distinction — it matters for where a change belongs.
+1. **Add a contract** — declare the schema a write is supposed to produce.
+2. **Run the check** — Invaract's enforcement rule verifies the job's real
+   Spark plan against it, before Spark executes the write.
+3. **Get a useful failure** — a violating write is aborted, nothing is
+   written, and you get an exact diagnosis: which field, why, how to fix it.
 
-## Quick Start
+📖 **[Full documentation →](https://mlltx.github.io/Invaract/)** — install,
+write your first contract, guides, reference.
 
-### Prerequisites
+## See it fail, for real
 
-- GitHub account with Codespaces access
-- Modern web browser (Safari, Chrome, Firefox)
-- No local development setup required
+This is the actual output of this repository's own example job — no
+setup beyond `./dev/build`, no wrappers, just `spark-submit`.
 
-### Setup
+**1. The contract** (`demo/contracts/invaract_output_broken_example.yaml`)
+declares an output field the job doesn't produce yet:
 
-1. **Clone and open in Codespaces**:
-   ```bash
-   git clone https://github.com/mlltx/Invaract.git
-   # Open in GitHub Codespaces — the Dev Container auto-provisions
-   # JDK 21, sbt, Apache Spark 3.5.1, and Node.js 20 (~5 min first time)
-   ```
-
-2. **Run the test harness**:
-   ```bash
-   ./dev/test
-   ```
-   Builds all 5 modules, runs a real Spark job (`DemoJobHarness`) with the
-   verification engine installed, and validates the result. Exit code `0`
-   = pass.
-
-3. **View results**:
-   ```bash
-   ./dev/report
-   ```
-   Forward port 3000 to your phone and open `http://localhost:3000`.
-
-## Key Features
-
-- **A real verification engine, not a linter**: parses an ODCS-shaped
-  contract, translates a Spark job's actual Catalyst logical plan into an
-  engine-independent IR, and verifies it structurally against the
-  contract
-- **Enforcement, not just reporting**: a `SparkSessionExtensions` check
-  rule (`ContractEnforcementRule`) aborts a write that violates its
-  contract *before* Spark executes it — proven by `./dev/regression`'s
-  pass/fail pair, not just a happy-path run
-- **Real Spark execution as the test harness**: the demo job runs via
-  actual `spark-submit`, not mocked Spark (see ARCHITECTURE.md's ADR-005)
-- **Never throws**: the Spark adapter degrades to `Unsupported`/
-  `Diagnostic` on constructs it doesn't recognize instead of crashing —
-  checked by property-based fuzzing across random operation chains
-- **Mutation-tested**: `ir` and `spark-adapter` are mutation-tested with
-  Stryker4s, blocking CI below each module's threshold (see CLAUDE.md's
-  "Mutation Testing Requirement")
-- **Mobile-first results UI**: fully responsive down to 375px screens,
-  auto-refreshing
-- **One-command verification**: `./dev/test` covers build → real Spark
-  execution → report validation
-
-## Repository Structure
-
-```
-.
-├── contract/                # Verification engine: contract model
-├── ir/                      # Verification engine: transformation IR
-├── spark-adapter/           # Verification engine: Spark integration
-│                             (translation, verification, enforcement)
-├── plugin/                  # Example harness: demo transformation
-├── runner/                  # Example harness: demo job (DemoJobHarness)
-├── demo/                    # Example harness: fixtures + generated output
-├── web/                     # Example harness: mobile-friendly results UI
-├── dev/                     # Development scripts (build, test, report, regression)
-├── docs/                    # Module-level design docs
-├── .devcontainer/           # GitHub Codespaces configuration
-├── .github/workflows/       # CI/CD pipeline
-├── ARCHITECTURE.md          # Full architecture, ADRs, data flow
-├── ROADMAP.md               # Phase-by-phase plan and status
-├── CLAUDE.md                # Comprehensive development guide
-└── README.md                # This file
+```yaml
+outputs:
+  - name: result
+    location: demo/output/result_broken_example.parquet
+    format: parquet
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+        - name: value
+          type: integer
+          required: true
+        - name: value_squared
+          type: integer
+          required: true
+        - name: customer_name
+          type: string
+          required: true
 ```
 
-## Commands
-
-| Command | Purpose |
-|---------|---------|
-| `./dev/test` | Build every module, run the demo job on a real Spark session, generate and validate a report |
-| `./dev/build` | Build every module's jar, in dependency order, without running the demo job |
-| `./dev/regression` | Contract regression pack: proves a satisfied contract executes and a violated one is aborted before any output is written (see below) |
-| `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed |
-| `./dev/report` | Start the web UI on localhost:3000 |
-| `cd spark-adapter && sbt test` | Run one module's unit tests only (works for `contract`/`ir`/`spark-adapter`/`plugin`) |
-| `cd spark-adapter && sbt stryker` | Run mutation testing for one module (`ir`/`spark-adapter` only) |
-
-## Contract Regression Pack
-
-`ContractEnforcementRule` (see [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md))
-gates every Spark write against a contract before it executes: a write
-that violates its contract is aborted, and no output is ever created.
-`./dev/regression` re-runs that guarantee as a script instead of a
-transcript, with real `spark-submit` invocations and real assertions —
-not mocks:
+**2. Run it** — Invaract's `ContractEnforcementRule` is installed in the
+job's `SparkSession` the same way any real job would install it; this just
+invokes the resulting jars directly:
 
 ```bash
-./dev/regression
+spark-submit \
+  --class com.example.runner.DemoJobHarness \
+  --master local[*] \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  runner/target/scala-2.12/invaract-spark-runner.jar \
+  demo/input/sample.csv \
+  demo/output/result_broken_example.parquet \
+  demo/output/report.json \
+  demo/contracts/invaract_output_broken_example.yaml
 ```
 
-It checks two real cases and exits non-zero if either behaves unexpectedly:
+**3. The failure** — `spark-submit` exits non-zero, and the real exception
+message (trimmed here to the useful part — the full message also shows
+what the contract expects and the full translated plan) reads:
 
-1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the
-   job exits 0, the report says `PASS`, and the output file exists.
-2. **Contract violated**
-   (`demo/contracts/invaract_output_broken_example.yaml`, which requires a
-   `customer_name` column the demo transformation never produces) — the
-   job exits non-zero, the report says `FAIL` with a `MISSING_OUTPUT_FIELD`
-   violation, and — the core guarantee — the output file is never created.
+```
+Exception in thread "main" com.example.sparkadapter.ContractViolationException:
+Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. Write aborted.
 
-The only requirement is a working `./dev/test` environment (Codespaces
-already provides one). With just Docker installed and nothing else,
-`./dev/regression-docker` builds a self-contained image and runs the same
-pack inside it — useful for verifying the guarantee on a machine that
-hasn't set up JDK/sbt/Spark at all. This same pack runs in CI on every
-push, so the abort path is checked automatically, not just the happy path.
+What the plan contains:
+  Write(demo/output/result_broken_example.parquet, format=parquet, saveMode=Overwrite)
+  [...]
 
-## Contract Rules
+Why it violates the contract (1 violation):
+  1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema
 
-Beyond schema/format/location checks, a contract can declare rules that
-constrain a table's row-level DML (`MERGE`/`UPDATE`/`DELETE`) — checked
-against a real Spark plan the same way everything else is, aborting the
-write before anything is committed if violated. Three rule types are
-interpreted and enforced today (see
-[docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)'s "Interpreted rules"
-and [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md)'s "DML rule
-verification" for the full design):
+How to correct it:
+  1. Add a 'customer_name' column (type 'string') to the output, or mark it
+     optional in the contract if it isn't always produced.
+```
+
+`demo/output/result_broken_example.parquet` is never created. Nothing
+partial gets committed — the write is stopped before Spark touches disk.
+This is the exact mechanism `./dev/regression` checks in CI on every push
+(both directions: a satisfying write goes through, a violating one is
+aborted) — see [Prove Enforcement with the Regression
+Pack](https://mlltx.github.io/Invaract/guides/running-the-regression-pack/).
+
+## What's the product
+
+**The verification engine — `contract/`, `ir/`, `spark-adapter/`.**
+Together they parse a contract, translate a real Spark job's logical plan
+into an engine-independent IR, verify one against the other structurally,
+and — via a `SparkSessionExtensions` check rule — abort the write if it
+fails. This is what a real user of Invaract depends on.
+
+**`plugin/`, `runner/`, `demo/`, `web/` are the example above and its test
+harness**, not the product: a small illustrative transformation, the demo
+job that installs the engine and drives it (exactly like a real job
+would), fixtures, and a mobile-friendly results viewer. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the full breakdown.
+
+## Try the full demo
+
+No local setup — open in [GitHub
+Codespaces](https://github.com/features/codespaces) (Dev Container
+auto-provisions JDK 21, sbt, Spark 3.5.1, Node.js):
+
+```bash
+git clone https://github.com/mlltx/Invaract.git
+./dev/test      # build everything, run the passing case, validate the report
+./dev/report    # mobile-friendly results UI on :3000
+```
+
+Or prove the abort path yourself, without touching Spark/sbt at all:
+
+```bash
+./dev/regression-docker
+```
+
+## Contract rules — beyond schema
+
+A contract can also constrain a table's row-level `MERGE`/`UPDATE`/`DELETE`,
+checked against the real Spark plan the same way, aborting the write if
+violated:
 
 ```yaml
 rules:
@@ -160,141 +138,62 @@ rules:
     columns: [status, updated_at]
 ```
 
-- **`merge_condition`** — a `MERGE`'s `ON` clause must reference every
-  listed column. Catches the real, common bug this exists for: a MERGE
-  silently missing a match key (e.g. matching only on `customer_id` in a
-  table that should also match on `region`).
-- **`forbid_unconditional_delete`** — a `DELETE` may never omit a
-  filtering predicate (`DELETE FROM t` with no `WHERE`).
-- **`allowed_update_columns`** — an `UPDATE` may only assign to the
-  listed columns.
+Catches real bugs: a `MERGE` silently missing a match key, a `DELETE` with
+no `WHERE`, an `UPDATE` touching a column it shouldn't. Works today against
+Delta and Iceberg. Where a rule genuinely can't be checked (e.g. Iceberg
+merge-on-read `UPDATE`), the write is aborted with
+`RULE_UNVERIFIABLE_DML` rather than silently let through unverified. Full
+details: [Enforce Row-Level DML
+Rules](https://mlltx.github.io/Invaract/guides/enforcing-dml-rules/).
 
-**Works today against Delta and Iceberg**, both copy-on-write and
-merge-on-read for `merge_condition`/`forbid_unconditional_delete`;
-`allowed_update_columns` covers Delta fully and Iceberg's copy-on-write
-UPDATE. Where a rule genuinely can't be checked — Iceberg's
-merge-on-read UPDATE has no per-column before/after fact this module can
-extract — the write is **aborted with `RULE_UNVERIFIABLE_DML`**, not
-silently allowed through with no protection. This only fires for an
-operation kind the contract actually declares a rule for; an unrelated
-DML rule never blocks an operation it doesn't apply to.
+## Commands
 
-**Not yet handled**, listed here so expectations are set correctly, not
-implied by omission:
+| Command | Purpose |
+|---------|---------|
+| `./dev/test` | Build every module, run the demo job on a real Spark session, generate and validate a report |
+| `./dev/build` | Build every module's jar, in dependency order, without running the demo job |
+| `./dev/regression` | Proves a satisfied contract's write executes and a violated one is aborted before any output is written |
+| `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed |
+| `./dev/report` | Start the web results UI on `localhost:3000` |
+| `cd spark-adapter && sbt test` | Run one module's unit tests (`contract`/`ir`/`spark-adapter`/`plugin`) |
+| `cd spark-adapter && sbt stryker` | Mutation testing for one module (`ir`/`spark-adapter` only) |
 
-- The merge condition's actual predicate logic — `merge_condition` checks
-  that declared columns are *referenced* by the `ON` clause, not that
-  they're its only columns or a genuine equality pairing.
-- Which specific rows an `UPDATE` touches, or whether a non-empty
-  `DELETE` predicate is trivially satisfiable (e.g. `WHERE 1=1`).
-- Row-level DML on connectors other than Delta/Iceberg (Parquet, CSV,
-  JDBC, and similar don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL
-  at all — Spark itself rejects them before any plan reaches Invaract).
-- Governance rules (field-level masking, residency, purpose limitation),
-  transformation-semantic rules (join/aggregation/filter shape), and
-  compatibility rules (a transformation against a contract version, as
-  opposed to `ContractCompatibility`'s existing version-to-version diff)
-  — no rule vocabulary exists for any of these yet.
+## Repository structure
 
-A documentation strategy for this (where examples like these ultimately
-live, how deep each doc goes) is still being worked out — this section is
-a snapshot of what's real right now, not the final shape.
-
-## Example Integration
-
-`plugin/`'s `InvaractPlugin` is a small, illustrative transformation
-(schema validation, a computed column, event logging) standing in for
-"some real job's logic" — it's what the engine is demonstrated against,
-not part of the engine itself. `runner/`'s `DemoJobHarness` is the example
-Spark job: it installs the verification engine into a real `SparkSession`
-exactly the way a real user's job would, drives `InvaractPlugin` through
-it, and captures the outcome.
-
-See `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala` and
-`runner/src/main/scala/com/example/runner/DemoJobHarness.scala`.
-
-## Test Results
-
-Each run of `./dev/test` generates (harness artifacts, not engine APIs —
-see ARCHITECTURE.md's "API Contracts"):
-
-1. **`demo/output/report.json`** — status, build info, test counts,
-   input/output schema and sample data, the translated Transformation IR,
-   contract verification outcome, and demo-plugin events/diagnostics
-2. **`demo/output/result.parquet`** — output data from the demo run
-3. **Web UI** — mobile-friendly visualization of both
-
-## Mobile Access
-
-1. Run `./dev/test` to generate a report
-2. Run `./dev/report` to start the web UI
-3. Codespaces forwards port 3000
-4. Open the forwarded URL on your phone (375px+ responsive)
-5. The UI polls every 2 seconds for new reports
-
-## CI/CD
-
-GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
-
-- **`test`**: OS × Java matrix (ubuntu/macos/windows × 11/17/21) — builds
-  all 5 modules and runs `./dev/test`
-- **`docker-regression`**: runs `./dev/regression`, proving enforcement
-  actually blocks a bad write
-- **`mutation-testing`**: Stryker4s for `ir`/`spark-adapter`, whole-module
-  and incremental per-PR
-- **`summary`**: gates on all of the above
-
-Exit code determines PR check status.
-
-## Important Notes
-
-- **Real Spark execution**: the demo job runs via actual `spark-submit`,
-  not unit test mocks
-- **Exit code 0**: success means the engine actually verified a real
-  Spark write, not just that code compiled
-- **Mobile-first**: optimized for 375–430px screens
-- **No infrastructure**: uses a local Spark master, no cloud required
-- **Deterministic**: same demo data every run, reproducible results
+```
+.
+├── contract/                # Verification engine: contract model
+├── ir/                      # Verification engine: transformation IR
+├── spark-adapter/           # Verification engine: Spark integration
+│                             (translation, verification, enforcement)
+├── plugin/                  # Example: demo transformation
+├── runner/                  # Example: demo job (DemoJobHarness)
+├── demo/                    # Example: fixtures + generated output
+├── web/                     # Example: mobile-friendly results UI
+├── dev/                     # Development scripts
+├── docs/                    # Module-level design docs (developer-facing)
+├── docs-site/               # User documentation (Astro Starlight)
+├── ARCHITECTURE.md          # Full architecture, ADRs, data flow
+├── ROADMAP.md               # Phase-by-phase plan and status
+└── CLAUDE.md                # Comprehensive development guide
+```
 
 ## Documentation
 
-- **[User documentation site](https://mlltx.github.io/Invaract/)**
-  ([source](docs-site/)) — installation, quick start, guides, concepts, and
-  reference material for anyone *using* Invaract. Start here if you want
-  to write a contract or install the enforcement rule in your own job.
+- **[Full user documentation](https://mlltx.github.io/Invaract/)** —
+  install, write your first contract, install the enforcement rule in
+  your own job, guides, concepts, and reference.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component breakdown, data flow, ADRs
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
-- [CLAUDE.md](CLAUDE.md) — complete development guide, troubleshooting,
-  performance expectations
-- [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
-  [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
-  [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) — module-level design docs
-  (developer-facing, implementation detail)
-
-## References
-
-- [Apache Spark](https://spark.apache.org/) — data processing framework
-- [Scala 2.12](https://docs.scala-lang.org/2.12/) — programming language
-- [sbt](https://www.scala-sbt.org/) — build tool
-- [Next.js 14](https://nextjs.org/) — React framework
-- [GitHub Codespaces](https://github.com/features/codespaces) — cloud development
-- [ODCS Specification](https://github.com/opendatadiscovery/open-data-contracts-standard) — the contract format this project's contracts are shaped after
+- [CLAUDE.md](CLAUDE.md) — development guide, testing requirements,
+  troubleshooting
 
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-## Support
-
-For questions or issues:
-
-1. Review [CLAUDE.md](CLAUDE.md)
-2. Check GitHub Actions workflow logs
-3. Inspect `demo/output/report.json` and the web UI's diagnostics
-4. Examine the relevant module's source and tests
-
 ---
 
 **Status**: Phase 1 (verification engine) complete; example harness and
 web UI stable. See [ROADMAP.md](ROADMAP.md) for what's next.
-**Last Updated**: 2026-08-22
+**Last Updated**: 2026-08-29
