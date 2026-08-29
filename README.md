@@ -107,17 +107,19 @@ would), fixtures, and a mobile-friendly results viewer. See
 
 ## Try the full demo
 
-No local setup — open in [GitHub
-Codespaces](https://github.com/features/codespaces) (Dev Container
-auto-provisions JDK 21, sbt, Spark 3.5.1, Node.js):
-
 ```bash
 git clone https://github.com/mlltx/Invaract.git
+cd Invaract
 ./dev/test      # build everything, run the passing case, validate the report
-./dev/report    # mobile-friendly results UI on :3000
+./dev/report    # results UI on :3000
 ```
 
-Or prove the abort path yourself, without touching Spark/sbt at all:
+Needs JDK 21, sbt, and Spark 3.5.1 on your `PATH` — see
+[Installation](https://mlltx.github.io/Invaract/getting-started/installation/).
+Don't want to install those locally? [GitHub
+Codespaces](https://github.com/features/codespaces) is a supported,
+zero-setup alternative — its dev container provisions all three for you.
+Or skip Spark/sbt entirely and just prove the abort path:
 
 ```bash
 ./dev/regression-docker
