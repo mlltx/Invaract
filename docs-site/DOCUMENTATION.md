@@ -84,6 +84,23 @@ it wastes a reader's click and erodes trust in every other page on the site.
 - Don't convert a page to MDX just because it *could* use a component — only when a
   component genuinely improves the reader's experience over a heading and a paragraph.
 
+**A `.md` file with an `import {...}` line and `<Steps>`/`<Aside>`/`<Tabs>` tags is a real,
+silent bug, not a style choice** — this shipped once and reached production before being
+caught. Astro's MDX compiler only processes `.mdx` files; in a `.md` file, `import ...` is
+just inert text and gets rendered on the page verbatim, and the component tags render as
+nothing (unrecognized custom elements). No build error, no warning — it looks correct in
+the source and is visibly broken only once rendered. If you add or copy a Starlight
+component into a page, **the file extension must be `.mdx`**, full stop; there is no
+"just wrap it and keep `.md`" option. After renaming, verify with a real build, not just a
+visual glance at the source: `npm run build` then confirm the output is clean —
+`grep -rl "import {.*} from" dist --include="*.html"` must return nothing, and the
+component's real CSS class should be present (e.g. `grep -c 'sl-steps' dist/<page>/index.html`
+for `Steps`, `starlight-aside` for `Aside`, `tablist-wrapper` for `Tabs`). Also clear
+`node_modules/.astro/` (a content-layer cache separate from `dist/` and the project-root
+`.astro/`, and *not* removed by a normal rebuild) before that verification build if you've
+just renamed a file — a stale entry there can keep serving the old, broken parse of a file
+that's already been fixed on disk, making the bug look unfixed when it's actually cache.
+
 ## When to use which Starlight component
 
 - **`Steps`** — a sequential procedure where order matters and the reader is doing
