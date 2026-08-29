@@ -7,6 +7,11 @@ abort the write if it fails. Ships with a mobile-first Codespaces
 environment for exercising the whole thing against a real Spark job from
 a phone.
 
+📖 **[Read the full user documentation →](https://mlltx.github.io/Invariant/)**
+— installation, a guided quick start, contract-writing guides, concepts,
+and complete reference material. This README stays a concise entry
+point; the docs site is where the deeper user journey lives.
+
 **The product is the verification engine — `contract/`, `ir/`, and
 `spark-adapter/`.** `plugin/`, `runner/`, `demo/`, and `web/` are an
 example integration and test harness that prove the engine works against
@@ -250,6 +255,10 @@ Exit code determines PR check status.
 
 ## Documentation
 
+- **[User documentation site](https://mlltx.github.io/Invariant/)**
+  ([source](docs-site/)) — installation, quick start, guides, concepts, and
+  reference material for anyone *using* Invariant. Start here if you want
+  to write a contract or install the enforcement rule in your own job.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component breakdown, data flow, ADRs
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
 - [CLAUDE.md](CLAUDE.md) — complete development guide, troubleshooting,
@@ -257,6 +266,7 @@ Exit code determines PR check status.
 - [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
   [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
   [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) — module-level design docs
+  (developer-facing, implementation detail)
 
 ## References
 

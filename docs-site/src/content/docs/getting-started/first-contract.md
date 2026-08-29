@@ -1,0 +1,112 @@
+---
+title: Your First Contract
+description: Watch Invariant reject a real Spark write that violates its contract.
+sidebar:
+  order: 3
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+[Quick Start](/Invariant/getting-started/quick-start/) showed a *passing* write. This walks
+through making one fail — the moment that actually demonstrates what Invariant is for —
+using a contract already included in the repository, run directly against the real demo
+job.
+
+<Steps>
+
+1. ### Build the modules once
+
+   If you haven't already:
+
+   ```bash
+   ./dev/build
+   ```
+
+2. ### Look at the broken contract
+
+   `demo/contracts/invariant_output_broken_example.yaml` is identical to the working
+   contract, except its output schema declares a `customer_name` field:
+
+   ```yaml
+   outputs:
+     - name: result
+       location: demo/output/result_broken_example.parquet
+       format: parquet
+       schema:
+         fields:
+           - name: id
+             type: integer
+           # ...
+           - name: customer_name
+             type: string
+             required: true
+             nullable: false
+   ```
+
+   The real demo transformation (`InvariantPlugin`) never produces a `customer_name`
+   column — so this contract can never be satisfied by the job as written.
+
+3. ### Run the job against it
+
+   Invoke the same job the quick start used, passing the broken contract as the fourth
+   argument:
+
+   ```bash
+   spark-submit \
+     --class com.example.runner.DemoJobHarness \
+     --master local[*] \
+     --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
+     runner/target/scala-2.12/invariant-spark-runner.jar \
+     demo/input/sample.csv \
+     demo/output/result_broken_example.parquet \
+     demo/output/report_broken_example.json \
+     demo/contracts/invariant_output_broken_example.yaml
+   ```
+
+4. ### Read the rejection
+
+   The job exits non-zero, and prints exactly what was wrong:
+
+   ```
+   Contract violation: 'invariant_demo_output@1.0.0' rejected this transformation. Write aborted.
+
+   What the contract expects:
+     input  'orders' at demo/input/sample.csv: id: integer, value: integer
+     output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
+
+   What the plan contains:
+     Write(file:/.../demo/output/result_broken_example.parquet)
+     └─ Project
+        ├─ Read(file:/.../demo/input/sample.csv)
+        ├─ id = id
+        ├─ value = value
+        └─ value_squared = value * value
+
+   Why it violates the contract (1 violation):
+     1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema
+
+   How to correct it:
+     1. Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.
+   ```
+
+5. ### Confirm nothing was written
+
+   ```bash
+   ls demo/output/result_broken_example.parquet
+   ```
+
+   The file does not exist. Spark never got to execute the write — Invariant rejected the
+   plan during analysis, before any output was produced.
+
+</Steps>
+
+<Aside type="tip" title="You just verified the core guarantee">
+A structurally invalid write doesn't just get flagged after the fact — it never happens.
+This is the same guarantee `./dev/regression` checks automatically on every push. See
+[Prove Enforcement with the Regression Pack](/Invariant/guides/running-the-regression-pack/).
+</Aside>
+
+## What's next
+
+Now that you've seen a contract reject a real write, learn the full format so you can
+write your own: [Write a Contract](/Invariant/guides/writing-a-contract/).
