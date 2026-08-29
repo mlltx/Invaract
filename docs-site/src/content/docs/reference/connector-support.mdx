@@ -1,13 +1,13 @@
 ---
 title: Connector Support
-description: Which Spark data sources Invariant recognizes, and what's checked for each.
+description: Which Spark data sources Invaract recognizes, and what's checked for each.
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Invariant only verifies a write it can translate into a recognized `ir.Write` (see
+Invaract only verifies a write it can translate into a recognized `ir.Write` (see
 [The Transformation IR](/concepts/transformation-ir/)). A write shape it
 doesn't recognize is rejected outright rather than silently passed — see
 [Fail-Closed by Default](/concepts/fail-closed/).
@@ -26,7 +26,7 @@ doesn't recognize is rejected outright rather than silently passed — see
 | **JDBC** (generic) | ✅ | — | — | Reads recognized precisely, including the resolved connection/table identity. |
 
 Parquet, CSV, and JDBC don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL at all —
-Spark itself rejects those statements before any plan reaches Invariant, so there's
+Spark itself rejects those statements before any plan reaches Invaract, so there's
 nothing to verify there.
 
 ## Recognized Spark write commands

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -29,7 +29,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-csv-test")
+    scratchDir = Files.createTempDirectory("invaract-csv-test")
 
     spark = SparkSession
       .builder()
@@ -136,7 +136,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
   // CreateDataSourceTableAsSelectCommand translation for a genuinely new
   // table with the format made explicit. ---
 
-  test(".writeTo() against an existing plain-CSV table is rejected by Spark itself, not by Invariant") {
+  test(".writeTo() against an existing plain-CSV table is rejected by Spark itself, not by Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS csv_writeto_existing_tbl (id BIGINT, value BIGINT) USING csv")
     val ex1 = intercept[org.apache.spark.sql.AnalysisException](df().writeTo("csv_writeto_existing_tbl").append())
     assert(ex1.getMessage.contains("Cannot write into v1 table"))
@@ -183,7 +183,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
   // constraint, not a CSV-specific finding, but verified directly rather
   // than assumed. ---
 
-  test("MERGE/UPDATE/DELETE against a plain csv table are rejected by Spark itself, nothing reaches Invariant") {
+  test("MERGE/UPDATE/DELETE against a plain csv table are rejected by Spark itself, nothing reaches Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS csv_dml_target_tbl (id BIGINT, value BIGINT) USING csv")
     spark.sql("INSERT INTO csv_dml_target_tbl VALUES (1, 10)")
     spark.sql("CREATE TABLE IF NOT EXISTS csv_dml_source_tbl (id BIGINT, value BIGINT) USING csv")
@@ -427,7 +427,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
 
   // --- Feature surface: malformed-record modes. FAILFAST confirmed to
   // fail only at execution (task/job failure reading the bad record),
-  // never at analysis - the same "orthogonal to Invariant's structural
+  // never at analysis - the same "orthogonal to Invaract's structural
   // check" pattern already confirmed for Parquet's corrupt-file case.
   // DROPMALFORMED confirmed to silently exclude bad rows from what's
   // written, with the analyzed schema unaffected. ---
@@ -477,7 +477,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
 
   // --- Feature surface: the corrupt-record column (columnNameOfCorruptRecord).
   // Confirmed transparent: declaring it just adds an ordinary extra
-  // StringType column to the schema - Invariant sees it like any other
+  // StringType column to the schema - Invaract sees it like any other
   // field, no special handling needed. ---
 
   test("feature surface: columnNameOfCorruptRecord is an ordinary extra column in the analyzed schema") {

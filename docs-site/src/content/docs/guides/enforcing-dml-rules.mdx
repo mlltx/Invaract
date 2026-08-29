@@ -55,7 +55,7 @@ list is rejected.
 | `allowed_update_columns` | ✅ | ✅ | ⚠️ fails closed |
 
 Iceberg's merge-on-read `UPDATE` rewrites into a plan shape with no per-column
-before/after pairing to compare, so Invariant can't extract which columns actually
+before/after pairing to compare, so Invaract can't extract which columns actually
 changed. Rather than silently reporting "no violation" with no real check behind it, a
 write matching this shape is rejected with `RULE_UNVERIFIABLE_DML` — see
 [Fail-Closed by Default](/concepts/fail-closed/). This only fires when the
@@ -73,7 +73,7 @@ Set expectations correctly rather than assuming full coverage:
   trivially satisfiable (e.g. `WHERE 1=1`).
 - **Connectors without row-level DML support.** Parquet, CSV, JDBC, and similar don't
   support `MERGE`/`UPDATE`/`DELETE` via Spark SQL at all — Spark rejects them before any
-  plan reaches Invariant.
+  plan reaches Invaract.
 - **Governance rules** (field-level masking, residency, purpose limitation) and
   **transformation-semantic rules** (join/aggregation/filter shape) — no rule vocabulary
   exists for these yet; `rules` entries of other types are recorded on the contract but

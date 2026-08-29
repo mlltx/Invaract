@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-IMAGE_TAG="invariant-regression"
+IMAGE_TAG="invaract-regression"
 
 echo "Building $IMAGE_TAG image..."
 docker build -t "$IMAGE_TAG" -f docker/Dockerfile .

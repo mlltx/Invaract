@@ -1,6 +1,6 @@
 # Compatibility Matrix
 
-Invariant maintains compatibility across multiple versions of Java, Scala, and Apache Spark.
+Invaract maintains compatibility across multiple versions of Java, Scala, and Apache Spark.
 
 ## Quick Reference
 
@@ -111,7 +111,7 @@ If your environment requires Spark 3.4.x:
 
 1. Test plugin locally: `./dev/test`
 2. If tests pass, integration should work
-3. Report any issues: [GitHub Issues](https://github.com/mlltx/Invariant/issues)
+3. Report any issues: [GitHub Issues](https://github.com/mlltx/Invaract/issues)
 4. Phase 2 will add official multi-version support
 
 ### Newer Spark Versions (3.6.x+)
@@ -185,7 +185,7 @@ Plugin and runner are built for Maven publication:
 ```xml
 <dependency>
   <groupId>com.mlltx</groupId>
-  <artifactId>invariant-spark-plugin</artifactId>
+  <artifactId>invaract-spark-plugin</artifactId>
   <version>0.1.0</version>
 </dependency>
 ```

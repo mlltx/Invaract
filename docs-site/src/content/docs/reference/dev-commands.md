@@ -1,11 +1,11 @@
 ---
 title: Dev Commands
-description: Every command for building, testing, and demonstrating Invariant from a clone of the repository.
+description: Every command for building, testing, and demonstrating Invaract from a clone of the repository.
 sidebar:
   order: 4
 ---
 
-These scripts, under `dev/`, are how you build, exercise, and demonstrate Invariant from
+These scripts, under `dev/`, are how you build, exercise, and demonstrate Invaract from
 a cloned repository today — there's no published package yet (see
 [Installation](/getting-started/installation/)).
 
@@ -36,8 +36,8 @@ contract against the demo job without the full harness (as in
 spark-submit \
   --class com.example.runner.DemoJobHarness \
   --master local[*] \
-  --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
-  runner/target/scala-2.12/invariant-spark-runner.jar \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  runner/target/scala-2.12/invaract-spark-runner.jar \
   <input-path> <output-path> <report-path> <contract-path>
 ```
 

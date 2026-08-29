@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.contract
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -183,7 +183,7 @@ object VerificationResult {
   *
   * `private[sparkadapter]`: nothing outside this module calls `verify`
   * directly (confirmed by grep before narrowing it —
-  * `ContractEnforcementRule` is the only real caller). A real Invariant
+  * `ContractEnforcementRule` is the only real caller). A real Invaract
   * user gets verification automatically via the installed extension
   * (`ContractEnforcementRule.forContract`) and never needs to call this
   * raw function themselves; `VerificationResult`/`Violation` (the payload

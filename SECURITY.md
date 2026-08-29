@@ -4,7 +4,7 @@
 
 **Do not open public GitHub issues for security vulnerabilities.**
 
-If you discover a security vulnerability in Invariant, please report it responsibly to the project maintainers.
+If you discover a security vulnerability in Invaract, please report it responsibly to the project maintainers.
 
 ### How to Report
 
@@ -219,7 +219,7 @@ If a security incident is discovered:
 
 ## Security Audit
 
-Invariant has not undergone formal third-party security audit. Security audit is planned for later phases (Phase 1 or 2) as the codebase matures.
+Invaract has not undergone formal third-party security audit. Security audit is planned for later phases (Phase 1 or 2) as the codebase matures.
 
 To request security review:
 - Open issue on GitHub: "Security Review Request"

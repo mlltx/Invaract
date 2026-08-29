@@ -26,12 +26,12 @@ Work through this in order:
    - A `MISSING_OUTPUT_FIELD`/`OUTPUT_FIELD_TYPE_MISMATCH`/similar violation → your
      contract and your job's actual output disagree; see
      [Reference → Violation Types](/reference/violation-types/).
-   - `UNVERIFIABLE_WRITE` → your job writes via a shape Invariant doesn't recognize; see
+   - `UNVERIFIABLE_WRITE` → your job writes via a shape Invaract doesn't recognize; see
      below.
 
 ## A write is rejected with `UNVERIFIABLE_WRITE`
 
-This means Invariant found a command that changes data but couldn't translate it into a
+This means Invaract found a command that changes data but couldn't translate it into a
 recognized write — so it refused to guess, and rejected it. This is deliberate; see
 [Fail-Closed by Default](/concepts/fail-closed/).
 
@@ -43,7 +43,7 @@ connectors this covers), support for it may not exist yet.
 ## A rule check is rejected with `RULE_UNVERIFIABLE_DML`
 
 Your contract declares a DML rule (`merge_condition`, `forbid_unconditional_delete`, or
-`allowed_update_columns`) against an operation Invariant recognizes as real DML but can't
+`allowed_update_columns`) against an operation Invaract recognizes as real DML but can't
 extract the specific fact that rule needs from — today, this is known to happen for
 Iceberg's merge-on-read `UPDATE`. See
 [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for exactly which
@@ -82,8 +82,8 @@ match, not a substring anywhere in the string.
 
 ## Still stuck
 
-1. Re-check [CLAUDE.md](https://github.com/mlltx/Invariant/blob/main/CLAUDE.md) in the
+1. Re-check [CLAUDE.md](https://github.com/mlltx/Invaract/blob/main/CLAUDE.md) in the
    repository for the full development guide.
 2. Check the relevant module's own test suite (`contract`, `ir`, `spark-adapter`,
    `plugin`) for a similar, working example.
-3. Open an issue on [GitHub](https://github.com/mlltx/Invariant).
+3. Open an issue on [GitHub](https://github.com/mlltx/Invaract).

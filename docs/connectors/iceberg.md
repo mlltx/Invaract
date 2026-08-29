@@ -149,7 +149,7 @@ to avoid them:
   `scala-collection-compat`), but the jar's own POM doesn't declare that
   dependency. Added as a `% "test"` dependency here, purely so this
   module's own test suite can exercise `CALL`-based operations against a
-  real session — a real Invariant user running Iceberg `CALL` procedures
+  real session — a real Invaract user running Iceberg `CALL` procedures
   in their own job would need this on their own runtime classpath too,
   independent of anything `spark-adapter` does.
 
@@ -557,10 +557,10 @@ connector-specific list, not the fixed operation-surface template above.
 | Branching and tagging (named refs to a snapshot) | ✅ Confirmed | Metadata/ref-only, safe-listed; `IcebergConnectorSpec`'s regression test exercises create/drop of both directly. |
 | `CALL` system procedures (maintenance) | ✅ **Found and fully fixed** | See "Iceberg CALL procedure classification", "Verifying `rollback_to_snapshot`", "Extending to the five procedures...", and "Verifying the remaining harder procedures" above, and the operation-surface row above — all 20 procedures reclassified from wrongly-rejected: 11 to correctly-allowed no-ops, 9 to genuinely verified. None left fail-closed for lack of a mechanism; the classification itself (not "still unmodeled") is now the complete, permanent disposition for every procedure this connector version has. |
 | Iceberg SQL views (`CREATE`/`DROP`/`SHOW ICEBERG VIEWS`) | ✅ Confirmed | Metadata-only (view definitions carry no data of their own, matching this file's existing Spark/Delta view-command entries), safe-listed. Not separately tested beyond the safe-list regression test above — no distinguishing behavior beyond "doesn't touch row content," the same reasoning already applied to Spark's own `ShowViews`/`CreateViewCommand` entries. |
-| `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invariant one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
+| `iceberg-spark-runtime`'s missing `scala-collection-compat` dependency | 🔧 **Found — a library gap, not an Invaract one** | See above; documented as a real, external finding, not a bug this module can fix (adding it as anything but a test dependency would be exactly the kind of unwanted runtime dependency this module's whole design avoids). |
 | Deletion vectors / merge-on-read positional deletes | ✅ **Confirmed — closed this pass** | Real probe (since deleted): a `DELETE` against a real `format-version = 3` table (Iceberg's deletion-vector spec) still produces a plain `ReplaceData` node — the same class `dsv2RowLevelWrite` already matches via the shared `RowLevelWrite` trait. The storage mechanism behind a merge-on-read delete (position-delete file vs. deletion vector) isn't visible at the `LogicalPlan` level this adapter operates on at all, so no code change was needed. `IcebergConnectorSpec`'s new "PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table..." test. |
 | Schema evolution on write (`write.spark.accept-any-schema` table property + `mergeSchema` write option) | 🔧 **Found and fixed** | Real bug, but the *opposite* direction from the one predicted before investigating: adding a genuinely new column via `mergeSchema` was already correct (`cmd.query.schema` — the writer's own DataFrame — already includes it, confirmed empirically; unlike Delta's MERGE, `AppendData`'s query *is* the writer-supplied data, not a re-derived plan that could go stale). The real bug is a *narrower* write: with `accept-any-schema` enabled, Iceberg accepts an append missing a column the target already has, NULL-filling it — `outputSchema` (from `query.schema` alone) omitted that column entirely, so a contract requiring it was wrongly `MISSING_OUTPUT_FIELD`-rejected. See "Generalizing the generated-columns fix" below — fixed by the same mechanism that now also covers Delta's generated columns. |
-| Identity/generated columns | ✅ **Confirmed — closed this pass** | Real probes (since deleted), not assumed from docs: both Spark's `GENERATED ALWAYS AS` syntax and column `DEFAULT` values are rejected outright by this Iceberg catalog integration — `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`, "does not support generated columns"/"does not support column default value"), thrown by Spark's own analyzer before any plan is ever produced, regardless of `write.spark.accept-any-schema` (tried explicitly, made no difference). So unlike Delta, there's no Iceberg analog to generated columns reachable through Spark SQL with this connector version — nothing for Invariant to translate, verify, or fix. `IcebergConnectorSpec`'s new "GENERATED ALWAYS AS is rejected outright..." and "a column DEFAULT value is rejected outright..." tests. |
+| Identity/generated columns | ✅ **Confirmed — closed this pass** | Real probes (since deleted), not assumed from docs: both Spark's `GENERATED ALWAYS AS` syntax and column `DEFAULT` values are rejected outright by this Iceberg catalog integration — `AnalysisException` (`UNSUPPORTED_FEATURE.TABLE_OPERATION`, "does not support generated columns"/"does not support column default value"), thrown by Spark's own analyzer before any plan is ever produced, regardless of `write.spark.accept-any-schema` (tried explicitly, made no difference). So unlike Delta, there's no Iceberg analog to generated columns reachable through Spark SQL with this connector version — nothing for Invaract to translate, verify, or fix. `IcebergConnectorSpec`'s new "GENERATED ALWAYS AS is rejected outright..." and "a column DEFAULT value is rejected outright..." tests. |
 
 ## Generalizing the generated-columns fix: target-only fields, not just generated columns
 
@@ -590,7 +590,7 @@ since deleted) that an Iceberg table *without* `accept-any-schema`
 rejects a narrower write with `AnalysisException` before it ever
 produces an `AppendData` node for this rule to see (verified by a
 permanent test, `IcebergConnectorSpec`'s "a narrower append is still
-rejected by Spark itself... before reaching Invariant"). So a
+rejected by Spark itself... before reaching Invaract"). So a
 genuinely-missing required field (the case `MISSING_OUTPUT_FIELD` exists
 to catch) is never silenced by this: either Spark's analyzer already
 rejected the write for real (this code never runs), or the target's own
@@ -647,7 +647,7 @@ Spark SQL at all — there's no feature here for
 `outputSchemaWithTargetOnlyFields` (or anything else) to need to handle.
 Closed by adding two permanent tests asserting the rejection, the same
 pattern already used for "a narrower append is still rejected by Spark
-itself... before reaching Invariant."
+itself... before reaching Invaract."
 
 Both findings are `IcebergConnectorSpec` tests (19 tests total in that
 suite after this pass, up from 17). No `spark-adapter` main source

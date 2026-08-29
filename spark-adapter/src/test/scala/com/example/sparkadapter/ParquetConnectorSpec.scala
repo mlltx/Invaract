@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -31,7 +31,7 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-parquet-test")
+    scratchDir = Files.createTempDirectory("invaract-parquet-test")
 
     spark = SparkSession
       .builder()
@@ -144,7 +144,7 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
 
   // --- .writeTo(...) DataFrameWriterV2 against a plain parquet table under the
   // default (non-Hive) session catalog: confirmed empirically to be entirely
-  // rejected by Spark ITSELF, not an Invariant gap. append/overwrite/
+  // rejected by Spark ITSELF, not an Invaract gap. append/overwrite/
   // overwritePartitions against an EXISTING plain-parquet table always fail
   // ("Cannot write into v1 table") - a permanent constraint of Spark's V1/V2
   // architecture (parquet never implements the SupportsWrite V2 capability
@@ -158,10 +158,10 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
   // CreateDataSourceTableAsSelectCommand + nested InsertIntoHadoopFsRelationCommand
   // path .saveAsTable() already uses, confirmed via injectCheckRule (no new
   // plan shape at all). None of this needs new WriteCommandSupport code: the
-  // rejected sub-ops never produce an analyzable plan for Invariant to see,
+  // rejected sub-ops never produce an analyzable plan for Invaract to see,
   // and the one that succeeds was already covered. ---
 
-  test(".writeTo() against an existing plain-parquet table is rejected by Spark itself, not by Invariant") {
+  test(".writeTo() against an existing plain-parquet table is rejected by Spark itself, not by Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS writeto_existing_tbl (id BIGINT, value BIGINT) USING parquet")
     val ex1 = intercept[org.apache.spark.sql.AnalysisException](df().writeTo("writeto_existing_tbl").append())
     assert(ex1.getMessage.contains("Cannot write into v1 table"))
@@ -207,11 +207,11 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
   // Spark ITSELF refuses all three against a plain parquet table - real
   // SparkUnsupportedOperationException/AnalysisException, before any
   // analyzable Command-shaped plan is ever produced for injectCheckRule to
-  // see. Genuinely N/A for this format (not a 🚫 "Invariant hasn't
+  // see. Genuinely N/A for this format (not a 🚫 "Invaract hasn't
   // translated this yet"): plain Parquet is not a row-level-DML-capable
   // table format at all in vanilla Spark, unlike Delta/Iceberg. ---
 
-  test("MERGE/UPDATE/DELETE against a plain parquet table are rejected by Spark itself, nothing reaches Invariant") {
+  test("MERGE/UPDATE/DELETE against a plain parquet table are rejected by Spark itself, nothing reaches Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS dml_target_tbl (id BIGINT, value BIGINT) USING parquet")
     spark.sql("INSERT INTO dml_target_tbl VALUES (1, 10)")
     spark.sql("CREATE TABLE IF NOT EXISTS dml_source_tbl (id BIGINT, value BIGINT) USING parquet")
@@ -584,12 +584,12 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
   // being constructed or once a job actually runs, depending on file
   // layout and footer-reading order (non-deterministic, so this test
   // doesn't assert exactly which phase). Either way, the failure is
-  // orthogonal to Invariant's structural verification: a write whose
+  // orthogonal to Invaract's structural verification: a write whose
   // source can't be read never produces an analyzable write-command plan
   // for ContractEnforcementRule to see at all, and nothing ever commits.
   // No fix needed. ---
 
-  test("feature surface: a directory with a corrupt file fails entirely within Spark, never committing output or reaching Invariant") {
+  test("feature surface: a directory with a corrupt file fails entirely within Spark, never committing output or reaching Invaract") {
     val dir = scratchDir.resolve("corrupt_feature")
     Files.createDirectories(dir)
     df().write.mode("overwrite").parquet(dir.resolve("good").toString)

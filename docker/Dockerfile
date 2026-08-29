@@ -1,11 +1,11 @@
-# Self-contained image for running Invariant's contract regression pack
+# Self-contained image for running Invaract's contract regression pack
 # (dev/regression) without installing anything locally. Mirrors
 # .devcontainer/post-create.sh — same JDK 21 base, same Spark 3.5.1
 # distribution — so behavior matches the Codespace dev environment.
 #
 # Build and run:
-#   docker build -t invariant-regression -f docker/Dockerfile .
-#   docker run --rm invariant-regression
+#   docker build -t invaract-regression -f docker/Dockerfile .
+#   docker run --rm invaract-regression
 #
 # Or in one command: ./dev/regression-docker
 

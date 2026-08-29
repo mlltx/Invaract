@@ -1,14 +1,14 @@
-# Invariant — Product Vision
+# Invaract — Product Vision
 
 ## 1. Vision
 
-Invariant is an open framework for verifying that data transformations conform to machine-readable data contracts.
+Invaract is an open framework for verifying that data transformations conform to machine-readable data contracts.
 
 The long-term goal is to make data transformations statically verifiable in the same way that software compilers and type systems verify programs against defined interfaces.
 
 A data contract should not merely describe a dataset after it exists. It should define the properties that a transformation is required to satisfy before that transformation executes.
 
-Invariant will turn this:
+Invaract will turn this:
 
 ```
 Data contract + transformation
@@ -21,7 +21,7 @@ into this:
 ```
 Data contract + transformation
             ↓
-          Invariant
+          Invaract
             ↓
     VERIFIED / REJECTED
 ```
@@ -56,13 +56,13 @@ But neither necessarily establishes:
 
 > The implementation of this transformation has been proven to conform to the contract for customer_orders.
 
-Invariant exists to provide that missing layer.
+Invaract exists to provide that missing layer.
 
 ---
 
 ## 3. Core Concept
 
-Invariant treats a data transformation as an implementation of a contract.
+Invaract treats a data transformation as an implementation of a contract.
 
 The conceptual model is:
 
@@ -77,7 +77,7 @@ The conceptual model is:
              "What will happen?"
                        │
                        ▼
-                  INVARIANT
+                  INVARACT
                   VERIFIER
                        │
               ┌────────┴────────┐
@@ -96,17 +96,17 @@ The contract defines the invariants.
 
 The execution technology provides the transformation plan.
 
-Invariant determines whether the plan satisfies those invariants.
+Invaract determines whether the plan satisfies those invariants.
 
 ---
 
 ## 4. What a Contract Means
 
-Invariant will build on established open standards rather than creating an isolated contract ecosystem.
+Invaract will build on established open standards rather than creating an isolated contract ecosystem.
 
 Open Data Contract Standard (ODCS) should be the primary foundation for the contract representation wherever its concepts are applicable.
 
-Invariant will add only the concepts required to express executable transformation guarantees that are not adequately represented by the underlying standard.
+Invaract will add only the concepts required to express executable transformation guarantees that are not adequately represented by the underlying standard.
 
 A contract may describe:
 
@@ -137,7 +137,7 @@ The important distinction is:
 
 ## 5. Verified Lineage
 
-Invariant will make a distinction between different kinds of lineage.
+Invaract will make a distinction between different kinds of lineage.
 
 **Observed Lineage**
 
@@ -159,17 +159,17 @@ Derived from the transformation plan and proven to conform to the contract.
 
 Verified lineage is one of the project's most important outputs.
 
-Where possible, Invariant should interoperate with OpenLineage rather than replacing it.
+Where possible, Invaract should interoperate with OpenLineage rather than replacing it.
 
 OpenLineage remains the ecosystem interoperability layer for lineage events.
 
-Invariant provides the verification layer that can establish confidence in those relationships.
+Invaract provides the verification layer that can establish confidence in those relationships.
 
 ---
 
 ## 6. The Transformation Abstraction
 
-Invariant should not ultimately be coupled to Spark.
+Invaract should not ultimately be coupled to Spark.
 
 The core abstraction is:
 
@@ -180,7 +180,7 @@ Source language / execution engine
        Transformation IR
               │
               ▼
-       Invariant verifier
+       Invaract verifier
               │
               ▼
        Verification result
@@ -204,7 +204,7 @@ The engine should therefore be execution-technology agnostic even though individ
 
 ---
 
-## 7. Invariant as a Data Type System
+## 7. Invaract as a Data Type System
 
 One of the long-term conceptual goals is to make data contracts behave like interfaces and data transformations behave like implementations.
 
@@ -215,7 +215,7 @@ The analogy is:
 | Type | Schema |
 | Interface | Data contract |
 | Program | Transformation |
-| Compiler | Invariant verifier |
+| Compiler | Invaract verifier |
 | Type checking | Contract verification |
 | Dependency graph | Lineage |
 | Build artifact | Verified data product |
@@ -228,7 +228,7 @@ This gives data engineering a familiar model:
 
 ## 8. Contract Verification
 
-Invariant should eventually verify multiple classes of properties.
+Invaract should eventually verify multiple classes of properties.
 
 **Structural**
 
@@ -272,7 +272,7 @@ Invariant should eventually verify multiple classes of properties.
 
 ## 9. Contract-Driven CI/CD
 
-Invariant should make contracts part of the software development lifecycle.
+Invaract should make contracts part of the software development lifecycle.
 
 A future workflow:
 
@@ -286,7 +286,7 @@ Developer changes transformation
        Compile / analyse
               │
               ▼
-          Invariant
+          Invaract
               │
         ┌─────┴─────┐
         ▼           ▼
@@ -318,7 +318,7 @@ An AI agent should be able to ask:
 
 > Can this dataset satisfy the input requirements of my task?
 
-Invariant could eventually expose machine-readable answers such as:
+Invaract could eventually expose machine-readable answers such as:
 
 ```
 compatible(dataset, contract)
@@ -346,7 +346,7 @@ Potential applications include:
 
 ## 11. A Contract Registry Ecosystem
 
-Invariant should eventually support a world where contracts are versioned artefacts.
+Invaract should eventually support a world where contracts are versioned artefacts.
 
 ```
 Git / Registry
@@ -374,7 +374,7 @@ The contract becomes the stable interface while implementations can evolve indep
 
 ## 12. Open Ecosystem Principles
 
-Invariant should be designed as an open ecosystem rather than a closed platform.
+Invaract should be designed as an open ecosystem rather than a closed platform.
 
 Principles:
 
@@ -395,7 +395,7 @@ Principles:
 
 The long-term ambition is not to become another data catalogue, lineage UI or data quality platform.
 
-Invariant should become a verification primitive underneath those systems.
+Invaract should become a verification primitive underneath those systems.
 
 The ecosystem could eventually look like:
 
@@ -404,7 +404,7 @@ The ecosystem could eventually look like:
                           │
                           ▼
                    ┌─────────────┐
-                   │  INVARIANT  │
+                   │  INVARACT  │
                    │ verification│
                    └──────┬──────┘
                           │
@@ -425,7 +425,7 @@ The ultimate goal is simple:
 
 ## 14. What Success Looks Like
 
-Invariant succeeds when it becomes normal for a data product to have:
+Invaract succeeds when it becomes normal for a data product to have:
 
 1. A versioned machine-readable contract.
 2. One or more implementations.

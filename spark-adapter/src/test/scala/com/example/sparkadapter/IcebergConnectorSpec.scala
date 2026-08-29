@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -25,7 +25,7 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-iceberg-test")
+    scratchDir = Files.createTempDirectory("invaract-iceberg-test")
 
     spark = SparkSession
       .builder()
@@ -722,7 +722,7 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
   // dsv2RowLevelWrite case already matches via the shared RowLevelWrite
   // trait. No new code was needed: the storage mechanism behind a
   // merge-on-read delete (position-delete file vs. deletion vector) isn't
-  // visible at the LogicalPlan level Invariant operates on at all.
+  // visible at the LogicalPlan level Invaract operates on at all.
 
   test("PASS: a DELETE against a format-version=3 (deletion vector) Iceberg table satisfying its contract executes normally") {
     val tableName = "local.db.dv_delete_pass_tbl"
@@ -821,13 +821,13 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     assert(written.head.isNullAt(2), "extra_col must actually have been NULL-filled by Iceberg, not supplied")
   }
 
-  test("FAIL: a narrower append is still rejected by Spark itself without accept-any-schema, before reaching Invariant") {
+  test("FAIL: a narrower append is still rejected by Spark itself without accept-any-schema, before reaching Invaract") {
     val tableName = "local.db.narrow_no_evo_fail_tbl"
     spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT, extra_col STRING) USING iceberg")
     spark.range(5).withColumn("doubled", col("id") * 2).withColumn("extra_col", lit("x")).writeTo(tableName).append()
 
     // No active contract - this must fail on Spark's own analysis, not
-    // Invariant's enforcement, proving outputSchemaWithTargetOnlyFields's
+    // Invaract's enforcement, proving outputSchemaWithTargetOnlyFields's
     // safety argument: a genuinely-missing field is still caught upstream.
     intercept[org.apache.spark.sql.AnalysisException] {
       spark.range(5, 6).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
@@ -843,7 +843,7 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
   // before a plan is ever produced, regardless of 'write.spark.accept-
   // any-schema'. So there's no Iceberg analog to Delta's generated
   // columns reachable through Spark SQL with this connector: nothing for
-  // Invariant to translate or verify, and no gap the outputSchemaWith-
+  // Invaract to translate or verify, and no gap the outputSchemaWith-
   // TargetOnlyFields mechanism needs to cover for this case.
 
   test("GENERATED ALWAYS AS is rejected outright by this Iceberg catalog integration, before any plan is produced") {
@@ -1111,7 +1111,7 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     val tableName = "local.db.publish_pass_tbl"
     spark.sql(s"CREATE TABLE $tableName (id BIGINT) USING iceberg TBLPROPERTIES ('write.wap.enabled'='true')")
     spark.range(3).writeTo(tableName).append()
-    spark.conf.set("spark.wap.id", "wap-invariant-pass")
+    spark.conf.set("spark.wap.id", "wap-invaract-pass")
     spark.range(3, 5).writeTo(tableName).append() // staged under the WAP id, invisible on main until published
     spark.conf.unset("spark.wap.id")
     spark.catalog.refreshTable(tableName)
@@ -1131,7 +1131,7 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
          |""".stripMargin
 
     withContract(yaml) {
-      spark.sql(s"CALL local.system.publish_changes('db.publish_pass_tbl', 'wap-invariant-pass')").collect() // must not throw
+      spark.sql(s"CALL local.system.publish_changes('db.publish_pass_tbl', 'wap-invaract-pass')").collect() // must not throw
     }
 
     spark.catalog.refreshTable(tableName)

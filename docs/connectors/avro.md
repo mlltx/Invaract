@@ -59,7 +59,7 @@ schema-carrying binary format with logical types and explicit
 external-schema support — real behaviors with no Parquet/CSV analog:
 
 - **`avroSchema` option (explicit external reader schema).** Confirmed
-  transparent: Invariant sees exactly the schema Spark reports for the
+  transparent: Invaract sees exactly the schema Spark reports for the
   read, including an extra field the underlying data doesn't carry
   (reading back `null`) — no special handling needed, a contract
   declaring the wider schema is satisfied normally.
@@ -98,7 +98,7 @@ external-schema support — real behaviors with no Parquet/CSV analog:
 - **`recordName`/`recordNamespace` write options.** Confirmed
   transparent: purely a writer-side detail of the emitted Avro schema's
   own `name`/`namespace` metadata, zero effect on the DataFrame-facing
-  schema Invariant sees on read-back.
+  schema Invaract sees on read-back.
 - **Compression codec options.** Confirmed transparent: a storage-
   representation detail only, zero effect on the read-back schema or row
   content.
@@ -122,9 +122,9 @@ external-schema support — real behaviors with no Parquet/CSV analog:
 | `.saveAsTable(...)`, new table | ✅ Covered | `CreateDataSourceTableAsSelectCommand`, `table.provider = "avro"`. The path-less case specifically closed this pass — see the location fix above and its dedicated tests. |
 | `.saveAsTable(...)`, existing table (append) | ✅ Covered | Same nested-double-write pattern Parquet/CSV's passes documented, confirmed independently for Avro via a real PASS/FAIL pair (the FAIL half asserts the nested insert never ran). |
 | `.insertInto(...)` | ✅ Covered | Same `InsertIntoHadoopFsRelationCommand` shape. `AvroConnectorSpec`'s translation test via `SparkAdapterListener`. |
-| `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)` against an *existing* table | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Confirmed empirically for Avro specifically: `AnalysisException: Cannot write into v1 table` — the same V1/V2 constraint as Parquet/CSV (Avro's own `org.apache.spark.sql.v2.avro` classes exist but aren't reached under the default `useV1SourceList`). `AvroConnectorSpec`'s test proving rejection and zero committed rows. |
+| `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)` against an *existing* table | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | Confirmed empirically for Avro specifically: `AnalysisException: Cannot write into v1 table` — the same V1/V2 constraint as Parquet/CSV (Avro's own `org.apache.spark.sql.v2.avro` classes exist but aren't reached under the default `useV1SourceList`). `AvroConnectorSpec`'s test proving rejection and zero committed rows. |
 | `.writeTo(...).create()`, new table | ✅ Covered | With the format made explicit (`.using("avro")`), reuses the exact same `CreateDataSourceTableAsSelectCommand` path `.saveAsTable()` already uses — confirmed via `injectCheckRule`. `AvroConnectorSpec`'s translation test. |
-| `.writeTo(...).createOrReplace()`/`.replace()` | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Same `StagingTableCatalog` constraint as Parquet/CSV — not re-probed with a dedicated test this pass (CSV's pass already confirmed this is connector-agnostic for any V1-provider-backed format); the generic `.writeTo()`-against-existing-table test above exercises the same rejection path. **Next step**: a dedicated Avro-specific `createOrReplace()`/`.replace()` test, if ever doubted — cheap to add, mirroring CSV's. |
+| `.writeTo(...).createOrReplace()`/`.replace()` | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | Same `StagingTableCatalog` constraint as Parquet/CSV — not re-probed with a dedicated test this pass (CSV's pass already confirmed this is connector-agnostic for any V1-provider-backed format); the generic `.writeTo()`-against-existing-table test above exercises the same rejection path. **Next step**: a dedicated Avro-specific `createOrReplace()`/`.replace()` test, if ever doubted — cheap to add, mirroring CSV's. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **N/A — not an Avro capability at all** | Confirmed empirically: Spark itself rejects all three against a plain Avro table, the same messages as Parquet/CSV's. `AvroConnectorSpec`'s regression test proving rejection and an unchanged row count. |
 | Streaming write | ✅ Covered | `WriteToStream`/`FileStreamSink`, confirmed to generalize to Avro via `AvroConnectorSpec`'s streaming PASS/FAIL pair. A per-microbatch `WriteToMicroBatchDataSourceV1` node was also observed reaching `injectCheckRule` during investigation — confirmed **not** `Command`-shaped (`isInstanceOf[Command] == false`), so it's inert with respect to `ContractEnforcementRule`'s fail-closed net; the one real enforcement point remains the outer `WriteToStream` node, already covered. |
 | Maintenance operations that touch data | 🚫 **N/A — no such mechanism exists** | Plain Avro has no connector-level maintenance command, the same constraint as Parquet/CSV. Nothing to classify. |
@@ -133,7 +133,7 @@ external-schema support — real behaviors with no Parquet/CSV analog:
 
 | Feature | Status | Evidence / next step |
 |---|---|---|
-| `avroSchema` option (explicit external reader schema) | ✅ Confirmed transparent | Invariant sees exactly the schema Spark reports, including an extra undeclared-in-the-data field (reads back `null`). `AvroConnectorSpec`'s test. |
+| `avroSchema` option (explicit external reader schema) | ✅ Confirmed transparent | Invaract sees exactly the schema Spark reports, including an extra undeclared-in-the-data field (reads back `null`). `AvroConnectorSpec`'s test. |
 | Logical types (`decimal`/`date`/`timestamp`) round-trip | ✅ Confirmed — `date`/`timestamp`; see the dedicated gap row below for `decimal` | Exact round-trip confirmed for all three at the schema/value level; `date`/`timestamp` satisfy a declaring contract normally. `AvroConnectorSpec`'s test. |
 | Contract type declaration for decimal fields | 🔧 **Found, not fixed this pass — pre-existing, cross-connector gap** | `ContractValidator`'s bare `"decimal"` keyword can never match `StructuralVerifier`'s `DataType.typeName` comparison (always precision/scale-qualified, e.g. `"decimal(10,2)"`), and there's no parametrized form to declare instead — true for every connector, not Avro-specific, and never previously exercised by any existing connector's tests. **Next step**: teach `ContractValidator`/`StructuralVerifier` to accept and compare a parametrized `decimal(p,s)` contract type — a `contract`/`ir` module design change, out of scope for a spark-adapter connector pass. `AvroConnectorSpec`'s dedicated test documents and pins the current (mismatching) behavior. |
 | Nullability on read-back | ✅ Confirmed — independently, not inherited | Every field reports `nullable = true` after an Avro write+read round-trip regardless of declared nullability (Avro's `["null", T]` union representation). `AvroConnectorSpec`'s test. |

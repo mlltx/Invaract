@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -28,7 +28,7 @@ class ContractViolationException(val result: VerificationResult, message: String
 /** Gates a Spark write on contract verification, per ROADMAP.md Phase 5:
   *
   * {{{
-  * Spark application → Logical plan → Invariant → PASS → execute
+  * Spark application → Logical plan → Invaract → PASS → execute
   *                                             └─→ FAIL → abort
   * }}}
   *
@@ -232,7 +232,7 @@ object ContractEnforcementRule {
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
             val violation = Violation(
               ViolationType.UnverifiableWrite,
-              s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invariant has no " +
+              s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invaract has no " +
                 s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
               remediation =
                 "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
@@ -321,10 +321,10 @@ object ContractEnforcementRule {
     }
     Violation(
       ViolationType.RuleUnverifiableDml,
-      s"this operation is a $kindName the active contract declares a rule for, but Invariant could not " +
+      s"this operation is a $kindName the active contract declares a rule for, but Invaract could not " +
         "extract the structural fact that rule needs to check, so it was never actually verified.",
       remediation =
-        "This is likely a genuine gap in Invariant's support for this operation's exact shape (e.g. an " +
+        "This is likely a genuine gap in Invaract's support for this operation's exact shape (e.g. an " +
           "Iceberg merge-on-read UPDATE, whose rewritten plan doesn't expose which columns changed) - open " +
           "an issue/PR. If the rule doesn't need to apply to this operation, remove it from the contract."
     )

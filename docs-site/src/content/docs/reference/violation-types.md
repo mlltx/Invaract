@@ -1,6 +1,6 @@
 ---
 title: Violation Types
-description: Every violation Invariant can raise, and what each one means.
+description: Every violation Invaract can raise, and what each one means.
 sidebar:
   order: 3
 ---
@@ -49,14 +49,14 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 
 ## Fail-closed violations
 
-Produced when Invariant genuinely can't verify a write or operation, rather than when a
+Produced when Invaract genuinely can't verify a write or operation, rather than when a
 verified write is structurally wrong. See
 [Fail-Closed by Default](/concepts/fail-closed/) for the reasoning behind both.
 
 | Type | Meaning |
 |---|---|
-| `UNVERIFIABLE_WRITE` | The plan is command-shaped and isn't on the known-safe list, but doesn't translate to a recognized write either — Invariant can't confirm it's safe, so it's rejected. |
-| `RULE_UNVERIFIABLE_DML` | The plan is genuinely row-level DML of a kind the active contract declares a rule for, but Invariant couldn't extract the fact that rule needs (e.g. Iceberg's merge-on-read `UPDATE`). |
+| `UNVERIFIABLE_WRITE` | The plan is command-shaped and isn't on the known-safe list, but doesn't translate to a recognized write either — Invaract can't confirm it's safe, so it's rejected. |
+| `RULE_UNVERIFIABLE_DML` | The plan is genuinely row-level DML of a kind the active contract declares a rule for, but Invaract couldn't extract the fact that rule needs (e.g. Iceberg's merge-on-read `UPDATE`). |
 | `INVALID_CONTRACT` | The contract itself is structurally unsound (e.g. no declared outputs) — caught before any plan is checked against it. |
 
 ## Learn more

@@ -1,6 +1,6 @@
 ---
 name: add-spark-connector
-description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invariant's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invariant work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every operation *and* every format-specific feature (schema evolution, generated columns, constraints, and the like) has an explicit disposition backed by a real permanent test, not assumed from documentation or left standing on a deleted probe's output. Always ends by producing two coverage ledgers — operation surface (per-shape ✅ covered / 🚫 fails closed / ❓ not investigated) and feature surface (per-behavior ✅ confirmed / 🔧 found and fixed / ❓ not investigated) — even for a narrowly-scoped ask — never lets a partial pass be silently mistaken for "done", which is exactly how the Delta Lake gaps happened, more than once. Do not hand-roll a one-off translatePlan case without this skill.
+description: Guides adding full read/write support for a new Spark data connector (Iceberg, ClickHouse, Avro, JDBC-based sources, or any format/table library beyond what spark-adapter already handles) to Invaract's spark-adapter module. Use this whenever a contributor wants to add, extend, or investigate connector support in spark-adapter — including requests phrased as "support X format", "add a Y adapter", "read/write Z tables", or "does Invaract work with <connector>" where the honest answer requires checking. Also use it before claiming any connector has "full" or "comprehensive" coverage, since that claim is only true once every operation *and* every format-specific feature (schema evolution, generated columns, constraints, and the like) has an explicit disposition backed by a real permanent test, not assumed from documentation or left standing on a deleted probe's output. Always ends by producing two coverage ledgers — operation surface (per-shape ✅ covered / 🚫 fails closed / ❓ not investigated) and feature surface (per-behavior ✅ confirmed / 🔧 found and fixed / ❓ not investigated) — even for a narrowly-scoped ask — never lets a partial pass be silently mistaken for "done", which is exactly how the Delta Lake gaps happened, more than once. Do not hand-roll a one-off translatePlan case without this skill.
 ---
 
 # Adding a Spark Connector
@@ -41,7 +41,7 @@ works, is safely rejected, or was never checked — not infer "probably
 fine" from the parts you happened to mention.
 
 **🚫 Fails closed is not a synonym for "not supported, and that's fine."**
-It exists to catch operations Invariant hasn't translated *yet* — a
+It exists to catch operations Invaract hasn't translated *yet* — a
 safety net, not a verdict. Every 🚫 row needs a next step the same way
 every ❓ row does: either what real translation work would close it (the
 default assumption — most 🚫 rows exist because a pass ran out of scope,

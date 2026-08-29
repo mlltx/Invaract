@@ -1,7 +1,7 @@
 # Spark Adapter
 
 This document describes the Spark adapter: the bridge from Spark's Catalyst
-logical plan into the Invariant [transformation IR](TRANSFORMATION_IR.md).
+logical plan into the Invaract [transformation IR](TRANSFORMATION_IR.md).
 It's the first concrete front-end for the IR, and the first piece of
 ROADMAP.md Phase 1c (Verification Engine) — the IR now has one real source
 of transformation plans, not just hand-constructed test fixtures.
@@ -189,7 +189,7 @@ val result = SparkPlanAdapter.translateAsWrite(agg.queryExecution.analyzed, Data
 ```
 Write(gold.customer_orders)
 └─ Aggregate
-   ├─ Read(file:/home/user/Invariant/demo/input/sample.csv)
+   ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
    ├─ GROUP BY id
    ├─ id = id
    └─ lifetime_value = SUM(value)
@@ -208,7 +208,7 @@ translation.
 ## Integrated with the test Spark app
 
 `runner/src/main/scala/com/example/runner/DemoJobHarness.scala` registers
-`SparkAdapterListener` before running `InvariantPlugin`, and after the
+`SparkAdapterListener` before running `InvaractPlugin`, and after the
 real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 
 1. Waits (bounded, since `QueryExecutionListener` callbacks run
@@ -218,14 +218,14 @@ real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
    rendered plan, the traced lineage, and any diagnostics.
 3. Prints the rendered plan to the console.
 
-Actual output from `./dev/test` against the real `InvariantPlugin`
-(`value_squared = value * value`, per `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala`):
+Actual output from `./dev/test` against the real `InvaractPlugin`
+(`value_squared = value * value`, per `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala`):
 
 ```
 Transformation IR (translated from the real Spark logical plan):
-Write(file:/home/user/Invariant/demo/output/result.parquet)
+Write(file:/home/user/Invaract/demo/output/result.parquet)
 └─ Project
-   ├─ Read(file:/home/user/Invariant/demo/input/sample.csv)
+   ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
    ├─ id = id
    ├─ value = value
    └─ value_squared = value * value
@@ -295,7 +295,7 @@ today, and any future write shape this adapter hasn't been taught yet —
 shares the same failure mode: `SparkPlanAdapter` produces `ir.Unsupported`
 instead of `ir.Write`, and `ContractEnforcementRule.verifyOrThrow`
 previously treated *any* non-`ir.Write` plan as "not a write, nothing to
-gate." A write Invariant simply doesn't recognize was, until this change,
+gate." A write Invaract simply doesn't recognize was, until this change,
 indistinguishable from a `SELECT` or a `.count()` — silently let through,
 contract or no contract, exactly the way the original Delta gap worked
 before `SaveIntoDataSourceCommand` was recognized (see "Delta Lake
@@ -536,7 +536,7 @@ The result matches the spec's exact shape:
 ```json
 {
   "status": "PASSED" | "FAILED",
-  "contract": "invariant_demo_output@1.0.0",
+  "contract": "invaract_demo_output@1.0.0",
   "violations": [
     { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country" }
   ]
@@ -557,7 +557,7 @@ corresponding actual value from `ir.Write` are known; either side being
 unset skips the check.
 
 `runner/DemoJobHarness.scala` runs this against the real demo pipeline on
-every `./dev/test`, using `demo/contracts/invariant_output.yaml`. Kept in
+every `./dev/test`, using `demo/contracts/invaract_output.yaml`. Kept in
 its own `contractVerification` report section and console block, separate
 from `ExecutionReport.status`: "did the Spark job execute" and "does its
 output satisfy the contract" are different questions, and conflating them
@@ -566,7 +566,7 @@ would hide which one actually failed.
 Actual console output from `./dev/test`:
 
 ```
-Contract verification: PASSED (invariant_demo_output@1.0.0)
+Contract verification: PASSED (invaract_demo_output@1.0.0)
   (no violations)
 ```
 
@@ -589,7 +589,7 @@ prevention. `ContractEnforcementRule`
 moves verification *into* the execution lifecycle:
 
 ```
-Spark application → Logical plan → Invariant → PASS → execute
+Spark application → Logical plan → Invaract → PASS → execute
                                              └─→ FAIL → abort
 ```
 
@@ -640,21 +640,21 @@ scenario three times, asserting byte-identical explanation text.
 
 **Live, not just unit-tested.** Beyond `ContractEnforcementRuleSpec`, the
 real demo pipeline was run via `spark-submit` against
-`demo/contracts/invariant_output_broken_example.yaml` — a contract
-requiring a `customer_name` column the real `InvariantPlugin` never
+`demo/contracts/invaract_output_broken_example.yaml` — a contract
+requiring a `customer_name` column the real `InvaractPlugin` never
 produces:
 
 ```
-Contract violation: 'invariant_demo_output@1.0.0' rejected this transformation. Write aborted.
+Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. Write aborted.
 
 What the contract expects:
   input  'orders' at demo/input/sample.csv: id: integer, value: integer
   output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
 
 What the plan contains:
-  Write(file:/home/user/Invariant/demo/output/result_broken_example.parquet)
+  Write(file:/home/user/Invaract/demo/output/result_broken_example.parquet)
   └─ Project
-     ├─ Read(file:/home/user/Invariant/demo/input/sample.csv)
+     ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
      ├─ id = id
      ├─ value = value
      └─ value_squared = value * value

@@ -1,10 +1,10 @@
-# Invariant Governance
+# Invaract Governance
 
-This document describes how Invariant is governed, how decisions are made, and the roles and responsibilities of project participants.
+This document describes how Invaract is governed, how decisions are made, and the roles and responsibilities of project participants.
 
 ## Project Philosophy
 
-Invariant is an open-source project designed to:
+Invaract is an open-source project designed to:
 
 1. **Serve the data engineering community** with a robust verification primitive
 2. **Remain vendor-neutral** and not favoring any single platform or engine
@@ -48,7 +48,7 @@ Invariant is an open-source project designed to:
 
 Decisions are evaluated on:
 
-1. **Alignment with Mission** — Does it serve Invariant's vision?
+1. **Alignment with Mission** — Does it serve Invaract's vision?
 2. **Community Benefit** — Does it help the target audience?
 3. **Maintainability** — Can the project maintain it long-term?
 4. **Backward Compatibility** — Does it break existing usage?

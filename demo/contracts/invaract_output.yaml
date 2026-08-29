@@ -1,12 +1,12 @@
-# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
-id: invariant_demo_output
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
 version: "1.0.0"
 status: active
 
 description:
   purpose: >
-    Contract for the output of the demo InvariantPlugin pipeline
-    (plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala),
+    Contract for the output of the demo InvaractPlugin pipeline
+    (plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala),
     written by runner/DemoJobHarness.scala to demo/output/result.parquet.
 
 inputs:
@@ -49,4 +49,4 @@ rules:
     mode: backward
 
 extensions:
-  owner: invariant-demo
+  owner: invaract-demo

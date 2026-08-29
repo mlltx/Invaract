@@ -234,7 +234,7 @@ table, not left as a theoretical carryover:
   before they'd ever reach this point — Hive tables don't implement
   `SupportsRowLevelOperations`, so the rewrite never applies). Already
   correctly excluded from the safe list (this document's own exclusion
-  list already named both). Confirmed for real: Invariant's own
+  list already named both). Confirmed for real: Invaract's own
   `UnverifiableWrite` rejection fires *before* Spark's own `MERGE INTO
   TABLE is not supported temporarily`/`UPDATE TABLE is not supported
   temporarily` error ever would. `DELETE FROM` against a plain Hive table
@@ -244,7 +244,7 @@ table, not left as a theoretical carryover:
 ## `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
 
 Both confirmed to be rejected by Spark before producing any analyzable
-plan Invariant could see, the same pattern already documented for
+plan Invaract could see, the same pattern already documented for
 Parquet/CSV: `.writeTo(...).append()` against a Hive table fails with
 `Cannot write into v1 table` (the default `spark_catalog` isn't a
 `SupportsWrite`-capable V2 catalog for V1-provider-backed tables); a
@@ -266,7 +266,7 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. Translation-level test passes; enforcement has a documented, tested gap when no physical path pre-exists — see "Known limitation" above. Next step: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change) or accept the qualified identifier as an equally valid declared `location`, neither attempted here. |
 | `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Same two commands, confirmed to agree on the real physical path for append mode specifically. `HiveConnectorSpec`'s PASS/FAIL pair. |
 | `.insertInto(...)` | ✅ **Covered — closed this pass** | `InsertIntoHiveTable`. `HiveConnectorSpec`'s PASS/FAIL pair, plus a dedicated translation test confirming `INSERT OVERWRITE`'s save mode. |
-| `.writeTo(...)` (DataFrameWriterV2) | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | `Cannot write into v1 table` — the default `spark_catalog` isn't a `SupportsWrite` V2 catalog for Hive tables. `HiveConnectorSpec`'s test. |
+| `.writeTo(...)` (DataFrameWriterV2) | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | `Cannot write into v1 table` — the default `spark_catalog` isn't a `SupportsWrite` V2 catalog for Hive tables. `HiveConnectorSpec`'s test. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **Fails closed (MERGE/UPDATE), N/A (DELETE)** | `MergeIntoTable`/`UpdateTable` are real `Command`-shaped plans, correctly rejected by the existing generic exclusion (no new code needed) — `HiveConnectorSpec`'s enforcement test. `DELETE FROM` is rejected by Spark itself before any plan is produced. Next step, if ever pursued: would need the same kind of structural-only treatment `deltaRowLevelDml`/`dsv2RowLevelWrite` give Delta/DSv2 MERGE — not attempted, since plain Hive tables have no ACID/row-level-mutation storage layer in vanilla OSS Spark to make this meaningful. |
 | Streaming write | 🚫 **N/A — rejected by Spark itself** | No valid streaming sink format for Hive tables — confirmed via a real rejected `.toTable()` call. `HiveConnectorSpec`'s test. |
 | Maintenance operations that touch data | ✅ **Covered by policy classification** | `LoadDataCommand` (`LOAD DATA INPATH`) and `TruncateTableCommand` confirmed, for real against a Hive table, to already be correctly excluded from `FailClosedCommands`' safe list — both fail closed, with a dedicated test proving the target table's data is left unchanged. `INSERT ... DIRECTORY` (`InsertIntoHiveDirCommand`) is a real, translated write, not a maintenance op — see above. |

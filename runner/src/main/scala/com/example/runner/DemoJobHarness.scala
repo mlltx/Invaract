@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.runner
 
@@ -31,11 +31,11 @@ case class ExecutionReport(
   error: Option[String]
 )
 
-/** An example Spark job, run as a test harness: it drives `InvariantPlugin`
+/** An example Spark job, run as a test harness: it drives `InvaractPlugin`
   * (a stand-in for a real transformation) through a real `SparkSession` with
-  * Invariant's verification engine (`contract`/`ir`/`spark-adapter`)
+  * Invaract's verification engine (`contract`/`ir`/`spark-adapter`)
   * installed as an extension, then captures the outcome as `report.json`.
-  * This class is not part of that engine and is not what a real Invariant
+  * This class is not part of that engine and is not what a real Invaract
   * user would depend on — it exists to prove the engine works end-to-end
   * against an actual Spark job, the same way any user's own job would use
   * it. See ARCHITECTURE.md's "Example Integration & Test Harness" section.
@@ -45,7 +45,7 @@ object DemoJobHarness {
     val inputPath = args.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = args.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
     val reportPath = args.applyOrElse(2, (_: Int) => "demo/output/report.json")
-    val contractPath = args.applyOrElse(3, (_: Int) => "demo/contracts/invariant_output.yaml")
+    val contractPath = args.applyOrElse(3, (_: Int) => "demo/contracts/invaract_output.yaml")
 
     val startTime = System.currentTimeMillis()
 
@@ -67,7 +67,7 @@ object DemoJobHarness {
 
       val spark = SparkSession
         .builder()
-        .appName("InvariantDemoJobHarness")
+        .appName("InvaractDemoJobHarness")
         .master("local[*]")
         .config("spark.sql.shuffle.partitions", "1")
         // Moves verification into the Spark execution lifecycle (ROADMAP.md
@@ -95,7 +95,7 @@ object DemoJobHarness {
       ))
 
       // Process with plugin
-      val outputDf = com.example.plugin.InvariantPlugin.process(inputDf)
+      val outputDf = com.example.plugin.InvaractPlugin.process(inputDf)
 
       // Verification happens as part of this call, before any data is
       // written (ContractEnforcementRule, installed above). Reaching the
@@ -130,7 +130,7 @@ object DemoJobHarness {
         row.schema.fieldNames.map(name => name -> row.getAs[Any](name)).toMap
       })
 
-      val pluginEvents = com.example.plugin.InvariantPlugin.getEvents
+      val pluginEvents = com.example.plugin.InvaractPlugin.getEvents
 
       val endTime = System.currentTimeMillis()
 
@@ -143,7 +143,7 @@ object DemoJobHarness {
         javaVersion = System.getProperty("java.version"),
         durationMs = endTime - startTime,
         buildInfo = Map(
-          "pluginName" -> "invariant-spark-plugin",
+          "pluginName" -> "invaract-spark-plugin",
           "pluginVersion" -> "0.1.0"
         ),
         tests = Map(

@@ -44,14 +44,14 @@ each confirmed with a real probe and codified into a permanent test:
   like any other field name.
 - **Malformed-record modes.** `FAILFAST` confirmed to fail only at
   execution (task/job failure reading the bad record), never at
-  analysis — the same "orthogonal to Invariant's structural check"
+  analysis — the same "orthogonal to Invaract's structural check"
   pattern already confirmed for Parquet's corrupt-file case.
   `DROPMALFORMED` confirmed to silently exclude bad rows from what's
   written, with the analyzed schema unaffected, so a contract is
   satisfied against the remaining good rows.
 - **`columnNameOfCorruptRecord`.** Confirmed to be transparent: declaring
   it just adds an ordinary extra `StringType` column to the analyzed
-  schema — Invariant sees it like any other field, no special handling
+  schema — Invaract sees it like any other field, no special handling
   needed, and a contract that declares it is satisfied normally.
 - **Nullability on read-back.** Every field reports `nullable = true`
   after a CSV write+read round-trip, regardless of the original schema's
@@ -93,9 +93,9 @@ inferred schema actually produces.
 | `.saveAsTable(...)`, new table | ✅ Covered | `CreateDataSourceTableAsSelectCommand`, `table.provider = "csv"`. Confirmed via probe; exercised throughout `CsvConnectorSpec`'s setup code. |
 | `.saveAsTable(...)`, existing table (append) | ✅ Covered | Same nested-double-write pattern Parquet's pass documented (`CreateDataSourceTableAsSelectCommand` delegating to a nested `InsertIntoHadoopFsRelationCommand`), confirmed independently for CSV via a real PASS/FAIL pair — not assumed to generalize from Parquet. `CsvConnectorSpec`'s PASS/FAIL pair (the FAIL half also asserts the nested insert never ran). |
 | `.insertInto(...)` | ✅ Covered | Same `InsertIntoHadoopFsRelationCommand` shape. `CsvConnectorSpec`'s translation test via `SparkAdapterListener`. |
-| `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)` against an *existing* table | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Confirmed empirically for CSV specifically: `AnalysisException: Cannot write into v1 table` — the same V1/V2 architectural constraint as Parquet (plain CSV never implements the V2 `SupportsWrite` capability under the default `useV1SourceList`). `CsvConnectorSpec`'s test proving rejection and zero committed rows. |
+| `.writeTo(...)` (DataFrameWriterV2) — `.append()`/`.overwrite(cond)` against an *existing* table | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | Confirmed empirically for CSV specifically: `AnalysisException: Cannot write into v1 table` — the same V1/V2 architectural constraint as Parquet (plain CSV never implements the V2 `SupportsWrite` capability under the default `useV1SourceList`). `CsvConnectorSpec`'s test proving rejection and zero committed rows. |
 | `.writeTo(...).create()`, new table | ✅ Covered | With the format made explicit (`.using("csv")`), reuses the exact same `CreateDataSourceTableAsSelectCommand` path `.saveAsTable()` already uses — confirmed via `injectCheckRule`, no new plan shape. `CsvConnectorSpec`'s translation test. |
-| `.writeTo(...).createOrReplace()`/`.replace()` | 🚫 **N/A — rejected by Spark itself, not an Invariant gap** | Confirmed empirically for CSV, for both new and existing tables, format made explicit: `AnalysisException: ... does not support REPLACE TABLE AS SELECT` — the default `spark_catalog` is not a `StagingTableCatalog` for V1-provider-backed tables. Unlike Parquet's pass (which only confirmed this via probe), `CsvConnectorSpec` has a dedicated permanent test for this row. |
+| `.writeTo(...).createOrReplace()`/`.replace()` | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | Confirmed empirically for CSV, for both new and existing tables, format made explicit: `AnalysisException: ... does not support REPLACE TABLE AS SELECT` — the default `spark_catalog` is not a `StagingTableCatalog` for V1-provider-backed tables. Unlike Parquet's pass (which only confirmed this via probe), `CsvConnectorSpec` has a dedicated permanent test for this row. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **N/A — not a CSV capability at all** | Confirmed empirically: Spark itself rejects all three against a plain CSV table, the same messages as Parquet's (`MERGE INTO TABLE is not supported temporarily`/`UPDATE TABLE is not supported temporarily`/`AnalysisException` for `DELETE`). `CsvConnectorSpec`'s regression test proving rejection and an unchanged row count. |
 | Streaming write | ✅ Covered | `WriteToStream`/`FileStreamSink`, using the exact fix Parquet's pass made to `WriteCommandSupport.reflectiveSinkPath`/`streamSinkFormatOf` — confirmed to generalize to CSV specifically via a direct-construction test (`FileStreamSink` built with a real `CSVFileFormat`, translated synchronously), not assumed from the fix's own "connector-agnostic" doc comment. `CsvConnectorSpec`'s direct-construction test plus its streaming PASS/FAIL pair. |
 | Maintenance operations that touch data | 🚫 **N/A — no such mechanism exists** | Plain CSV has no connector-level maintenance command, the same constraint as Parquet. Nothing to classify. |

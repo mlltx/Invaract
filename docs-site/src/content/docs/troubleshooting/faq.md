@@ -1,29 +1,29 @@
 ---
 title: FAQ
-description: Frequently asked questions about Invariant.
+description: Frequently asked questions about Invaract.
 sidebar:
   order: 2
 ---
 
 ### Is there a published library I can add as a dependency?
 
-Not yet. Invariant is early-stage, and its modules (`contract`, `ir`, `spark-adapter`)
+Not yet. Invaract is early-stage, and its modules (`contract`, `ir`, `spark-adapter`)
 have no Maven Central release. See [Installation](/getting-started/installation/)
 for how to build and use it from source today.
 
-### Does Invariant work with engines other than Spark?
+### Does Invaract work with engines other than Spark?
 
 The transformation IR itself (`ir/`) is engine-independent by design, but the only front
 end that exists today translates Spark's Catalyst logical plans
 (`spark-adapter/`). See [The Transformation IR](/concepts/transformation-ir/).
 
-### Does Invariant verify that my transformation's logic is *correct*, not just its shape?
+### Does Invaract verify that my transformation's logic is *correct*, not just its shape?
 
 No — today's checks are structural (does the output exist, at the right location, with
 the right schema, format, and save mode; do declared DML rules hold), not semantic. See
-[What is Invariant?](/introduction/what-is-this/#what-it-verifies-today).
+[What is Invaract?](/introduction/what-is-this/#what-it-verifies-today).
 
-### What happens if my job writes to a connector or in a shape Invariant doesn't recognize?
+### What happens if my job writes to a connector or in a shape Invaract doesn't recognize?
 
 The write is rejected, not silently allowed through — see
 [Fail-Closed by Default](/concepts/fail-closed/). Check
@@ -31,7 +31,7 @@ The write is rejected, not silently allowed through — see
 
 ### Can I use my existing ODCS contracts as-is?
 
-Invariant's format mirrors ODCS and preserves any fields it doesn't recognize rather than
+Invaract's format mirrors ODCS and preserves any fields it doesn't recognize rather than
 rejecting them (see [Data Contracts](/concepts/data-contracts/)), but it only
 *interprets* a subset of ODCS today — schema/location/format/saveMode, and three DML rule
 types. Fields describing anything else (SLAs, quality rules, governance policies) will
@@ -46,4 +46,4 @@ business logic (that an aggregation computed the right value, for instance). Tre
 
 ### Where do I report a bug or request a connector?
 
-Open an issue on [GitHub](https://github.com/mlltx/Invariant/issues).
+Open an issue on [GitHub](https://github.com/mlltx/Invaract/issues).

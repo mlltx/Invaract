@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -29,7 +29,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   override def afterAll(): Unit = spark.stop()
 
   private def realDemoContract() =
-    ContractParser.parseFile(new File("../demo/contracts/invariant_output.yaml"))
+    ContractParser.parseFile(new File("../demo/contracts/invaract_output.yaml"))
 
   private def realDemoInput() =
     spark.read.option("header", "true").option("inferSchema", "true").csv("../demo/input/sample.csv")
@@ -52,7 +52,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(result.passed, s"expected PASSED, got violations: ${result.violations}")
     assert(result.status == "PASSED")
-    assert(result.contract == "invariant_demo_output@1.0.0")
+    assert(result.contract == "invaract_demo_output@1.0.0")
     assert(result.violations.isEmpty)
   }
 

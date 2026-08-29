@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Prerequisites and setup for working with Invariant, in Codespaces or locally.
+description: Prerequisites and setup for working with Invaract, in Codespaces or locally.
 sidebar:
   order: 1
 ---
@@ -8,9 +8,10 @@ sidebar:
 import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
 
 <Aside type="note" title="No published package yet">
-Invariant is early-stage and hasn't published a Maven artifact yet. Today, you use it by
-cloning the repository and building its modules from source — either in GitHub Codespaces
-(recommended, zero local setup) or on your own machine. Both paths are covered below.
+Invaract is early-stage and hasn't published a Maven artifact yet. Today, you use it by
+cloning the repository and building its modules from source, either on your own machine
+or, if you'd rather not install the toolchain yourself, in GitHub Codespaces. Both paths
+are covered below.
 </Aside>
 
 ## Prerequisites
@@ -28,31 +29,6 @@ provisions all of them automatically.
 ## Set up
 
 <Tabs>
-<TabItem label="GitHub Codespaces">
-<Steps>
-
-1. Clone the repository and open it in GitHub Codespaces:
-
-   ```bash
-   git clone https://github.com/mlltx/Invariant.git
-   ```
-
-   Open the repository on GitHub and choose **Code → Codespaces → Create codespace**.
-
-2. Wait for the dev container to provision. `.devcontainer/post-create.sh` installs sbt,
-   Apache Spark 3.5.1, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
-   further to configure.
-
-3. Confirm the toolchain is ready:
-
-   ```bash
-   java -version
-   sbt --version
-   spark-submit --version
-   ```
-
-</Steps>
-</TabItem>
 <TabItem label="Local machine">
 <Steps>
 
@@ -88,8 +64,8 @@ provisions all of them automatically.
 5. Clone the repository:
 
    ```bash
-   git clone https://github.com/mlltx/Invariant.git
-   cd Invariant
+   git clone https://github.com/mlltx/Invaract.git
+   cd Invaract
    ```
 
 </Steps>
@@ -101,6 +77,31 @@ sets the required `--add-opens` flags for you. If you invoke a module's tests di
 with `sbt test` and hit an `InaccessibleObjectException`, see
 [Troubleshooting](/troubleshooting/common-problems/).
 </Aside>
+</TabItem>
+<TabItem label="GitHub Codespaces">
+<Steps>
+
+1. Clone the repository and open it in GitHub Codespaces:
+
+   ```bash
+   git clone https://github.com/mlltx/Invaract.git
+   ```
+
+   Open the repository on GitHub and choose **Code → Codespaces → Create codespace**.
+
+2. Wait for the dev container to provision. `.devcontainer/post-create.sh` installs sbt,
+   Apache Spark 3.5.1, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
+   further to configure.
+
+3. Confirm the toolchain is ready:
+
+   ```bash
+   java -version
+   sbt --version
+   spark-submit --version
+   ```
+
+</Steps>
 </TabItem>
 </Tabs>
 

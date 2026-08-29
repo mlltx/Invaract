@@ -1,6 +1,6 @@
 ---
 title: Prove Enforcement with the Regression Pack
-description: Run the pass/fail pair that proves Invariant actually blocks a bad write.
+description: Run the pass/fail pair that proves Invaract actually blocks a bad write.
 sidebar:
   order: 5
 ---
@@ -40,9 +40,9 @@ guarantee on a machine that hasn't set up JDK/sbt/Spark at all. Only Docker is r
 
 Two real cases, exiting non-zero if either behaves unexpectedly:
 
-1. **Contract satisfied** (`demo/contracts/invariant_output.yaml`) — the job exits `0`,
+1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the job exits `0`,
    the report says `PASS`, and the output file exists.
-2. **Contract violated** (`demo/contracts/invariant_output_broken_example.yaml`, which
+2. **Contract violated** (`demo/contracts/invaract_output_broken_example.yaml`, which
    requires a `customer_name` column the demo transformation never produces) — the job
    exits non-zero, the report says `FAIL` with a `MISSING_OUTPUT_FIELD` violation, and —
    the core guarantee — **the output file is never created**.

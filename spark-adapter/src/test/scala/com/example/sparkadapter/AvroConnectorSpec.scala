@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -36,7 +36,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-avro-test")
+    scratchDir = Files.createTempDirectory("invaract-avro-test")
 
     spark = SparkSession
       .builder()
@@ -305,7 +305,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
   // reuse the existing CreateDataSourceTableAsSelectCommand translation for
   // a genuinely new table with the format made explicit. ---
 
-  test(".writeTo() against an existing plain-avro table is rejected by Spark itself, not by Invariant") {
+  test(".writeTo() against an existing plain-avro table is rejected by Spark itself, not by Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS avro_writeto_existing_tbl (id BIGINT, value BIGINT) USING avro")
     val ex1 = intercept[org.apache.spark.sql.AnalysisException](df().writeTo("avro_writeto_existing_tbl").append())
     assert(ex1.getMessage.contains("Cannot write into v1 table"))
@@ -338,7 +338,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
   // rejection messages as Parquet/CSV's - a generic V1-table architectural
   // constraint, not an Avro-specific finding, but verified directly. ---
 
-  test("MERGE/UPDATE/DELETE against a plain avro table are rejected by Spark itself, nothing reaches Invariant") {
+  test("MERGE/UPDATE/DELETE against a plain avro table are rejected by Spark itself, nothing reaches Invaract") {
     spark.sql("CREATE TABLE IF NOT EXISTS avro_dml_target_tbl (id BIGINT, value BIGINT) USING avro")
     spark.sql("INSERT INTO avro_dml_target_tbl VALUES (1, 10)")
     spark.sql("CREATE TABLE IF NOT EXISTS avro_dml_source_tbl (id BIGINT, value BIGINT) USING avro")
@@ -452,12 +452,12 @@ class AvroConnectorSpec extends ConnectorSpecBase {
   }
 
   // --- Feature surface: avroSchema option (explicit external reader
-  // schema). Confirmed transparent: Invariant sees exactly the schema
+  // schema). Confirmed transparent: Invaract sees exactly the schema
   // Spark reports for the read (the avroSchema-declared shape, including
   // an extra field the underlying data doesn't carry, read back as null),
   // no special handling needed. ---
 
-  test("feature surface: avroSchema option's declared schema is what Invariant sees on read, including an extra field") {
+  test("feature surface: avroSchema option's declared schema is what Invaract sees on read, including an extra field") {
     val p = scratchDir.resolve("avro_schema_feature").toString
     df().write.mode("overwrite").format("avro").save(p)
     val explicitSchema =
@@ -636,13 +636,13 @@ class AvroConnectorSpec extends ConnectorSpecBase {
   // --- Feature surface: recordName/recordNamespace write options (Avro's
   // own record-identity metadata). Confirmed transparent: purely a
   // writer-side detail of the emitted Avro schema's `name`/`namespace`
-  // fields, with zero effect on the DataFrame-facing schema Invariant sees
+  // fields, with zero effect on the DataFrame-facing schema Invaract sees
   // on read-back. ---
 
   test("feature surface: recordName/recordNamespace write options don't affect the read-back schema") {
     val p = scratchDir.resolve("record_name_feature").toString
     df().write.mode("overwrite").format("avro")
-      .option("recordName", "InvariantProbeRecord")
+      .option("recordName", "InvaractProbeRecord")
       .option("recordNamespace", "com.example.probe")
       .save(p)
     val readBack = spark.read.format("avro").load(p)

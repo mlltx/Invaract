@@ -1,6 +1,6 @@
 # Versioning Strategy
 
-Invariant follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
+Invaract follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## Version Format
 
@@ -106,7 +106,7 @@ Examples: `0.2.0-alpha.1`, `0.2.0-beta.2`, `1.0.0-rc.1`
 
 ### Spark
 
-| Invariant | Spark | Support Level |
+| Invaract | Spark | Support Level |
 |-----------|-------|---------------|
 | 0.1.x     | 3.5.x | Primary       |
 | 0.2.x     | 3.5.x | Supported     |
@@ -116,7 +116,7 @@ Examples: `0.2.0-alpha.1`, `0.2.0-beta.2`, `1.0.0-rc.1`
 
 ### Scala
 
-| Invariant | Scala | Support Level |
+| Invaract | Scala | Support Level |
 |-----------|-------|---------------|
 | 0.1.x     | 2.12.18 | Primary       |
 | 0.2.x     | 2.12.18, 2.13.x | Supported |
@@ -126,7 +126,7 @@ Examples: `0.2.0-alpha.1`, `0.2.0-beta.2`, `1.0.0-rc.1`
 
 ### Java
 
-| Invariant | Java | Support Level |
+| Invaract | Java | Support Level |
 |-----------|------|---------------|
 | 0.1.x     | 11+  | Supported     |
 | 1.0.x     | 11+  | Supported     |

@@ -50,7 +50,7 @@ report_field() {
 }
 
 echo "======================================"
-echo "Invariant Contract Regression Pack"
+echo "Invaract Contract Regression Pack"
 echo "======================================"
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
@@ -70,7 +70,7 @@ mkdir -p demo/output
 # --- Case 1: contract satisfied -> execute -------------------------------
 echo ""
 echo -e "${YELLOW}Case 1/2: contract satisfied -> transformation executes${NC}"
-echo "  contract: demo/contracts/invariant_output.yaml"
+echo "  contract: demo/contracts/invaract_output.yaml"
 
 # Output location must match what the contract declares — StructuralVerifier
 # checks that too (OUTPUT_LOCATION_MISMATCH), so this can't be an arbitrary
@@ -80,7 +80,7 @@ PASS_REPORT="demo/output/regression_pass_report.json"
 rm -rf "$PASS_OUTPUT" "$PASS_REPORT"
 
 run_demo_job_harness "demo/input/sample.csv" "$PASS_OUTPUT" "$PASS_REPORT" \
-  "demo/contracts/invariant_output.yaml"
+  "demo/contracts/invaract_output.yaml"
 PASS_EXIT=$?
 
 PASS_STATUS="$(report_field "$PASS_REPORT" status)"
@@ -97,14 +97,14 @@ check "output was written to $PASS_OUTPUT" "$out_ok"
 # --- Case 2: contract violated -> abort before write ----------------------
 echo ""
 echo -e "${YELLOW}Case 2/2: contract violated -> write aborted, no output${NC}"
-echo "  contract: demo/contracts/invariant_output_broken_example.yaml"
+echo "  contract: demo/contracts/invaract_output_broken_example.yaml"
 
 FAIL_OUTPUT="demo/output/result_broken_example.parquet"
 FAIL_REPORT="demo/output/regression_fail_report.json"
 rm -rf "$FAIL_OUTPUT" "$FAIL_REPORT"
 
 run_demo_job_harness "demo/input/sample.csv" "$FAIL_OUTPUT" "$FAIL_REPORT" \
-  "demo/contracts/invariant_output_broken_example.yaml"
+  "demo/contracts/invaract_output_broken_example.yaml"
 FAIL_EXIT=$?
 
 FAIL_STATUS="$(report_field "$FAIL_REPORT" status)"

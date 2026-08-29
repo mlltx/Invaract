@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -49,7 +49,7 @@ private[sparkadapter] object ClickHouseTestServer {
   private val ClickHouseVersion = "25.3.3.42"
 
   private def cacheRoot: Path =
-    Paths.get(System.getProperty("user.home"), ".cache", "invariant-test", "clickhouse", ClickHouseVersion)
+    Paths.get(System.getProperty("user.home"), ".cache", "invaract-test", "clickhouse", ClickHouseVersion)
 
   private def platformKey: String = {
     val osName = System.getProperty("os.name", "").toLowerCase
@@ -151,7 +151,7 @@ private[sparkadapter] object ClickHouseTestServer {
   */
 private[sparkadapter] class ClickHouseTestServer(httpPort: Int, tcpPort: Int) {
   private var process: Process = _
-  private val dataDir: Path = Files.createTempDirectory("invariant-clickhouse-data")
+  private val dataDir: Path = Files.createTempDirectory("invaract-clickhouse-data")
   private val configFile: Path = dataDir.resolve("config.xml")
 
   def start(): Unit = {

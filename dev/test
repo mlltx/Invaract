@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 source dev/lib.sh
 
 echo "======================================"
-echo "Invariant Spark Plugin Test Suite"
+echo "Invaract Spark Plugin Test Suite"
 echo "======================================"
 
 # Colors for output

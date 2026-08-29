@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -40,7 +40,7 @@ private[sparkadapter] case class StateChangeInfo(callName: String, location: Str
   * has a query in that sense - even `add_files`, which does bring in new
   * data, does so by importing already-written files whose schema the
   * *target table's own declared schema* governs, not a Spark query
-  * Invariant could translate (see "add_files and migrate" below). Forcing
+  * Invaract could translate (see "add_files and migrate" below). Forcing
   * a `None`/dummy `query` into `WriteCommandInfo` would misrepresent what
   * actually happens and widen a stable, central type for a shape that
   * doesn't fit it. This is a separate, narrower registry instead -
