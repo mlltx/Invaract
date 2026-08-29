@@ -1,0 +1,87 @@
+---
+title: Enforce Row-Level DML Rules
+description: Constrain MERGE, UPDATE, and DELETE statements with contract rules.
+sidebar:
+  order: 3
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Beyond schema, location, and format checks, a contract can constrain a table's row-level
+`MERGE`/`UPDATE`/`DELETE` statements. These are checked against a real Spark plan the same
+way everything else is — the write is aborted before anything is committed if a rule is
+violated.
+
+## The three rule types
+
+```yaml
+rules:
+  - type: merge_condition
+    columns: [customer_id, region]
+  - type: forbid_unconditional_delete
+  - type: allowed_update_columns
+    columns: [status, updated_at]
+```
+
+### `merge_condition`
+
+A `MERGE`'s `ON` clause must reference every listed column. This catches a common, costly
+bug: a `MERGE` silently missing a match key — for example, matching only on
+`customer_id` in a table that should also match on `region`, quietly overwriting the
+wrong rows.
+
+<Aside type="note">
+The YAML key is `columns`, not `on`. YAML 1.1's resolver treats a bare `on` key as the
+boolean `true` (the "Norway problem" — `on`/`off`/`yes`/`no` all resolve to booleans), so
+`on` was avoided deliberately.
+</Aside>
+
+### `forbid_unconditional_delete`
+
+A `DELETE` may never omit a filtering predicate — `DELETE FROM t` with no `WHERE` is
+rejected. No properties needed.
+
+### `allowed_update_columns`
+
+An `UPDATE` may only assign to the listed columns. Assigning to any column outside the
+list is rejected.
+
+## What's checked, per connector
+
+| Rule | Delta (copy-on-write & merge-on-read) | Iceberg (copy-on-write) | Iceberg (merge-on-read) |
+|---|---|---|---|
+| `merge_condition` | ✅ | ✅ | ✅ |
+| `forbid_unconditional_delete` | ✅ | ✅ | ✅ |
+| `allowed_update_columns` | ✅ | ✅ | ⚠️ fails closed |
+
+Iceberg's merge-on-read `UPDATE` rewrites into a plan shape with no per-column
+before/after pairing to compare, so Invariant can't extract which columns actually
+changed. Rather than silently reporting "no violation" with no real check behind it, a
+write matching this shape is rejected with `RULE_UNVERIFIABLE_DML` — see
+[Fail-Closed by Default](/concepts/fail-closed/). This only fires when the
+active contract actually declares an `allowed_update_columns` rule; the same operation
+under a contract with no such rule executes normally.
+
+## What these rules don't check yet
+
+Set expectations correctly rather than assuming full coverage:
+
+- **The merge condition's predicate logic.** `merge_condition` checks that the declared
+  columns are *referenced* by the `ON` clause — not that they're its only columns, or
+  that they form a genuine equality pairing.
+- **Which rows an `UPDATE` touches**, or whether a non-empty `DELETE` predicate is
+  trivially satisfiable (e.g. `WHERE 1=1`).
+- **Connectors without row-level DML support.** Parquet, CSV, JDBC, and similar don't
+  support `MERGE`/`UPDATE`/`DELETE` via Spark SQL at all — Spark rejects them before any
+  plan reaches Invariant.
+- **Governance rules** (field-level masking, residency, purpose limitation) and
+  **transformation-semantic rules** (join/aggregation/filter shape) — no rule vocabulary
+  exists for these yet; `rules` entries of other types are recorded on the contract but
+  not interpreted.
+
+## Try it
+
+The regression pack (`./dev/regression`) demonstrates the structural PASS/FAIL guarantee
+end-to-end; see [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/)
+to run it yourself. For the exact violation types these rules produce, see
+[Reference → Violation Types](/reference/violation-types/).

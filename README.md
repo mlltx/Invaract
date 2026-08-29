@@ -1,4 +1,7 @@
-# Invariant
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo-light.svg" alt="Invariant" height="56">
+</picture>
 
 A framework for verifying data transformations against machine-readable
 data contracts — parse a contract, translate a real Spark job's logical
@@ -6,6 +9,11 @@ plan into an engine-independent IR, verify it against the contract, and
 abort the write if it fails. Ships with a mobile-first Codespaces
 environment for exercising the whole thing against a real Spark job from
 a phone.
+
+📖 **[Read the full user documentation →](https://mlltx.github.io/Invariant/)**
+— installation, a guided quick start, contract-writing guides, concepts,
+and complete reference material. This README stays a concise entry
+point; the docs site is where the deeper user journey lives.
 
 **The product is the verification engine — `contract/`, `ir/`, and
 `spark-adapter/`.** `plugin/`, `runner/`, `demo/`, and `web/` are an
@@ -250,6 +258,10 @@ Exit code determines PR check status.
 
 ## Documentation
 
+- **[User documentation site](https://mlltx.github.io/Invariant/)**
+  ([source](docs-site/)) — installation, quick start, guides, concepts, and
+  reference material for anyone *using* Invariant. Start here if you want
+  to write a contract or install the enforcement rule in your own job.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component breakdown, data flow, ADRs
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
 - [CLAUDE.md](CLAUDE.md) — complete development guide, troubleshooting,
@@ -257,6 +269,7 @@ Exit code determines PR check status.
 - [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
   [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
   [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) — module-level design docs
+  (developer-facing, implementation detail)
 
 ## References
 

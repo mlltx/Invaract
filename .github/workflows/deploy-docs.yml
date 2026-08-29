@@ -1,0 +1,55 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Only one production deploy at a time; a newer push cancels an in-flight
+# one rather than racing it.
+concurrency:
+  group: "docs-production-deploy"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Publishes to the gh-pages branch's root, which is what GitHub Pages
+      # (configured under Settings > Pages to deploy from the gh-pages
+      # branch) actually serves. clean-exclude protects pr-preview/, which
+      # preview-docs.yml maintains on this same branch — without it, every
+      # production deploy would wipe out every currently-open PR's preview.
+      - name: Publish to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: docs-site/dist
+          branch: gh-pages
+          clean-exclude: pr-preview/
+          force: false

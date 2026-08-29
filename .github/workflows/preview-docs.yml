@@ -1,0 +1,155 @@
+name: Deploy PR documentation preview
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/preview-docs.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# One preview deploy per PR at a time; a newer push to the same PR
+# supersedes an in-flight preview build for it rather than racing it.
+concurrency:
+  group: docs-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build and deploy PR preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history, so "changed documentation pages" below can diff
+          # against the PR's base branch (a shallow clone only has HEAD).
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        working-directory: docs-site
+        run: npm ci
+
+      # Built with a base path scoped to this PR's own preview subfolder
+      # (/Invariant/pr-preview/pr-<number>/), not the production base — see
+      # astro.config.mjs and remark-base-links.mjs. This is what makes
+      # every link inside the preview (sidebar, pagination, and links
+      # written in page content) stay inside the preview instead of
+      # pointing back at production.
+      - name: Build
+        if: github.event.action != 'closed'
+        working-directory: docs-site
+        env:
+          DOCS_BASE_PATH: /Invariant/pr-preview/pr-${{ github.event.number }}
+        run: npm run build
+
+      # action: auto deploys the preview on opened/synchronize and removes
+      # it on closed (merged or not) — one step handles both, per
+      # https://github.com/rossjrw/pr-preview-action.
+      #
+      # pages-base-url/pages-base-path are deliberately left unset: this
+      # action computes them itself from the repository name (correctly
+      # producing mlltx.github.io/Invariant, with no protocol prefix, for
+      # a project-pages repo) and prepends https:// on its own — passing
+      # an explicit https://... value here double-prefixes the protocol,
+      # and passing an unrelated path here gets silently ignored (with a
+      # warning) since it doesn't match the umbrella-dir prefix the action
+      # expects. Its own sticky comment is disabled (comment: false) in
+      # favor of the custom one below, which names this as a docs preview
+      # and points at what changed.
+      - name: Deploy preview
+        id: preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: docs-site/dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: auto
+          comment: "false"
+          qr-code: "false"
+
+      # GitHub Pages only honors .nojekyll at the branch ROOT — Jekyll's
+      # default processing otherwise silently drops any file/folder
+      # starting with an underscore, which is exactly where Astro puts
+      # every CSS/JS bundle (_astro/), leaving the page unstyled. The copy
+      # that ships in docs-site/public/ only ever lands under
+      # pr-preview/pr-<n>/.nojekyll (correct for the production deploy,
+      # which publishes straight to the root, but not for a preview,
+      # nested under umbrella-dir). deploy-docs.yml keeps this present
+      # once main has ever deployed; this step makes preview deploys not
+      # depend on that having happened yet, and re-asserts it defensively
+      # on every preview build. clean: false is required — this must never
+      # touch anything else already at the root.
+      - name: Ensure .nojekyll exists at the Pages root
+        if: github.event.action != 'closed'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nojekyll-root"
+          touch "$RUNNER_TEMP/nojekyll-root/.nojekyll"
+      - uses: JamesIves/github-pages-deploy-action@v4
+        if: github.event.action != 'closed'
+        with:
+          folder: ${{ runner.temp }}/nojekyll-root
+          branch: gh-pages
+          clean: false
+
+      - name: List changed documentation pages
+        if: github.event.action != 'closed'
+        id: changed
+        env:
+          # Diffing the PR's own base/head SHAs directly (from the event
+          # payload) rather than a symbolic ref like origin/main: a prior
+          # version used origin/${{ github.base_ref }}, but actions/checkout
+          # does not set up that remote-tracking ref for a pull_request
+          # checkout even with fetch-depth: 0, so it failed with "fatal:
+          # bad revision" — silently, since this step's default shell runs
+          # with -e but not pipefail, so the failure upstream of `sed` in a
+          # pipe went unnoticed and produced an empty (wrongly "no changes")
+          # result instead of a visible error. set -o pipefail below fixes
+          # that class of bug going forward: any future failure here fails
+          # the step loudly instead of quietly posting a wrong comment.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- docs-site/src/content/docs | sed 's/^docs-site\/src\/content\/docs\///; s/^/- `/; s/$/`/')
+          {
+            echo "list<<PREVIEW_CHANGED_EOF"
+            if [ -n "$changed" ]; then
+              echo "$changed"
+            else
+              echo "_No documentation pages changed in this push._"
+            fi
+            echo "PREVIEW_CHANGED_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: github.event.action != 'closed'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: docs-preview
+          message: |
+            ### 📚 Documentation preview
+
+            🔗 **[View the documentation preview](${{ steps.preview.outputs.preview-url }})**
+
+            **Changed pages in this PR:**
+            ${{ steps.changed.outputs.list }}
+
+      - name: Remove comment when preview is closed
+        if: github.event.action == 'closed'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: docs-preview
+          delete: true

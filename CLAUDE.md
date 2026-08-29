@@ -206,6 +206,91 @@ just silence it:
 Never react to a MiMa failure by loosening `mimaPreviousArtifacts` or
 disabling the check — that defeats the entire point of running it.
 
+## Documentation Policy
+
+**Documentation is a first-class part of the product, not an afterthought bolted on
+later.** User-facing documentation lives in `docs-site/` — an Astro Starlight site built
+from `docs-site/src/content/docs/`. It documents Invariant from the perspective of
+someone *using* the verification engine (writing contracts, installing the enforcement
+rule, running the demo harness) — never Invariant's own internals. See
+`docs-site/DOCUMENTATION.md` for the full writing playbook (information architecture,
+style, when to use MDX/Starlight components, what belongs here vs. in `docs/`/
+`ARCHITECTURE.md`/`ROADMAP.md`) before writing or editing a page there.
+
+Whenever a change adds or changes **user-facing** behavior — anything in
+`contract`/`ir`/`spark-adapter`'s public surface, the contract format, a `dev/` script, or
+how a user installs/configures/runs the engine — you MUST determine whether
+`docs-site/` needs updating, as part of the same task, not a follow-up. A change scoped
+entirely to `plugin`/`runner`/`demo`/`web` internals with no effect on how a real
+Invariant user would install, configure, or use the engine does not require a docs-site
+update — but check that assumption before skipping it, since a change to the example
+harness sometimes does change what a guide demonstrates (e.g. the actual console output
+quoted in a guide).
+
+### When adding a user-facing feature
+
+1. Identify the user-visible behavior introduced — what can a user now do, configure, or
+   observe that they couldn't before?
+2. Find the appropriate existing documentation page (`docs-site/src/content/docs/`) —
+   check Guides, Concepts, and Reference for the closest fit before assuming none exists.
+3. Update it if the feature extends something already documented (e.g. a new connector
+   joins the table in `reference/connector-support.md`; a new violation type joins
+   `reference/violation-types.md`).
+4. Create a new guide (under `guides/`) if the feature introduces a genuinely new
+   workflow a user would follow — not a page per source file, a page per user goal.
+5. Update `getting-started/` if the feature affects the initial install/quick-start
+   experience.
+6. Update `reference/` if it changes commands, contract-format fields, or other public,
+   stable behavior.
+7. Add or update examples — real ones, derived from an actual test, fixture, or a real
+   run's output, never invented. See `docs-site/DOCUMENTATION.md`'s "How to write an
+   example."
+8. Check existing pages for contradictions the change introduces (a guide describing the
+   old behavior, a reference table now missing a row, a "not yet supported" note that's
+   now stale).
+
+### When changing existing behavior
+
+- Find the documentation describing the old behavior and update it — don't leave it
+  describing something no longer true.
+- Check related guides, concept pages, and reference tables that assumed the old
+  behavior.
+- Check every example that exercises the changed behavior; re-verify its output against
+  a real run rather than editing it by eyeball.
+- Remove obsolete instructions rather than leaving them alongside the new ones with a
+  caveat — stale-but-present docs are worse than a clean cut.
+
+### When fixing a user-facing bug
+
+Determine whether:
+
+- The documentation was itself incorrect (described behavior that never actually
+  existed) — fix it.
+- The correct behavior was under-explained and contributed to the bug being filed —
+  clarify it.
+- A [Troubleshooting](docs-site/src/content/docs/troubleshooting/) entry would help the
+  next person hit the same thing — add one, but only for a problem that's actually real
+  and reproducible, never a hypothetical.
+
+### Definition of done
+
+A user-facing feature or fix is not complete until:
+
+- [ ] Implementation complete
+- [ ] Tests complete (per this file's other requirements — mutation testing, API
+      compatibility, `./dev/test`/`./dev/regression` where applicable)
+- [ ] User documentation updated (`docs-site/`), per the checklist above
+- [ ] Examples updated where the change affects one
+- [ ] Existing documentation checked for accuracy against the change
+- [ ] `cd docs-site && npm run build` succeeds
+
+CI enforces the last item automatically (`.github/workflows/deploy-docs.yml` builds
+`docs-site/` on every push touching it); the rest is a manual check, the same way the
+Mutation Testing Requirement above is manual-but-mandatory. A merged PR that changes user-
+facing behavior without a corresponding `docs-site/` update should be treated as
+incomplete, the same way a PR that changes `ir`/`spark-adapter` without mutation testing
+would be.
+
 ## Repository Structure
 
 ```
@@ -277,14 +362,28 @@ disabling the check — that defeats the entire point of running it.
 │   ├── regression                # Docker-based pass/fail enforcement proof
 │   └── report                   # Launch web UI
 │
-├── docs/                         # Module-level design docs
+├── docs/                         # Module-level design docs (developer-facing)
 │   ├── CONTRACT_MODEL.md
 │   ├── TRANSFORMATION_IR.md
 │   └── SPARK_ADAPTER.md
 │
+├── docs-site/                     # User documentation: Astro Starlight site
+│   ├── src/content/docs/
+│   │   ├── index.mdx
+│   │   ├── introduction/
+│   │   ├── getting-started/
+│   │   ├── guides/
+│   │   ├── concepts/
+│   │   ├── reference/
+│   │   └── troubleshooting/
+│   ├── public/images/            # Screenshots/diagrams (empty until real ones exist)
+│   ├── DOCUMENTATION.md          # Documentation playbook — read before editing pages
+│   └── astro.config.mjs
+│
 ├── .github/workflows/
-│   └── test.yml                 # CI: OS/JDK test matrix, docker-regression,
-│                                 # mutation-testing, summary gate
+│   ├── test.yml                 # CI: OS/JDK test matrix, docker-regression,
+│   │                             # mutation-testing, summary gate
+│   └── deploy-docs.yml          # Builds and deploys docs-site/ to GitHub Pages
 │
 ├── ARCHITECTURE.md               # Full architecture, ADRs, data flow
 ├── ROADMAP.md                    # Phase-by-phase plan and status
