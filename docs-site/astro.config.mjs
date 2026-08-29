@@ -4,9 +4,9 @@ import starlight from '@astrojs/starlight';
 import { remarkBaseLinks } from './remark-base-links.mjs';
 
 // Overridable so CI can build a PR preview at its own sub-path
-// (/Invariant/pr-preview/pr-<n>/) without changing content — see
+// (/Invaract/pr-preview/pr-<n>/) without changing content — see
 // .github/workflows/deploy-docs.yml and remark-base-links.mjs.
-const base = process.env.DOCS_BASE_PATH ?? '/Invariant';
+const base = process.env.DOCS_BASE_PATH ?? '/Invaract';
 
 export default defineConfig({
 	site: 'https://mlltx.github.io',
@@ -16,19 +16,19 @@ export default defineConfig({
 	},
 	integrations: [
 		starlight({
-			title: 'Invariant',
+			title: 'Invaract',
 			description:
 				'Verify Spark data transformations against machine-readable data contracts — and abort the write before a violation ever lands.',
 			logo: {
-				light: './src/assets/invariant-mark-light.svg',
-				dark: './src/assets/invariant-mark-dark.svg',
-				alt: 'Invariant',
+				light: './src/assets/invaract-mark-light.svg',
+				dark: './src/assets/invaract-mark-dark.svg',
+				alt: 'Invaract',
 			},
 			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/mlltx/Invariant' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/mlltx/Invaract' },
 			],
 			editLink: {
-				baseUrl: 'https://github.com/mlltx/Invariant/edit/main/docs-site/',
+				baseUrl: 'https://github.com/mlltx/Invaract/edit/main/docs-site/',
 			},
 			lastUpdated: true,
 			pagination: true,
@@ -37,7 +37,7 @@ export default defineConfig({
 				{
 					label: 'Introduction',
 					items: [
-						{ label: 'What is Invariant?', slug: 'introduction/what-is-this' },
+						{ label: 'What is Invaract?', slug: 'introduction/what-is-this' },
 						{ label: 'Why use it?', slug: 'introduction/why-use-it' },
 					],
 				},

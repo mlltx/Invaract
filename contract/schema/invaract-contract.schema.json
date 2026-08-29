@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/mlltx/Invariant/main/contract/schema/invariant-contract.schema.json",
-  "title": "Invariant Data Contract",
-  "description": "Structural shape of a contract document Invariant's `contract` module (com.example.contract.ContractParser/ContractValidator) accepts, modeled after the Open Data Contract Standard (ODCS) - see docs/CONTRACT_MODEL.md. This schema is deliberately permissive at every level (`additionalProperties: true`) to match the parser's own design: an unrecognized key is preserved verbatim rather than rejected, so a contract authored for other ODCS-based tooling stays valid input here too. It also intentionally sits between two layers of the real Scala implementation: some constraints here (id, version, dataset name/location/schema, field name/type) mirror ContractParser's hard parse failures; others (outputs being present and non-empty, a schema's fields being non-empty) mirror ContractValidator's Error-level checks rather than the parser alone, because a document that merely parses but fails validation isn't a useful contract either. Two things this schema does NOT and cannot enforce, both still Scala-side responsibilities: duplicate-name detection (dataset names, field names) and cross-field business rules (e.g. ContractValidator's required-and-nullable warning) - see docs/CONTRACT_MODEL.md's \"JSON Schema\" section for the full list of what's schema-level versus what stays engine-only.",
+  "$id": "https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-contract.schema.json",
+  "title": "Invaract Data Contract",
+  "description": "Structural shape of a contract document Invaract's `contract` module (com.example.contract.ContractParser/ContractValidator) accepts, modeled after the Open Data Contract Standard (ODCS) - see docs/CONTRACT_MODEL.md. This schema is deliberately permissive at every level (`additionalProperties: true`) to match the parser's own design: an unrecognized key is preserved verbatim rather than rejected, so a contract authored for other ODCS-based tooling stays valid input here too. It also intentionally sits between two layers of the real Scala implementation: some constraints here (id, version, dataset name/location/schema, field name/type) mirror ContractParser's hard parse failures; others (outputs being present and non-empty, a schema's fields being non-empty) mirror ContractValidator's Error-level checks rather than the parser alone, because a document that merely parses but fails validation isn't a useful contract either. Two things this schema does NOT and cannot enforce, both still Scala-side responsibilities: duplicate-name detection (dataset names, field names) and cross-field business rules (e.g. ContractValidator's required-and-nullable warning) - see docs/CONTRACT_MODEL.md's \"JSON Schema\" section for the full list of what's schema-level versus what stays engine-only.",
   "type": "object",
   "required": ["id", "version", "outputs"],
   "additionalProperties": true,
@@ -19,7 +19,7 @@
     },
     "status": {
       "type": "string",
-      "description": "Free-form; Invariant does not constrain or interpret this value. Defaults to \"active\" if the key is omitted."
+      "description": "Free-form; Invaract does not constrain or interpret this value. Defaults to \"active\" if the key is omitted."
     },
     "inputs": {
       "type": "array",
@@ -42,7 +42,7 @@
     "extensions": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Explicit bucket for metadata Invariant doesn't interpret (owners, SLAs, quality rules, ...). Any top-level key not listed in this schema's `properties` is preserved here too by ContractParser, whether or not it's nested under this explicit `extensions` map."
+      "description": "Explicit bucket for metadata Invaract doesn't interpret (owners, SLAs, quality rules, ...). Any top-level key not listed in this schema's `properties` is preserved here too by ContractParser, whether or not it's nested under this explicit `extensions` map."
     }
   },
   "$defs": {
@@ -98,7 +98,7 @@
         "type": {
           "type": "string",
           "minLength": 1,
-          "description": "Field type. Recognized values (ContractValidator.KnownTypes): string, integer, long, short, byte, double, float, decimal, boolean, date, timestamp, binary, struct, array, map. An unrecognized value is only a ContractValidator Warning, not a parse or validation Error, so it is not enforced here as an enum - a contract using a type this version of Invariant doesn't yet know about still parses and still matches this schema. A field with a non-empty `properties` array is treated as a struct regardless of this value."
+          "description": "Field type. Recognized values (ContractValidator.KnownTypes): string, integer, long, short, byte, double, float, decimal, boolean, date, timestamp, binary, struct, array, map. An unrecognized value is only a ContractValidator Warning, not a parse or validation Error, so it is not enforced here as an enum - a contract using a type this version of Invaract doesn't yet know about still parses and still matches this schema. A field with a non-empty `properties` array is treated as a struct regardless of this value."
         },
         "required": {
           "type": "boolean",

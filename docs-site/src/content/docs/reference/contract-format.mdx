@@ -1,6 +1,6 @@
 ---
 title: Contract Format
-description: The complete Invariant contract document shape, field by field.
+description: The complete Invaract contract document shape, field by field.
 sidebar:
   order: 1
 ---
@@ -84,7 +84,7 @@ extensions:
 
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`, `boolean`,
 `date`, `timestamp`, `binary`, `struct`, `array`, `map`. An unlisted type is a validator
-warning, not a rejection — a contract using a type Invariant doesn't yet recognize still
+warning, not a rejection — a contract using a type Invaract doesn't yet recognize still
 validates and parses.
 
 ## Validator checks
@@ -135,13 +135,13 @@ the parsed contract but not yet interpreted or enforced.
 
 ## JSON Schema
 
-`contract/schema/invariant-contract.schema.json` (Draft 2020-12) is a standalone,
+`contract/schema/invaract-contract.schema.json` (Draft 2020-12) is a standalone,
 language-agnostic description of this same shape — useful for IDE validation/autocomplete
 while authoring a contract by hand, or for generating one from another language. Point
 your editor at it:
 
 ```yaml
-# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
 id: my_contract
 ```
 
@@ -160,5 +160,5 @@ engine-only.
   limitation) — no vocabulary exists for these in the contract format yet.
 
 See [Data Contracts](/concepts/data-contracts/) for how this format relates to
-ODCS, and [What is Invariant?](/introduction/what-is-this/) for what's verified
+ODCS, and [What is Invaract?](/introduction/what-is-this/) for what's verified
 against it today.

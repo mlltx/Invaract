@@ -1,5 +1,5 @@
 ---
-title: Invariant
+title: Invaract
 description: Verify Spark data transformations against machine-readable data contracts, and abort the write before a violation ever lands.
 template: splash
 hero:
@@ -14,11 +14,11 @@ hero:
   # destinations with links that DO stay inside the preview.
   actions:
     - text: Get Started
-      link: /Invariant/getting-started/quick-start/
+      link: /Invaract/getting-started/quick-start/
       icon: right-arrow
       variant: primary
-    - text: What is Invariant?
-      link: /Invariant/introduction/what-is-this/
+    - text: What is Invaract?
+      link: /Invaract/introduction/what-is-this/
       icon: rocket
       variant: minimal
 ---
@@ -27,7 +27,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## A verification engine, not a linter
 
-Invariant parses a data contract, translates a real Spark job's logical plan into an
+Invaract parses a data contract, translates a real Spark job's logical plan into an
 engine-independent representation, and checks the two against each other — structurally,
 before Spark ever executes the write. A violation aborts the job. No output file is created.
 
@@ -40,7 +40,7 @@ before Spark ever executes the write. A violation aborts the job. No output file
 		A `SparkSessionExtensions` check rule aborts a contract-violating write *before* it happens.
 	</Card>
 	<Card title="Fails closed" icon="error">
-		A write shape Invariant doesn't recognize is rejected, not silently let through unverified.
+		A write shape Invaract doesn't recognize is rejected, not silently let through unverified.
 	</Card>
 	<Card title="Never crashes" icon="setting">
 		Constructs the adapter can't translate degrade to a diagnostic, not an exception — checked by
@@ -60,7 +60,7 @@ before Spark ever executes the write. A violation aborts the job. No output file
 		guide →](/guides/writing-a-contract/)
 	</Card>
 	<Card title="Concepts" icon="open-book">
-		Understand verification vs. enforcement, and why Invariant fails closed. [Learn
+		Understand verification vs. enforcement, and why Invaract fails closed. [Learn
 		more →](/concepts/verification-vs-enforcement/)
 	</Card>
 	<Card title="Reference" icon="information">

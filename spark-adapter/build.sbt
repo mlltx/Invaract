@@ -1,4 +1,4 @@
-name := "invariant-spark-adapter"
+name := "invaract-spark-adapter"
 version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
@@ -121,7 +121,7 @@ libraryDependencies ++= {
       // as a dependency - a real gap in Iceberg's own artifact for this
       // Spark/Scala combination, not a bug in this module. Needed here only so
       // this module's own test suite can exercise CALL-based Iceberg
-      // maintenance ops against a real session; a real Invariant user running
+      // maintenance ops against a real session; a real Invaract user running
       // Iceberg CALL procedures in their own job would need this on their
       // runtime classpath too, independent of anything spark-adapter does.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.13.0" % "test"
@@ -171,10 +171,10 @@ dependencyOverrides ++= Seq(
   "org.apache.arrow" % "arrow-memory-netty" % "14.0.1"
 )
 
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invariant-ir-0.1.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invariant-contract-0.1.0.jar")
+unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")
 
-assembly / assemblyJarName := "invariant-spark-adapter-0.1.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.1.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -294,4 +294,4 @@ strykerThresholdsBreak := 70
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
-mimaPreviousArtifacts := Set("com.example" %% "invariant-spark-adapter" % "0.1.0")
+mimaPreviousArtifacts := Set("com.example" %% "invaract-spark-adapter" % "0.1.0")

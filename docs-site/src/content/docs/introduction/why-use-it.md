@@ -1,6 +1,6 @@
 ---
 title: Why use it?
-description: The problem Invariant solves, and why structural verification before the write matters.
+description: The problem Invaract solves, and why structural verification before the write matters.
 sidebar:
   order: 2
 ---
@@ -27,18 +27,18 @@ requires. Usually nobody finds out until a downstream consumer breaks.
 
 Post-hoc data quality checks (run a validation query after the table is written) catch
 problems late: bad data has already landed, and something downstream may have already
-read it. Invariant instead hooks into Spark's own query analysis, via
+read it. Invaract instead hooks into Spark's own query analysis, via
 `SparkSessionExtensions`, and rejects a violating write **before Spark executes it**. The
 target file or table is never created. See
 [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for how
-this differs from Invariant's own post-hoc reporting path.
+this differs from Invaract's own post-hoc reporting path.
 
 ## Why a real Spark plan, not a schema diff
 
 Comparing "the contract's declared output schema" against "the DataFrame's schema right
 before `.write()`" sounds sufficient, but it can't see how the data actually got there —
 whether a `MERGE` matched on the columns it should have, or whether a `DELETE` had a
-filter at all. Invariant translates Spark's actual Catalyst logical plan into an
+filter at all. Invaract translates Spark's actual Catalyst logical plan into an
 engine-independent IR (see [The Transformation IR](/concepts/transformation-ir/)),
 so verification is checking the transformation Spark is about to run, not a description of
 it.
@@ -46,13 +46,13 @@ it.
 ## Why it's worth trusting
 
 A verification tool that silently lets through what it doesn't understand is worse than no
-tool at all — it creates false confidence. Invariant is deliberately built to
+tool at all — it creates false confidence. Invaract is deliberately built to
 **fail closed**: a write shape it doesn't recognize is rejected, not passed through
 unverified. See [Fail-Closed by Default](/concepts/fail-closed/) for why, and
 how that policy was arrived at from a real gap found during development (an early version
 silently let an unrecognized Delta write through with no verification at all).
 
-## When Invariant is a good fit
+## When Invaract is a good fit
 
 - You already write, or want to write, machine-readable data contracts (ODCS-shaped or
   close to it) for tables your Spark jobs produce.
@@ -65,7 +65,7 @@ silently let an unrecognized Delta write through with no verification at all).
 
 - You need to verify business logic correctness (is the aggregation itself right?), not
   just structural shape — out of scope today, see
-  [What is Invariant?](/introduction/what-is-this/#what-it-verifies-today).
+  [What is Invaract?](/introduction/what-is-this/#what-it-verifies-today).
 - You're not on Apache Spark — the only adapter that exists today translates Spark's
   Catalyst plans; the IR itself is engine-independent, but no other front end has been
   built yet.

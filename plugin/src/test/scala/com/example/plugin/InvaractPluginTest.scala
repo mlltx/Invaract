@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.plugin
 
@@ -7,14 +7,14 @@ import org.apache.spark.sql.SparkSession
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
-class InvariantPluginTest extends AnyFunSuite with BeforeAndAfterAll {
+class InvaractPluginTest extends AnyFunSuite with BeforeAndAfterAll {
   private var spark: SparkSession = _
 
   override def beforeAll(): Unit = {
     spark = SparkSession
       .builder()
       .master("local[*]")
-      .appName("InvariantPluginTest")
+      .appName("InvaractPluginTest")
       .getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
   }
@@ -27,7 +27,7 @@ class InvariantPluginTest extends AnyFunSuite with BeforeAndAfterAll {
     val df = spark.createDataFrame(Seq((1, 10), (2, 20)))
       .toDF("id", "value")
 
-    val result = InvariantPlugin.validate(df)
+    val result = InvaractPlugin.validate(df)
     assert(result.count() == 2)
   }
 
@@ -36,7 +36,7 @@ class InvariantPluginTest extends AnyFunSuite with BeforeAndAfterAll {
       .toDF("id", "other")
 
     assertThrows[IllegalArgumentException] {
-      InvariantPlugin.validate(df)
+      InvaractPlugin.validate(df)
     }
   }
 
@@ -44,7 +44,7 @@ class InvariantPluginTest extends AnyFunSuite with BeforeAndAfterAll {
     val df = spark.createDataFrame(Seq((1, 10), (2, 20)))
       .toDF("id", "value")
 
-    val result = InvariantPlugin.addComputedColumn(df)
+    val result = InvaractPlugin.addComputedColumn(df)
     assert(result.columns.contains("value_squared"))
 
     val rows = result.collect()
@@ -56,11 +56,11 @@ class InvariantPluginTest extends AnyFunSuite with BeforeAndAfterAll {
     val df = spark.createDataFrame(Seq((1, 5), (2, 10)))
       .toDF("id", "value")
 
-    val result = InvariantPlugin.process(df)
+    val result = InvaractPlugin.process(df)
     assert(result.columns.contains("value_squared"))
     assert(result.count() == 2)
 
-    val events = InvariantPlugin.getEvents
+    val events = InvaractPlugin.getEvents
     assert(events.nonEmpty)
     assert(events.exists(_.contains("Processing started")))
   }

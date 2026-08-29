@@ -1,11 +1,11 @@
 ---
 title: The Transformation IR
-description: Why Invariant translates Spark plans into an engine-independent representation before checking them.
+description: Why Invaract translates Spark plans into an engine-independent representation before checking them.
 sidebar:
   order: 2
 ---
 
-Before a Spark write is checked against a contract, it's translated into Invariant's own
+Before a Spark write is checked against a contract, it's translated into Invaract's own
 **transformation IR** (intermediate representation) — an engine-independent algebra of
 plan and expression nodes: `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`,
 `Union`, `Sort`, `Window`, and their expression-level counterparts.
@@ -55,7 +55,7 @@ correct."
 
 ## Degrading, never crashing
 
-A real adapter will meet constructs it has no precise translation for. Invariant's answer
+A real adapter will meet constructs it has no precise translation for. Invaract's answer
 is: **degrade, never crash.**
 
 - An unrecognized **plan** node becomes `ir.Unsupported(description, children)` — its own

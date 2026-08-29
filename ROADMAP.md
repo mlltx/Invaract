@@ -1,4 +1,4 @@
-# Invariant Roadmap
+# Invaract Roadmap
 
 ## Phase 0 — Establish the Project Foundations
 
@@ -15,9 +15,9 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 #### 1. Repository Organization
 
 - [x] **Repository name and organization**
-  - Name: `Invariant`
+  - Name: `Invaract`
   - Organization: `mlltx`
-  - URL: `https://github.com/mlltx/Invariant`
+  - URL: `https://github.com/mlltx/Invaract`
   - Description: Open framework for verifying data transformations against contracts
 
 - [ ] **Repository visibility**
@@ -316,7 +316,7 @@ Phase 0 is complete when:
 Upon completion of Phase 0, the repository will include:
 
 ```
-Invariant/
+Invaract/
 ├── LICENSE                          # Apache 2.0
 ├── CONTRIBUTING.md                  # Contribution guidelines
 ├── CODE_OF_CONDUCT.md              # Community standards
@@ -358,7 +358,7 @@ Represent the minimum contract required to verify a transformation while
 remaining compatible with an established open contract standard.
 
 ODCS (Open Data Contract Standard) was evaluated as the base representation.
-Invariant avoids redefining concepts ODCS already standardizes (schema,
+Invaract avoids redefining concepts ODCS already standardizes (schema,
 fields, types) and folds anything else it doesn't yet interpret into
 `extensions` rather than rejecting it. See
 [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md) for the full design.
@@ -405,7 +405,7 @@ The model supports:
 - [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/example/contract/ContractValidator.scala`)
 - [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/example/contract/ContractCompatibility.scala`)
 - [x] **Contract fixtures** — valid, additive, breaking, and invalid example contracts (`contract/src/test/resources/fixtures/`)
-- [x] **JSON Schema** — `contract/schema/invariant-contract.schema.json` (Draft 2020-12), the public, language-agnostic contract format spec for authoring/generating contracts outside Scala; validated against the same fixtures via `ContractSchemaSpec` so it can't silently drift from the parser/validator it documents. `demo/contracts/*.yaml` carry a `yaml-language-server` `$schema` hint for live editor validation. See docs/CONTRACT_MODEL.md's "JSON Schema" section for what it does and deliberately does not enforce.
+- [x] **JSON Schema** — `contract/schema/invaract-contract.schema.json` (Draft 2020-12), the public, language-agnostic contract format spec for authoring/generating contracts outside Scala; validated against the same fixtures via `ContractSchemaSpec` so it can't silently drift from the parser/validator it documents. `demo/contracts/*.yaml` carry a `yaml-language-server` `$schema` hint for live editor validation. See docs/CONTRACT_MODEL.md's "JSON Schema" section for what it does and deliberately does not enforce.
 - [x] **Documentation** — [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
 
 38 unit tests across parser, validator, compatibility engine, and the JSON Schema's conformance, run via `cd contract && sbt test`.
@@ -567,7 +567,7 @@ nullability compatibility).
       requiring non-null violated by an actual nullable column is a real
       violation; the reverse (actual guarantees more than required) isn't
 - [x] Wired into `runner/DemoJobHarness.scala`: verifies the real plan's
-      actual inputs/output against `demo/contracts/invariant_output.yaml`
+      actual inputs/output against `demo/contracts/invaract_output.yaml`
       on every `./dev/test` run, adding a `contractVerification` section
       to `demo/output/report.json` and console output. Kept separate from
       `ExecutionReport.status` — "did the Spark job run" and "does its
@@ -599,7 +599,7 @@ above), a write is now verified *before* Spark executes it, and aborted —
 no data written — if it violates its contract.
 
 ```
-Spark application → Logical plan → Invariant → PASS → execute
+Spark application → Logical plan → Invaract → PASS → execute
                                              └─→ FAIL → abort
 ```
 
@@ -637,7 +637,7 @@ Spark application → Logical plan → Invariant → PASS → execute
       after it.
 - [x] Live-demonstrated against the real pipeline, not just unit tests:
       running `DemoJobHarness` with a deliberately-broken contract
-      (`demo/contracts/invariant_output_broken_example.yaml`, requiring a
+      (`demo/contracts/invaract_output_broken_example.yaml`, requiring a
       `customer_name` column the real plugin never produces) via
       `spark-submit` exits 1, the target parquet path is never created,
       and the console/report show the full four-part explanation.
@@ -739,7 +739,7 @@ coverage (see the sub-phase above for the first three).
       `spark-submit`-style write — `dev/regression`'s own rendered plan
       output now shows `Write(location, format=parquet,
       saveMode=overwrite)`, and the real demo contract
-      (`demo/contracts/invariant_output.yaml`) declares `saveMode:
+      (`demo/contracts/invaract_output.yaml`) declares `saveMode:
       overwrite` to match `DemoJobHarness.scala`'s actual
       `.write.mode("overwrite")` call.
 - [x] **JDBC location fidelity.** `SparkPlanAdapter.locationOf` previously
@@ -958,7 +958,7 @@ docs/connectors/delta.md.
 
 Resolves the fail-open-vs-closed question the Delta Lake sub-phase above
 flagged and CLAUDE.md's "Mutation Testing Requirement" section referenced
-as outstanding: should a write Invariant cannot translate/verify be
+as outstanding: should a write Invaract cannot translate/verify be
 *rejected* by default, rather than silently passed through the way the
 original (pre-fix) Delta gap worked? User decision: yes, fail closed —
 "the contract being valid when it's not" is worse than an aborted write,
@@ -1596,7 +1596,7 @@ discovered fresh.
 - [x] `mimaReportBinaryIssues` clean for all three modules (after the
       `ContractRule` fix above); `./dev/build`/`./dev/test`/
       `./dev/regression` all pass against real `spark-submit` — the demo
-      pipeline's own `PASSED (invariant_demo_output@1.0.0)`, and the
+      pipeline's own `PASSED (invaract_demo_output@1.0.0)`, and the
       regression pack's 2/2 cases, both unaffected by this change.
 
 Deliberately still open, not attempted here: the merge condition's actual

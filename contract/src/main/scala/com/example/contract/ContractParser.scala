@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.contract
 
@@ -8,7 +8,7 @@ import org.yaml.snakeyaml.Yaml
 import java.io.{File, FileInputStream, InputStream}
 import scala.collection.JavaConverters._
 
-/** Parses contract documents (YAML) into the Invariant contract object model.
+/** Parses contract documents (YAML) into the Invaract contract object model.
   *
   * The parser is deliberately strict about structure it must interpret
   * (id, version, dataset locations, schema fields) and deliberately
@@ -62,7 +62,7 @@ object ContractParser {
       case Some(m) => loadMap(m, "contract.extensions")
       case None    => Map.empty[String, Any]
     }
-    // Preserve any top-level keys Invariant doesn't interpret, so contracts
+    // Preserve any top-level keys Invaract doesn't interpret, so contracts
     // authored against a broader standard aren't rejected outright.
     val undeclaredExtensions = raw -- knownKeys
     val extensions = undeclaredExtensions ++ declaredExtensions

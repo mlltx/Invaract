@@ -34,7 +34,7 @@ step-by-step version of what's described here.
 Easy to misread the coverage ledger below as: ✅ = done, 🚫 = also done
 (just a different flavor — "not supported, and that's fine"), ❓ =
 the only real gap. **That reading is wrong, and defeats the point of the
-policy.** Fail-closed exists to catch operations Invariant *hasn't gotten
+policy.** Fail-closed exists to catch operations Invaract *hasn't gotten
 around to translating yet* — a deliberate safety net so an unrecognized
 write aborts loudly instead of silently passing an unverified contract.
 It was never meant to be a resting state equivalent to "we've decided not
@@ -103,7 +103,7 @@ for, not a checklist to fill in blindly — most formats have some subset:
 - **Schema-affecting behaviors the writer doesn't fully control**: schema
   evolution/merge-on-write, computed/generated columns, identity/auto-
   increment columns, default values applied server-side. Anything where
-  the schema Invariant can read *before* a write differs from the schema
+  the schema Invaract can read *before* a write differs from the schema
   the write actually commits is a candidate for exactly the false-
   rejection (or worse, false-pass) bug class Delta's schema evolution and
   generated-columns fixes both were.
@@ -118,18 +118,18 @@ for, not a checklist to fill in blindly — most formats have some subset:
 - **Constraints or invariants the format enforces itself**: `CHECK`
   constraints, `NOT NULL`, foreign-key-like relationships, uniqueness. The
   question to answer for each is specifically the boundary: does
-  Invariant's own structural verification interact with the format's
+  Invaract's own structural verification interact with the format's
   enforcement at all (double-check, silently duplicate, silently
   conflict), or are they genuinely orthogonal — confirm with a test that
   exercises *both* a satisfying and a violating write, the way Delta's
-  `CHECK`-constraint test does (Invariant passes both; the format itself
+  `CHECK`-constraint test does (Invaract passes both; the format itself
   then rejects the violating one).
 - **Versioning/time-travel semantics**, if not already covered by "The
   operation surface"'s time-travel read row.
 
 For each item found: **write a real test against a real
 connector-enabled table with the feature turned on, and check what
-Invariant actually reports** — never reason from the format's
+Invaract actually reports** — never reason from the format's
 documentation about what "should" happen. A throwaway probe is the right
 first move (same as the operation-surface investigation), but **a probe
 is not the deliverable and never stands in as the evidence for a coverage
@@ -188,7 +188,7 @@ coverage ledger this section ends with is complete.
       connector-enabled `SparkSession` — no mocking (see
       ARCHITECTURE.md's ADR-005).
 - [ ] **A fail-closed test exists for at least one real, concrete
-      operation the connector supports that Invariant deliberately
+      operation the connector supports that Invaract deliberately
       doesn't translate** (if any exist), proving it's rejected — and
       that nothing was written — rather than silently passed.
 - [ ] **A regression test proves the connector's own non-data

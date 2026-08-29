@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-Invariant ships two distinct mechanisms that are easy to conflate, since both end up
+Invaract ships two distinct mechanisms that are easy to conflate, since both end up
 checking a write against a contract. They run at different moments, for different
 purposes, and a real job typically uses both together.
 
@@ -27,7 +27,7 @@ plan that translates to a recognized write is checked; a violation throws
 `ContractViolationException`, and the query never runs.
 
 ```
-Spark application → Logical plan → Invariant → PASS → execute
+Spark application → Logical plan → Invaract → PASS → execute
                                              └─→ FAIL → abort
 ```
 

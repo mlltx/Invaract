@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.contract
 
@@ -11,8 +11,8 @@ import org.yaml.snakeyaml.Yaml
 import java.io.{File, FileInputStream}
 import scala.collection.JavaConverters._
 
-/** Validates contract/schema/invariant-contract.schema.json — the public,
-  * language-agnostic contract for authoring Invariant contracts — against
+/** Validates contract/schema/invaract-contract.schema.json — the public,
+  * language-agnostic contract for authoring Invaract contracts — against
   * the same real fixtures ContractParser/ContractValidator are tested
   * against. This schema is a separate, standalone artifact (nothing in the
   * contract module's own runtime consults it); this spec is what keeps it
@@ -28,7 +28,7 @@ import scala.collection.JavaConverters._
 class ContractSchemaSpec extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
   private val schema = {
-    val schemaNode = objectMapper.readTree(new File("schema/invariant-contract.schema.json"))
+    val schemaNode = objectMapper.readTree(new File("schema/invaract-contract.schema.json"))
     JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012).getSchema(schemaNode)
   }
 
@@ -83,12 +83,12 @@ class ContractSchemaSpec extends AnyFunSuite {
   }
 
   test("both real demo contracts conform to the schema") {
-    assertConformant(demoContract("invariant_output.yaml"))
+    assertConformant(demoContract("invaract_output.yaml"))
     // The "broken" demo contract is only broken relative to what the demo
     // plugin actually produces (StructuralVerifier catches that at
     // verification time) - as a document, it's a perfectly well-formed
     // contract, so it should conform too.
-    assertConformant(demoContract("invariant_output_broken_example.yaml"))
+    assertConformant(demoContract("invaract_output_broken_example.yaml"))
   }
 
   test("a contract missing the required 'id' is rejected by the schema") {

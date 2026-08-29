@@ -1,13 +1,13 @@
 ---
 title: Install the Enforcement Rule
-description: Wire Invariant's contract enforcement into your own Spark job.
+description: Wire Invaract's contract enforcement into your own Spark job.
 sidebar:
   order: 2
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-This guide wires Invariant into a Spark job of your own, the same way the example job in
+This guide wires Invaract into a Spark job of your own, the same way the example job in
 this repository (`runner/DemoJobHarness`) does it. `ContractEnforcementRule` is a
 `SparkSessionExtensions` check rule: it runs on the analyzed logical plan of every query
 your session executes, and throws before Spark runs a query that violates the active
@@ -52,7 +52,7 @@ changed afterward. Load your contract *before* building the session.
 3. ### Run your job as usual
 
    Nothing else about how you write your transformation changes. If your job's actual
-   write matches the contract, it proceeds exactly as it would without Invariant
+   write matches the contract, it proceeds exactly as it would without Invaract
    installed.
 
 </Steps>
@@ -112,4 +112,4 @@ Only a plan that translates to a recognized write is verified — everything els
 [Connector Support](/reference/connector-support/) for which write shapes are
 recognized today, and
 [Fail-Closed by Default](/concepts/fail-closed/) for what happens when your job
-writes via a shape Invariant doesn't recognize at all.
+writes via a shape Invaract doesn't recognize at all.

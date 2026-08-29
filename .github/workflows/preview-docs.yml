@@ -43,7 +43,7 @@ jobs:
         run: npm ci
 
       # Built with a base path scoped to this PR's own preview subfolder
-      # (/Invariant/pr-preview/pr-<number>/), not the production base — see
+      # (/Invaract/pr-preview/pr-<number>/), not the production base — see
       # astro.config.mjs and remark-base-links.mjs. This is what makes
       # every link inside the preview (sidebar, pagination, and links
       # written in page content) stay inside the preview instead of
@@ -52,7 +52,7 @@ jobs:
         if: github.event.action != 'closed'
         working-directory: docs-site
         env:
-          DOCS_BASE_PATH: /Invariant/pr-preview/pr-${{ github.event.number }}
+          DOCS_BASE_PATH: /Invaract/pr-preview/pr-${{ github.event.number }}
         run: npm run build
 
       # action: auto deploys the preview on opened/synchronize and removes
@@ -61,7 +61,7 @@ jobs:
       #
       # pages-base-url/pages-base-path are deliberately left unset: this
       # action computes them itself from the repository name (correctly
-      # producing mlltx.github.io/Invariant, with no protocol prefix, for
+      # producing mlltx.github.io/Invaract, with no protocol prefix, for
       # a project-pages repo) and prepends https:// on its own — passing
       # an explicit https://... value here double-prefixes the protocol,
       # and passing an unrelated path here gets silently ignored (with a

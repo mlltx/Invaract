@@ -1,6 +1,6 @@
-# Contributing to Invariant
+# Contributing to Invaract
 
-Thank you for your interest in contributing to Invariant! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Invaract! This document provides guidelines and instructions for contributing to the project.
 
 ## Code of Conduct
 
@@ -21,8 +21,8 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 #### Setup in GitHub Codespaces (Recommended)
 
 ```bash
-git clone https://github.com/mlltx/Invariant.git
-cd Invariant
+git clone https://github.com/mlltx/Invaract.git
+cd Invaract
 # Dev Container auto-provisions JDK, sbt, Spark, Node.js
 # Wait for .devcontainer/post-create.sh to complete (~5 minutes on first launch)
 ```
@@ -35,8 +35,8 @@ cd Invariant
 # Install Spark 3.5.1 to /opt/spark or set SPARK_HOME
 
 # Clone repository
-git clone https://github.com/mlltx/Invariant.git
-cd Invariant
+git clone https://github.com/mlltx/Invaract.git
+cd Invaract
 
 # Build every module (contract, ir, plugin, spark-adapter, runner) in the
 # dependency order their cross-module references require
@@ -176,7 +176,7 @@ test("feature should work") {
   val input = ...
   
   // Act
-  val result = InvariantPlugin.process(input)
+  val result = InvaractPlugin.process(input)
   
   // Assert
   assert(result.count() == expected)
@@ -236,7 +236,7 @@ Add Apache license and SPDX headers
 
 Add Apache 2.0 LICENSE file to repository root.
 Add SPDX headers to all source files.
-Update copyright to include Invariant Contributors.
+Update copyright to include Invaract Contributors.
 
 Fixes #45
 ```
@@ -262,8 +262,8 @@ required columns. Helps users debug configuration issues faster.
 git checkout -b feature/add-new-transformation
 
 # 2. Make changes
-# Edit plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala
-# Add test to plugin/src/test/scala/.../InvariantPluginTest.scala
+# Edit plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala
+# Add test to plugin/src/test/scala/.../InvaractPluginTest.scala
 
 # 3. Test locally
 ./dev/test
@@ -333,8 +333,8 @@ Contributions aligned with the roadmap are encouraged.
 
 ## License
 
-By contributing to Invariant, you agree that your contributions will be licensed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
+By contributing to Invaract, you agree that your contributions will be licensed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
 
 ---
 
-Thank you for contributing to Invariant!
+Thank you for contributing to Invaract!

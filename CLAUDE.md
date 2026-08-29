@@ -1,4 +1,4 @@
-# Invariant — Development Guide
+# Invaract — Development Guide
 
 This repository builds a framework for verifying data transformations
 against machine-readable data contracts, with a mobile-first Codespace
@@ -11,17 +11,17 @@ development environment for exercising it against a real Spark job.
 Spark job's Catalyst logical plan into an engine-independent IR, verify it
 against the contract, and — via a `SparkSessionExtensions` check rule
 installed in the `SparkSession` — abort the write if it fails. This is
-what a real user of Invariant would depend on.
+what a real user of Invaract would depend on.
 
 **`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
 test harness, not the product.** `plugin/` is a small illustrative Spark
-transformation (`InvariantPlugin`) standing in for "some real job's
+transformation (`InvaractPlugin`) standing in for "some real job's
 logic." `runner/` is `DemoJobHarness` — an example Spark job that installs
-the verification engine and drives `InvariantPlugin` through it, exactly
+the verification engine and drives `InvaractPlugin` through it, exactly
 the way a real user's job would install it, then captures the outcome as
 `demo/output/report.json`. `web/` is a mobile-friendly viewer for that
-report. None of `InvariantPlugin`, `DemoJobHarness`, or `report.json` is
-something a real Invariant user imports or depends on — they exist so
+report. None of `InvaractPlugin`, `DemoJobHarness`, or `report.json` is
+something a real Invaract user imports or depends on — they exist so
 `./dev/test` can prove the engine works against a real Spark execution,
 not just unit tests.
 
@@ -159,7 +159,7 @@ compatibility release-to-release. It answers a different question than
 mutation testing or fuzzing: not "does my code work," but "does this
 change silently break everyone who already depends on the previous
 version's compiled jar" — a real risk for `contract`/`ir`/`spark-adapter`
-specifically, since those are what a real Invariant user would depend on,
+specifically, since those are what a real Invaract user would depend on,
 and Scala case classes (`Contract`, `Dataset`, `Field`, `Plan`, `Expr`,
 ...) make this easy to break by accident (adding a field, reordering a
 constructor parameter) without it ever showing up as a compile error in
@@ -210,9 +210,9 @@ disabling the check — that defeats the entire point of running it.
 
 **Documentation is a first-class part of the product, not an afterthought bolted on
 later.** User-facing documentation lives in `docs-site/` — an Astro Starlight site built
-from `docs-site/src/content/docs/`. It documents Invariant from the perspective of
+from `docs-site/src/content/docs/`. It documents Invaract from the perspective of
 someone *using* the verification engine (writing contracts, installing the enforcement
-rule, running the demo harness) — never Invariant's own internals. See
+rule, running the demo harness) — never Invaract's own internals. See
 `docs-site/DOCUMENTATION.md` for the full writing playbook (information architecture,
 style, when to use MDX/Starlight components, what belongs here vs. in `docs/`/
 `ARCHITECTURE.md`/`ROADMAP.md`) before writing or editing a page there.
@@ -222,7 +222,7 @@ Whenever a change adds or changes **user-facing** behavior — anything in
 how a user installs/configures/runs the engine — you MUST determine whether
 `docs-site/` needs updating, as part of the same task, not a follow-up. A change scoped
 entirely to `plugin`/`runner`/`demo`/`web` internals with no effect on how a real
-Invariant user would install, configure, or use the engine does not require a docs-site
+Invaract user would install, configure, or use the engine does not require a docs-site
 update — but check that assumption before skipping it, since a change to the example
 harness sometimes does change what a guide demonstrates (e.g. the actual console output
 quoted in a guide).
@@ -325,9 +325,9 @@ would be.
 ├── plugin/                       # Example harness: demo transformation
 │   ├── src/
 │   │   ├── main/scala/com/example/plugin/
-│   │   │   └── InvariantPlugin.scala
+│   │   │   └── InvaractPlugin.scala
 │   │   └── test/scala/com/example/plugin/
-│   │       └── InvariantPluginTest.scala
+│   │       └── InvaractPluginTest.scala
 │   ├── build.sbt
 │   └── project/assembly.sbt
 │
@@ -340,7 +340,7 @@ would be.
 │
 ├── runner/                       # Example harness: demo job
 │   ├── src/main/scala/com/example/runner/
-│   │   └── DemoJobHarness.scala # Runs InvariantPlugin through the engine, generates report
+│   │   └── DemoJobHarness.scala # Runs InvaractPlugin through the engine, generates report
 │   ├── build.sbt
 │   └── project/assembly.sbt
 │
@@ -448,7 +448,7 @@ This single command:
 3. ✓ Verifies the Spark environment
 4. ✓ Prepares the demo output directory
 5. ✓ Runs the demo job (`DemoJobHarness`) via real `spark-submit`,
-   installing the verification engine and driving `InvariantPlugin`
+   installing the verification engine and driving `InvaractPlugin`
    through it
 6. ✓ Captures results to `demo/output/result.parquet`
 7. ✓ Generates `demo/output/report.json`
@@ -459,7 +459,7 @@ This single command:
 
 ```
 ======================================
-Invariant Test Suite
+Invaract Test Suite
 ======================================
 
 Step 6/7: Executing Spark integration test...
@@ -517,11 +517,11 @@ If `./dev/test` fails:
 
 ### Engine and plugin JARs
 
-- `plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar`
-- `contract/target/scala-2.12/invariant-contract-0.1.0.jar`
-- `ir/target/scala-2.12/invariant-ir-0.1.0.jar`
-- `spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar`
-- `runner/target/scala-2.12/invariant-spark-runner.jar` — the demo job,
+- `plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.1.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.1.0.jar`
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar`
+- `runner/target/scala-2.12/invaract-spark-runner.jar` — the demo job,
   bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
 
 All created by `sbt assembly` (via `./dev/build`); used by Spark through
@@ -543,7 +543,7 @@ All created by `sbt assembly` (via `./dev/build`); used by Spark through
 
 - **Location**: `demo/output/result.parquet`
 - **Format**: Apache Parquet
-- **Content**: Output of `InvariantPlugin` processing `demo/input/sample.csv`
+- **Content**: Output of `InvaractPlugin` processing `demo/input/sample.csv`
 - **Lifecycle**: Regenerated on each `./dev/test`
 
 ## Execution Model
@@ -574,8 +574,8 @@ The demo job runs **via real Spark submission**, not unit test mocking
 spark-submit \
   --class com.example.runner.DemoJobHarness \
   --master local[*] \
-  --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
-  runner/target/scala-2.12/invariant-spark-runner.jar \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  runner/target/scala-2.12/invaract-spark-runner.jar \
   demo/input/sample.csv \
   demo/output/result.parquet \
   demo/output/report.json
@@ -609,7 +609,7 @@ id,value
 
 ## Example Plugin (demo transformation, not the engine)
 
-`InvariantPlugin.scala` illustrates:
+`InvaractPlugin.scala` illustrates:
 
 1. **Schema Validation**: Checks for required columns
 2. **Transformation**: Adds a computed column (`value_squared`)
@@ -618,8 +618,8 @@ id,value
 
 To modify it:
 
-1. Edit `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala`
-2. Add or update tests in `plugin/src/test/scala/com/example/plugin/InvariantPluginTest.scala`
+1. Edit `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala`
+2. Add or update tests in `plugin/src/test/scala/com/example/plugin/InvaractPluginTest.scala`
 3. Run `./dev/test`
 4. Verify the report
 
@@ -705,7 +705,7 @@ head -5 demo/input/sample.csv
   unit tests (`cd spark-adapter && sbt test`) before assuming it's the
   demo harness
 - Demo transformation issue → check
-  `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala` for
+  `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala` for
   null pointer exceptions, schema assumptions, case sensitivity, type
   mismatches
 - Report/harness wiring issue → check `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`
@@ -759,7 +759,7 @@ otherwise silently mistranslate.
 ### Add a new column transformation (demo harness)
 
 ```scala
-// In InvariantPlugin.scala
+// In InvaractPlugin.scala
 def addNewColumn(df: DataFrame): DataFrame = {
   logEvent("Adding new_column")
   df.withColumn("new_column", col("value") + 100)
@@ -769,10 +769,10 @@ def addNewColumn(df: DataFrame): DataFrame = {
 Then add test:
 
 ```scala
-// In InvariantPluginTest.scala
+// In InvaractPluginTest.scala
 test("addNewColumn should add column") {
   val df = spark.createDataFrame(...)
-  val result = InvariantPlugin.addNewColumn(df)
+  val result = InvaractPlugin.addNewColumn(df)
   assert(result.columns.contains("new_column"))
 }
 ```
@@ -794,11 +794,11 @@ Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ```bash
 # Start Spark shell with the engine + plugin JARs
-spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar,spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar
+spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)
-// scala> val result = com.example.plugin.InvariantPlugin.process(df)
+// scala> val result = com.example.plugin.InvaractPlugin.process(df)
 // scala> result.show()
 ```
 
@@ -814,7 +814,7 @@ spark-shell --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar,spa
 
 ```bash
 # 1. Clone and open in Codespaces (Dev Container auto-provisions)
-git clone https://github.com/mlltx/Invariant.git
+git clone https://github.com/mlltx/Invaract.git
 # Wait for post-create.sh to finish (~5 min first time)
 
 # 2. Make a change — engine (contract/ir/spark-adapter) or harness (plugin/runner)

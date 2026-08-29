@@ -322,14 +322,14 @@ confirmed untestable in this environment, not silently skipped.
   throwaway probe evidence.
 
 - **CHECK constraints — confirmed orthogonal, no fix needed.** Delta
-  enforces these itself, independently, at commit time — Invariant has no
+  enforces these itself, independently, at commit time — Invaract has no
   rule vocabulary for a row-level condition like `CHECK (id >= 0)` (see
   docs/CONTRACT_MODEL.md's `rules` field). A write violating a CHECK
   constraint is recognized by `WriteCommandSupport` identically to a
-  satisfying one (no diagnostic — Invariant's structural checks simply
+  satisfying one (no diagnostic — Invaract's structural checks simply
   don't apply here), and is then independently rejected by Delta's own
-  `DeltaInvariantViolationException` before commit — confirmed with a
-  permanent test asserting both halves: Invariant raises nothing, Delta
+  `DeltaInvaractViolationException` before commit — confirmed with a
+  permanent test asserting both halves: Invaract raises nothing, Delta
   does.
 
 - **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
@@ -339,7 +339,7 @@ confirmed untestable in this environment, not silently skipped.
   dedicated probe with no `try`/`catch` that could have masked a
   different failure. This is very likely a Databricks Runtime-only SQL
   extension not present in vanilla OSS Spark 3.5.1's grammar at all, not
-  a Delta or Invariant limitation — there is nothing for
+  a Delta or Invaract limitation — there is nothing for
   `WriteCommandSupport` to translate because Spark itself never produces
   an analyzed plan to see. Left as ❓ **Not investigated** rather than
   claimed as covered.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -43,7 +43,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
-    outputDir = Files.createTempDirectory("invariant-spark-adapter-test")
+    outputDir = Files.createTempDirectory("invaract-spark-adapter-test")
     inputCsv = outputDir.resolve("sample.csv")
     Files.write(
       inputCsv,
@@ -418,7 +418,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
   // though JDBCRelation always carries a precise url/table identity of its
   // own. locationOf now special-cases JDBCRelation directly.
   test("translates a JDBC read with a precise location, not the generic relation fallback") {
-    val jdbcUrl = s"jdbc:h2:mem:invariant_test_${System.nanoTime()};DB_CLOSE_DELAY=-1"
+    val jdbcUrl = s"jdbc:h2:mem:invaract_test_${System.nanoTime()};DB_CLOSE_DELAY=-1"
     val conn = java.sql.DriverManager.getConnection(jdbcUrl)
     try {
       val stmt = conn.createStatement()

@@ -116,7 +116,7 @@ out of scope for this pass.
 
 **A real, confirmed read/write location-format asymmetry**, general to
 how `Table.properties()` behaves for this connector, not a bug in
-Invariant's own logic: writes resolve to a computed 3-part qualified
+Invaract's own logic: writes resolve to a computed 3-part qualified
 identifier (`catalog.namespace.table`, e.g. `ch.probe_db.t`) via
 `WriteCommandSupport`'s existing `qualifiedIdentifier` helper, since
 `ClickHouseTable` exposes no `"location"` property either side. Reads go
@@ -137,13 +137,13 @@ real quirk contract authors need to know about.
 
 **Feature surface**: ClickHouse's own `ORDER BY`/sorting-key nullability
 constraint (`allow_nullable_key`) confirmed genuinely orthogonal to
-Invariant — a source DataFrame column can correctly report
+Invaract — a source DataFrame column can correctly report
 `nullable = false` while `DataFrameWriterV2`'s `.create()` path still
 doesn't propagate that into the generated ClickHouse DDL, so ClickHouse
 itself rejects a nullable-typed sorting key regardless of what a
-contract declares or what Invariant's own structural checks see — the
+contract declares or what Invaract's own structural checks see — the
 same "confirmed orthogonal" pattern as Delta's `CHECK` constraints.
-Invariant neither causes nor can prevent this; a satisfying write (with
+Invaract neither causes nor can prevent this; a satisfying write (with
 `settings.allow_nullable_key=1` supplied) is unaffected either way,
 confirmed by every other `.create()`/`.createOrReplace()` test in this
 file succeeding once that workaround is applied.
@@ -247,7 +247,7 @@ confirmed-transparent behavior or a confirmed real limitation.
   `TBLPROPERTIES` keys that genuinely apply; `sample_by` requires an
   unsigned-integer sampling column in real ClickHouse (a `cityHash64(id)`
   expression, ClickHouse's own idiom, works around Spark's `BIGINT` being
-  signed) — a real ClickHouse constraint, not an Invariant one.
+  signed) — a real ClickHouse constraint, not an Invaract one.
 - **Replicated engines**: the connector's own jar has a dedicated
   `ReplicatedMergeTreeEngineSpec` class (confirmed via decompilation,
   not assumed from the `engine` string alone) — real, first-class
@@ -257,7 +257,7 @@ confirmed-transparent behavior or a confirmed real limitation.
   server fails with `NO_ELEMENTS_IN_CONFIG` (no `{shard}`/`{replica}`
   macros or Keeper coordination configured) — an environment gap, the
   same class as this connector's own Docker-unavailability constraint,
-  not a connector or Invariant limitation.
+  not a connector or Invaract limitation.
 - **Materialized views**: confirmed genuinely unreachable through Spark
   SQL with this connector — `CREATE MATERIALIZED VIEW` fails with
   `ParseException`, the same "no SQL extension registered" pattern
@@ -307,14 +307,14 @@ confirmed-transparent behavior or a confirmed real limitation.
 | `.writeTo(...).overwritePartitions()` | 🚫 **N/A — connector doesn't support partition-level overwrite** | Confirmed via this connector's own documented caveat ("The connector doesn't currently support partition-level overwrite operations"), not independently re-probed this pass. **Next step**: a real probe to confirm the exact rejection mode (Spark-level or connector-level), if ever doubted. |
 | Format-specific DML — `DELETE FROM ... WHERE ...` | ✅ **Covered — closed this pass, genuinely new** | `DeleteFromTable`, a new connector-agnostic `WriteCommandSupport` case (see above). PASS/FAIL pair in `ClickHouseConnectorSpec`, structural verification only. |
 | Format-specific DML — `UPDATE`/`MERGE INTO` | 🚫 **N/A — rejected before any write occurs** | `UPDATE` reaches `UpdateTable` then is rejected by Spark's own generic "not supported temporarily" message; `MERGE` fails at analysis time before any Command-shaped plan exists at all. Neither is a real Phase-4 case-3 (data-mutating, unmodeled) operation for this connector — both are N/A the same way Parquet/CSV/Avro's own DML rejections are. `ClickHouseConnectorSpec`'s combined rejection test, asserting the target table is unchanged. |
-| Streaming write | 🚫 **N/A — connector doesn't implement `SupportsStreamingWrite`** | Confirmed empirically: `AnalysisException: Table ... doesn't support streaming write - ClickHouseTable(...)`, rejected by Spark itself before any Command-shaped write plan is produced. `ClickHouseConnectorSpec`'s dedicated rejection test. **Next step**: none — this is a genuine, permanent connector limitation as of 0.10.0, not something Invariant's translation could close even in principle without the connector itself adding the capability. |
+| Streaming write | 🚫 **N/A — connector doesn't implement `SupportsStreamingWrite`** | Confirmed empirically: `AnalysisException: Table ... doesn't support streaming write - ClickHouseTable(...)`, rejected by Spark itself before any Command-shaped write plan is produced. `ClickHouseConnectorSpec`'s dedicated rejection test. **Next step**: none — this is a genuine, permanent connector limitation as of 0.10.0, not something Invaract's translation could close even in principle without the connector itself adding the capability. |
 | Maintenance operations that touch data (`OPTIMIZE`, `ALTER TABLE ... DELETE`, `VACUUM`) | 🚫 **N/A — unreachable through Spark SQL with this connector** | Confirmed empirically: every attempt fails with `ParseException` at Spark's own parser, before analysis — the connector registers no SQL extension for them, unlike Delta's own `OPTIMIZE`/`VACUUM`. `ClickHouseConnectorSpec`'s dedicated test. **Next step**: none — would require the connector itself to add a parser extension or `CALL`-style procedure mechanism (it currently has neither). TTL-driven expiry, configured at `CREATE TABLE` time rather than invoked as a separate operation, is confirmed not requestable from Spark at all — see the feature-surface ledger below. |
 
 ## ClickHouse feature-surface coverage ledger
 
 | Feature | Status | Evidence / next step |
 |---|---|---|
-| `ORDER BY`/sorting-key nullability (`allow_nullable_key`) | ✅ Confirmed orthogonal | A source DataFrame's correct `nullable = false` isn't propagated into the generated DDL by `DataFrameWriterV2.create()`; ClickHouse enforces its own constraint independently of Invariant either way. `ClickHouseConnectorSpec`'s dedicated feature-surface test. |
+| `ORDER BY`/sorting-key nullability (`allow_nullable_key`) | ✅ Confirmed orthogonal | A source DataFrame's correct `nullable = false` isn't propagated into the generated DDL by `DataFrameWriterV2.create()`; ClickHouse enforces its own constraint independently of Invaract either way. `ClickHouseConnectorSpec`'s dedicated feature-surface test. |
 | Read/write location-format asymmetry (`Table.properties()`/`Table.name()`) | ✅ Confirmed and worked around | Not a "feature" in the schema-evolution sense, but a real, confirmed connector-specific behavior contract authors must account for. See the write-up above; exercised directly in the read test. |
 | `PARTITION BY` | ✅ **Confirmed working — closed this pass** | Spark's native `PARTITIONED BY (col)` clause, not a `TBLPROPERTIES` key. Confirmed against the real server's `create_table_query`. `ClickHouseConnectorSpec`'s dedicated test. |
 | Replicated engines | ❓ **Real connector support confirmed, environment-limited — closed as far as this pass can** | A dedicated `ReplicatedMergeTreeEngineSpec` class exists in the connector's own jar (confirmed via decompilation). Rejected in this environment with `NO_ELEMENTS_IN_CONFIG` — the standalone single-node test server has no `{shard}`/`{replica}` macros or Keeper configured. `ClickHouseConnectorSpec`'s dedicated test pins this real rejection. **Next step**: a multi-node test environment with Keeper configured, if this connector's replicated-engine behavior ever needs deeper verification — out of reach of the current single-binary test infrastructure. |

@@ -1,6 +1,6 @@
 # Transformation Intermediate Representation
 
-This document describes the Invariant transformation IR delivered in Phase
+This document describes the Invaract transformation IR delivered in Phase
 2: an engine-independent representation of a data transformation, precise
 enough to establish column-level lineage and, eventually, verify a
 transformation against a [contract](CONTRACT_MODEL.md).

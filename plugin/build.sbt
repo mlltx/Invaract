@@ -1,4 +1,4 @@
-name := "invariant-spark-plugin"
+name := "invaract-spark-plugin"
 version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
@@ -13,7 +13,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
 )
 
-assembly / assemblyJarName := "invariant-spark-plugin-0.1.0.jar"
+assembly / assemblyJarName := "invaract-spark-plugin-0.1.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first

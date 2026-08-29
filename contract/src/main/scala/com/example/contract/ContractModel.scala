@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.contract
 
@@ -80,7 +80,7 @@ case class Dataset(
   saveMode: Option[String] = None
 )
 
-/** Rule types Invariant currently interprets during verification (see
+/** Rule types Invaract currently interprets during verification (see
   * `InterpretedRule`, and `RuleVerifier` in `spark-adapter`). Any other
   * `ContractRule.ruleType` is still recorded on `Contract.rules` but not
   * acted on — this is deliberately a narrow, closed set (the concrete
@@ -105,7 +105,7 @@ object RuleType {
   val All: Set[String] = Set(MergeCondition, ForbidUnconditionalDelete, AllowedUpdateColumns)
 }
 
-/** A `ContractRule`, decoded into one of the shapes Invariant currently
+/** A `ContractRule`, decoded into one of the shapes Invaract currently
   * knows how to verify. Deliberately narrow, mirroring `RuleType`'s three
   * members — not a general rule-expression language.
   */
@@ -118,15 +118,15 @@ object InterpretedRule {
 
 /** A declarative rule attached to the contract (e.g. compatibility mode,
   * quality expectation, or one of `RuleType`'s DML constraints). Beyond
-  * `RuleType`'s three interpreted members, Invariant does not interpret
+  * `RuleType`'s three interpreted members, Invaract does not interpret
   * rule semantics — it records them; verification of those against a
   * transformation plan is future work (see ROADMAP.md, Phase 1 scope).
   */
 case class ContractRule(ruleType: String, properties: Map[String, Any]) {
 
   /** Decodes `properties` into one of `InterpretedRule`'s shapes when
-    * `ruleType` is one Invariant currently interprets and its properties
-    * are well-formed. `None` covers both "not a rule type Invariant
+    * `ruleType` is one Invaract currently interprets and its properties
+    * are well-formed. `None` covers both "not a rule type Invaract
     * interprets" and "malformed properties for a type it does" — this
     * stays total/safe so a caller never needs to catch an exception just
     * to check whether a rule applies; `ContractValidator` is where a
@@ -177,8 +177,8 @@ object ContractRule extends scala.runtime.AbstractFunction2[String, Map[String, 
 /** The root contract object: the minimum representation required to verify
   * a transformation, modeled after the Open Data Contract Standard (ODCS).
   *
-  * Invariant intentionally does not redefine concepts ODCS already
-  * standardizes (schema, fields, types). Fields not recognized by Invariant
+  * Invaract intentionally does not redefine concepts ODCS already
+  * standardizes (schema, fields, types). Fields not recognized by Invaract
   * are preserved verbatim in `extensions` rather than rejected, so contracts
   * authored for other ODCS-based tooling remain valid inputs.
   */

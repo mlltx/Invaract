@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.plugin
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 
-object InvariantPlugin {
+object InvaractPlugin {
   private var eventLog: List[String] = List()
 
   def logEvent(msg: String): Unit = {

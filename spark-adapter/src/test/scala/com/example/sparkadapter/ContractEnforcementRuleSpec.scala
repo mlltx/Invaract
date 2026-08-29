@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -38,7 +38,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-enforcement-test")
+    scratchDir = Files.createTempDirectory("invaract-enforcement-test")
 
     spark = SparkSession
       .builder()
@@ -878,7 +878,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // The four tests below lock in findings from a real probing pass over
   // Delta features not otherwise exercised by this file (throwaway probes,
   // since deleted, not assumed from documentation): each is confirmed
-  // transparent to Invariant - a real write against a table with the
+  // transparent to Invaract - a real write against a table with the
   // feature enabled is recognized exactly the same way as one without it,
   // no special-casing needed in WriteCommandSupport. Unlike schema
   // evolution and generated columns above, none of these needed a fix.
@@ -987,13 +987,13 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   // CHECK constraints are enforced independently by Delta itself, at
-  // commit time - Invariant's structural checks and Delta's own constraint
+  // commit time - Invaract's structural checks and Delta's own constraint
   // enforcement operate orthogonally, with no interaction/gap: a violating
-  // write is recognized by Invariant identically to a satisfying one (no
-  // diagnostic, no violation - Invariant has no vocabulary for row-level
+  // write is recognized by Invaract identically to a satisfying one (no
+  // diagnostic, no violation - Invaract has no vocabulary for row-level
   // constraints, only schema/location/format/save-mode), but Delta itself
   // then rejects it before commit. Confirmed empirically, not assumed.
-  test("PASS: a write satisfying a Delta CHECK constraint executes normally; a violating one is rejected by Delta itself, not Invariant") {
+  test("PASS: a write satisfying a Delta CHECK constraint executes normally; a violating one is rejected by Delta itself, not Invaract") {
     val tablePath = scratchDir.resolve("check_target").toString
     val tableName = "check_pass_tbl"
     spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
@@ -1018,14 +1018,14 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     withContract(yaml) {
       val satisfying = spark.range(5, 6).withColumn("doubled", col("id") * 2)
-      satisfying.write.format("delta").mode("append").saveAsTable(tableName) // must not throw - Invariant passes, constraint satisfied
+      satisfying.write.format("delta").mode("append").saveAsTable(tableName) // must not throw - Invaract passes, constraint satisfied
 
       val violating = spark.createDataFrame(Seq((-2L, -4L))).toDF("id", "doubled")
-      intercept[org.apache.spark.sql.delta.schema.DeltaInvariantViolationException] {
+      intercept[org.apache.spark.sql.delta.schema.DeltaInvaractViolationException] {
         violating.write.format("delta").mode("append").saveAsTable(tableName)
-        // Invariant itself raises nothing here (no ContractViolationException) - the row that
+        // Invaract itself raises nothing here (no ContractViolationException) - the row that
         // gets rejected is rejected by Delta's own commit-time constraint enforcement, not by
-        // Invariant, which has no rule vocabulary for a CHECK constraint's condition.
+        // Invaract, which has no rule vocabulary for a CHECK constraint's condition.
       }
     }
 

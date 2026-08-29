@@ -1,16 +1,16 @@
-# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
-id: invariant_demo_output
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
 version: "1.0.0"
 status: active
 
 description:
   purpose: >
-    A deliberately-broken variant of demo/contracts/invariant_output.yaml,
+    A deliberately-broken variant of demo/contracts/invaract_output.yaml,
     kept for reference/demonstration of ContractEnforcementRule's abort
     behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired
     into ./dev/test — the real demo pipeline is expected to pass its real
     contract, not this one.
-    Declares a 'customer_name' output field the real InvariantPlugin
+    Declares a 'customer_name' output field the real InvaractPlugin
     pipeline never produces, so verification fails deterministically.
 
 inputs:
@@ -56,4 +56,4 @@ rules:
     mode: backward
 
 extensions:
-  owner: invariant-demo
+  owner: invaract-demo

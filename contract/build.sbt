@@ -1,4 +1,4 @@
-name := "invariant-contract"
+name := "invaract-contract"
 version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
@@ -6,7 +6,7 @@ organization := "com.example"
 libraryDependencies ++= Seq(
   "org.yaml" % "snakeyaml" % "2.2",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
-  // Validates contract/schema/invariant-contract.schema.json against real
+  // Validates contract/schema/invaract-contract.schema.json against real
   // fixtures (ContractSchemaSpec) - test-scoped only. The schema is a
   // static artifact for external tooling to bind to; nothing in the
   // contract module's own runtime parses YAML against it (ContractParser/
@@ -20,7 +20,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invariant-contract-0.1.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.1.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -40,4 +40,4 @@ assembly / assemblyMergeStrategy := {
 // accepted break (a deliberate MAJOR-version API change) needs an explicit,
 // documented entry in `mimaBinaryIssueFilters` below, not a version bump
 // alone - see CLAUDE.md's "API Compatibility Requirement".
-mimaPreviousArtifacts := Set("com.example" %% "invariant-contract" % "0.1.0")
+mimaPreviousArtifacts := Set("com.example" %% "invaract-contract" % "0.1.0")

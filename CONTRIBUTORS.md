@@ -1,6 +1,6 @@
 # Contributors
 
-Thank you to everyone who has contributed to Invariant!
+Thank you to everyone who has contributed to Invaract!
 
 ## Core Contributors
 
@@ -48,7 +48,7 @@ Contributors are recognized in multiple places:
 
 ## Acknowledgments
 
-Invariant builds on ideas and tools from the broader data engineering ecosystem:
+Invaract builds on ideas and tools from the broader data engineering ecosystem:
 
 - [Apache Spark](https://spark.apache.org/) – Distributed data processing engine
 - [Scala](https://www.scala-lang.org/) – Functional programming language

@@ -2,14 +2,14 @@
 # Shared helpers for dev/test and dev/regression. Not meant to be run
 # directly — source it after cd-ing to the repo root.
 
-PLUGIN_JAR="plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar"
-RUNNER_JAR="runner/target/scala-2.12/invariant-spark-runner.jar"
+PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar"
+RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 
 # run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT]
 #
 # Runs DemoJobHarness (the example Spark job / test harness — see its class
 # doc in runner/src/main/scala/com/example/runner/DemoJobHarness.scala; it
-# is not Invariant's verification engine, just the job that exercises it)
+# is not Invaract's verification engine, just the job that exercises it)
 # via spark-submit when it's on PATH, falling back to a manually-flagged
 # `java -cp` invocation otherwise.
 #

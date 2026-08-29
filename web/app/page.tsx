@@ -91,7 +91,7 @@ const ReportViewer = () => {
   return (
     <div className={styles.container}>
       <header className={styles.header}>
-        <h1>Invariant Plugin Report</h1>
+        <h1>Invaract Plugin Report</h1>
       </header>
 
       <section className={`${styles.section} ${styles.status}`}>

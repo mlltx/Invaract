@@ -1,22 +1,22 @@
 ---
 title: Write a Contract
-description: Author an Invariant data contract, field by field, from the real one this project ships.
+description: Author an Invaract data contract, field by field, from the real one this project ships.
 sidebar:
   order: 1
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-An Invariant contract is a YAML document describing a transformation's inputs and
+An Invaract contract is a YAML document describing a transformation's inputs and
 outputs — shaped after the
 [Open Data Contract Standard (ODCS)](https://github.com/opendatadiscovery/open-data-contracts-standard),
 not a new format invented from scratch. This guide builds one up using the real contract
-this repository ships, `demo/contracts/invariant_output.yaml`.
+this repository ships, `demo/contracts/invaract_output.yaml`.
 
 ## Start with identity and version
 
 ```yaml
-id: invariant_demo_output
+id: invaract_demo_output
 version: "1.0.0"
 status: active
 ```
@@ -47,7 +47,7 @@ inputs:
 ```
 
 - `name` — logical name, used for lookups and violation messages.
-- `location` — the physical location Invariant matches against the real Spark plan (a
+- `location` — the physical location Invaract matches against the real Spark plan (a
   table name or a file path). Spark reports absolute `file:` URIs at runtime; a relative
   location declared here still matches, by suffix — see
   [Contract Format](/reference/contract-format/#location-matching).
@@ -92,7 +92,7 @@ save mode when both are known.
 | `properties` | — | Nested fields, for a `struct` type. |
 
 <Aside type="caution">
-Marking a field both `required: true` and `nullable: true` is legal — Invariant warns
+Marking a field both `required: true` and `nullable: true` is legal — Invaract warns
 about it (it's an unusual combination) but doesn't reject the contract.
 </Aside>
 
@@ -116,7 +116,7 @@ one checks.
 
 ## Add extensions (optional)
 
-Any top-level key Invariant doesn't recognize — and the explicit `extensions` map — are
+Any top-level key Invaract doesn't recognize — and the explicit `extensions` map — are
 preserved verbatim, not rejected:
 
 ```yaml
@@ -125,7 +125,7 @@ extensions:
 ```
 
 This keeps a contract additive to the wider ODCS ecosystem: fields your organization
-cares about (owners, SLAs, quality rules) round-trip through Invariant even though it
+cares about (owners, SLAs, quality rules) round-trip through Invaract even though it
 doesn't act on them yet.
 
 ## Validate as you write
@@ -135,7 +135,7 @@ works with the [YAML Language Server](https://github.com/redhat-developer/yaml-l
 VS Code extension, already configured for this repo):
 
 ```yaml
-# yaml-language-server: $schema=../../contract/schema/invariant-contract.schema.json
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
 id: my_contract
 # ...
 ```

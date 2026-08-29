@@ -1,6 +1,6 @@
 ---
 title: Your First Contract
-description: Watch Invariant reject a real Spark write that violates its contract.
+description: Watch Invaract reject a real Spark write that violates its contract.
 sidebar:
   order: 3
 ---
@@ -8,7 +8,7 @@ sidebar:
 import { Steps, Aside } from '@astrojs/starlight/components';
 
 [Quick Start](/getting-started/quick-start/) showed a *passing* write. This walks
-through making one fail — the moment that actually demonstrates what Invariant is for —
+through making one fail — the moment that actually demonstrates what Invaract is for —
 using a contract already included in the repository, run directly against the real demo
 job.
 
@@ -24,7 +24,7 @@ job.
 
 2. ### Look at the broken contract
 
-   `demo/contracts/invariant_output_broken_example.yaml` is identical to the working
+   `demo/contracts/invaract_output_broken_example.yaml` is identical to the working
    contract, except its output schema declares a `customer_name` field:
 
    ```yaml
@@ -43,7 +43,7 @@ job.
              nullable: false
    ```
 
-   The real demo transformation (`InvariantPlugin`) never produces a `customer_name`
+   The real demo transformation (`InvaractPlugin`) never produces a `customer_name`
    column — so this contract can never be satisfied by the job as written.
 
 3. ### Run the job against it
@@ -55,12 +55,12 @@ job.
    spark-submit \
      --class com.example.runner.DemoJobHarness \
      --master local[*] \
-     --jars plugin/target/scala-2.12/invariant-spark-plugin-0.1.0.jar \
-     runner/target/scala-2.12/invariant-spark-runner.jar \
+     --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+     runner/target/scala-2.12/invaract-spark-runner.jar \
      demo/input/sample.csv \
      demo/output/result_broken_example.parquet \
      demo/output/report_broken_example.json \
-     demo/contracts/invariant_output_broken_example.yaml
+     demo/contracts/invaract_output_broken_example.yaml
    ```
 
 4. ### Read the rejection
@@ -68,7 +68,7 @@ job.
    The job exits non-zero, and prints exactly what was wrong:
 
    ```
-   Contract violation: 'invariant_demo_output@1.0.0' rejected this transformation. Write aborted.
+   Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. Write aborted.
 
    What the contract expects:
      input  'orders' at demo/input/sample.csv: id: integer, value: integer
@@ -95,7 +95,7 @@ job.
    ls demo/output/result_broken_example.parquet
    ```
 
-   The file does not exist. Spark never got to execute the write — Invariant rejected the
+   The file does not exist. Spark never got to execute the write — Invaract rejected the
    plan during analysis, before any output was produced.
 
 </Steps>

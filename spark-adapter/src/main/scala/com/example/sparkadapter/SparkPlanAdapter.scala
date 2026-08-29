@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -70,7 +70,7 @@ case class Diagnostic(nodeType: String, message: String)
   */
 case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
 
-/** Translates a Spark Catalyst logical plan into the Invariant
+/** Translates a Spark Catalyst logical plan into the Invaract
   * transformation IR (`com.example.ir`).
   *
   * ## Integration point
@@ -114,7 +114,7 @@ case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
   * `private[sparkadapter]`: nothing outside this module calls `translate`/
   * `translateAsWrite`/`locationOf` directly (confirmed by grep before
   * narrowing it — `ContractEnforcementRule` and `SparkAdapterListener` are
-  * the only real callers, both in this same package). A real Invariant
+  * the only real callers, both in this same package). A real Invaract
   * user gets translation and verification automatically via the installed
   * extension (`ContractEnforcementRule.forContract`) and never needs the
   * raw Catalyst-to-IR translator directly. Note this is a Scala-compiler-

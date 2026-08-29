@@ -1,4 +1,4 @@
-name := "invariant-ir"
+name := "invaract-ir"
 version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
@@ -13,7 +13,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invariant-ir-0.1.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.1.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -31,4 +31,4 @@ strykerThresholdsBreak := 50
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
 // docs/TRANSFORMATION_IR.md's "API compatibility" section.
-mimaPreviousArtifacts := Set("com.example" %% "invariant-ir" % "0.1.0")
+mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")

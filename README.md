@@ -1,6 +1,6 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo-light.svg" alt="Invariant" height="56">
+  <img src="assets/logo-light.svg" alt="Invaract" height="56">
 </picture>
 
 A framework for verifying data transformations against machine-readable
@@ -10,7 +10,7 @@ abort the write if it fails. Ships with a mobile-first Codespaces
 environment for exercising the whole thing against a real Spark job from
 a phone.
 
-📖 **[Read the full user documentation →](https://mlltx.github.io/Invariant/)**
+📖 **[Read the full user documentation →](https://mlltx.github.io/Invaract/)**
 — installation, a guided quick start, contract-writing guides, concepts,
 and complete reference material. This README stays a concise entry
 point; the docs site is where the deeper user journey lives.
@@ -34,7 +34,7 @@ distinction — it matters for where a change belongs.
 
 1. **Clone and open in Codespaces**:
    ```bash
-   git clone https://github.com/mlltx/Invariant.git
+   git clone https://github.com/mlltx/Invaract.git
    # Open in GitHub Codespaces — the Dev Container auto-provisions
    # JDK 21, sbt, Apache Spark 3.5.1, and Node.js 20 (~5 min first time)
    ```
@@ -125,10 +125,10 @@ not mocks:
 
 It checks two real cases and exits non-zero if either behaves unexpectedly:
 
-1. **Contract satisfied** (`demo/contracts/invariant_output.yaml`) — the
+1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the
    job exits 0, the report says `PASS`, and the output file exists.
 2. **Contract violated**
-   (`demo/contracts/invariant_output_broken_example.yaml`, which requires a
+   (`demo/contracts/invaract_output_broken_example.yaml`, which requires a
    `customer_name` column the demo transformation never produces) — the
    job exits non-zero, the report says `FAIL` with a `MISSING_OUTPUT_FIELD`
    violation, and — the core guarantee — the output file is never created.
@@ -189,7 +189,7 @@ implied by omission:
   `DELETE` predicate is trivially satisfiable (e.g. `WHERE 1=1`).
 - Row-level DML on connectors other than Delta/Iceberg (Parquet, CSV,
   JDBC, and similar don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL
-  at all — Spark itself rejects them before any plan reaches Invariant).
+  at all — Spark itself rejects them before any plan reaches Invaract).
 - Governance rules (field-level masking, residency, purpose limitation),
   transformation-semantic rules (join/aggregation/filter shape), and
   compatibility rules (a transformation against a contract version, as
@@ -202,15 +202,15 @@ a snapshot of what's real right now, not the final shape.
 
 ## Example Integration
 
-`plugin/`'s `InvariantPlugin` is a small, illustrative transformation
+`plugin/`'s `InvaractPlugin` is a small, illustrative transformation
 (schema validation, a computed column, event logging) standing in for
 "some real job's logic" — it's what the engine is demonstrated against,
 not part of the engine itself. `runner/`'s `DemoJobHarness` is the example
 Spark job: it installs the verification engine into a real `SparkSession`
-exactly the way a real user's job would, drives `InvariantPlugin` through
+exactly the way a real user's job would, drives `InvaractPlugin` through
 it, and captures the outcome.
 
-See `plugin/src/main/scala/com/example/plugin/InvariantPlugin.scala` and
+See `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala` and
 `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`.
 
 ## Test Results
@@ -258,9 +258,9 @@ Exit code determines PR check status.
 
 ## Documentation
 
-- **[User documentation site](https://mlltx.github.io/Invariant/)**
+- **[User documentation site](https://mlltx.github.io/Invaract/)**
   ([source](docs-site/)) — installation, quick start, guides, concepts, and
-  reference material for anyone *using* Invariant. Start here if you want
+  reference material for anyone *using* Invaract. Start here if you want
   to write a contract or install the enforcement rule in your own job.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component breakdown, data flow, ADRs
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status

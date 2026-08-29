@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -323,9 +323,9 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
   // Neither is a real Phase-4 case-3 (data-mutating, unmodeled, left to
   // fail closed) operation for this connector specifically - both are
   // N/A the same way Parquet/CSV/Avro's own DML rejections are, not
-  // something Invariant's fail-closed policy needs to catch. ---
+  // something Invaract's fail-closed policy needs to catch. ---
 
-  test("UPDATE/MERGE against a ClickHouse table are rejected before any write occurs, nothing reaches Invariant's fail-closed policy") {
+  test("UPDATE/MERGE against a ClickHouse table are rejected before any write occurs, nothing reaches Invaract's fail-closed policy") {
     createTable("dml_reject_target")
     df().writeTo("ch.probe_db.dml_reject_target").append()
     createTable("dml_reject_source")
@@ -350,10 +350,10 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
 
   // --- Streaming write: confirmed empirically that ClickHouseTable
   // itself doesn't implement SupportsStreamingWrite - a genuine connector
-  // limitation, not an Invariant gap, rejected by Spark before any
+  // limitation, not an Invaract gap, rejected by Spark before any
   // Command-shaped write plan is ever produced. ---
 
-  test("streaming write to a ClickHouse table is rejected by the connector itself, not by Invariant") {
+  test("streaming write to a ClickHouse table is rejected by the connector itself, not by Invaract") {
     createTable("stream_reject_tbl")
     val memStream = new org.apache.spark.sql.execution.streaming.MemoryStream[(Long, Long)](500, spark.sqlContext)(org.apache.spark.sql.Encoders.product)
     memStream.addData((1L, 10L))
@@ -379,7 +379,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
   // implementation), which returns a backtick-quoted *2-part*
   // `namespace`.`table` with no catalog prefix at all - a real,
   // connector-specific inconsistency between the read and write location
-  // conventions for the identical table, not an Invariant bug (the same
+  // conventions for the identical table, not an Invaract bug (the same
   // "does Table.properties() expose 'location'?" fallback chain other
   // DSv2 connectors already use, ClickHouse just answers differently on
   // each side). See docs/connectors/clickhouse.md for the next step (a
@@ -446,16 +446,16 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
   }
 
   // --- Feature surface: ClickHouse's own ORDER BY/sorting-key nullability
-  // constraint. Confirmed genuinely orthogonal to Invariant: a source
+  // constraint. Confirmed genuinely orthogonal to Invaract: a source
   // DataFrame column correctly reports nullable=false, but
   // DataFrameWriterV2's .create() path doesn't propagate that into the
   // generated ClickHouse DDL, so ClickHouse itself rejects a nullable
   // sorting key regardless of the Spark-side schema - independently of
-  // whatever a contract declares. Invariant's own structural checks don't
+  // whatever a contract declares. Invaract's own structural checks don't
   // interact with this at all; ClickHouse enforces it itself, the same
   // "confirmed orthogonal" pattern as Delta's CHECK constraints. ---
 
-  test("feature surface: ClickHouse's own nullable-sorting-key constraint is orthogonal to Invariant, not something it checks") {
+  test("feature surface: ClickHouse's own nullable-sorting-key constraint is orthogonal to Invaract, not something it checks") {
     val ex = intercept[com.clickhouse.spark.exception.CHServerException] {
       df().writeTo("ch.probe_db.nullable_key_feature_tbl").using("ClickHouse")
         .tableProperty("engine", "MergeTree()").tableProperty("order_by", "id").create()
@@ -463,7 +463,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
       // other .create() test above
     }
     assert(ex.getMessage.contains("allow_nullable_key"))
-    // Invariant itself never rejects or reports on this - Delete/Append
+    // Invaract itself never rejects or reports on this - Delete/Append
     // tests elsewhere in this file already prove a *satisfying* write
     // (with the workaround applied) is unaffected either way.
   }
@@ -492,7 +492,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
       spark.sql("CREATE TABLE IF NOT EXISTS ch.regression_db.t (id BIGINT NOT NULL) USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'id')").collect()
       intercept[org.apache.spark.sql.AnalysisException] {
         spark.sql("ANALYZE TABLE ch.regression_db.t COMPUTE STATISTICS").collect()
-      } // ANALYZE TABLE is rejected by Spark itself for v2 tables, not by Invariant - confirmed, not assumed
+      } // ANALYZE TABLE is rejected by Spark itself for v2 tables, not by Invaract - confirmed, not assumed
       spark.sql("SHOW TABLES IN ch.regression_db").collect()
     }
   }
@@ -706,7 +706,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
     // SAMPLE BY requires an unsigned-integer sampling column in real
     // ClickHouse; cityHash64(id) is ClickHouse's own standard idiom for
     // sampling on a key that isn't naturally unsigned (Spark's BIGINT is
-    // signed Int64) - a real ClickHouse constraint, not an Invariant one.
+    // signed Int64) - a real ClickHouse constraint, not an Invaract one.
     spark.sql("CREATE TABLE ch.probe_db.sample_tbl (id BIGINT NOT NULL, value BIGINT NOT NULL) " +
       "USING ClickHouse TBLPROPERTIES (engine = 'MergeTree()', order_by = 'cityHash64(id), id', " +
       "sample_by = 'cityHash64(id)')")
@@ -720,7 +720,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
     // opaque `engine` string passed through. The rejection below is this
     // single-node standalone-binary test server having no {shard}/{replica}
     // macros or Keeper coordination configured, not a connector or
-    // Invariant limitation - the same class of environment gap already
+    // Invaract limitation - the same class of environment gap already
     // documented for Docker/testcontainers in this connector's onboarding.
     val ex = intercept[Exception] {
       spark.sql("CREATE TABLE ch.probe_db.replicated_tbl (id BIGINT NOT NULL, value BIGINT) " +

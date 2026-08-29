@@ -9,16 +9,16 @@ import { Aside } from '@astrojs/starlight/components';
 
 A verification tool that silently lets through what it doesn't understand creates false
 confidence — worse than no tool at all, since a team relying on it believes writes are
-being checked when some genuinely aren't. Invariant is built to fail closed instead: a
+being checked when some genuinely aren't. Invaract is built to fail closed instead: a
 write it can't verify is rejected, not passed.
 
 ## The gap this closes
 
-Every Spark write shape Invariant hasn't been taught to translate — an early gap in
+Every Spark write shape Invaract hasn't been taught to translate — an early gap in
 Delta Lake support, and any future write shape the adapter doesn't yet recognize — shares
 the same failure mode: `SparkPlanAdapter` produces `ir.Unsupported` instead of `ir.Write`.
 Early on, `ContractEnforcementRule` treated *any* non-`ir.Write` plan as "not a write,
-nothing to gate" — so a write Invariant simply didn't recognize was indistinguishable
+nothing to gate" — so a write Invaract simply didn't recognize was indistinguishable
 from a `SELECT` or a `.count()`, and was silently let through, contract or no contract.
 
 ## The fix: reject unrecognized commands, with an explicit safe list
@@ -65,7 +65,7 @@ an unrelated rule never blocks an operation it doesn't apply to.
 
 If a job you've put under contract starts failing with `UNVERIFIABLE_WRITE` or
 `RULE_UNVERIFIABLE_DML` after upgrading Spark, Delta, or Iceberg, or after changing how a
-write is issued, that's Invariant telling you it can no longer confirm the write is safe
+write is issued, that's Invaract telling you it can no longer confirm the write is safe
 — not a false positive to work around. See
 [Troubleshooting](/troubleshooting/common-problems/) and
 [Reference → Connector Support](/reference/connector-support/) for what's

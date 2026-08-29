@@ -1,8 +1,8 @@
-# Invariant Architecture
+# Invaract Architecture
 
 ## Overview
 
-Invariant is a framework for verifying data transformations against
+Invaract is a framework for verifying data transformations against
 machine-readable data contracts. This document describes the current
 architecture: what's actually built, how the pieces interact, and the
 design decisions behind them.
@@ -10,7 +10,7 @@ design decisions behind them.
 **The product is the verification engine — `contract`, `ir`, and
 `spark-adapter`.** Everything else in this repository (`plugin`, `runner`,
 `demo`, `web`) is an example integration and test harness built to prove
-the engine works against a real Spark job, not something a real Invariant
+the engine works against a real Spark job, not something a real Invaract
 user would import. See "Two halves of this repository" below before
 reading further — conflating the two is the most common way to misjudge
 where a change belongs.
@@ -80,8 +80,8 @@ against `plugin`/`runner`.
 
 | Module | Package | Purpose |
 |---|---|---|
-| `plugin/` | `com.example.plugin` | `InvariantPlugin`: a small, illustrative Spark transformation (validate a schema, add a computed column) standing in for "some real job's transformation logic." Not part of the engine — it's what the engine is demonstrated against. |
-| `runner/` | `com.example.runner` | `DemoJobHarness`: an example Spark job, run as a test harness. It builds a real `SparkSession` with the verification engine installed exactly the way a real user's job would, drives `InvariantPlugin`'s transformation through it, and captures the outcome as `demo/output/report.json`. Despite the historical directory name `runner/`, this is not "the thing that runs the engine" — it's one example caller of it. |
+| `plugin/` | `com.example.plugin` | `InvaractPlugin`: a small, illustrative Spark transformation (validate a schema, add a computed column) standing in for "some real job's transformation logic." Not part of the engine — it's what the engine is demonstrated against. |
+| `runner/` | `com.example.runner` | `DemoJobHarness`: an example Spark job, run as a test harness. It builds a real `SparkSession` with the verification engine installed exactly the way a real user's job would, drives `InvaractPlugin`'s transformation through it, and captures the outcome as `demo/output/report.json`. Despite the historical directory name `runner/`, this is not "the thing that runs the engine" — it's one example caller of it. |
 | `demo/` | — | Deterministic fixtures (`demo/input/sample.csv`), example contracts (`demo/contracts/*.yaml`, including a deliberately-broken one used to prove rejection works), and generated, gitignored output (`demo/output/`). |
 | `web/` | — | A Next.js viewer for `demo/output/report.json` — lets a human (on a phone, via forwarded Codespaces ports) see a harness run's PASS/FAIL status, schemas, and diagnostics without reading raw JSON. |
 
@@ -100,20 +100,20 @@ even though the harness itself is not the thing being changed.
    └─> each module's target/scala-2.12/*.jar
 
 2. Build spark-adapter (needs contract + ir)
-   └─> spark-adapter/target/scala-2.12/invariant-spark-adapter-0.1.0.jar
+   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar
 
 3. Build runner (needs contract, ir, plugin, spark-adapter)
-   └─> runner/target/scala-2.12/invariant-spark-runner.jar
+   └─> runner/target/scala-2.12/invaract-spark-runner.jar
 
 4. Verify Spark environment
    └─> spark-submit --version (must succeed)
 
 5. Run the demo job (DemoJobHarness, via spark-submit)
-   ├─> ContractParser loads demo/contracts/invariant_output.yaml
+   ├─> ContractParser loads demo/contracts/invaract_output.yaml
    ├─> SparkSession built with ContractEnforcementRule installed
    │   (from the same contract) and SparkAdapterListener registered
    ├─> Load demo/input/sample.csv into a DataFrame
-   ├─> InvariantPlugin.process(inputDf) — the example transformation
+   ├─> InvaractPlugin.process(inputDf) — the example transformation
    ├─> outputDf.write(...) — ContractEnforcementRule verifies the
    │   real Catalyst plan here, before any bytes are written; a
    │   violation raises ContractViolationException and no output
@@ -131,7 +131,7 @@ even though the harness itself is not the thing being changed.
 
 `./dev/regression` runs the same harness twice more against
 `demo/contracts/` — once against a passing contract, once against
-`invariant_output_broken_example.yaml` — asserting the write *succeeds* in
+`invaract_output_broken_example.yaml` — asserting the write *succeeds* in
 the first case and is *aborted* in the second. That pass/fail pair, not
 just a single green run, is what actually demonstrates
 `ContractEnforcementRule` enforces anything. See "Contract regression
@@ -216,7 +216,7 @@ docs/SPARK_ADAPTER.md's "Never throws" section.
 
 **Rationale:**
 - `plugin` stands in for "a user's real transformation"; `runner` stands
-  in for "the job wiring that installs Invariant and drives that
+  in for "the job wiring that installs Invaract and drives that
   transformation." Keeping them separate keeps the harness honest — a real
   user's job looks like `runner`'s shape wrapped around their own
   transformation, not like `plugin` plus something engine-specific baked
@@ -303,7 +303,7 @@ spark-submit \
 - `output_path` (optional): output Parquet — default `demo/output/result.parquet`
 - `report_path` (optional): output JSON report — default `demo/output/report.json`
 - `contract_path` (optional): contract YAML to enforce — default
-  `demo/contracts/invariant_output.yaml`
+  `demo/contracts/invaract_output.yaml`
 
 ### `ExecutionReport` shape (harness report, not an engine API)
 
@@ -316,13 +316,13 @@ spark-submit \
   "scalaVersion": "2.12.18",
   "javaVersion": "21.0.10",
   "durationMs": 7879,
-  "buildInfo": { "pluginName": "invariant-spark-plugin", "pluginVersion": "0.1.0" },
+  "buildInfo": { "pluginName": "invaract-spark-plugin", "pluginVersion": "0.1.0" },
   "tests": { "unit": {"passed": 4, "failed": 0}, "integration": {"passed": 1, "failed": 0} },
   "input": { "rowCount": 10, "schema": [{"name": "id", "type": "integer"}, ...], "sample": [...] },
   "output": { "rowCount": 10, "schema": [...], "sample": [...] },
   "plugin": { "events": ["...", ...], "diagnostics": [...] },
   "transformationIR": { "captured": true, "renderedPlan": "...", "lineage": [...], "diagnostics": [...] },
-  "contractVerification": { "status": "PASSED", "contract": "invariant_demo_output@1.0.0", "violations": [] },
+  "contractVerification": { "status": "PASSED", "contract": "invaract_demo_output@1.0.0", "violations": [] },
   "error": null
 }
 ```

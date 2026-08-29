@@ -1,7 +1,7 @@
 # Documentation Playbook
 
 This file is the operating manual for `docs-site/` — the Starlight user documentation
-site for Invariant. It's written for whoever (human or Claude Code) next adds or edits a
+site for Invaract. It's written for whoever (human or Claude Code) next adds or edits a
 page here. If you're about to touch `docs-site/`, read this first.
 
 For the policy on *when* documentation must be updated as part of other work, see
@@ -10,12 +10,12 @@ write it well once you've decided to.
 
 ## Audience
 
-**Users of Invariant** — people writing Spark jobs who want to install and use the
+**Users of Invaract** — people writing Spark jobs who want to install and use the
 verification engine, and people authoring data contracts against it. Not contributors to
-Invariant's own codebase.
+Invaract's own codebase.
 
 The test for every page: could someone who has never opened this repository's source
-follow this page and succeed, using only Invariant's public, user-facing surface (the
+follow this page and succeed, using only Invaract's public, user-facing surface (the
 contract format, the enforcement rule, the CLI-equivalent `dev/` scripts) — without
 reading Scala internals?
 
@@ -162,7 +162,7 @@ When adding a new example:
 
 **Belongs here (`docs-site/`):**
 
-- How to install, configure, and use Invariant's public surface: the contract format, the
+- How to install, configure, and use Invaract's public surface: the contract format, the
   enforcement rule, the `dev/` scripts, violation types, connector support.
 - Concepts a user needs to use the product correctly (verification vs. enforcement,
   fail-closed policy) — even though these concepts are implemented in Scala, the
@@ -174,7 +174,7 @@ When adding a new example:
   findings from probing Spark's internals, mutation testing methodology, MiMa binary
   compatibility mechanics, per-connector operation/feature coverage ledgers (the
   `add-spark-connector` skill's output).
-- Anything a contributor needs to modify Invariant's own code, but a user of Invariant
+- Anything a contributor needs to modify Invaract's own code, but a user of Invaract
   never needs to know.
 
 **Belongs in `ARCHITECTURE.md`/`ROADMAP.md`, not here:**
@@ -183,7 +183,7 @@ When adding a new example:
   yet built.
 
 If you're unsure which side of this line something falls on, ask: "would a user who never
-opens this repository's source need to know this to use Invariant correctly?" Yes → here.
+opens this repository's source need to know this to use Invaract correctly?" Yes → here.
 No → the developer docs.
 
 ## Quality bar before publishing a change
@@ -191,7 +191,7 @@ No → the developer docs.
 - [ ] Every command/output/config example is real, not invented.
 - [ ] No feature is described that doesn't exist yet (check `ROADMAP.md` if unsure).
 - [ ] The page fits the information architecture above without straining.
-- [ ] Internal links use the site's base path (`/Invariant/...`) and point to a real page.
+- [ ] Internal links use the site's base path (`/Invaract/...`) and point to a real page.
 - [ ] `npm run build` succeeds from `docs-site/`.
 - [ ] New/changed content reads correctly for someone with zero prior context on the
       repository — not just someone who already knows what the feature does.

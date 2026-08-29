@@ -1,6 +1,6 @@
 # Contract Model
 
-This document describes the Invariant contract model delivered in Phase 1: the
+This document describes the Invaract contract model delivered in Phase 1: the
 object model, parser, structural validator, and version-compatibility engine
 that together represent "the minimum contract required to verify a
 transformation" (see [ROADMAP.md](../ROADMAP.md), Phase 1 — Contract Model).
@@ -12,7 +12,7 @@ SQL, dbt) can be verified against.
 
 ## Relationship to ODCS
 
-Invariant does not invent a new contract syntax. The shape mirrors the [Open
+Invaract does not invent a new contract syntax. The shape mirrors the [Open
 Data Contract Standard (ODCS)](https://github.com/opendatadiscovery/open-data-contracts-standard):
 an identity, a version, one or more input/output datasets with physical
 locations, and per-dataset schemas made of typed, nullable fields.
@@ -22,13 +22,13 @@ transformation (see [MISSION.md, §4](../MISSION.md#4-what-a-contract-means)),
 not the full standard. Two decisions follow from that:
 
 1. **Unrecognized top-level keys are preserved, not rejected.** A contract
-   authored with additional ODCS fields Invariant doesn't yet interpret
+   authored with additional ODCS fields Invaract doesn't yet interpret
    (owners, SLAs, quality rules, etc.) still parses successfully — those keys
-   land in `Contract.extensions` verbatim. This keeps Invariant additive to
+   land in `Contract.extensions` verbatim. This keeps Invaract additive to
    the ecosystem rather than a competing, incompatible format.
 2. **Only fields needed for verification are strongly typed.** `id`,
    `version`, dataset `location`s, and schema `field`s are structured; the
-   rest is opaque metadata Invariant carries but does not act on.
+   rest is opaque metadata Invaract carries but does not act on.
 
 ## Contract Document Shape
 
@@ -259,10 +259,10 @@ the test suite:
 
 ## JSON Schema
 
-`contract/schema/invariant-contract.schema.json` (Draft 2020-12) is a
+`contract/schema/invaract-contract.schema.json` (Draft 2020-12) is a
 standalone, language-agnostic description of the same document shape
 `ContractParser`/`ContractValidator` accept — the actual public interface
-for anyone authoring or generating an Invariant contract in a language
+for anyone authoring or generating an Invaract contract in a language
 other than Scala (or wanting IDE validation/autocomplete while writing
 one by hand). This is a genuinely different concern from
 `demo/output/report.json`: the contract format is something external
@@ -290,7 +290,7 @@ implementation enforces — it sits between two layers:
 - **Does not restrict `field.type` to an enum**, even though
   `ContractValidator.KnownTypes` lists the recognized set — an
   unrecognized type is only a Warning there, so a contract using a type
-  this version of Invariant doesn't yet know about still validates
+  this version of Invaract doesn't yet know about still validates
   against the schema, matching what the real parser actually accepts.
 
 `ContractSchemaSpec` (`contract/src/test/scala/com/example/contract/`)
@@ -341,7 +341,7 @@ rules:
 
 `ContractRule.interpret: Option[InterpretedRule]` decodes a rule's
 `properties` into one of these three shapes, or `None` for a rule type
-Invariant doesn't interpret *or* a known type with malformed properties
+Invaract doesn't interpret *or* a known type with malformed properties
 (e.g. `merge_condition` with no `columns`) — `ContractValidator` reports
 the latter as an `Error` (`"Rule type '...' has malformed or missing
 properties for its shape"`), so a contract reaching enforcement with an

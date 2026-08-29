@@ -227,13 +227,13 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          tags: invariant-regression
+          tags: invaract-regression
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run contract regression pack in Docker
-        run: docker run --rm invariant-regression
+        run: docker run --rm invaract-regression
 
   # Split into two parallel jobs (ir vs spark-adapter), not one sequential
   # job doing both: they're independent modules with independent test
@@ -544,7 +544,7 @@ jobs:
     # dependency-graph.yml workflow, which feeds Dependabot). This produces
     # a CycloneDX SBOM per publishable artifact so users can run their own
     # scanners (grype, Dependency-Check, ...) against exactly what a real
-    # Invariant release depends on. One per module rather than one merged
+    # Invaract release depends on. One per module rather than one merged
     # SBOM, since these are 5 separately versioned jars plus the web UI, not
     # a single artifact.
     steps:

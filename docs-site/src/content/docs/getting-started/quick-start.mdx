@@ -26,11 +26,11 @@ write — using the example job this repository ships with. It assumes you've co
    1. Builds all 5 modules (`contract`, `ir`, `plugin` concurrently, then `spark-adapter`,
       then `runner`), in dependency order.
    2. Runs a real Spark job — `DemoJobHarness` — via actual `spark-submit`, with
-      Invariant's `ContractEnforcementRule` installed in the `SparkSession`.
+      Invaract's `ContractEnforcementRule` installed in the `SparkSession`.
    3. The job reads `demo/input/sample.csv`, runs a small example transformation
-      (`InvariantPlugin`, which adds a `value_squared` column), and writes the result to
-      `demo/output/result.parquet` — a write that Invariant verifies against
-      `demo/contracts/invariant_output.yaml` before it's allowed to happen.
+      (`InvaractPlugin`, which adds a `value_squared` column), and writes the result to
+      `demo/output/result.parquet` — a write that Invaract verifies against
+      `demo/contracts/invaract_output.yaml` before it's allowed to happen.
    4. Generates and validates `demo/output/report.json`.
 
    Expect output ending in something like:
@@ -65,12 +65,12 @@ write — using the example job this repository ships with. It assumes you've co
    - A **PASS** status badge
    - Build info (plugin/Spark/Java versions, duration)
    - Input/output schema and sample rows
-   - The translated **Transformation IR** — the actual Spark plan Invariant checked
-   - **Contract verification**: `PASSED (invariant_demo_output@1.0.0)`, no violations
+   - The translated **Transformation IR** — the actual Spark plan Invaract checked
+   - **Contract verification**: `PASSED (invaract_demo_output@1.0.0)`, no violations
 
 3. ### See it actually block a bad write
 
-   Everything so far proves a *passing* write goes through. To see Invariant reject a
+   Everything so far proves a *passing* write goes through. To see Invaract reject a
    violating one:
 
    ```bash
@@ -79,7 +79,7 @@ write — using the example job this repository ships with. It assumes you've co
 
    This runs two real jobs: one against the contract above (passes, output file is
    created), and one against a deliberately broken contract
-   (`demo/contracts/invariant_output_broken_example.yaml`, which requires a
+   (`demo/contracts/invaract_output_broken_example.yaml`, which requires a
    `customer_name` column the demo transformation never produces). The second job exits
    non-zero, and its output file is **never created** — the write was aborted before
    Spark touched disk. See
@@ -100,4 +100,4 @@ pass/fail proof inside a self-contained Docker image — nothing but Docker requ
 - [Write a Contract](/guides/writing-a-contract/) — the full format, from
   scratch.
 - [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) — wire
-  Invariant into your own Spark job, not just the demo.
+  Invaract into your own Spark job, not just the demo.

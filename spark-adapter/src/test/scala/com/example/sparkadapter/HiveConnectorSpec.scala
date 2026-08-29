@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 Invariant Contributors
+// Copyright 2024 Invaract Contributors
 
 package com.example.sparkadapter
 
@@ -36,7 +36,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   private var scratchDir: Path = _
 
   override def beforeAll(): Unit = {
-    scratchDir = Files.createTempDirectory("invariant-hive-test")
+    scratchDir = Files.createTempDirectory("invaract-hive-test")
     System.setProperty("derby.stream.error.file", scratchDir.resolve("derby.log").toString)
 
     spark = SparkSession
@@ -597,7 +597,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   }
 
   // --- Fail-closed: LOAD DATA INPATH - a genuinely data-mutating Hive
-  // operation Invariant deliberately doesn't translate (already documented
+  // operation Invaract deliberately doesn't translate (already documented
   // generically in FailClosedCommands' exclusion list; this is the first
   // real confirmation against an actual Hive table, not just a theoretical
   // classification). ---
@@ -667,7 +667,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // its own doc comment's exclusion list). Confirmed here for real,
   // through actual enforcement, not just probing the plan shape. ---
 
-  test("fails closed: MERGE INTO against a plain Hive table is rejected by Invariant before Spark's own rejection ever runs") {
+  test("fails closed: MERGE INTO against a plain Hive table is rejected by Invaract before Spark's own rejection ever runs") {
     spark.sql("CREATE TABLE hive_merge_target_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
     spark.sql("INSERT INTO hive_merge_target_tbl VALUES (1, 10)")
     spark.sql("CREATE TABLE hive_merge_source_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
@@ -697,17 +697,17 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_merge_target_tbl").count() == 1, "a rejected MERGE must never have committed")
   }
 
-  // --- N/A, confirmed by Spark itself, not an Invariant gap: DataFrameWriterV2
+  // --- N/A, confirmed by Spark itself, not an Invaract gap: DataFrameWriterV2
   // and streaming writes against a Hive table. ---
 
-  test(".writeTo() against a Hive table is rejected by Spark itself, not by Invariant") {
+  test(".writeTo() against a Hive table is rejected by Spark itself, not by Invaract") {
     spark.sql("CREATE TABLE hive_writeto_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
     val ex = intercept[org.apache.spark.sql.AnalysisException](df().writeTo("hive_writeto_tbl").append())
     assert(ex.getMessage.contains("Cannot write into v1 table"))
     assert(spark.table("hive_writeto_tbl").count() == 0)
   }
 
-  test("streaming .toTable() against a Hive table is rejected by Spark itself, not by Invariant") {
+  test("streaming .toTable() against a Hive table is rejected by Spark itself, not by Invaract") {
     spark.sql("CREATE TABLE hive_stream_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
     val inputDir = scratchDir.resolve("hive_stream_in")
     df().write.parquet(inputDir.toString)
