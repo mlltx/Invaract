@@ -19,6 +19,11 @@ export default defineConfig({
 			title: 'Invariant',
 			description:
 				'Verify Spark data transformations against machine-readable data contracts — and abort the write before a violation ever lands.',
+			logo: {
+				light: './src/assets/invariant-mark-light.svg',
+				dark: './src/assets/invariant-mark-dark.svg',
+				alt: 'Invariant',
+			},
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/mlltx/Invariant' },
 			],
