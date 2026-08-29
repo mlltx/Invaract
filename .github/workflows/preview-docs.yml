@@ -80,6 +80,30 @@ jobs:
           comment: "false"
           qr-code: "false"
 
+      # GitHub Pages only honors .nojekyll at the branch ROOT — Jekyll's
+      # default processing otherwise silently drops any file/folder
+      # starting with an underscore, which is exactly where Astro puts
+      # every CSS/JS bundle (_astro/), leaving the page unstyled. The copy
+      # that ships in docs-site/public/ only ever lands under
+      # pr-preview/pr-<n>/.nojekyll (correct for the production deploy,
+      # which publishes straight to the root, but not for a preview,
+      # nested under umbrella-dir). deploy-docs.yml keeps this present
+      # once main has ever deployed; this step makes preview deploys not
+      # depend on that having happened yet, and re-asserts it defensively
+      # on every preview build. clean: false is required — this must never
+      # touch anything else already at the root.
+      - name: Ensure .nojekyll exists at the Pages root
+        if: github.event.action != 'closed'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nojekyll-root"
+          touch "$RUNNER_TEMP/nojekyll-root/.nojekyll"
+      - uses: JamesIves/github-pages-deploy-action@v4
+        if: github.event.action != 'closed'
+        with:
+          folder: ${{ runner.temp }}/nojekyll-root
+          branch: gh-pages
+          clean: false
+
       - name: List changed documentation pages
         if: github.event.action != 'closed'
         id: changed
