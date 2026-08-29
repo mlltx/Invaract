@@ -40,4 +40,12 @@ assembly / assemblyMergeStrategy := {
 // accepted break (a deliberate MAJOR-version API change) needs an explicit,
 // documented entry in `mimaBinaryIssueFilters` below, not a version bump
 // alone - see CLAUDE.md's "API Compatibility Requirement".
-mimaPreviousArtifacts := Set("com.example" %% "invaract-contract" % "0.1.0")
+//
+// Transitional: this module was renamed invariant-contract -> invaract-contract
+// in the same commit that changed `name :=` above. CI's api-compatibility job
+// publishes base-ref's build under base-ref's own `name :=`, which - until this
+// PR merges - is still "invariant-contract". So this coordinate has to keep
+// saying "invariant-contract" for that lookup to resolve; once this PR is on
+// the base branch, a follow-up change should flip it to "invaract-contract" to
+// match what base-ref will publish from then on.
+mimaPreviousArtifacts := Set("com.example" %% "invariant-contract" % "0.1.0")

@@ -328,7 +328,7 @@ confirmed untestable in this environment, not silently skipped.
   constraint is recognized by `WriteCommandSupport` identically to a
   satisfying one (no diagnostic — Invaract's structural checks simply
   don't apply here), and is then independently rejected by Delta's own
-  `DeltaInvaractViolationException` before commit — confirmed with a
+  `DeltaInvariantViolationException` before commit — confirmed with a
   permanent test asserting both halves: Invaract raises nothing, Delta
   does.
 

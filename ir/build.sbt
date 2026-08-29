@@ -31,4 +31,8 @@ strykerThresholdsBreak := 50
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
 // docs/TRANSFORMATION_IR.md's "API compatibility" section.
-mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
+//
+// Transitional: renamed invariant-ir -> invaract-ir in the same commit that
+// changed `name :=` above - see contract/build.sbt's comment on why this has
+// to keep saying "invariant-ir" until this PR is on the base branch.
+mimaPreviousArtifacts := Set("com.example" %% "invariant-ir" % "0.1.0")

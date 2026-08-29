@@ -294,4 +294,9 @@ strykerThresholdsBreak := 70
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
-mimaPreviousArtifacts := Set("com.example" %% "invaract-spark-adapter" % "0.1.0")
+//
+// Transitional: renamed invariant-spark-adapter -> invaract-spark-adapter in
+// the same commit that changed `name :=` above - see contract/build.sbt's
+// comment on why this has to keep saying "invariant-spark-adapter" until this
+// PR is on the base branch.
+mimaPreviousArtifacts := Set("com.example" %% "invariant-spark-adapter" % "0.1.0")

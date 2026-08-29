@@ -1021,7 +1021,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       satisfying.write.format("delta").mode("append").saveAsTable(tableName) // must not throw - Invaract passes, constraint satisfied
 
       val violating = spark.createDataFrame(Seq((-2L, -4L))).toDF("id", "doubled")
-      intercept[org.apache.spark.sql.delta.schema.DeltaInvaractViolationException] {
+      intercept[org.apache.spark.sql.delta.schema.DeltaInvariantViolationException] {
         violating.write.format("delta").mode("append").saveAsTable(tableName)
         // Invaract itself raises nothing here (no ContractViolationException) - the row that
         // gets rejected is rejected by Delta's own commit-time constraint enforcement, not by
