@@ -24,6 +24,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history, so "changed documentation pages" below can diff
+          # against the PR's base branch (a shallow clone only has HEAD).
+          fetch-depth: 0
 
       - name: Set up Node.js
         if: github.event.action != 'closed'
@@ -53,15 +57,60 @@ jobs:
 
       # action: auto deploys the preview on opened/synchronize and removes
       # it on closed (merged or not) — one step handles both, per
-      # https://github.com/rossjrw/pr-preview-action. Posts/updates a
-      # sticky comment on the PR with the live preview link.
+      # https://github.com/rossjrw/pr-preview-action.
+      #
+      # pages-base-url/pages-base-path are deliberately left unset: this
+      # action computes them itself from the repository name (correctly
+      # producing mlltx.github.io/Invariant, with no protocol prefix, for
+      # a project-pages repo) and prepends https:// on its own — passing
+      # an explicit https://... value here double-prefixes the protocol,
+      # and passing an unrelated path here gets silently ignored (with a
+      # warning) since it doesn't match the umbrella-dir prefix the action
+      # expects. Its own sticky comment is disabled (comment: false) in
+      # favor of the custom one below, which names this as a docs preview
+      # and points at what changed.
       - name: Deploy preview
+        id: preview
         uses: rossjrw/pr-preview-action@v1
         with:
           source-dir: docs-site/dist
           preview-branch: gh-pages
           umbrella-dir: pr-preview
-          pages-base-url: https://mlltx.github.io
-          pages-base-path: /Invariant
           action: auto
+          comment: "false"
           qr-code: "false"
+
+      - name: List changed documentation pages
+        if: github.event.action != 'closed'
+        id: changed
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- docs-site/src/content/docs | sed 's/^docs-site\/src\/content\/docs\///; s/^/- `/; s/$/`/')
+          {
+            echo "list<<PREVIEW_CHANGED_EOF"
+            if [ -n "$changed" ]; then
+              echo "$changed"
+            else
+              echo "_No documentation pages changed in this push._"
+            fi
+            echo "PREVIEW_CHANGED_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: github.event.action != 'closed'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: docs-preview
+          message: |
+            ### 📚 Documentation preview
+
+            🔗 **[View the documentation preview](${{ steps.preview.outputs.preview-url }})**
+
+            **Changed pages in this PR:**
+            ${{ steps.changed.outputs.list }}
+
+      - name: Remove comment when preview is closed
+        if: github.event.action == 'closed'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: docs-preview
+          delete: true
