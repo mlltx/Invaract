@@ -30,7 +30,7 @@ problems late: bad data has already landed, and something downstream may have al
 read it. Invariant instead hooks into Spark's own query analysis, via
 `SparkSessionExtensions`, and rejects a violating write **before Spark executes it**. The
 target file or table is never created. See
-[Verification vs. Enforcement](/Invariant/concepts/verification-vs-enforcement/) for how
+[Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for how
 this differs from Invariant's own post-hoc reporting path.
 
 ## Why a real Spark plan, not a schema diff
@@ -39,7 +39,7 @@ Comparing "the contract's declared output schema" against "the DataFrame's schem
 before `.write()`" sounds sufficient, but it can't see how the data actually got there —
 whether a `MERGE` matched on the columns it should have, or whether a `DELETE` had a
 filter at all. Invariant translates Spark's actual Catalyst logical plan into an
-engine-independent IR (see [The Transformation IR](/Invariant/concepts/transformation-ir/)),
+engine-independent IR (see [The Transformation IR](/concepts/transformation-ir/)),
 so verification is checking the transformation Spark is about to run, not a description of
 it.
 
@@ -48,7 +48,7 @@ it.
 A verification tool that silently lets through what it doesn't understand is worse than no
 tool at all — it creates false confidence. Invariant is deliberately built to
 **fail closed**: a write shape it doesn't recognize is rejected, not passed through
-unverified. See [Fail-Closed by Default](/Invariant/concepts/fail-closed/) for why, and
+unverified. See [Fail-Closed by Default](/concepts/fail-closed/) for why, and
 how that policy was arrived at from a real gap found during development (an early version
 silently let an unrecognized Delta write through with no verification at all).
 
@@ -59,13 +59,13 @@ silently let an unrecognized Delta write through with no verification at all).
 - You want a write to genuinely fail — not just log a warning — when it violates its
   contract.
 - Your jobs write via Delta Lake, Iceberg, Parquet, CSV, Hive, Avro, or ClickHouse — see
-  [Connector Support](/Invariant/reference/connector-support/) for what's covered today.
+  [Connector Support](/reference/connector-support/) for what's covered today.
 
 ## When it isn't (yet)
 
 - You need to verify business logic correctness (is the aggregation itself right?), not
   just structural shape — out of scope today, see
-  [What is Invariant?](/Invariant/introduction/what-is-this/#what-it-verifies-today).
+  [What is Invariant?](/introduction/what-is-this/#what-it-verifies-today).
 - You're not on Apache Spark — the only adapter that exists today translates Spark's
   Catalyst plans; the IR itself is engine-independent, but no other front end has been
   built yet.

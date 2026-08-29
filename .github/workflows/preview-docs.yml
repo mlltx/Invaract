@@ -1,0 +1,67 @@
+name: Deploy PR documentation preview
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/preview-docs.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# One preview deploy per PR at a time; a newer push to the same PR
+# supersedes an in-flight preview build for it rather than racing it.
+concurrency:
+  group: docs-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build and deploy PR preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        working-directory: docs-site
+        run: npm ci
+
+      # Built with a base path scoped to this PR's own preview subfolder
+      # (/Invariant/pr-preview/pr-<number>/), not the production base — see
+      # astro.config.mjs and remark-base-links.mjs. This is what makes
+      # every link inside the preview (sidebar, pagination, and links
+      # written in page content) stay inside the preview instead of
+      # pointing back at production.
+      - name: Build
+        if: github.event.action != 'closed'
+        working-directory: docs-site
+        env:
+          DOCS_BASE_PATH: /Invariant/pr-preview/pr-${{ github.event.number }}
+        run: npm run build
+
+      # action: auto deploys the preview on opened/synchronize and removes
+      # it on closed (merged or not) — one step handles both, per
+      # https://github.com/rossjrw/pr-preview-action. Posts/updates a
+      # sticky comment on the PR with the live preview link.
+      - name: Deploy preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: docs-site/dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          pages-base-url: https://mlltx.github.io
+          pages-base-path: /Invariant
+          action: auto
+          qr-code: "false"

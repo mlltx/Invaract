@@ -56,7 +56,7 @@ Relevant top-level fields:
 |---|---|
 | `status` | `"PASS"` or `"FAIL"` for the overall job run |
 | `contractVerification.status` | `"PASSED"` or `"FAILED"` — did the output satisfy the contract |
-| `contractVerification.violations` | List of violations, if any — see [Violation Types](/Invariant/reference/violation-types/) |
+| `contractVerification.violations` | List of violations, if any — see [Violation Types](/reference/violation-types/) |
 | `transformationIR.plan` | The rendered Spark plan, translated to Invariant's IR |
 | `transformationIR.lineage` | Column-level lineage traced from that plan |
 | `plugin.events` | The transformation's own execution timeline |
@@ -69,4 +69,4 @@ and conflating them would hide which one actually failed.
 This format is internal to the example harness (`report.json` isn't versioned or
 published as an API) — if you need a machine-readable result *from the engine itself* in
 your own job, that's `VerificationResult` (see
-[Reference → Contract Format](/Invariant/reference/contract-format/)), not this file.
+[Reference → Contract Format](/reference/contract-format/)), not this file.

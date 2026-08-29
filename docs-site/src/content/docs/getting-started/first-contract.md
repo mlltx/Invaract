@@ -7,7 +7,7 @@ sidebar:
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-[Quick Start](/Invariant/getting-started/quick-start/) showed a *passing* write. This walks
+[Quick Start](/getting-started/quick-start/) showed a *passing* write. This walks
 through making one fail — the moment that actually demonstrates what Invariant is for —
 using a contract already included in the repository, run directly against the real demo
 job.
@@ -103,10 +103,10 @@ job.
 <Aside type="tip" title="You just verified the core guarantee">
 A structurally invalid write doesn't just get flagged after the fact — it never happens.
 This is the same guarantee `./dev/regression` checks automatically on every push. See
-[Prove Enforcement with the Regression Pack](/Invariant/guides/running-the-regression-pack/).
+[Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/).
 </Aside>
 
 ## What's next
 
 Now that you've seen a contract reject a real write, learn the full format so you can
-write your own: [Write a Contract](/Invariant/guides/writing-a-contract/).
+write your own: [Write a Contract](/guides/writing-a-contract/).

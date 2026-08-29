@@ -9,7 +9,7 @@ Every violation carries a `type`, a human-readable `message`, a `remediation` (a
 next step, not just a restatement of the problem), and — where relevant — the `column`,
 `location`, `expected`, and `actual` values involved. These appear in
 `contractVerification.violations` in a run's report (see
-[View Verification Results](/Invariant/guides/viewing-results/)) and in the four-part
+[View Verification Results](/guides/viewing-results/)) and in the four-part
 explanation `ContractEnforcementRule` prints when it aborts a write.
 
 ## Structural violations — inputs
@@ -38,7 +38,7 @@ explanation `ContractEnforcementRule` prints when it aborts a write.
 
 ## DML rule violations
 
-Produced when a contract declares one of the [row-level DML rules](/Invariant/guides/enforcing-dml-rules/)
+Produced when a contract declares one of the [row-level DML rules](/guides/enforcing-dml-rules/)
 and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 
 | Type | Meaning |
@@ -51,7 +51,7 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 
 Produced when Invariant genuinely can't verify a write or operation, rather than when a
 verified write is structurally wrong. See
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/) for the reasoning behind both.
+[Fail-Closed by Default](/concepts/fail-closed/) for the reasoning behind both.
 
 | Type | Meaning |
 |---|---|
@@ -61,7 +61,7 @@ verified write is structurally wrong. See
 
 ## Learn more
 
-- [View Verification Results](/Invariant/guides/viewing-results/) — where these appear in
+- [View Verification Results](/guides/viewing-results/) — where these appear in
   a run's output
-- [Reference → Contract Format](/Invariant/reference/contract-format/) — the validator
+- [Reference → Contract Format](/reference/contract-format/) — the validator
   checks that keep a contract from reaching `INVALID_CONTRACT` in the first place

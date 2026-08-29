@@ -53,5 +53,5 @@ job:
 `runner/DemoJobHarness.scala` uses both: the check rule decides whether a write happens
 at all, and the listener — fed from a write that only proceeded because it already
 passed verification — supplies the human-facing summary. See
-[Install the Enforcement Rule](/Invariant/guides/installing-the-enforcement-rule/) for
+[Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) for
 how to wire both into your own job.

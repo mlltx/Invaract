@@ -8,7 +8,7 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 
 The full shape `ContractParser`/`ContractValidator` accept. See
-[Write a Contract](/Invariant/guides/writing-a-contract/) for a guided introduction.
+[Write a Contract](/guides/writing-a-contract/) for a guided introduction.
 
 ## Document shape
 
@@ -57,7 +57,7 @@ extensions:
 | `status` | no | Defaults to `active`. Free-form (e.g. `active`, `deprecated`, `draft`). |
 | `inputs` | no | List of datasets the transformation reads. |
 | `outputs` | yes | List of datasets the transformation produces. At least one required. |
-| `rules` | no | List of `{type, ...properties}`. Most types are recorded, not yet interpreted — three are interpreted and enforced today, see [Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/). |
+| `rules` | no | List of `{type, ...properties}`. Most types are recorded, not yet interpreted — three are interpreted and enforced today, see [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/). |
 | `extensions` | no | Free-form map, merged with any unrecognized top-level keys. |
 
 ## Dataset fields (`inputs[]` / `outputs[]`)
@@ -129,7 +129,7 @@ rules:
     columns: [status, updated_at]
 ```
 
-See [Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/) for the full
+See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for the full
 semantics of each. Every other `rules` entry type (e.g. `compatibility`) is recorded on
 the parsed contract but not yet interpreted or enforced.
 
@@ -159,6 +159,6 @@ engine-only.
 - **Column-level lineage** and **governance rules** (masking, residency, purpose
   limitation) — no vocabulary exists for these in the contract format yet.
 
-See [Data Contracts](/Invariant/concepts/data-contracts/) for how this format relates to
-ODCS, and [What is Invariant?](/Invariant/introduction/what-is-this/) for what's verified
+See [Data Contracts](/concepts/data-contracts/) for how this format relates to
+ODCS, and [What is Invariant?](/introduction/what-is-this/) for what's verified
 against it today.

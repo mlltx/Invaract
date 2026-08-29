@@ -99,12 +99,12 @@ Spark reflectively accesses JDK-internal classes that JDK 17+'s module system cl
 default. Running via `spark-submit` (the primary path used throughout these docs) already
 sets the required `--add-opens` flags for you. If you invoke a module's tests directly
 with `sbt test` and hit an `InaccessibleObjectException`, see
-[Troubleshooting](/Invariant/troubleshooting/common-problems/).
+[Troubleshooting](/troubleshooting/common-problems/).
 </Aside>
 </TabItem>
 </Tabs>
 
 ## Next step
 
-Continue to [Quick Start](/Invariant/getting-started/quick-start/) to build every module
+Continue to [Quick Start](/getting-started/quick-start/) to build every module
 and run a real, contract-verified Spark job.

@@ -1,10 +1,19 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { remarkBaseLinks } from './remark-base-links.mjs';
+
+// Overridable so CI can build a PR preview at its own sub-path
+// (/Invariant/pr-preview/pr-<n>/) without changing content — see
+// .github/workflows/deploy-docs.yml and remark-base-links.mjs.
+const base = process.env.DOCS_BASE_PATH ?? '/Invariant';
 
 export default defineConfig({
 	site: 'https://mlltx.github.io',
-	base: '/Invariant',
+	base,
+	markdown: {
+		remarkPlugins: [[remarkBaseLinks, base]],
+	},
 	integrations: [
 		starlight({
 			title: 'Invariant',

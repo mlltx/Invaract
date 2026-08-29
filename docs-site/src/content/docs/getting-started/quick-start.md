@@ -9,7 +9,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 This walks through the fastest path from a fresh clone to a real, contract-verified Spark
 write — using the example job this repository ships with. It assumes you've completed
-[Installation](/Invariant/getting-started/installation/).
+[Installation](/getting-started/installation/).
 
 <Steps>
 
@@ -83,7 +83,7 @@ write — using the example job this repository ships with. It assumes you've co
    `customer_name` column the demo transformation never produces). The second job exits
    non-zero, and its output file is **never created** — the write was aborted before
    Spark touched disk. See
-   [Prove Enforcement with the Regression Pack](/Invariant/guides/running-the-regression-pack/)
+   [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/)
    for the full walkthrough and output.
 
 </Steps>
@@ -95,9 +95,9 @@ pass/fail proof inside a self-contained Docker image — nothing but Docker requ
 
 ## What's next
 
-- [Your First Contract](/Invariant/getting-started/first-contract/) — change the contract
+- [Your First Contract](/getting-started/first-contract/) — change the contract
   yourself and watch verification react.
-- [Write a Contract](/Invariant/guides/writing-a-contract/) — the full format, from
+- [Write a Contract](/guides/writing-a-contract/) — the full format, from
   scratch.
-- [Install the Enforcement Rule](/Invariant/guides/installing-the-enforcement-rule/) — wire
+- [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) — wire
   Invariant into your own Spark job, not just the demo.

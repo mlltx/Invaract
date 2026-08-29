@@ -52,7 +52,7 @@ case found during the survey was left off the safe list on that basis.
 ## The same principle applies to DML rules
 
 A contract's `merge_condition`/`forbid_unconditional_delete`/`allowed_update_columns`
-rules (see [Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/)) need
+rules (see [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/)) need
 specific facts extracted from a real `MERGE`/`UPDATE`/`DELETE` plan — and one case,
 Iceberg's merge-on-read `UPDATE`, rewrites into a plan shape with no per-column
 before/after pairing to extract those facts from. Rather than silently reporting "no
@@ -67,6 +67,6 @@ If a job you've put under contract starts failing with `UNVERIFIABLE_WRITE` or
 `RULE_UNVERIFIABLE_DML` after upgrading Spark, Delta, or Iceberg, or after changing how a
 write is issued, that's Invariant telling you it can no longer confirm the write is safe
 — not a false positive to work around. See
-[Troubleshooting](/Invariant/troubleshooting/common-problems/) and
-[Reference → Connector Support](/Invariant/reference/connector-support/) for what's
+[Troubleshooting](/troubleshooting/common-problems/) and
+[Reference → Connector Support](/reference/connector-support/) for what's
 recognized today.

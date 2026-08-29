@@ -58,7 +58,7 @@ Iceberg's merge-on-read `UPDATE` rewrites into a plan shape with no per-column
 before/after pairing to compare, so Invariant can't extract which columns actually
 changed. Rather than silently reporting "no violation" with no real check behind it, a
 write matching this shape is rejected with `RULE_UNVERIFIABLE_DML` — see
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/). This only fires when the
+[Fail-Closed by Default](/concepts/fail-closed/). This only fires when the
 active contract actually declares an `allowed_update_columns` rule; the same operation
 under a contract with no such rule executes normally.
 
@@ -82,6 +82,6 @@ Set expectations correctly rather than assuming full coverage:
 ## Try it
 
 The regression pack (`./dev/regression`) demonstrates the structural PASS/FAIL guarantee
-end-to-end; see [Prove Enforcement with the Regression Pack](/Invariant/guides/running-the-regression-pack/)
+end-to-end; see [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/)
 to run it yourself. For the exact violation types these rules produce, see
-[Reference → Violation Types](/Invariant/reference/violation-types/).
+[Reference → Violation Types](/reference/violation-types/).

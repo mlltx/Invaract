@@ -4,6 +4,14 @@ description: Verify Spark data transformations against machine-readable data con
 template: splash
 hero:
   tagline: Stop hoping your Spark job matches its contract. Prove it, before the write happens.
+  # These two links are frontmatter data consumed directly by Starlight's
+  # Hero component, which passes them straight through as a literal href —
+  # unlike the rest of this site's content links, they are NOT rewritten by
+  # remark-base-links.mjs (that plugin only sees markdown link syntax in
+  # page bodies, not YAML frontmatter). So they always point at production,
+  # even when this page is built for a PR preview. Left as-is rather than
+  # hand-rolling a preview-aware hero: the CardGrid below duplicates both
+  # destinations with links that DO stay inside the preview.
   actions:
     - text: Get Started
       link: /Invariant/getting-started/quick-start/
@@ -45,18 +53,18 @@ before Spark ever executes the write. A violation aborts the job. No output file
 <CardGrid>
 	<Card title="Quick Start" icon="rocket">
 		Go from a fresh clone to a verified Spark write in one command. [Start
-		here →](/Invariant/getting-started/quick-start/)
+		here →](/getting-started/quick-start/)
 	</Card>
 	<Card title="Write a Contract" icon="document">
 		Learn the contract format by extending the one this project ships with. [Read the
-		guide →](/Invariant/guides/writing-a-contract/)
+		guide →](/guides/writing-a-contract/)
 	</Card>
 	<Card title="Concepts" icon="open-book">
 		Understand verification vs. enforcement, and why Invariant fails closed. [Learn
-		more →](/Invariant/concepts/verification-vs-enforcement/)
+		more →](/concepts/verification-vs-enforcement/)
 	</Card>
 	<Card title="Reference" icon="information">
 		The full contract format, supported connectors, and every violation type. [Browse
-		reference →](/Invariant/reference/contract-format/)
+		reference →](/reference/contract-format/)
 	</Card>
 </CardGrid>

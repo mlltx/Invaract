@@ -38,22 +38,22 @@ These are two separate passes:
   type, a field marked both required and nullable).
 
 A contract that fails validation never reaches enforcement — see
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/).
+[Fail-Closed by Default](/concepts/fail-closed/).
 
 ## A contract is not the verification engine
 
 The contract is a plain data structure — parsing and validating one has no dependency on
 Spark at all. **Verification** — checking a contract against a real transformation's
 actual plan — is a separate concern, handled by translating that plan into the
-[transformation IR](/Invariant/concepts/transformation-ir/) and comparing the two. See
-[What is Invariant?](/Invariant/introduction/what-is-this/) for how the pieces fit
+[transformation IR](/concepts/transformation-ir/) and comparing the two. See
+[What is Invariant?](/introduction/what-is-this/) for how the pieces fit
 together end to end.
 
 ## Learn more
 
-- [Write a Contract](/Invariant/guides/writing-a-contract/) — a hands-on walkthrough of
+- [Write a Contract](/guides/writing-a-contract/) — a hands-on walkthrough of
   the format
-- [Reference → Contract Format](/Invariant/reference/contract-format/) — every field,
+- [Reference → Contract Format](/reference/contract-format/) — every field,
   fully specified
-- [Check Contract Compatibility](/Invariant/guides/checking-contract-compatibility/) —
+- [Check Contract Compatibility](/guides/checking-contract-compatibility/) —
   classifying changes between two versions of the same contract

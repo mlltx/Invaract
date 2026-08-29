@@ -37,7 +37,7 @@ Data contract + Spark transformation
 Beyond schema and location, a contract can also declare rules that constrain row-level
 `MERGE`/`UPDATE`/`DELETE` statements — for example, requiring a `MERGE`'s `ON` clause to
 match on a specific column, or forbidding an unconditional `DELETE`. See
-[Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/).
+[Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/).
 
 ## What it verifies today
 
@@ -51,8 +51,8 @@ Invariant's checks are **structural**, not semantic:
 It does **not** yet verify the transformation's business logic (that a `SUM` is the
 *correct* sum, for instance), governance rules (masking, residency), or compatibility
 between a transformation and a specific contract version. See
-[Data Contracts](/Invariant/concepts/data-contracts/) for the full picture and
-[Reference → Violation Types](/Invariant/reference/violation-types/) for exactly what's
+[Data Contracts](/concepts/data-contracts/) for the full picture and
+[Reference → Violation Types](/reference/violation-types/) for exactly what's
 checked.
 
 ## Who it's for
@@ -69,5 +69,5 @@ Invariant is early-stage: the core verification engine (contract parsing, the
 transformation IR, and the Spark adapter) is implemented and tested against real Spark
 jobs, with growing connector coverage (Delta Lake, Iceberg, Parquet, CSV, Hive, Avro,
 ClickHouse). There is no published package yet — see
-[Installation](/Invariant/getting-started/installation/) for how to use it from source
+[Installation](/getting-started/installation/) for how to use it from source
 today.

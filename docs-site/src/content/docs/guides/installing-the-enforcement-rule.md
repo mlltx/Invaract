@@ -46,7 +46,7 @@ changed afterward. Load your contract *before* building the session.
    it executes. A violation throws `ContractViolationException` — before any output is
    created — with a human-readable explanation of what the contract expected, what the
    plan contained, and how to fix it (see
-   [Your First Contract](/Invariant/getting-started/first-contract/) for a real example of
+   [Your First Contract](/getting-started/first-contract/) for a real example of
    that message).
 
 3. ### Run your job as usual
@@ -102,14 +102,14 @@ spark.listenerManager.register(irListener)
 val result = irListener.lastWrite // Option[TranslationResult]
 ```
 
-See [Verification vs. Enforcement](/Invariant/concepts/verification-vs-enforcement/) for
+See [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for
 why these are two separate mechanisms rather than one.
 
 ## What gets checked
 
 Only a plan that translates to a recognized write is verified — everything else (reads,
 `.count()`, intermediate transformations) is a silent no-op. See
-[Connector Support](/Invariant/reference/connector-support/) for which write shapes are
+[Connector Support](/reference/connector-support/) for which write shapes are
 recognized today, and
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/) for what happens when your job
+[Fail-Closed by Default](/concepts/fail-closed/) for what happens when your job
 writes via a shape Invariant doesn't recognize at all.

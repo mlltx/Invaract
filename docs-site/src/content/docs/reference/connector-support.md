@@ -8,9 +8,9 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 
 Invariant only verifies a write it can translate into a recognized `ir.Write` (see
-[The Transformation IR](/Invariant/concepts/transformation-ir/)). A write shape it
+[The Transformation IR](/concepts/transformation-ir/)). A write shape it
 doesn't recognize is rejected outright rather than silently passed — see
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/).
+[Fail-Closed by Default](/concepts/fail-closed/).
 
 ## Supported connectors
 
@@ -50,8 +50,8 @@ introduces a genuinely new write-command shape Spark has no existing generic nod
 
 If your contract is active and a write doesn't match a recognized shape above, the write
 is **rejected** — `UNVERIFIABLE_WRITE` — rather than silently allowed through. See
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/) for why, and
-[Reference → Violation Types](/Invariant/reference/violation-types/) for the full
+[Fail-Closed by Default](/concepts/fail-closed/) for why, and
+[Reference → Violation Types](/reference/violation-types/) for the full
 violation vocabulary.
 
 <Aside type="tip">

@@ -6,26 +6,20 @@ on:
     paths:
       - "docs-site/**"
       - ".github/workflows/deploy-docs.yml"
-  pull_request:
-    paths:
-      - "docs-site/**"
-      - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# Only one deployment at a time; a newer push cancels an in-flight one
-# rather than racing it, but never cancels a run that's already deploying.
+# Only one production deploy at a time; a newer push cancels an in-flight
+# one rather than racing it.
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: "docs-production-deploy"
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build docs-site
+  deploy:
+    name: Build and deploy to GitHub Pages
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -47,20 +41,15 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Upload build artifact
-        uses: actions/upload-pages-artifact@v3
+      # Publishes to the gh-pages branch's root, which is what GitHub Pages
+      # (configured under Settings > Pages to deploy from the gh-pages
+      # branch) actually serves. clean-exclude protects pr-preview/, which
+      # preview-docs.yml maintains on this same branch — without it, every
+      # production deploy would wipe out every currently-open PR's preview.
+      - name: Publish to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          path: docs-site/dist
-
-  deploy:
-    name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          folder: docs-site/dist
+          branch: gh-pages
+          clean-exclude: pr-preview/
+          force: false

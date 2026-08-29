@@ -74,8 +74,8 @@ generated operation chains, not just hand-picked examples.
 
 ## Where this fits
 
-The IR is what [structural verification](/Invariant/concepts/verification-vs-enforcement/)
+The IR is what [structural verification](/concepts/verification-vs-enforcement/)
 actually compares against a contract — it's the "actual plan" side of "does the actual
 plan match what the contract declares." See
-[Reference → Connector Support](/Invariant/reference/connector-support/) for exactly
+[Reference → Connector Support](/reference/connector-support/) for exactly
 which Spark write shapes translate to a recognized `ir.Write` today.

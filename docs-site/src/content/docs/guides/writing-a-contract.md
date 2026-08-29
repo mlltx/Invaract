@@ -50,7 +50,7 @@ inputs:
 - `location` — the physical location Invariant matches against the real Spark plan (a
   table name or a file path). Spark reports absolute `file:` URIs at runtime; a relative
   location declared here still matches, by suffix — see
-  [Contract Format](/Invariant/reference/contract-format/#location-matching).
+  [Contract Format](/reference/contract-format/#location-matching).
 - `format` — optional, e.g. `csv`, `parquet`, `delta`.
 - `schema.fields` — at least one field, each with a `name` and `type`.
 
@@ -111,7 +111,7 @@ rules:
     columns: [status, updated_at]
 ```
 
-See [Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/) for what each
+See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for what each
 one checks.
 
 ## Add extensions (optional)
@@ -145,4 +145,4 @@ Every contract under `demo/contracts/` carries this comment already.
 ## Full reference
 
 For every field, its type, and the complete set of validator checks, see
-[Reference → Contract Format](/Invariant/reference/contract-format/).
+[Reference → Contract Format](/reference/contract-format/).

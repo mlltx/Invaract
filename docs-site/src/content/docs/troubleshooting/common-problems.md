@@ -25,7 +25,7 @@ Work through this in order:
      it's the demo transformation.
    - A `MISSING_OUTPUT_FIELD`/`OUTPUT_FIELD_TYPE_MISMATCH`/similar violation → your
      contract and your job's actual output disagree; see
-     [Reference → Violation Types](/Invariant/reference/violation-types/).
+     [Reference → Violation Types](/reference/violation-types/).
    - `UNVERIFIABLE_WRITE` → your job writes via a shape Invariant doesn't recognize; see
      below.
 
@@ -33,10 +33,10 @@ Work through this in order:
 
 This means Invariant found a command that changes data but couldn't translate it into a
 recognized write — so it refused to guess, and rejected it. This is deliberate; see
-[Fail-Closed by Default](/Invariant/concepts/fail-closed/).
+[Fail-Closed by Default](/concepts/fail-closed/).
 
 Check whether your write goes through a shape listed in
-[Reference → Connector Support](/Invariant/reference/connector-support/). If it doesn't
+[Reference → Connector Support](/reference/connector-support/). If it doesn't
 (a DataSourceV2 catalog write, a streaming write, or `MERGE`/`UPDATE`/`DELETE` outside the
 connectors this covers), support for it may not exist yet.
 
@@ -46,7 +46,7 @@ Your contract declares a DML rule (`merge_condition`, `forbid_unconditional_dele
 `allowed_update_columns`) against an operation Invariant recognizes as real DML but can't
 extract the specific fact that rule needs from — today, this is known to happen for
 Iceberg's merge-on-read `UPDATE`. See
-[Enforce Row-Level DML Rules](/Invariant/guides/enforcing-dml-rules/) for exactly which
+[Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for exactly which
 combinations are covered per connector.
 
 ## `InaccessibleObjectException` running `sbt test` directly on JDK 17+
@@ -69,13 +69,13 @@ invoking Spark some other way and hit this error, add the same flag set yourself
 A document can be syntactically valid YAML and still fail `ContractValidator` — missing
 `outputs`, a duplicate field name, an empty schema. Check `INVALID_CONTRACT` in your
 violations list, and see
-[Reference → Contract Format](/Invariant/reference/contract-format/#validator-checks) for
+[Reference → Contract Format](/reference/contract-format/#validator-checks) for
 the full list of checks.
 
 ## A location doesn't match even though it "looks right"
 
 Locations are matched by normalized suffix, not exact string equality — see
-[Reference → Contract Format](/Invariant/reference/contract-format/#location-matching).
+[Reference → Contract Format](/reference/contract-format/#location-matching).
 If a match still fails, double-check for a typo in the declared path relative to where
 your job actually runs from, since the suffix match still requires a real path-boundary
 match, not a substring anywhere in the string.

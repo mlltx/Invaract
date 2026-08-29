@@ -7,15 +7,15 @@ sidebar:
 
 These scripts, under `dev/`, are how you build, exercise, and demonstrate Invariant from
 a cloned repository today — there's no published package yet (see
-[Installation](/Invariant/getting-started/installation/)).
+[Installation](/getting-started/installation/)).
 
 | Command | Purpose |
 |---|---|
 | `./dev/test` | Build every module, run the demo job on a real Spark session, generate and validate a report. The primary "does everything still work" command. |
 | `./dev/build` | Build every module's jar, in dependency order, without running the demo job. |
-| `./dev/regression` | Contract regression pack — proves a satisfied contract executes and a violated one is aborted before any output is written. See [Prove Enforcement with the Regression Pack](/Invariant/guides/running-the-regression-pack/). |
+| `./dev/regression` | Contract regression pack — proves a satisfied contract executes and a violated one is aborted before any output is written. See [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/). |
 | `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed. |
-| `./dev/report` | Start the results web UI on `http://localhost:3000`. See [View Verification Results](/Invariant/guides/viewing-results/). |
+| `./dev/report` | Start the results web UI on `http://localhost:3000`. See [View Verification Results](/guides/viewing-results/). |
 
 ## Per-module commands
 
@@ -30,7 +30,7 @@ Run from inside a module's directory (`contract`, `ir`, `spark-adapter`, or `plu
 
 `./dev/test` and `./dev/regression` wrap this; running it directly is useful for trying a
 contract against the demo job without the full harness (as in
-[Your First Contract](/Invariant/getting-started/first-contract/)):
+[Your First Contract](/getting-started/first-contract/)):
 
 ```bash
 spark-submit \
@@ -51,4 +51,4 @@ Every script here follows the same convention: exit code `0` means success — f
 `./dev/test`, that the engine actually verified a real Spark write, not just that code
 compiled. A non-zero exit means something failed; check the script's console output and
 `demo/output/report.json` first (see
-[Troubleshooting](/Invariant/troubleshooting/common-problems/)).
+[Troubleshooting](/troubleshooting/common-problems/)).

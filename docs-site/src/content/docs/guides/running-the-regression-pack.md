@@ -58,5 +58,5 @@ just the happy path.
 Unit tests can assert that `ContractEnforcementRule.verifyOrThrow` throws for a given
 input, but that doesn't prove the *real* Spark write never happens end-to-end, via a real
 `spark-submit` process, the way a production job would run. The regression pack closes
-that gap: it's the same proof [Your First Contract](/Invariant/getting-started/first-contract/)
+that gap: it's the same proof [Your First Contract](/getting-started/first-contract/)
 walked through manually, automated and asserted on every run.
