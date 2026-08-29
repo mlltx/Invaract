@@ -83,8 +83,23 @@ jobs:
       - name: List changed documentation pages
         if: github.event.action != 'closed'
         id: changed
+        env:
+          # Diffing the PR's own base/head SHAs directly (from the event
+          # payload) rather than a symbolic ref like origin/main: a prior
+          # version used origin/${{ github.base_ref }}, but actions/checkout
+          # does not set up that remote-tracking ref for a pull_request
+          # checkout even with fetch-depth: 0, so it failed with "fatal:
+          # bad revision" — silently, since this step's default shell runs
+          # with -e but not pipefail, so the failure upstream of `sed` in a
+          # pipe went unnoticed and produced an empty (wrongly "no changes")
+          # result instead of a visible error. set -o pipefail below fixes
+          # that class of bug going forward: any future failure here fails
+          # the step loudly instead of quietly posting a wrong comment.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- docs-site/src/content/docs | sed 's/^docs-site\/src\/content\/docs\///; s/^/- `/; s/$/`/')
+          set -o pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- docs-site/src/content/docs | sed 's/^docs-site\/src\/content\/docs\///; s/^/- `/; s/$/`/')
           {
             echo "list<<PREVIEW_CHANGED_EOF"
             if [ -n "$changed" ]; then
