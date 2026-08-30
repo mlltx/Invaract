@@ -839,6 +839,35 @@ plain data) — every rule type's inapplicable case, PASS, and FAIL, an
 unrecognized/malformed rule contributing no violations, and
 `RuleVerifier.appliesTo`'s kind-matching truth table.
 
+**`merge_condition` checks genuine equality pairing, not just "the column
+is referenced somewhere."** The first version of this check
+(`RuleVerifier.checkMergeCondition`) only confirmed each declared column
+appeared *anywhere* in the MERGE's `ON` condition — a real gap, since a
+range check (`t.customer_id > 0`), a literal comparison (`t.customer_id =
+'ACME'`), or an `OR` branch (`t.id = s.id OR t.region = s.region`, which
+only requires *one* side to hold) all reference a column without the
+MERGE actually matching target against source on it. `RuleVerifier.equalityPairedColumns(expr)`
+closes this: it recursively flattens top-level `&&` conjuncts (Catalyst's
+own `And.symbol`, confirmed via `SparkPlanAdapter.translateExpr`'s
+`BinaryOperator` case — not the SQL keyword `"AND"`) and only counts a
+column as matched if it's a bare operand of a top-level `=`/`<=>`
+(null-safe equality) comparison against another bare column reference —
+`t.customer_id = s.customer_id`, or even `t.customer_id = s.cust_id`
+(the declared name only has to appear on *one* side, since a contract
+could reasonably be authored against either the target's or the source's
+naming). An extra, non-equality conjunct beyond the declared columns
+(an additional partition-pruning predicate, say) is still tolerated, not
+flagged — checking more than required was never the failure this rule
+guards against.
+
+Still a structural approximation, not full predicate logic:
+`equalityPairedColumns` doesn't descend into `||`, `NOT`, or `CASE WHEN`
+(no De Morgan-equivalence reasoning), and doesn't distinguish target- from
+source-side qualifiers — two columns on the *same* side compared to each
+other would still count as a pairing. Both are documented, deliberate
+scope limits (see ROADMAP.md's "Full semantic DML verification" item),
+not oversights.
+
 ## Testing
 
 **Cross-platform assertions — a real CI failure, not a hypothetical.**

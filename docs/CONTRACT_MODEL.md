@@ -329,8 +329,10 @@ rules:
 ```
 
 - **`merge_condition`** (`columns: List[String]`) — a MERGE's `ON`
-  condition must reference every listed column. Deliberately `columns`,
-  not `on`: SnakeYAML's default (YAML 1.1) resolver treats the bare key
+  condition must include a genuine equality match (`t.col = s.col`, or
+  the null-safe `<=>`) on every listed column, not merely reference it.
+  Deliberately `columns`, not `on`: SnakeYAML's default (YAML 1.1)
+  resolver treats the bare key
   `on` as the boolean `true` (the "Norway problem" — `on`/`off`/`yes`/`no`
   all resolve to booleans), confirmed the hard way by a real failing test
   before this was caught.
@@ -350,9 +352,10 @@ constrains the DML *shape* it names — a `merge_condition` rule is
 silently inapplicable (not violated) to an operation that isn't a MERGE,
 and likewise for the other two — see `RuleVerifier`'s class doc in
 `spark-adapter` for the full reasoning, including why the merge-condition
-check is a structural approximation (checks the declared columns are
-*referenced*, not that they form the operation's only or exact equality
-pairing) rather than full predicate-logic verification.
+check is still a structural approximation, not full predicate-logic
+verification: it recognizes only a flat top-level `AND` of equalities,
+without reasoning about `NOT`, `CASE WHEN`, or De Morgan equivalences,
+and doesn't distinguish target- from source-side qualifiers.
 
 ## API compatibility
 

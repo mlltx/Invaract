@@ -1141,6 +1141,98 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
   }
 
+  // A real regression test for the predicate-logic upgrade: before it, a
+  // declared column that was merely *referenced* anywhere in the ON
+  // condition satisfied merge_condition, even via a range check that
+  // never actually matches target against source on it. This MERGE's
+  // condition references 'region' (in a `>` comparison) without an
+  // equality pairing for it at all - this must now be rejected, where it
+  // would previously have wrongly passed.
+  test("FAIL: a MERGE INTO whose ON condition only range-checks a declared column, never equality-matching it, is aborted") {
+    val tablePath = scratchDir.resolve("rule_merge_range_check_target").toString
+    val tableName = "rule_merge_range_check_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).withColumn("region", lit("us")).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |        - name: region
+         |          type: string
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id, region]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled, 'us' as region) s
+             |ON t.id = s.id AND t.region > 'a'
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleMergeConditionViolation && v.message.contains("region")),
+      s"expected a RULE_MERGE_CONDITION_VIOLATION naming 'region', got ${ex.result.violations}"
+    )
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
+  test("PASS: a MERGE INTO satisfying merge_condition via a differently-named source column executes normally") {
+    val tablePath = scratchDir.resolve("rule_merge_crossname_target").toString
+    val tableName = "rule_merge_crossname_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as source_id, 198L as doubled) s
+           |ON t.id = s.source_id
+           |WHEN NOT MATCHED THEN INSERT (id, doubled) VALUES (s.source_id, s.doubled)
+           |""".stripMargin).collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
   test("PASS: a DELETE with a filtering predicate satisfies its contract's forbid_unconditional_delete rule") {
     val tablePath = scratchDir.resolve("rule_delete_pass_target").toString
     val tableName = "rule_delete_pass_tbl"

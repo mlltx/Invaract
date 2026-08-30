@@ -4,7 +4,7 @@
 package com.example.sparkadapter
 
 import com.example.contract.{ContractRule, InterpretedRule}
-import com.example.ir.{ColumnReference, ColumnRef, DeleteScope, FunctionCall, RowMutation}
+import com.example.ir.{ColumnReference, ColumnRef, DeleteScope, FunctionCall, Literal, RowMutation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -34,25 +34,90 @@ class RuleVerifierSpec extends AnyFunSuite {
     assert(RuleVerifier.verify(rules, RowMutation()).isEmpty)
   }
 
-  test("merge_condition passes when every declared column is referenced by the match condition") {
+  test("merge_condition passes when every declared column is equality-paired in the match condition") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
     val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
 
-  test("merge_condition fails when a declared column isn't referenced by the match condition") {
+  test("merge_condition passes via null-safe equality (<=>), not just plain =") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val nullSafeEq = FunctionCall("<=>", List(ColumnReference(ColumnRef("id", Some("t"))), ColumnReference(ColumnRef("id", Some("s")))))
+    val mutation = RowMutation(matchCondition = Some(nullSafeEq))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition fails when a declared column has no equality pairing at all") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
     val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")))
     val violations = RuleVerifier.verify(rules, mutation)
     assert(violations.size == 1)
     assert(violations.head.violationType == ViolationType.RuleMergeConditionViolation)
     assert(violations.head.message.contains("region"))
+    assert(violations.head.actual.contains("id"), "'id' was genuinely paired and should be reported as such")
   }
 
-  test("merge_condition tolerates a condition referencing extra columns beyond the declared set") {
+  test("merge_condition tolerates an extra, non-equality conjunct beyond the declared columns") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
-    val extraPredicate = FunctionCall("AND", List(equalityOn("id", "id"), ColumnReference(ColumnRef("region", Some("t")))))
-    val mutation = RowMutation(matchCondition = Some(extraPredicate))
+    val extraConjunct = FunctionCall(">", List(ColumnReference(ColumnRef("created_date", Some("t"))), Literal("2024-01-01", "string")))
+    val condition = FunctionCall("&&", List(equalityOn("id", "id"), extraConjunct))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition allows a declared column to be paired with a differently-named source column") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id"))))
+    val mutation = RowMutation(matchCondition = Some(equalityOn("customer_id", "cust_id")))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition also accepts the source-side name from a cross-named pairing") {
+    // The pairing above (customer_id = cust_id) establishes both names -
+    // a contract could equally have been authored against the source's
+    // own naming.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("cust_id"))))
+    val mutation = RowMutation(matchCondition = Some(equalityOn("customer_id", "cust_id")))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition fails when a declared column is only checked by a range comparison, not an equality") {
+    // Real gap the old "referenced anywhere" check missed: customer_id
+    // appears in the condition, but nothing actually matches target
+    // against source on it.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id", "id"))))
+    val rangeCheck = FunctionCall(">", List(ColumnReference(ColumnRef("customer_id", Some("t"))), Literal(0, "integer")))
+    val condition = FunctionCall("&&", List(rangeCheck, equalityOn("id", "id")))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+  }
+
+  test("merge_condition fails when a declared column is only compared to a literal, not another column") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id"))))
+    val literalEquality = FunctionCall("=", List(ColumnReference(ColumnRef("customer_id", Some("t"))), Literal("ACME", "string")))
+    val mutation = RowMutation(matchCondition = Some(literalEquality))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+  }
+
+  test("merge_condition fails when the only equality is inside an OR branch, not a required conjunct") {
+    // Only one of the two needs to hold - a strictly weaker guarantee
+    // than declaring both columns intends.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
+    val condition = FunctionCall("||", List(equalityOn("id", "id"), equalityOn("region", "region")))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+    assert(violations.head.message.contains("region"))
+  }
+
+  test("merge_condition handles a nested (three-way) AND conjunction") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("a", "b", "c"))))
+    val nested = FunctionCall("&&", List(FunctionCall("&&", List(equalityOn("a", "a"), equalityOn("b", "b"))), equalityOn("c", "c")))
+    val mutation = RowMutation(matchCondition = Some(nested))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
 

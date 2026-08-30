@@ -4,16 +4,19 @@
 package com.example.sparkadapter
 
 import com.example.contract.{ContractRule, InterpretedRule}
-import com.example.ir.{DeleteScope, RowMutation}
+import com.example.ir.{ColumnReference, DeleteScope, Expr, FunctionCall, RowMutation}
 
 /** Checks a contract's declared DML rules (`com.example.contract.RuleType`)
   * against the structural facts `RowMutationSupport` extracted from one
   * real Spark row-level DML operation. The counterpart to
   * `StructuralVerifier` for exactly the three rule types
   * `ContractRule.interpret` currently understands — not a general
-  * rule-expression evaluator; deeper semantic DML verification (a MERGE's
-  * full predicate logic, which specific rows an UPDATE touches) remains
-  * future work (see ROADMAP.md's "Full semantic DML verification" item).
+  * rule-expression evaluator. `merge_condition` checks genuine
+  * column-to-column equality pairing (see `equalityPairedColumns`), not
+  * just "the column is referenced somewhere" — but deeper semantic DML
+  * verification (arbitrary predicate logic beyond a flat `AND` of
+  * equalities, which specific rows an `UPDATE` touches) remains future
+  * work (see ROADMAP.md's "Full semantic DML verification" item).
   *
   * Each rule only constrains the DML *shape* it's about — a single
   * `RowMutation` represents one concrete operation instance, and a
@@ -54,40 +57,79 @@ private[sparkadapter] object RuleVerifier {
       case InterpretedRule.AllowedUpdateColumns(columns) => checkAllowedUpdateColumns(columns, mutation)
     }
 
-  /** Structural approximation, not full predicate logic: this checks that
-    * every declared column is *referenced somewhere* in the MERGE's `ON`
-    * condition — enough to catch the real, common bug this rule exists
-    * for (a MERGE silently dropping a match key, e.g. matching only on
-    * `order_id` in a multi-tenant table that should also match on
-    * `customer_id`) — not that those are the *only* columns referenced,
-    * nor that each forms a genuine `target.col = source.col` equality
-    * pair rather than, say, appearing only on one side of an unrelated
-    * predicate. A condition referencing extra columns beyond the
-    * declared set (an additional partition-pruning predicate, for
-    * example) is not flagged — checking more than required is not the
-    * failure this rule guards against.
+  /** Predicate-aware, not just "referenced somewhere": a declared column
+    * must appear as a bare operand of a top-level equality (`=`/`<=>`)
+    * conjunct — `t.customer_id = s.customer_id`, or even `t.customer_id
+    * = s.cust_id` (source/target column names are allowed to differ; the
+    * declared name only has to appear on *one* side) — not merely occur
+    * anywhere in the condition. This closes three real false negatives
+    * the previous "is it referenced anywhere" check had, each a
+    * genuinely weaker match than the rule is meant to guarantee:
+    *
+    *   1. **A range/inequality check, not an equality.**
+    *      `t.customer_id > 0 AND t.id = s.id` referenced `customer_id`
+    *      without the MERGE actually matching target against source on
+    *      it — the previous check accepted this.
+    *   2. **A literal comparison, not a column-to-column match.**
+    *      `t.customer_id = 'ACME'` references `customer_id`, but pins it
+    *      to a constant rather than joining target to source on it.
+    *   3. **An `OR` branch, not a required condition.**
+    *      `t.id = s.id OR t.region = s.region` only actually requires
+    *      *one* of the two to hold, not both — a strictly weaker
+    *      guarantee than a contract declaring both columns intends.
+    *
+    * Still a structural approximation, not full predicate logic:
+    * `equalityPairedColumns` only descends through top-level `AND`
+    * (`&&`) — it doesn't reason about De Morgan equivalences, `NOT`,
+    * `CASE WHEN`, or whether the two sides are genuinely target vs.
+    * source (as opposed to, say, two target-side columns) — and a
+    * condition with *extra* conjuncts beyond the declared columns (an
+    * additional partition-pruning predicate, for example) is still not
+    * flagged: checking more than required is not the failure this rule
+    * guards against.
     */
   private def checkMergeCondition(declaredColumns: List[String], mutation: RowMutation): List[Violation] =
     mutation.matchCondition match {
       case None => Nil
       case Some(condition) =>
-        val referenced = condition.references.map(_.name)
-        val missing = declaredColumns.filterNot(referenced.contains)
+        val paired = equalityPairedColumns(condition)
+        val missing = declaredColumns.filterNot(paired.contains)
         if (missing.isEmpty) Nil
         else
           List(
             Violation(
               ViolationType.RuleMergeConditionViolation,
               s"contract requires the MERGE to match on ${declaredColumns.mkString(", ")}, but its ON condition " +
-                s"does not reference ${missing.mkString(", ")}",
+                s"does not include an equality match on ${missing.mkString(", ")}",
               remediation =
-                s"Add ${missing.mkString(", ")} to the MERGE's ON condition, or update the contract's " +
-                  "merge_condition rule if matching on fewer columns is intentional.",
+                s"Add a 'target.${missing.head} = source.${missing.head}'-style equality to the MERGE's ON " +
+                  s"condition for ${missing.mkString(", ")}, or update the contract's merge_condition rule if " +
+                  "matching on fewer columns is intentional.",
               expected = Some(declaredColumns.mkString(", ")),
-              actual = Some(referenced.mkString(", "))
+              actual = Some(paired.mkString(", "))
             )
           )
     }
+
+  /** Column names genuinely established as an equality match by `expr` —
+    * every name appearing as a bare operand of a top-level `=`/`<=>`
+    * conjunct, recursively flattening top-level `&&` (Spark's own
+    * `And.symbol`, confirmed via `SparkPlanAdapter.translateExpr`'s
+    * `BinaryOperator` case — not the SQL keyword `"AND"`). Deliberately
+    * does not descend into `||`, `NOT`, or any other function: only a
+    * conjunct that's an unconditional, required part of the match
+    * (everything `AND`-ed together must hold) counts, and only a
+    * genuine column-to-column comparison (both operands a bare
+    * `ColumnReference`) counts as establishing a match — `col = literal`
+    * pins to a constant, not to the other side of the merge.
+    */
+  private def equalityPairedColumns(expr: Expr): Set[String] = expr match {
+    case FunctionCall("&&", List(left, right)) =>
+      equalityPairedColumns(left) ++ equalityPairedColumns(right)
+    case FunctionCall(op, List(ColumnReference(a), ColumnReference(b))) if op == "=" || op == "<=>" =>
+      Set(a.name, b.name)
+    case _ => Set.empty
+  }
 
   private def checkForbidUnconditionalDelete(mutation: RowMutation): List[Violation] =
     mutation.delete match {

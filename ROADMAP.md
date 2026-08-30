@@ -1566,7 +1566,9 @@ discovered fresh.
       `target.col = source.col` equality pair — enough to catch the real
       bug this rule guards against (a MERGE silently missing a match key)
       without false-rejecting a condition with additional legitimate
-      predicate terms.
+      predicate terms. **Superseded** — see "Sub-phase: Predicate-logic
+      `merge_condition`" below, which replaces "referenced anywhere" with
+      genuine equality-pairing detection.
     - Deliberately does **not** cover Iceberg's (or any DSv2
       `SupportsRowLevelOperations` connector's) MERGE/UPDATE/DELETE —
       `ReplaceData`/`WriteDelta` are Spark's own *rewritten* form of the
@@ -1601,12 +1603,13 @@ discovered fresh.
 
 Deliberately still open, not attempted here: the merge condition's actual
 predicate logic (only *referenced* columns are checked, not a genuine
-equality pairing), which specific rows an UPDATE touches, whether a
+equality pairing) — since closed, see "Sub-phase: Predicate-logic
+`merge_condition`" below — which specific rows an UPDATE touches, whether a
 DELETE's predicate is trivially satisfiable, Iceberg/DSv2
-`SupportsRowLevelOperations` connectors, and any rule vocabulary beyond
-these three types (governance, compatibility, richer transformation
-checks) — all still tracked below, now with one fewer prerequisite
-blocking them.
+`SupportsRowLevelOperations` connectors — since closed, see "Sub-phase:
+Iceberg DML rule support" below — and any rule vocabulary beyond these
+three types (governance, compatibility, richer transformation checks) —
+all still tracked below, now with one fewer prerequisite blocking them.
 
 #### Sub-phase: Iceberg DML rule support, and failing closed on an
 #### unverifiable rule instead of silently skipping it (done)
@@ -1691,6 +1694,74 @@ and no protection, indistinguishable from "the rule doesn't apply here."
       "Mutation Testing Requirement" section. Not run to a final score;
       recorded here rather than silently presented as a completed check.
 
+#### Sub-phase: Predicate-logic `merge_condition` (done)
+
+Closes the first of the three gaps `RuleVerifier`'s own doc comment and
+ROADMAP.md's "Scope (Future)" had named since "Interpreting `rules`":
+`merge_condition` checked that every declared column was *referenced*
+somewhere in the MERGE's `ON` condition, not that it formed a genuine
+equality match — a real false-negative gap, not a hypothetical one.
+Prompted directly by a user follow-up ("what's up next on the
+roadmap?").
+
+- [x] **Three concrete false negatives the old "referenced anywhere"
+      check missed, all closed by requiring genuine equality pairing:**
+      a range/inequality check on a declared column (`t.customer_id > 0`)
+      referenced it without matching on it; a literal comparison
+      (`t.customer_id = 'ACME'`) referenced it while pinning to a
+      constant, not the source side; and a declared column's only
+      equality living inside an `OR` branch (`t.id = s.id OR t.region =
+      s.region`) made the match strictly weaker than the contract
+      intended, since only one side needs to hold.
+- [x] **`RuleVerifier.equalityPairedColumns(expr)`**: recursively
+      flattens top-level `&&` conjuncts (confirmed to be Catalyst's own
+      `And.symbol`, `"&&"`, via `SparkPlanAdapter.translateExpr`'s
+      `BinaryOperator` case — not the SQL keyword `"AND"`, a real mistake
+      an early test draft made and a later read of the actual translator
+      caught) and collects every column name appearing as a bare operand
+      of a top-level `=`/`<=>` — the null-safe operator accepted
+      alongside plain equality. Deliberately does not descend into `||`,
+      `NOT`, or `CASE WHEN` — full De Morgan-aware predicate logic
+      remains future work, not attempted here — and doesn't distinguish
+      target- from source-side qualifiers (two target columns compared to
+      each other would still count), a real remaining approximation.
+      Cross-named pairings (`t.customer_id = s.cust_id`) are accepted
+      either from the target's or the source's declared name, since a
+      contract could reasonably be authored against either side's naming.
+      An extra, non-equality conjunct beyond the declared columns (a
+      partition-pruning predicate, say) is still tolerated, not flagged —
+      checking more than required was never the failure this rule guards
+      against.
+- [x] 13 new/rewritten tests: `RuleVerifierSpec` gained 9 pure-Scala
+      `merge_condition` cases (equality pairing PASS, null-safe `<=>`,
+      missing pairing FAIL, an extra tolerated conjunct, cross-named
+      pairing from either side, a range-only FAIL, a literal-only FAIL,
+      an OR-only FAIL, and a nested three-way `AND`); `ContractEnforcementRuleSpec`
+      gained 2 real-Delta cases (a range-check-only MERGE aborted with
+      `RULE_MERGE_CONDITION_VIOLATION`; a cross-named-column MERGE
+      executing normally) — both asserting on the target table's rows
+      being byte-identical (FAIL) or correctly updated (PASS), the same
+      discipline every enforcement test in this file uses. Full
+      `spark-adapter` suite: 279/279 passing, zero regressions across all
+      connectors (Delta, Iceberg both write strategies, Hive, Avro,
+      ClickHouse via a real subprocess server, Parquet/CSV/JDBC).
+- [x] Mutation testing scoped to `RuleVerifier.scala` (the only file this
+      change touched): **100%** (15/15 non-excluded mutants killed, 39
+      generated total) — written up front per CLAUDE.md's "write
+      mutation-resistant tests the first time" guidance, run once to
+      confirm rather than iteratively.
+- [x] `mimaReportBinaryIssues` clean for `spark-adapter` (baseline
+      published from this branch's prior HEAD via `git stash`, not a
+      destructive checkout); `./dev/build`/`./dev/test`/`./dev/regression`
+      all pass against real `spark-submit` — the demo pipeline's own
+      `PASSED (invariant_demo_output@1.0.0)`, and the regression pack's
+      2/2 cases, both unaffected by this change (neither uses a MERGE).
+
+Deliberately still open, not attempted here: De Morgan-aware handling of
+`NOT`/`CASE WHEN`, distinguishing target- from source-side qualifiers in
+an equality pair, which specific rows an UPDATE touches, and whether a
+DELETE's predicate is trivially satisfiable — all still tracked below.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1718,18 +1789,20 @@ and no protection, indistinguishable from "the rule doesn't apply here."
       `DELETE`), continued. Structural verification (target location/
       schema, MERGE's source as an input) and a rule-based slice covering
       both Delta and any DSv2 `SupportsRowLevelOperations` connector
-      (Iceberg's mechanism) — merge match columns, forbidding an
-      unconditional delete, allowed update columns for copy-on-write
-      UPDATE, all checked structurally rather than by predicate logic,
-      failing closed rather than silently skipping the rule when this
-      module recognizes an operation as DML but can't extract what a
-      declared rule needs — are all done; see the "Delta Lake
-      operation-surface coverage ledger", "Interpreting `rules`", and
-      "Iceberg DML rule support" sub-phases above. What's still
-      unverified, deliberately:
-      - The merge condition's actual predicate logic — `merge_condition`
-        today checks that declared columns are *referenced*, not that
-        they form the operation's only or exact equality pairing.
+      (Iceberg's mechanism) — merge match columns (now checked via
+      genuine equality pairing, not just "referenced somewhere"),
+      forbidding an unconditional delete, allowed update columns for
+      copy-on-write UPDATE, failing closed rather than silently skipping
+      the rule when this module recognizes an operation as DML but can't
+      extract what a declared rule needs — are all done; see the "Delta
+      Lake operation-surface coverage ledger", "Interpreting `rules`",
+      "Iceberg DML rule support", and "Predicate-logic `merge_condition`"
+      sub-phases above. What's still unverified, deliberately:
+      - `equalityPairedColumns` doesn't reason about De Morgan
+        equivalences, `NOT`, or `CASE WHEN` — only a flat top-level `AND`
+        of equalities is recognized — and doesn't distinguish target- from
+        source-side qualifiers (two same-side columns compared to each
+        other would still count as a pairing).
       - Which specific rows an `UPDATE` touches, and whether a `DELETE`'s
         predicate (when present) is trivially satisfiable.
       - `allowed_update_columns` against an Iceberg merge-on-read
@@ -1739,8 +1812,8 @@ and no protection, indistinguishable from "the rule doesn't apply here."
         but isn't verified.
       A richer rule vocabulary (row-level conditions expressed as actual
       boolean logic against contract-declared fields, not just "which
-      columns does it touch") would be needed for the predicate-logic
-      piece specifically — not started.
+      columns does it touch") would be needed for the De Morgan/`NOT`/
+      `CASE WHEN` piece specifically — not started.
 
 #### Dependencies
 

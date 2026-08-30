@@ -43,7 +43,7 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 
 | Type | Meaning |
 |---|---|
-| `RULE_MERGE_CONDITION_VIOLATION` | A `MERGE`'s `ON` condition doesn't reference every column a `merge_condition` rule declares. |
+| `RULE_MERGE_CONDITION_VIOLATION` | A `MERGE`'s `ON` condition doesn't include a genuine equality match on every column a `merge_condition` rule declares. |
 | `RULE_UNCONDITIONAL_DELETE` | A `DELETE` (or DSv2 `DeleteFromTable`) removes every row it reaches, with no filtering predicate, under a `forbid_unconditional_delete` rule. |
 | `RULE_DISALLOWED_UPDATE_COLUMN` | A standalone `UPDATE` assigns a column outside an `allowed_update_columns` rule's declared list. |
 
