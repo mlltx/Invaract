@@ -273,4 +273,84 @@ class ContractParserTest extends AnyFunSuite {
     }
     assert(ex.getMessage.contains("location"))
   }
+
+  // write() is the inverse of parse/parseFile - these lock in the round
+  // trip a caller like ContractEnforcementRule.dryRun depends on: a
+  // Contract built programmatically (or parsed from a real file) must
+  // come back byte-for-byte equal after write() then parse(), covering
+  // every shape parseContract itself decodes (nested struct fields,
+  // interpreted rules, extensions, saveMode, optional format).
+
+  test("write should round-trip a full contract parsed from a real fixture") {
+    val original = ContractParser.parseFile(fixture("customer_orders_v1.yaml"))
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+
+    assert(roundTripped == original)
+  }
+
+  test("write should round-trip a contract with nested struct fields, rules, and extensions") {
+    val yaml =
+      """id: nested_contract
+        |version: "2.3.1"
+        |status: draft
+        |inputs:
+        |  - name: in
+        |    location: raw.in
+        |    format: table
+        |    schema:
+        |      fields:
+        |        - name: address
+        |          type: struct
+        |          required: true
+        |          nullable: false
+        |          properties:
+        |            - name: city
+        |              type: string
+        |            - name: zip
+        |              type: string
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    saveMode: overwrite
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |          required: true
+        |rules:
+        |  - type: merge_condition
+        |    columns: [customer_id, order_id]
+        |  - type: forbid_unconditional_delete
+        |extensions:
+        |  owner: data-platform-team
+        |  domain: sales
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+
+    assert(roundTripped == original)
+  }
+
+  test("write should omit empty inputs/rules/extensions rather than emitting empty collections") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val contract = ContractParser.parse(yaml)
+    val written = ContractParser.write(contract)
+
+    assert(!written.contains("inputs"))
+    assert(!written.contains("rules"))
+    assert(!written.contains("extensions"))
+    assert(ContractParser.parse(written) == contract)
+  }
 }

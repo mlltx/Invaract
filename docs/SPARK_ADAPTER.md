@@ -680,6 +680,48 @@ still fed from a write that only proceeded because it already passed
 verification) supplies `demo/output/report.json`'s human-facing
 `transformationIR` summary.
 
+### Dry-run mode: inferring a contract instead of enforcing one
+
+`ContractEnforcementRule.dryRun` (`ContractInference.scala`) answers a
+different question from everything above: "I don't have a contract for
+this job yet — what would one covering it actually look like?" Installed
+via the same `injectCheckRule` mechanism as `forContract`, but with no
+contract to enforce, so it only observes: never throws, never blocks a
+write. On a recognized write, it builds a `Contract` from that write's
+actual location/format/save-mode/schema and the schemas of every input the
+write's plan reads — the same `collectInputSchemas` helper `verifyOrThrow`
+itself uses, factored out specifically so the two can never disagree about
+what counts as an input — and hands it to a caller-supplied callback.
+`runner/DemoJobHarness` wires this up behind a `--dry-run` flag: no
+contract is loaded at all, and the inferred contract is printed via
+`ContractParser.write` (the new inverse of `ContractParser.parse`/
+`parseFile`) instead of being enforced. See docs-site's "Dry-run mode"
+guide for the user-facing walkthrough.
+
+**Structure only, never business rules.** `rules` is always empty on an
+inferred contract — there is no way to observe "this MERGE must always
+match on customer_id" from watching one execution, the way `RuleType`'s
+vocabulary expresses it. Every inferred field is marked `required: true`
+(it genuinely was present in this run) with `nullable` taken directly from
+Spark's own tracked nullability, not guessed. Row-level DML (MERGE/UPDATE/
+DELETE) is out of scope for the same reason `WriteCommandInfo`'s DML cases
+already document: those operations have no single "new output" to build a
+dataset schema from.
+
+**A real bug this caught.** The first implementation inferred a write's
+raw `WriteCommandInfo.location` verbatim — for a local path, that includes
+Spark's own `file:` scheme prefix (`file:/tmp/...`). `StructuralVerifier.locationsMatch`
+only strips that prefix from the *actual* side of a comparison, expecting
+a contract's *declared* location to already be scheme-less (the form every
+hand-authored contract in `demo/contracts/` uses). An inferred contract
+that skipped this normalization would therefore fail its own
+`OUTPUT_LOCATION_MISMATCH` check the moment it was used with
+`forContract` against the exact write it came from — confirmed by a real
+round-trip test (`ContractInferenceSpec`, "an inferred contract ...
+passes real enforcement of the write it came from") failing this way
+before the fix. `ContractInference.normalizeLocation` strips the prefix
+inferred locations the same way `locationsMatch` expects.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s

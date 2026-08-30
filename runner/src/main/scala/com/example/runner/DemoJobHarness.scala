@@ -42,18 +42,31 @@ case class ExecutionReport(
   */
 object DemoJobHarness {
   def main(args: Array[String]): Unit = {
-    val inputPath = args.headOption.getOrElse("demo/input/sample.csv")
-    val outputPath = args.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
-    val reportPath = args.applyOrElse(2, (_: Int) => "demo/output/report.json")
-    val contractPath = args.applyOrElse(3, (_: Int) => "demo/contracts/invaract_output.yaml")
+    // Dry-run mode (ROADMAP.md): run with no contract at all, and instead
+    // of enforcing one, infer and print what a contract covering this run
+    // would look like — see ContractEnforcementRule.dryRun's class doc. A
+    // flag rather than a magic positional value so "no contract" stays an
+    // explicit, discoverable choice, not an easy-to-miss reinterpretation
+    // of an omitted argument. Recognized anywhere in `args` and stripped
+    // before positional parsing, so `--dry-run` can precede or follow the
+    // other arguments equally.
+    val dryRun = args.contains("--dry-run")
+    val positional = args.filterNot(_ == "--dry-run")
+
+    val inputPath = positional.headOption.getOrElse("demo/input/sample.csv")
+    val outputPath = positional.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
+    val reportPath = positional.applyOrElse(2, (_: Int) => "demo/output/report.json")
+    val contractPath = positional.applyOrElse(3, (_: Int) => "demo/contracts/invaract_output.yaml")
 
     val startTime = System.currentTimeMillis()
 
     val report = Try {
       // Loaded before the SparkSession, since ContractEnforcementRule must
       // be installed at session-construction time (SparkSessionExtensions
-      // configuration can't be changed on an already-built session).
-      val contract = ContractParser.parseFile(contractPath)
+      // configuration can't be changed on an already-built session). In
+      // dry-run mode there is no contract to load at all — contractPath is
+      // ignored entirely, not just left unvalidated.
+      val contract = if (dryRun) None else Some(ContractParser.parseFile(contractPath))
 
       // Least invasive way to observe a write's real logical plan for
       // *reporting*: a QueryExecutionListener, registered once, requires no
@@ -64,6 +77,13 @@ object DemoJobHarness {
       // fires after Spark has already executed the query. Enforcement (see
       // below) needs a different mechanism entirely.
       val irListener = new SparkAdapterListener
+
+      // Only dry-run mode ever writes to this; a mutable cell is the
+      // simplest way to get a value out of a check-rule callback (the same
+      // "last value wins" pattern SparkAdapterListener.lastWrite already
+      // uses for the analogous post-execution case — see dryRun's own doc
+      // for why more than one callback per write is possible).
+      @volatile var inferredContract: Option[com.example.contract.Contract] = None
 
       val spark = SparkSession
         .builder()
@@ -76,8 +96,13 @@ object DemoJobHarness {
         // write that violates `contract` throws ContractViolationException
         // here, aborting before any data is written — see
         // ContractEnforcementRule's class doc for why a check rule, not the
-        // listener above, is the correct mechanism for this.
-        .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+        // listener above, is the correct mechanism for this. Dry-run mode
+        // installs the analogous observe-only rule instead — see
+        // ContractEnforcementRule.dryRun's class doc.
+        .withExtensions(_.injectCheckRule(contract match {
+          case Some(c) => ContractEnforcementRule.forContract(c)
+          case None    => ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
+        }))
         .getOrCreate()
 
       spark.sparkContext.setLogLevel("WARN")
@@ -113,13 +138,22 @@ object DemoJobHarness {
       )
 
       // The write only reached this point because ContractEnforcementRule
-      // already verified it; report that outcome rather than re-verifying.
-      val contractVerification = Map(
-        "status" -> "PASSED",
-        "contract" -> s"${contract.id}@${contract.version}",
-        "contractPath" -> contractPath,
-        "violations" -> List()
-      )
+      // already verified it (or, in dry-run mode, was only observed);
+      // report that outcome rather than re-verifying.
+      val contractVerification = contract match {
+        case Some(c) =>
+          Map(
+            "status" -> "PASSED",
+            "contract" -> s"${c.id}@${c.version}",
+            "contractPath" -> contractPath,
+            "violations" -> List()
+          )
+        case None =>
+          Map(
+            "status" -> "DRY_RUN",
+            "inferredContractYaml" -> inferredContract.map(ContractParser.write).getOrElse("")
+          )
+      }
 
       val outputSchema = outputDf.schema.fields.map(f => Map(
         "name" -> f.name,
@@ -235,6 +269,16 @@ object DemoJobHarness {
     }
 
     report.contractVerification.get("status") match {
+      case Some("DRY_RUN") =>
+        println("\nDry-run mode: no contract was supplied, so nothing was enforced.")
+        report.contractVerification.get("inferredContractYaml") match {
+          case Some(yaml: String) if yaml.nonEmpty =>
+            println("Inferred contract, from this run's actual inputs/outputs — copy it into a file, review it, " +
+              "and pass it as the contract argument to use the normal (enforced) mode:\n")
+            println(yaml)
+          case _ =>
+            println("No write was recognized during this run, so no contract could be inferred.")
+        }
       case Some(status: String) =>
         println(s"\nContract verification: $status (${report.contractVerification.getOrElse("contract", "?")})")
         report.contractVerification.get("explanation") match {

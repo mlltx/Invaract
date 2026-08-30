@@ -13,6 +13,7 @@ a cloned repository today — there's no published package yet (see
 |---|---|
 | `./dev/test` | Build every module, run the demo job on a real Spark session, generate and validate a report. The primary "does everything still work" command. |
 | `./dev/build` | Build every module's jar, in dependency order, without running the demo job. |
+| `./dev/dry-run` | Run the demo job with no contract at all, and print one inferred from its actual inputs/outputs. See [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). |
 | `./dev/regression` | Contract regression pack — proves a satisfied contract executes and a violated one is aborted before any output is written. See [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/). |
 | `./dev/regression-docker` | Same regression pack, in a self-contained Docker image — no local JDK/sbt/Spark needed. |
 | `./dev/report` | Start the results web UI on `http://localhost:3000`. See [View Verification Results](/guides/viewing-results/). |
@@ -43,7 +44,9 @@ spark-submit \
 
 All four positional arguments are optional and default to the demo's own paths — you can
 override only the ones you need, e.g. just the contract path to try a different contract
-against the same demo data.
+against the same demo data. Add `--dry-run` anywhere in the argument list (before or
+after the positional ones) to run with no contract at all — see
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/).
 
 ## Exit codes
 

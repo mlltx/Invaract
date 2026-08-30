@@ -5,13 +5,15 @@
 PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar"
 RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 
-# run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT]
+# run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT] [EXTRA_ARG...]
 #
 # Runs DemoJobHarness (the example Spark job / test harness — see its class
 # doc in runner/src/main/scala/com/example/runner/DemoJobHarness.scala; it
 # is not Invaract's verification engine, just the job that exercises it)
 # via spark-submit when it's on PATH, falling back to a manually-flagged
-# `java -cp` invocation otherwise.
+# `java -cp` invocation otherwise. Any arguments beyond CONTRACT are passed
+# straight through after it — used by dev/dry-run to append `--dry-run`,
+# which DemoJobHarness recognizes anywhere in its argument list.
 #
 # On Windows (git-bash/MSYS, $OSTYPE=msys), Spark's bin/spark-submit is a
 # bash script whose bin/spark-class internals call `ps -o`, which
@@ -23,6 +25,7 @@ RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 # but nowhere else in this repo's scripts.
 run_demo_job_harness() {
   local input="$1" output="$2" report="$3" contract="${4:-}"
+  local extra=("${@:5}")
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
@@ -31,14 +34,14 @@ run_demo_job_harness() {
         --master local[*] \
         --jars "$PLUGIN_JAR" \
         "$RUNNER_JAR" \
-        "$input" "$output" "$report" $contract
+        "$input" "$output" "$report" $contract "${extra[@]}"
   elif command -v spark-submit &> /dev/null; then
     spark-submit \
       --class com.example.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
       "$RUNNER_JAR" \
-      "$input" "$output" "$report" $contract
+      "$input" "$output" "$report" $contract "${extra[@]}"
   else
     # spark-submit's own launch scripts inject the --add-opens flags Spark
     # needs on JDK 17+ (see plugin/build.sbt and spark-adapter/build.sbt
@@ -62,6 +65,6 @@ run_demo_job_harness() {
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
       -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.DemoJobHarness \
-      "$input" "$output" "$report" $contract
+      "$input" "$output" "$report" $contract "${extra[@]}"
   fi
 }

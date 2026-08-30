@@ -1,0 +1,133 @@
+---
+title: Infer a Starting Contract with Dry-Run Mode
+description: Run a transformation with no contract at all, and get one printed for you to copy.
+sidebar:
+  order: 1
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+[Write a Contract](/guides/writing-a-contract/) walks through authoring one by hand,
+field by field. If you don't have a contract yet and just want to see what your
+transformation actually reads and writes, dry-run mode does that for you: run your job
+with no contract at all, and Invaract prints one back — built from the job's real inputs
+and outputs — that you can copy into a file, review, and use with
+[the enforcement rule](/guides/installing-the-enforcement-rule/) from then on.
+
+<Aside type="note" title="A starting point, not a finished contract">
+Dry-run mode infers *structure* — locations, formats, save mode, field names/types/
+nullability — never business rules. It has no way to know your MERGE must always match
+on `customer_id`, or that a `DELETE` should never run unconditionally; add those by hand
+once you have a contract to add them to. Every inferred field is also marked `required:
+true`, since it genuinely was present in this run — review that against what you actually
+intend before treating it as a finished document.
+</Aside>
+
+## Try it against the demo job
+
+<Steps>
+
+1. ### Run the demo with no contract supplied
+
+   ```bash
+   ./dev/dry-run
+   ```
+
+   This builds all 5 modules the same way `./dev/test` does, then runs `DemoJobHarness`
+   with `--dry-run` and no contract argument at all.
+
+2. ### Read the inferred contract
+
+   The run prints something like:
+
+   ```yaml
+   Dry-run mode: no contract was supplied, so nothing was enforced.
+   Inferred contract, from this run's actual inputs/outputs — copy it into a file, review it,
+   and pass it as the contract argument to use the normal (enforced) mode:
+
+   id: inferred_contract
+   version: "0.1.0"
+   status: draft
+   inputs:
+     - name: input
+       location: demo/input/sample.csv
+       schema:
+         fields:
+           - name: id
+             type: integer
+             required: true
+             nullable: true
+           - name: value
+             type: integer
+             required: true
+             nullable: true
+   outputs:
+     - name: output
+       location: demo/output/dry_run_result.parquet
+       format: parquet
+       saveMode: overwrite
+       schema:
+         fields:
+           - name: id
+             type: integer
+             required: true
+             nullable: true
+           - name: value
+             type: integer
+             required: true
+             nullable: true
+           - name: value_squared
+             type: integer
+             required: true
+             nullable: true
+   ```
+
+   Save that to a file (`id`, `version`, and `status` are placeholders — replace them once
+   you know what this contract should really be called), and you have a real starting
+   point for [Write a Contract](/guides/writing-a-contract/) to refine.
+
+</Steps>
+
+## Using it in your own job
+
+Dry-run mode installs the same way as real enforcement — a `SparkSessionExtensions` check
+rule, at session construction time — just with no contract to enforce:
+
+```scala
+import com.example.contract.{Contract, ContractParser}
+import com.example.sparkadapter.ContractEnforcementRule
+import org.apache.spark.sql.SparkSession
+
+var inferredContract: Option[Contract] = None
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(
+    ContractEnforcementRule.dryRun(contract => inferredContract = Some(contract))
+  ))
+  .getOrCreate()
+
+// ... your job's write happens here, exactly as it would without Invaract installed ...
+
+inferredContract.foreach(c => println(ContractParser.write(c)))
+```
+
+`ContractEnforcementRule.dryRun` never throws and never blocks a write — there's no
+contract to violate. It only calls its callback when the analyzed plan is a write Invaract
+recognizes (see [Connector Support](/reference/connector-support/)); a `.count()`, a plain
+read, or an unrecognized write shape produces nothing. If your job performs more than one
+write, the callback fires once per recognized write — capture the one you want the same
+way the example above does, by overwriting a mutable cell.
+
+## What it doesn't do
+
+Dry-run mode only observes — it's the mirror image of
+[`SparkAdapterListener`](/guides/installing-the-enforcement-rule/#reporting-on-a-write-not-just-gating-it),
+not a replacement for real enforcement. Once you have a reviewed contract, switch back to
+[`ContractEnforcementRule.forContract`](/guides/installing-the-enforcement-rule/) — that's
+the mechanism that actually gates a write. Row-level DML (`MERGE`/`UPDATE`/`DELETE`) is
+also out of scope for inference: those operations have no single "new output" to build a
+dataset schema from (see [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for
+how they're verified once a contract exists), so dry-run mode is silent for them.

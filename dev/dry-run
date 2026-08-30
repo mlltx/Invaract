@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+source dev/lib.sh
+
+echo "======================================"
+echo "Invaract Dry-Run"
+echo "======================================"
+echo ""
+echo "Runs the demo job with no contract at all. Instead of enforcing one,"
+echo "Invaract observes the job's real write and prints what a contract"
+echo "covering it would look like - see docs-site's 'Dry-run mode' guide."
+echo ""
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+REPORT_DIR="demo/output"
+REPORT_FILE="$REPORT_DIR/dry_run_report.json"
+INPUT="${1:-demo/input/sample.csv}"
+OUTPUT="${2:-demo/output/dry_run_result.parquet}"
+
+cleanup() {
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}✕ Dry run failed${NC}"
+  fi
+  return $exit_code
+}
+trap cleanup EXIT
+
+echo -e "${YELLOW}Building all modules...${NC}"
+./dev/build
+
+if [ ! -f "$PLUGIN_JAR" ] || [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Required JAR(s) not found - see ./dev/build output above${NC}"
+  exit 1
+fi
+
+mkdir -p "$REPORT_DIR"
+rm -f "$REPORT_FILE"
+
+echo ""
+echo -e "${YELLOW}Running the demo job with --dry-run (no contract supplied)...${NC}"
+echo "  Input: $INPUT"
+echo "  Output: $OUTPUT"
+echo "  Report: $REPORT_FILE"
+echo ""
+
+# No CONTRACT positional argument at all - dry-run mode never loads one
+# (see DemoJobHarness.main and ContractEnforcementRule.dryRun's class doc).
+run_demo_job_harness "$INPUT" "$OUTPUT" "$REPORT_FILE" "" --dry-run
+
+echo ""
+echo -e "${GREEN}✓ Dry run complete - copy the inferred contract above into a file to use with the normal (enforced) mode${NC}"
+echo -e "${GREEN}✓ Full report: $REPORT_FILE${NC}"

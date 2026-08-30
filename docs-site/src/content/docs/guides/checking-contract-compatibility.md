@@ -2,7 +2,7 @@
 title: Check Contract Compatibility
 description: Classify the difference between two versions of a contract, and catch a mis-declared version bump.
 sidebar:
-  order: 6
+  order: 7
 ---
 
 As a contract evolves, its `version` should reflect the actual scope of change — a
