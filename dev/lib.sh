@@ -53,7 +53,15 @@ install_failure_trap() {
 # but nowhere else in this repo's scripts.
 run_demo_job_harness() {
   local input="$1" output="$2" report="$3" contract="${4:-}"
-  local extra=("${@:5}")
+  # A plain word-split string, not a bash array: dev/regression runs under
+  # `set -u`, and macOS's default /bin/bash (still 3.2, Apple ships it
+  # GPLv2-only and hasn't upgraded) throws "unbound variable" expanding
+  # "${arr[@]}" on a zero-length array under nounset - confirmed the hard
+  # way by a real CI failure on macos-latest, not assumed. Unquoted
+  # interpolation below matches the existing `$contract` convention in this
+  # same function, which has the identical "no spaces in a real argument"
+  # assumption already.
+  local extra="${*:5}"
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
@@ -62,14 +70,14 @@ run_demo_job_harness() {
         --master local[*] \
         --jars "$PLUGIN_JAR" \
         "$RUNNER_JAR" \
-        "$input" "$output" "$report" $contract "${extra[@]}"
+        "$input" "$output" "$report" $contract $extra
   elif command -v spark-submit &> /dev/null; then
     spark-submit \
       --class com.example.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
       "$RUNNER_JAR" \
-      "$input" "$output" "$report" $contract "${extra[@]}"
+      "$input" "$output" "$report" $contract $extra
   else
     # spark-submit's own launch scripts inject the --add-opens flags Spark
     # needs on JDK 17+ (see plugin/build.sbt and spark-adapter/build.sbt
@@ -93,6 +101,6 @@ run_demo_job_harness() {
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
       -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.DemoJobHarness \
-      "$input" "$output" "$report" $contract "${extra[@]}"
+      "$input" "$output" "$report" $contract $extra
   fi
 }

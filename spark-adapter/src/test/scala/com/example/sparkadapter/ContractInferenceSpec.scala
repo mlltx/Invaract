@@ -69,6 +69,18 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     inferred.last
   }
 
+  /** `scratchDir.resolve(...).toString` renders OS-native separators
+    * (backslashes on Windows), but `ContractInference` always normalizes an
+    * inferred location to forward slashes (via
+    * `StructuralVerifier.normalizeSparkLocation`, matching Spark's own
+    * platform-independent reporting) - confirmed the hard way by a real
+    * CI failure on windows-latest, not assumed, when these tests compared
+    * against the raw, backslash-containing `Path.toString()` value
+    * directly. Every exact-equality location assertion below normalizes
+    * its expected value the same way first.
+    */
+  private def normalizedPath(path: String): String = path.replace('\\', '/')
+
   test("dry-run infers an output dataset matching a real write's actual location, format, save mode, and schema") {
     val outputPath = scratchDir.resolve("infer_output.parquet").toString
 
@@ -83,7 +95,7 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     // "file:" scheme prefix, which ContractInference must strip so the
     // inferred location matches the bare-path form a hand-authored
     // contract declares (see ContractInference.normalizeLocation's doc).
-    assert(output.location == outputPath, s"expected location '$outputPath', got '${output.location}'")
+    assert(output.location == normalizedPath(outputPath), s"expected location '$outputPath', got '${output.location}'")
     assert(output.format.contains("parquet"))
     assert(output.saveMode.contains("overwrite"))
     assert(output.schema.fields.map(_.name) == List("id", "doubled"))
@@ -114,7 +126,7 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(contract.inputs.size == 1)
     val input = contract.input("input").get
-    assert(input.location == inputPath, s"expected location '$inputPath', got '${input.location}'")
+    assert(input.location == normalizedPath(inputPath), s"expected location '$inputPath', got '${input.location}'")
     assert(input.schema.fields.map(_.name).toSet == Set("id", "doubled"))
   }
 
@@ -133,7 +145,7 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(contract.inputs.size == 2)
     assert(contract.inputs.map(_.name).toSet == Set("input_1", "input_2"))
-    assert(contract.inputs.map(_.location).toSet == Set(leftPath, rightPath))
+    assert(contract.inputs.map(_.location).toSet == Set(normalizedPath(leftPath), normalizedPath(rightPath)))
   }
 
   test("dry-run infers a contract with no rules and no extensions - never fabricates business intent") {
