@@ -79,6 +79,36 @@ object ContractEnforcementRule {
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options)
 
+  /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
+    * the same way as `forContract` — via
+    * `SparkSession.Builder.withExtensions(_.injectCheckRule(...))` — but
+    * with no contract to enforce at all. Rather than verifying a write, it
+    * infers what a contract covering it would look like (see
+    * `ContractInference`) and hands that to `onInferred`, so a user running
+    * a real transformation for the first time, before any contract exists
+    * for it, gets a concrete starting point to copy, edit, and use with
+    * `forContract` from then on — see docs-site's "Dry-run mode" guide.
+    *
+    * Never throws, never blocks a write: there is nothing to enforce
+    * without a contract, so unlike `forContract` this check rule only
+    * observes. Only a plan recognized as an ordinary write (one
+    * `WriteCommandSupport.combined` matches) triggers `onInferred` — the
+    * same scope `verifyOrThrow`'s `ir.Write` branch covers, deliberately
+    * excluding state-changing CALLs and row-level DML (MERGE/UPDATE/DELETE
+    * have no "new output" to infer a dataset schema from — see
+    * `WriteCommandInfo`'s row-level-DML cases in `WriteCommandSupport` for
+    * why). `injectCheckRule` fires on every analyzed plan the session
+    * produces, so `onInferred` may fire more than once for what a user
+    * thinks of as a single write (e.g. an atomic CTAS's nested `AppendData`
+    * against a `StagedTable` — see `WriteCommandSupport.namedRelationLocationAndFormat`'s
+    * doc); a caller that only wants "the last one" should simply overwrite
+    * its own captured value on each call, the same pattern
+    * `SparkAdapterListener.lastWrite` already uses for the analogous
+    * post-execution case.
+    */
+  def dryRun(onInferred: Contract => Unit): SparkSession => LogicalPlan => Unit =
+    _ => (plan: LogicalPlan) => inferOrIgnore(plan, onInferred)
+
   /** Every recognized *read* shape's location/schema extraction, in one
     * place - shared by both `plan.collect` sites in `verifyOrThrow` below
     * (the raw plan, and a recognized write's own `query`), which used to
@@ -106,6 +136,27 @@ object ContractEnforcementRule {
     // always reported MISSING_INPUT even though data was genuinely read).
     case htr: HiveTableRelation => SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.schema
   }
+
+  /** Every recognized read anywhere in `plan` — the raw plan itself, plus
+    * (for a recognized write) its own `query` — via `recognizedRead` above.
+    * Shared by `verifyOrThrow`'s real enforcement and `inferOrIgnore`'s
+    * dry-run inference, so the two can never disagree about what counts as
+    * a contract input; see `verifyOrThrow`'s own call site for why both the
+    * raw plan and `query` need walking (Delta's row-level DML commands are
+    * leaf nodes in the tree-traversal sense).
+    *
+    * Takes the write's `query` directly rather than re-deriving it via a
+    * second `WriteCommandSupport.combined.lift(plan)` — both call sites
+    * already compute that lookup once for their own purposes (`verifyOrThrow`
+    * for `outputSchema`, `inferOrIgnore` for the `WriteCommandInfo` it
+    * infers from), so re-deriving it a second time here would just repeat
+    * that match on every analyzed plan the session produces for no reason.
+    */
+  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): List[(String, StructType)] =
+    (
+      plan.collect(recognizedRead) ++
+        writeQuery.toList.flatMap(_.collect(recognizedRead))
+    ).distinct.toList
 
   /** The check logic itself, exposed directly for tests and for callers
     * that want to verify without going through `SparkSession` construction
@@ -156,14 +207,14 @@ object ContractEnforcementRule {
         // DML, the same plan `plan.collect` would already reach on its own
         // for every other shape) - which is a real, independently
         // traversable `LogicalPlan`, unlike the outer command.
-        val inputSchemas = (
-          plan.collect(recognizedRead) ++
-            WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect(recognizedRead))
-        ).distinct.toList
         // WriteCommandSupport.combined is the same lookup translation used
         // to reach this ir.Write in the first place, so this can never
         // drift out of sync with it the way three independent matches
-        // could (and once did - see WriteCommandSupport's class doc). Its
+        // could (and once did - see WriteCommandSupport's class doc).
+        // Computed once and reused by both inputSchemas and outputSchema
+        // below, rather than each re-deriving it independently.
+        val writeInfo = WriteCommandSupport.combined.lift(plan)
+        val inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query))
         // outputSchema is always the underlying query's schema, not the
         // command node's own: a Command's `.schema` is its own (typically
         // empty) output, not the data it writes - using that directly
@@ -177,7 +228,7 @@ object ContractEnforcementRule {
         // currently possible - `WriteCommandSupport.combined` is the only
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
-        val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
+        val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
         val structuralResult = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
@@ -247,6 +298,23 @@ object ContractEnforcementRule {
         }
     }
   }
+
+  /** The dry-run counterpart to `verifyOrThrow`: only the plain-write shape
+    * (backed by a real `WriteCommandInfo` from `WriteCommandSupport.combined`
+    * — the same lookup `SparkPlanAdapter.translatePlan`'s own `ir.Write`
+    * case consults, so a match here is guaranteed to translate to `ir.Write`
+    * too, with no need to also run that translation just to re-check it) is
+    * inferrable — see `dryRun`'s own doc for why state-changing CALLs and
+    * row-level DML are deliberately out of scope. Everything else (a
+    * `.count()`, an intermediate transformation, a recognized-but-not-a-write
+    * plan) is a silent no-op, the same "only a write matters" policy
+    * `verifyOrThrow` follows for the analogous case.
+    */
+  private[sparkadapter] def inferOrIgnore(plan: LogicalPlan, onInferred: Contract => Unit): Unit =
+    WriteCommandSupport.combined.lift(plan) match {
+      case Some(writeInfo) => onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query))))
+      case None             => () // not a recognized write - nothing to infer a contract from
+    }
 
   /** Throws if `contract` itself is structurally unsound per
     * `ContractValidator` (e.g. no declared outputs) - the same check every

@@ -296,14 +296,18 @@ spark-submit \
   --master local[*] \
   --jars plugin.jar \
   runner.jar \
-  [input_path] [output_path] [report_path] [contract_path]
+  [--dry-run] [input_path] [output_path] [report_path] [contract_path]
 ```
 
+- `--dry-run` (optional flag, recognized anywhere in the argument list): run with no
+  contract at all — `contract_path` is ignored entirely — and infer/print one from this
+  run's actual inputs/outputs instead of enforcing one. See
+  `ContractEnforcementRule.dryRun` (`spark-adapter`) and docs-site's "Dry-run mode" guide.
 - `input_path` (optional): input CSV — default `demo/input/sample.csv`
 - `output_path` (optional): output Parquet — default `demo/output/result.parquet`
 - `report_path` (optional): output JSON report — default `demo/output/report.json`
 - `contract_path` (optional): contract YAML to enforce — default
-  `demo/contracts/invaract_output.yaml`
+  `demo/contracts/invaract_output.yaml`; unused in `--dry-run` mode
 
 ### `ExecutionReport` shape (harness report, not an engine API)
 
@@ -326,6 +330,15 @@ spark-submit \
   "error": null
 }
 ```
+
+In `--dry-run` mode, `contractVerification` instead looks like:
+
+```json
+{ "status": "DRY_RUN", "inferredContractYaml": "id: inferred_contract\nversion: \"0.1.0\"\n..." }
+```
+
+(`status` stays `"PASS"`/`"FAIL"` at the report's top level either way — it reflects
+whether the job itself ran successfully, not whether a contract was enforced.)
 
 ### Web API endpoint
 

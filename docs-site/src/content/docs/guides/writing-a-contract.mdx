@@ -2,7 +2,7 @@
 title: Write a Contract
 description: Author an Invaract data contract, field by field, from the real one this project ships.
 sidebar:
-  order: 1
+  order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -12,6 +12,12 @@ outputs — shaped after the
 [Open Data Contract Standard (ODCS)](https://github.com/opendatadiscovery/open-data-contracts-standard),
 not a new format invented from scratch. This guide builds one up using the real contract
 this repository ships, `demo/contracts/invaract_output.yaml`.
+
+<Aside type="tip">
+Don't want to start from a blank file? [Dry-run mode](/guides/dry-run-mode/) runs your
+transformation with no contract at all and prints one back, built from what it actually
+read and wrote — a real draft to edit rather than a template to fill in.
+</Aside>
 
 ## Start with identity and version
 

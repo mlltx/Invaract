@@ -319,6 +319,7 @@ would be.
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
+│   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
 │   │   └── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
 │   └── src/test/scala/com/example/sparkadapter/
 │

@@ -1,17 +1,47 @@
 #!/bin/bash
-# Shared helpers for dev/test and dev/regression. Not meant to be run
-# directly — source it after cd-ing to the repo root.
+# Shared helpers for dev/test, dev/regression, and dev/dry-run. Not meant to
+# be run directly — source it after cd-ing to the repo root.
 
 PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar"
 RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 
-# run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT]
+# ANSI color codes every dev/ script's console output uses.
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+_dev_failure_message="Script failed"
+
+_dev_cleanup_trap() {
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}✕ ${_dev_failure_message}${NC}"
+  fi
+  return $exit_code
+}
+
+# install_failure_trap MESSAGE
+#
+# Registers an EXIT trap that prints MESSAGE (prefixed with ✕, in red) only
+# if the script exits non-zero, then preserves that exit code — the same
+# cleanup()/trap pattern dev/test and dev/regression each still define
+# inline (their own `cleanup()` functions); dev/dry-run uses this shared
+# version instead of a third inline copy.
+install_failure_trap() {
+  _dev_failure_message="$1"
+  trap _dev_cleanup_trap EXIT
+}
+
+# run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT] [EXTRA_ARG...]
 #
 # Runs DemoJobHarness (the example Spark job / test harness — see its class
 # doc in runner/src/main/scala/com/example/runner/DemoJobHarness.scala; it
 # is not Invaract's verification engine, just the job that exercises it)
 # via spark-submit when it's on PATH, falling back to a manually-flagged
-# `java -cp` invocation otherwise.
+# `java -cp` invocation otherwise. Any arguments beyond CONTRACT are passed
+# straight through after it — used by dev/dry-run to append `--dry-run`,
+# which DemoJobHarness recognizes anywhere in its argument list.
 #
 # On Windows (git-bash/MSYS, $OSTYPE=msys), Spark's bin/spark-submit is a
 # bash script whose bin/spark-class internals call `ps -o`, which
@@ -23,6 +53,15 @@ RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 # but nowhere else in this repo's scripts.
 run_demo_job_harness() {
   local input="$1" output="$2" report="$3" contract="${4:-}"
+  # A plain word-split string, not a bash array: dev/regression runs under
+  # `set -u`, and macOS's default /bin/bash (still 3.2, Apple ships it
+  # GPLv2-only and hasn't upgraded) throws "unbound variable" expanding
+  # "${arr[@]}" on a zero-length array under nounset - confirmed the hard
+  # way by a real CI failure on macos-latest, not assumed. Unquoted
+  # interpolation below matches the existing `$contract` convention in this
+  # same function, which has the identical "no spaces in a real argument"
+  # assumption already.
+  local extra="${*:5}"
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
@@ -31,14 +70,14 @@ run_demo_job_harness() {
         --master local[*] \
         --jars "$PLUGIN_JAR" \
         "$RUNNER_JAR" \
-        "$input" "$output" "$report" $contract
+        "$input" "$output" "$report" $contract $extra
   elif command -v spark-submit &> /dev/null; then
     spark-submit \
       --class com.example.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
       "$RUNNER_JAR" \
-      "$input" "$output" "$report" $contract
+      "$input" "$output" "$report" $contract $extra
   else
     # spark-submit's own launch scripts inject the --add-opens flags Spark
     # needs on JDK 17+ (see plugin/build.sbt and spark-adapter/build.sbt
@@ -62,6 +101,6 @@ run_demo_job_harness() {
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
       -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.DemoJobHarness \
-      "$input" "$output" "$report" $contract
+      "$input" "$output" "$report" $contract $extra
   fi
 }
