@@ -32,7 +32,7 @@ strykerThresholdsBreak := 50
 // compares against the PR's own base branch instead) and
 // docs/TRANSFORMATION_IR.md's "API compatibility" section.
 //
-// Transitional: renamed invariant-ir -> invaract-ir in the same commit that
-// changed `name :=` above - see contract/build.sbt's comment on why this has
-// to keep saying "invariant-ir" until this PR is on the base branch.
-mimaPreviousArtifacts := Set("com.example" %% "invariant-ir" % "0.1.0")
+// Renamed invariant-ir -> invaract-ir by the rebrand PR, which is now on the
+// base branch - see contract/build.sbt's comment for why this coordinate
+// must match base-ref's own published name.
+mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
