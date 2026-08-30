@@ -57,14 +57,25 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   override def afterAll(): Unit = spark.stop()
 
+  /** Runs `action` (expected to trigger exactly one recognized write) and
+    * returns the last contract `dryRun`'s callback inferred from it - the
+    * `inferred.clear()` / act / `inferred.last` shape every test below
+    * needs, factored out since it was otherwise repeated verbatim five
+    * times with only `action` varying.
+    */
+  private def lastInferredAfter(action: => Unit): com.example.contract.Contract = {
+    inferred.clear()
+    action
+    inferred.last
+  }
+
   test("dry-run infers an output dataset matching a real write's actual location, format, save mode, and schema") {
     val outputPath = scratchDir.resolve("infer_output.parquet").toString
-    inferred.clear()
 
-    val df = spark.range(5).withColumn("doubled", col("id") * 2)
-    df.write.mode("overwrite").parquet(outputPath)
-
-    val contract = inferred.last
+    val contract = lastInferredAfter {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath)
+    }
     val output = contract.output("output").get
     // Exact equality, not just endsWith: InsertIntoHadoopFsRelationCommand's
     // own outputPath.toString (what WriteCommandInfo.location actually
@@ -96,12 +107,11 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     val inputPath = scratchDir.resolve("infer_input_source.parquet").toString
     val outputPath = scratchDir.resolve("infer_input_output.parquet").toString
     spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(inputPath)
-    inferred.clear()
 
-    val df = spark.read.parquet(inputPath).select("id")
-    df.write.mode("overwrite").parquet(outputPath)
-
-    val contract = inferred.last
+    val contract = lastInferredAfter {
+      val df = spark.read.parquet(inputPath).select("id")
+      df.write.mode("overwrite").parquet(outputPath)
+    }
     assert(contract.inputs.size == 1)
     val input = contract.input("input").get
     assert(input.location == inputPath, s"expected location '$inputPath', got '${input.location}'")
@@ -114,14 +124,13 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     val outputPath = scratchDir.resolve("infer_multi_output.parquet").toString
     spark.range(3).write.mode("overwrite").parquet(leftPath)
     spark.range(3).write.mode("overwrite").parquet(rightPath)
-    inferred.clear()
 
-    val left = spark.read.parquet(leftPath).withColumnRenamed("id", "left_id")
-    val right = spark.read.parquet(rightPath).withColumnRenamed("id", "right_id")
-    val joined = left.crossJoin(right)
-    joined.write.mode("overwrite").parquet(outputPath)
-
-    val contract = inferred.last
+    val contract = lastInferredAfter {
+      val left = spark.read.parquet(leftPath).withColumnRenamed("id", "left_id")
+      val right = spark.read.parquet(rightPath).withColumnRenamed("id", "right_id")
+      val joined = left.crossJoin(right)
+      joined.write.mode("overwrite").parquet(outputPath)
+    }
     assert(contract.inputs.size == 2)
     assert(contract.inputs.map(_.name).toSet == Set("input_1", "input_2"))
     assert(contract.inputs.map(_.location).toSet == Set(leftPath, rightPath))
@@ -129,11 +138,10 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("dry-run infers a contract with no rules and no extensions - never fabricates business intent") {
     val outputPath = scratchDir.resolve("infer_no_rules.parquet").toString
-    inferred.clear()
 
-    spark.range(5).write.mode("overwrite").parquet(outputPath)
-
-    val contract = inferred.last
+    val contract = lastInferredAfter {
+      spark.range(5).write.mode("overwrite").parquet(outputPath)
+    }
     assert(contract.rules.isEmpty)
     assert(contract.extensions.isEmpty)
     assert(contract.status == "draft")
@@ -148,12 +156,11 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("an inferred contract round-trips through ContractParser.write/parse and passes real enforcement of the write it came from") {
     val outputPath = scratchDir.resolve("infer_roundtrip.parquet").toString
-    inferred.clear()
     capturedPlans.clear()
 
-    spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
-
-    val contract = inferred.last
+    val contract = lastInferredAfter {
+      spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+    }
     val roundTripped = ContractParser.parse(ContractParser.write(contract))
     assert(roundTripped == contract)
 

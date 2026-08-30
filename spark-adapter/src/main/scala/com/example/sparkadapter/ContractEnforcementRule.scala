@@ -144,11 +144,18 @@ object ContractEnforcementRule {
     * a contract input; see `verifyOrThrow`'s own call site for why both the
     * raw plan and `query` need walking (Delta's row-level DML commands are
     * leaf nodes in the tree-traversal sense).
+    *
+    * Takes the write's `query` directly rather than re-deriving it via a
+    * second `WriteCommandSupport.combined.lift(plan)` — both call sites
+    * already compute that lookup once for their own purposes (`verifyOrThrow`
+    * for `outputSchema`, `inferOrIgnore` for the `WriteCommandInfo` it
+    * infers from), so re-deriving it a second time here would just repeat
+    * that match on every analyzed plan the session produces for no reason.
     */
-  private def collectInputSchemas(plan: LogicalPlan): List[(String, StructType)] =
+  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): List[(String, StructType)] =
     (
       plan.collect(recognizedRead) ++
-        WriteCommandSupport.combined.lift(plan).toList.flatMap(_.query.collect(recognizedRead))
+        writeQuery.toList.flatMap(_.collect(recognizedRead))
     ).distinct.toList
 
   /** The check logic itself, exposed directly for tests and for callers
@@ -200,11 +207,14 @@ object ContractEnforcementRule {
         // DML, the same plan `plan.collect` would already reach on its own
         // for every other shape) - which is a real, independently
         // traversable `LogicalPlan`, unlike the outer command.
-        val inputSchemas = collectInputSchemas(plan)
         // WriteCommandSupport.combined is the same lookup translation used
         // to reach this ir.Write in the first place, so this can never
         // drift out of sync with it the way three independent matches
-        // could (and once did - see WriteCommandSupport's class doc). Its
+        // could (and once did - see WriteCommandSupport's class doc).
+        // Computed once and reused by both inputSchemas and outputSchema
+        // below, rather than each re-deriving it independently.
+        val writeInfo = WriteCommandSupport.combined.lift(plan)
+        val inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query))
         // outputSchema is always the underlying query's schema, not the
         // command node's own: a Command's `.schema` is its own (typically
         // empty) output, not the data it writes - using that directly
@@ -218,7 +228,7 @@ object ContractEnforcementRule {
         // currently possible - `WriteCommandSupport.combined` is the only
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
-        val outputSchema = WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)
+        val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
         val structuralResult = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
@@ -302,7 +312,7 @@ object ContractEnforcementRule {
     */
   private[sparkadapter] def inferOrIgnore(plan: LogicalPlan, onInferred: Contract => Unit): Unit =
     WriteCommandSupport.combined.lift(plan) match {
-      case Some(writeInfo) => onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan)))
+      case Some(writeInfo) => onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query))))
       case None             => () // not a recognized write - nothing to infer a contract from
     }
 

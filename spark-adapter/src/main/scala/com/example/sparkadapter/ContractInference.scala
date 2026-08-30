@@ -43,9 +43,10 @@ private[sparkadapter] object ContractInference {
     *   enforcement can never disagree about what counts as an input.
     */
   def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, StructType)]): Contract = {
+    val totalInputs = inputSchemas.size
     val inputs = inputSchemas.zipWithIndex.map { case ((location, schema), index) =>
       Dataset(
-        name = inputName(index, inputSchemas.size),
+        name = inputName(index, totalInputs),
         location = normalizeLocation(location),
         format = None, // recognizedRead only ever yields a (location, schema) pair - no format is collected alongside it
         schema = schemaOf(schema)
@@ -72,24 +73,12 @@ private[sparkadapter] object ContractInference {
   private def inputName(index: Int, total: Int): String =
     if (total <= 1) "input" else s"input_${index + 1}"
 
-  /** Strips a local `file:` scheme prefix Spark itself adds when qualifying
-    * a plan's actual location (see `WriteCommandSupport`/`SparkPlanAdapter`'s
-    * location-extraction helpers), matching the bare-path form a
-    * hand-authored contract normally declares (see the YAML files under
-    * `demo/contracts` for real examples) — the exact same asymmetry
-    * `StructuralVerifier.locationsMatch` already bridges by stripping
-    * `actual`'s `"file:"` prefix before comparing it against a contract's
-    * declared value. Without this, an inferred contract would declare a
-    * `"file:..."`-prefixed location that `locationsMatch` never strips from
-    * the *declared* side, so re-checking the inferred contract's own write
-    * with `forContract` would wrongly report OUTPUT_LOCATION_MISMATCH
-    * against the exact write it was inferred from — confirmed the hard way
-    * by a real round-trip test failing this way before this fix, not
-    * assumed. A non-file location (a table name, `s3://...`, `jdbc:...`)
-    * has no `"file:"` prefix to strip, so this is a no-op for every other
-    * location shape.
+  /** Delegates to `StructuralVerifier.normalizeSparkLocation` rather than
+    * stripping `"file:"` independently here — see that method's own doc
+    * for why the two must share one definition, not two copies that could
+    * silently drift apart.
     */
-  private def normalizeLocation(location: String): String = location.stripPrefix("file:")
+  private def normalizeLocation(location: String): String = StructuralVerifier.normalizeSparkLocation(location)
 
   /** `required = true` for every field: unlike a hand-authored contract
     * (where "required" expresses intent the author holds independently of

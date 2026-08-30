@@ -87,7 +87,7 @@ object ContractParser {
     if (contract.inputs.nonEmpty) doc.put("inputs", contract.inputs.map(datasetToJava).asJava)
     if (contract.outputs.nonEmpty) doc.put("outputs", contract.outputs.map(datasetToJava).asJava)
     if (contract.rules.nonEmpty) doc.put("rules", contract.rules.map(ruleToJava).asJava)
-    if (contract.extensions.nonEmpty) doc.put("extensions", mapToJava(contract.extensions))
+    if (contract.extensions.nonEmpty) doc.put("extensions", contract.extensions.asJava)
     doc
   }
 
@@ -120,14 +120,8 @@ object ContractParser {
   private def ruleToJava(rule: ContractRule): java.util.Map[String, Any] = {
     val m = new java.util.LinkedHashMap[String, Any]()
     m.put("type", rule.ruleType)
-    rule.properties.foreach { case (k, v) => m.put(k, v) }
+    m.putAll(rule.properties.asJava)
     m
-  }
-
-  private def mapToJava(m: Map[String, Any]): java.util.Map[String, Any] = {
-    val out = new java.util.LinkedHashMap[String, Any]()
-    m.foreach { case (k, v) => out.put(k, v) }
-    out
   }
 
   private def parseContract(raw: Map[String, Any]): Contract = {

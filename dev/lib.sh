@@ -1,9 +1,37 @@
 #!/bin/bash
-# Shared helpers for dev/test and dev/regression. Not meant to be run
-# directly — source it after cd-ing to the repo root.
+# Shared helpers for dev/test, dev/regression, and dev/dry-run. Not meant to
+# be run directly — source it after cd-ing to the repo root.
 
 PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar"
 RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
+
+# ANSI color codes every dev/ script's console output uses.
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+_dev_failure_message="Script failed"
+
+_dev_cleanup_trap() {
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}✕ ${_dev_failure_message}${NC}"
+  fi
+  return $exit_code
+}
+
+# install_failure_trap MESSAGE
+#
+# Registers an EXIT trap that prints MESSAGE (prefixed with ✕, in red) only
+# if the script exits non-zero, then preserves that exit code — the same
+# cleanup()/trap pattern dev/test and dev/regression each still define
+# inline (their own `cleanup()` functions); dev/dry-run uses this shared
+# version instead of a third inline copy.
+install_failure_trap() {
+  _dev_failure_message="$1"
+  trap _dev_cleanup_trap EXIT
+}
 
 # run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT] [EXTRA_ARG...]
 #

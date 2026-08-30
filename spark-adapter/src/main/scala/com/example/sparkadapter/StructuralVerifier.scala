@@ -359,9 +359,26 @@ private[sparkadapter] object StructuralVerifier {
     // sides so a Windows-style declared path (C:\...\out.parquet) still
     // matches Spark's file:/C:/.../out.parquet.
     val normalizedDeclared = declared.replace('\\', '/')
-    val normalizedActual = actual.stripPrefix("file:").replace('\\', '/')
+    val normalizedActual = normalizeSparkLocation(actual)
     normalizedActual == normalizedDeclared || normalizedActual.endsWith("/" + normalizedDeclared)
   }
+
+  /** The bare, OS-agnostic form a contract's `declared` location is
+    * expected to already be in, derived from a location as Spark itself
+    * reports it (always forward-slash, often `file:`-scheme-prefixed for a
+    * local path) - factored out of `locationsMatch` above so
+    * `ContractInference` (dry-run mode) can apply the exact same
+    * normalization when inferring a location a user will *declare* in a
+    * contract, not just when comparing one against it. The two must use
+    * one shared definition: an inferred contract that skipped this
+    * normalization would carry a `"file:..."`-prefixed declared location
+    * that `locationsMatch` never strips from the *declared* side, wrongly
+    * rejecting the exact write it was inferred from - confirmed the hard
+    * way by a real test failing this way before `ContractInference` was
+    * fixed to call this instead of its own separate copy.
+    */
+  private[sparkadapter] def normalizeSparkLocation(actual: String): String =
+    actual.stripPrefix("file:").replace('\\', '/')
 
   /** Shared by both input and output checking — "Schema" in the check list
     * is one set of rules, applied twice (once per side), not two separate
