@@ -25,10 +25,15 @@ rules:
 
 ### `merge_condition`
 
-A `MERGE`'s `ON` clause must reference every listed column. This catches a common, costly
-bug: a `MERGE` silently missing a match key — for example, matching only on
-`customer_id` in a table that should also match on `region`, quietly overwriting the
-wrong rows.
+A `MERGE`'s `ON` clause must include a genuine equality match (`t.col = s.col`, or the
+null-safe `t.col <=> s.col`) on every listed column — not merely mention it. This catches
+several common, costly bugs: a `MERGE` silently missing a match key (for example, matching
+only on `customer_id` in a table that should also match on `region`, quietly overwriting
+the wrong rows), matching on a range check instead of an equality, pinning a column to a
+literal instead of joining target to source on it, or only matching inside an `OR` branch
+instead of a required condition. A declared column may be paired against a
+differently-named column on the other side (`t.customer_id = s.cust_id`) — the contract
+can be authored against either side's naming.
 
 <Aside type="note">
 The YAML key is `columns`, not `on`. YAML 1.1's resolver treats a bare `on` key as the
@@ -66,9 +71,10 @@ under a contract with no such rule executes normally.
 
 Set expectations correctly rather than assuming full coverage:
 
-- **The merge condition's predicate logic.** `merge_condition` checks that the declared
-  columns are *referenced* by the `ON` clause — not that they're its only columns, or
-  that they form a genuine equality pairing.
+- **Full predicate logic for `merge_condition`.** It recognizes only a flat top-level
+  `AND` of equalities — it doesn't reason about `NOT`, `CASE WHEN`, or De Morgan
+  equivalences, and doesn't distinguish target- from source-side qualifiers (two columns
+  on the *same* side compared to each other would still count as a pairing).
 - **Which rows an `UPDATE` touches**, or whether a non-empty `DELETE` predicate is
   trivially satisfiable (e.g. `WHERE 1=1`).
 - **Connectors without row-level DML support.** Parquet, CSV, JDBC, and similar don't
