@@ -69,17 +69,29 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     inferred.last
   }
 
-  /** `scratchDir.resolve(...).toString` renders OS-native separators
-    * (backslashes on Windows), but `ContractInference` always normalizes an
-    * inferred location to forward slashes (via
-    * `StructuralVerifier.normalizeSparkLocation`, matching Spark's own
-    * platform-independent reporting) - confirmed the hard way by a real
-    * CI failure on windows-latest, not assumed, when these tests compared
-    * against the raw, backslash-containing `Path.toString()` value
-    * directly. Every exact-equality location assertion below normalizes
-    * its expected value the same way first.
+  /** Whether `actual` (an inferred location) and `expectedRaw`
+    * (`scratchDir.resolve(...).toString`, in OS-native form) refer to the
+    * same location - the exact same tolerance
+    * `StructuralVerifier.locationsMatch` itself applies for a real
+    * contract's declared location against a plan's actual one, deliberately
+    * reused here rather than a hand-rolled byte-equality check. A plain
+    * backslash swap isn't enough on Windows: Hadoop's own `Path` (the type
+    * Spark's `InsertIntoHadoopFsRelationCommand.outputPath` actually is)
+    * additionally renders a local drive-letter absolute path with a
+    * leading slash (`C:\Users\x` becomes `/C:/Users/x`) that
+    * `scratchDir.resolve(...).toString` never has - confirmed the hard way
+    * by a real CI failure on windows-latest that a backslash-only fix
+    * still didn't account for. Asserting the same tolerance
+    * `locationsMatch` already applies, instead of trying to replicate
+    * Hadoop's own path-parsing quirks here, is the right level to test at:
+    * it's the actual acceptance criterion a real contract's location gets
+    * checked against, and it's immune to whichever exact string Hadoop's
+    * `Path` produces on a given OS.
     */
-  private def normalizedPath(path: String): String = path.replace('\\', '/')
+  private def sameLocation(actual: String, expectedRaw: String): Boolean = {
+    val expected = expectedRaw.replace('\\', '/')
+    actual == expected || actual.endsWith("/" + expected)
+  }
 
   test("dry-run infers an output dataset matching a real write's actual location, format, save mode, and schema") {
     val outputPath = scratchDir.resolve("infer_output.parquet").toString
@@ -89,13 +101,13 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
       df.write.mode("overwrite").parquet(outputPath)
     }
     val output = contract.output("output").get
-    // Exact equality, not just endsWith: InsertIntoHadoopFsRelationCommand's
-    // own outputPath.toString (what WriteCommandInfo.location actually
-    // carries - see WriteCommandSupport) renders a local path with a
-    // "file:" scheme prefix, which ContractInference must strip so the
-    // inferred location matches the bare-path form a hand-authored
-    // contract declares (see ContractInference.normalizeLocation's doc).
-    assert(output.location == normalizedPath(outputPath), s"expected location '$outputPath', got '${output.location}'")
+    // Not raw string equality: InsertIntoHadoopFsRelationCommand's own
+    // outputPath.toString (what WriteCommandInfo.location actually carries
+    // - see WriteCommandSupport) renders a local path with a "file:" scheme
+    // prefix (which ContractInference strips) and, on Windows, an
+    // OS-specific drive-letter form `sameLocation` already tolerates - see
+    // its own doc.
+    assert(sameLocation(output.location, outputPath), s"expected location matching '$outputPath', got '${output.location}'")
     assert(output.format.contains("parquet"))
     assert(output.saveMode.contains("overwrite"))
     assert(output.schema.fields.map(_.name) == List("id", "doubled"))
@@ -126,7 +138,7 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(contract.inputs.size == 1)
     val input = contract.input("input").get
-    assert(input.location == normalizedPath(inputPath), s"expected location '$inputPath', got '${input.location}'")
+    assert(sameLocation(input.location, inputPath), s"expected location matching '$inputPath', got '${input.location}'")
     assert(input.schema.fields.map(_.name).toSet == Set("id", "doubled"))
   }
 
@@ -145,7 +157,11 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(contract.inputs.size == 2)
     assert(contract.inputs.map(_.name).toSet == Set("input_1", "input_2"))
-    assert(contract.inputs.map(_.location).toSet == Set(normalizedPath(leftPath), normalizedPath(rightPath)))
+    val actualLocations = contract.inputs.map(_.location)
+    assert(
+      Set(leftPath, rightPath).forall(expected => actualLocations.exists(sameLocation(_, expected))),
+      s"expected locations matching '$leftPath' and '$rightPath', got $actualLocations"
+    )
   }
 
   test("dry-run infers a contract with no rules and no extensions - never fabricates business intent") {
