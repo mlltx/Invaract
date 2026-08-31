@@ -24,14 +24,25 @@ confirmed (same investigation) to implement `DataSourceRegister` with
 for built-in file formats — so `formatOf`'s parameter type was simply
 widened from `FileFormat` to `AnyRef` and reused as-is, rather than
 writing Delta-specific translation code. `delta-spark` appears only as a
-`% "test"` dependency (pinned to 3.2.0, not the latest 3.2.x: a confirmed
-real bug in 3.2.1 affects exactly this Scala 2.12 + Spark 3.5.1
+`% "test"` dependency — its only job is spinning up a real Delta session
+to test against, the same role `com.h2database` plays for the JDBC
+precedent, never something the main translation code imports or needs
+present at runtime for a non-Delta job to run.
+
+Originally pinned to 3.2.0 (not the latest 3.2.x at the time) because a
+confirmed real bug in 3.2.1 affected exactly the Scala 2.12 + Spark 3.5.1
 combination — see
-[delta-io/delta#3737](https://github.com/delta-io/delta/issues/3737)) —
-its only job is spinning up a real Delta session to test against, the
-same role `com.h2database` plays for the JDBC precedent, never something
-the main translation code imports or needs present at runtime for a
-non-Delta job to run.
+[delta-io/delta#3737](https://github.com/delta-io/delta/issues/3737).
+Later moved to 3.3.3 as part of the CVE-driven Spark 3.5.1 → 3.5.7 bump
+(see `spark-adapter/build.sbt`'s comment above `deltaVersion` and
+docs/CVE_REMEDIATION.md for the full detail): staying on 3.2.0 while
+Spark moved to 3.5.7 broke `ContractEnforcementRuleSpec`'s
+`.format("delta").saveAsTable()` coverage, because delta-spark 3.2.0
+predates the Spark DSv2 write-path behavior 3.5.7 exercises. 3.3.3 is
+delta-io/delta's own closest published release to Spark 3.5.7 (its
+`LATEST_RELEASED_SPARK_VERSION` build.sbt setting was 3.5.6 at that tag)
+and is well past Spark 3.5.3, the version #3737's own thread named as a
+workaround for the original 3.2.1 bug — so this move doesn't reopen it.
 
 This is also why the single assembled `spark-adapter` jar (see
 CLAUDE.md's "What's the product, and what's the test harness" and

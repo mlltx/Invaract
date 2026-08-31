@@ -646,6 +646,85 @@ Jackson override is `test`/`provided`-scope only, exactly like every
 other CVE fix in those two modules; only `runner`'s compile-scope
 dependencies actually ship.
 
+## 7e. Worked example: the Spark version bump, and a fourth regression it uncovered
+
+The Spark History Server RCE (CVE-2025-54920, GHSA-jwp6-cvj8-fw65) is a
+Direct dependency, not a transitive jar — Spark's own event-log
+deserialization bug, fixed in 3.5.7. There's no `dependencyOverrides`
+workaround for a bug in Spark's own code, so unlike every other fix in
+this document, this one is a real `sparkVersion` bump. It was held back
+from every prior batch specifically because a Spark bump can shift many
+other pinned transitive versions at once — confirmed necessary caution,
+not just caution for its own sake, since it did exactly that.
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.apache.spark:spark-core`/`spark-sql` | `spark-adapter` (`provided`), `plugin` (`provided`), `runner` (compile-scope) | 3.5.1 | 3.5.7 | CVE-2025-54920 |
+| `io.delta:delta-spark` | `spark-adapter` (`test`-only) | 3.2.0 | 3.3.3 | not itself CVE-driven — see below |
+
+**Checked before touching it, not assumed:** fetched `spark-core_2.12:
+3.5.7`'s own published POM and confirmed it still declares
+`fasterxml.jackson.version=2.15.2` and `jackson-module-scala_2.12:
+2.15.2`, identical to 3.5.1 — since `dependencyOverrides` always wins
+regardless of what any POM in the tree declares, this ruled out the
+bump reopening §7a/§7d's Netty→Arrow→Jackson conflict class before a
+single test ran.
+
+**It still found a real regression — just not the one already
+guarded against.** `spark-adapter`'s full suite failed 1/286 on the
+first attempt: `ContractEnforcementRuleSpec`'s
+`.format("delta").saveAsTable()` case on a *brand-new* table started
+failing Spark's own analysis with `Table ... does not support truncate
+in batch mode.`, before `ContractEnforcementRule` ever got a chance to
+run. Root-caused rather than reverted, the same discipline as §7a's
+chain:
+
+1. Confirmed it wasn't a stale-warehouse artifact or test-order
+   collision — isolating just `ContractEnforcementRuleSpec` with a wiped
+   `spark-warehouse/` reproduced it standalone, so it was real.
+2. Diffed `TableCapabilityCheck.scala` and `DataFrameWriter`'s
+   `saveAsTable` logic between Spark 3.5.1 and 3.5.7 directly (bytecode
+   diff for the former, source fetch for the latter) — both were
+   unchanged in the ways that would matter here; `SaveMode.Overwrite`
+   still always builds `ReplaceTableAsSelect(orCreate = true)`
+   regardless of whether the table exists, exactly as this module's own
+   pre-existing test comment already documented.
+3. The actual failing plan (`OverwriteByExpression` against a
+   placeholder `DataSourceV2Relation` reporting neither `TRUNCATE` nor
+   `OVERWRITE_BY_FILTER`) pointed at the target catalog, not Spark's
+   analyzer: `delta-spark:3.2.0`'s `DeltaCatalog` predates whatever
+   Spark 3.5.x point release changed about the DSv2 write path it
+   exercises here. Checked delta-io/delta's own release metadata (each
+   git tag's `build.sbt` sets `LATEST_RELEASED_SPARK_VERSION` — `3.2.0`
+   was built/tested against Spark `3.5.0`; `3.3.3`, the newest published
+   `delta-spark_2.12` release at the time, against `3.5.6`) rather than
+   guessing a version to try.
+4. `3.3.3` is also safely past the reason `3.2.0` was pinned in the
+   first place: [delta-io/delta#3737](https://github.com/delta-io/delta/issues/3737),
+   a `NoSuchMethodError` the issue's own thread isolates to exactly
+   Scala 2.12 + Spark 3.5.1 + Delta 3.2.1, naming "upgrade past Spark
+   3.5.3" as a workaround — moot at Spark 3.5.7.
+
+Bumped `deltaVersion` to `3.3.3` alongside the Spark bump (both land in
+the same commit, since the Delta move exists *because of* the Spark
+move, not independently of it). `ContractEnforcementRuleSpec` alone then
+passed 49/49; the full `spark-adapter` suite passed 286/286;
+`plugin` (no Delta dependency, never hit this) passed 4/4 unchanged.
+
+**Verified past the unit suites, per this repo's Critical Requirement**:
+this environment didn't have a `spark-submit` binary on `PATH` at all —
+`./dev/test`'s local-execution fallback path isn't a substitute for it
+(it hit its own unrelated log4j2 classloading error, a pre-existing gap
+in that fallback, not a regression from this change), so a matching
+Spark 3.5.7 binary distribution was installed before treating anything
+as verified. With real `spark-submit` in place: `./dev/test` passed,
+`report.json` shows `"sparkVersion": "3.5.7"` and
+`"contractVerification": {"status": "PASSED", "violations": []}`; and
+`./dev/regression` passed both cases (2/2) — a satisfying transformation
+still writes normally, and a violating one is still aborted with zero
+bytes written, proving `ContractEnforcementRule` itself is unaffected by
+either version bump, not just that a harness run completed.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -694,13 +773,13 @@ dependencies actually ship.
       Arrow racing ahead of what `jackson-module-scala` tolerated, not
       evidence that Jackson bumps themselves are risky; this one moved
       all four pieces that need to agree as the matched set they are.
-- [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
-      High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
-      far: unlike a transitive-jar override, a Spark version bump can
-      shift *many* other pinned transitive versions at once (as §7a's
-      chain shows even a single-jar bump can cascade), so it needs its own
-      isolated pass with its own full-suite verification before merging
-      with anything else.
+- [x] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
+      High) — Spark 3.5.1 → 3.5.7 (this change). See §7e: it needed its
+      own isolated pass, and it found a fourth regression (this one in
+      `delta-spark:3.2.0`'s compatibility with the bumped Spark's DSv2
+      write path, fixed by moving `deltaVersion` to `3.3.3` alongside it)
+      — confirmed via `./dev/test` and `./dev/regression` with a real
+      `spark-submit` 3.5.7, not just the unit suites.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

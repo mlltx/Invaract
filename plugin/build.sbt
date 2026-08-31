@@ -3,7 +3,14 @@ version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
 
-val sparkVersion = "3.5.1"
+// 3.5.1 -> 3.5.7: CVE-2025-54920 (Spark History Server Code Execution,
+// a Direct dependency, not transitive - no dependencyOverrides
+// workaround for a bug in Spark's own code) - see spark-adapter/build.sbt's
+// comment for the full detail, including confirming Spark 3.5.7's own
+// POM still declares the same jackson-module-scala:2.15.2 as 3.5.1 does,
+// so this doesn't reopen that module's Netty->Arrow->Jackson conflict
+// class.
+val sparkVersion = "3.5.7"
 
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",

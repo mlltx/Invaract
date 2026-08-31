@@ -3,7 +3,27 @@ version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
 
-val sparkVersion = "3.5.1"
+// 3.5.1 -> 3.5.7: CVE-2025-54920 (GHSA-jwp6-cvj8-fw65, Spark History
+// Server Code Execution) - the Spark History Web UI's overly permissive
+// Jackson polymorphic deserialization of event-log data lets an attacker
+// with access to the event-log directory inject a malicious JSON payload
+// that instantiates arbitrary classes, fixed in 3.5.7/4.0.1. A Direct
+// (not transitive) dependency, unlike every other CVE fix in this file -
+// there's no dependencyOverrides workaround for a bug in Spark's own
+// code, so this is a real version bump, held back from every prior
+// batch (see docs/CVE_REMEDIATION.md's worked examples) specifically
+// because a Spark bump can shift many other pinned transitive versions
+// at once. Checked before touching it, not assumed: fetched
+// spark-core_2.12:3.5.7's own published POM and confirmed it still
+// declares fasterxml.jackson.version=2.15.2 and
+// jackson-module-scala_2.12:2.15.2, identical to 3.5.1 - the
+// dependencyOverrides below win regardless of what any POM in the tree
+// declares, so this doesn't reopen the Netty->Arrow->Jackson class of
+// conflict. Delta/Iceberg/ClickHouse connector versions below are pinned
+// independently of sparkVersion and stay as they were; only spark-core/
+// spark-sql/spark-hive/spark-avro (Spark's own per-release artifacts)
+// move with this bump.
+val sparkVersion = "3.5.7"
 
 // Test-scope only, not provided: empirical investigation (see
 // docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta
@@ -14,10 +34,31 @@ val sparkVersion = "3.5.1"
 // up a real Delta-enabled session to test against (the same role
 // com.h2database plays for the JDBC precedent below), never to compile
 // or run the main translation code.
-// 3.2.0, not the latest 3.x release: a confirmed real bug in 3.2.1 affects
-// exactly this combination (Scala 2.12 + Spark 3.5.1) - see
-// docs/SPARK_ADAPTER.md's Delta section for the citation.
-val deltaVersion = "3.2.0"
+// 3.2.0 -> 3.3.3, moved together with the Spark 3.5.1 -> 3.5.7 bump above:
+// staying on 3.2.0 while Spark moved to 3.5.7 broke this module's own
+// ContractEnforcementRuleSpec (a genuine regression, confirmed by
+// isolating the spec and by diffing Spark's DataFrameWriter/
+// TableCapabilityCheck bytecode between 3.5.1 and 3.5.7 - the check logic
+// itself is byte-identical, so the break is Delta 3.2.0 not having been
+// built/tested against anything past Spark 3.5.0's DSv2 write path).
+// `.format("delta").saveAsTable()` on a brand-new table started failing
+// analysis with "Table ... does not support truncate in batch mode.",
+// because Spark's ReplaceTableAsSelect(orCreate = true) gets rewritten to
+// an OverwriteByExpression against a placeholder v2 relation whose
+// capability set no longer includes TRUNCATE/OVERWRITE_BY_FILTER under
+// 3.5.7 for a delta-spark 3.2.0-vintage DeltaCatalog. delta-io/delta's
+// own release metadata (LATEST_RELEASED_SPARK_VERSION in build.sbt at
+// each tag) shows 3.2.0 was built against Spark 3.5.0 and 3.3.3 against
+// 3.5.6 - the closest published delta-spark release to our new Spark
+// 3.5.7, and current enough that it no longer hits the previous pin's
+// reason (delta-io/delta#3737, a NoSuchMethodError isolated to exactly
+// Scala 2.12 + Spark 3.5.1 + Delta 3.2.1, whose own thread names
+// upgrading past Spark 3.5.3 as a workaround - moot now at Spark 3.5.7).
+// Confirmed by re-running ContractEnforcementRuleSpec (and the rest of
+// this module's suite) against 3.3.3 before settling on it - see
+// docs/SPARK_ADAPTER.md's Delta section / docs/connectors/delta.md for
+// the full citation trail.
+val deltaVersion = "3.3.3"
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
 // for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
