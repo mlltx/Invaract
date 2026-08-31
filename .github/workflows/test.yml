@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -262,7 +262,7 @@ jobs:
     # `summary` below folds into the overall status.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -321,7 +321,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -458,7 +458,7 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # A fixed base (the PR's base branch), not a sliding one. An earlier
       # version of this job diffed against the PREVIOUS PUSH's HEAD
@@ -477,7 +477,7 @@ jobs:
       # skip a module gracefully if it didn't exist yet at the (fixed) base
       # commit, rather than changing which commit counts as the base.
       - name: Checkout PR base ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base-ref
@@ -549,7 +549,7 @@ jobs:
     # a single artifact.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
