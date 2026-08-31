@@ -29,23 +29,89 @@ Hive, and ClickHouse connector runtimes for testing, and none of it had any
 outlet before now. Treat the raw 238 as a starting inventory, not a
 prioritized list — most of it needs bucketing before it needs fixing (§2).
 
-## 2. Triage: bucket by blast radius before by severity
+## 2. Triage: would a downstream user actually inherit this?
 
-CVSS severity alone is misleading here because most of this dependency
-surface is deliberately **not shipped**. Reuse the product-vs-harness
-distinction CLAUDE.md already draws, plus Scala's `provided`/`test` scope,
-to decide how urgently each alert actually matters:
+The single most important question for any alert against `contract`, `ir`,
+or `spark-adapter` — the three modules actually published as Maven
+artifacts (`com.example %% invaract-contract/invaract-ir/invaract-spark-adapter`,
+per each module's `mimaPreviousArtifacts`; see CLAUDE.md's "What's the
+product" section) — is **not** severity, and not even "is it shipped
+somewhere." It's: *if a real user adds one of these three coordinates as a
+dependency in their own build, does Maven/Ivy's own resolution actually
+pull the vulnerable jar onto their classpath?* That's determined entirely
+by which Ivy/Maven **scope** the dependency was declared with, and only
+one scope answers yes:
 
-1. **Runtime/compile-scope, in the shipped engine** — highest priority.
-   Concretely: `contract`'s `snakeyaml` and `runner`'s compile-scope
-   `spark-core`/`spark-sql` (runner is the one module that pulls Spark in
-   unscoped, since it's the thing that actually runs `spark-submit`).
-   A real Invaract user's classpath includes these.
-2. **`provided`-scope in the engine** (`spark-core`/`spark-sql` in
-   `spark-adapter` and `plugin`) — real, but the vulnerable jar is supplied
-   by whatever cluster the user deploys to, not by this repo's artifact.
-   Still worth tracking (it constrains which Spark versions we can honestly
-   claim to support), but it's not something *this repo's* release ships.
+- **`compile` (the default — unscoped in `libraryDependencies`)**
+  propagates transitively to every downstream consumer. This is the
+  *only* bucket where "our users would inherit the CVE" is literally
+  true, and it should outrank every other prioritization signal,
+  including CVSS severity: a Moderate alert here matters more than a
+  Critical one in the buckets below.
+- **`% "provided"`** appears in the published POM (confirmed empirically —
+  `contract`'s generated POM correctly emits `<scope>test</scope>` for
+  its test deps, so the sbt→POM scope mapping is real and trustworthy)
+  but Maven's own resolution rules make `provided` **non-transitive by
+  definition** — a consumer does not inherit it through us. In practice
+  it's supplied by whatever Spark cluster the user already deploys to,
+  which is a real vulnerability surface, but it's *theirs*, sourced from
+  their own Spark install, not delivered by our artifact. Track it (it
+  constrains which Spark versions we can honestly claim to support), but
+  don't rank it as "our users inherit our CVE."
+- **`% "test"`** is excluded from the published POM entirely — not
+  merely non-transitive, genuinely absent from the dependency list a
+  consumer ever sees. Zero inheritance risk, by construction. This is
+  pure CI/dev-machine attack surface (see bucket 3 below).
+
+**How to check, concretely**: look at the scope in that module's
+`build.sbt` (`libraryDependencies`, unscoped = compile), or run
+`sbt publishLocal` and read the generated `.pom`'s `<scope>` tags
+directly — don't infer from the advisory or from "is it declared in this
+file," since `provided`/`test` both *are* declared and both still fail
+to reach a consumer.
+
+**What this means concretely for this repo today**: walking
+`contract`/`ir`/`spark-adapter`'s own `build.sbt` files, the *entire*
+externally-facing (compile-scope) dependency surface across all three
+published artifacts is a single coordinate — `org.yaml:snakeyaml:2.2` in
+`contract`. `ir` declares no external compile dependency at all.
+`spark-adapter` declares zero compile-scope dependencies of its own —
+`spark-core`/`spark-sql` are `% "provided"` there, and everything else
+(Delta/Iceberg/Hive/Avro/ClickHouse/H2) is `% "test"`. So the practical
+triage rule for this repo: **check `snakeyaml` first, every time**, before
+touching anything else in the Scala/Maven bucket — it's the one place a
+CVE would genuinely travel into a real user's build.
+
+One more distinction worth being explicit about, since it's easy to
+conflate: `plugin` and `runner` are never consumed as a Maven dependency
+by anyone (see CLAUDE.md's "What's the product" section — they're the
+demo transformation and the demo job harness, not libraries). It doesn't
+matter what scope *they* declare something at — nobody's `build.sbt`
+ever writes `"com.example" %% "invaract-spark-runner" % "..."`. A CVE in
+`runner`'s compile-scope Spark tree (it's the one module that pulls Spark
+in unscoped, since it actually runs `spark-submit`) matters only for
+whoever runs *that specific assembled jar* — this repo's own `./dev/test`
+demo, or a real regression per `./dev/regression` — not for "a real
+Invaract user" in the library-consumer sense. Keep those two audiences
+separate; §7 shows a worked case where this distinction changed the
+actual priority.
+
+### Everything else: bucket by blast radius on our own CI/dev machine
+
+Once the externally-facing check above clears an alert (or confirms it's
+`compile`-scope and genuinely urgent), the rest is about limiting how much
+time gets spent on lower-stakes alerts — CVSS severity still isn't the
+whole story, since most of this remaining surface is deliberately not
+shipped to anyone:
+
+1. **`spark-adapter`'s `snakeyaml`-equivalent**: n/a today (see above —
+   this bucket is empty for `spark-adapter`/`ir` right now, and 1
+   coordinate for `contract`). Kept as its own numbered bucket so a
+   future *new* compile-scope dependency lands here automatically.
+2. **`provided`-scope in `contract`/`ir`/`spark-adapter`/`plugin`**
+   (`spark-core`/`spark-sql`) — real, but non-transitive per the
+   mechanism above; track for "which Spark versions can we honestly
+   support," not as user-facing urgency.
 3. **`test`-scope in `contract`/`ir`/`spark-adapter`** (`scalatest`,
    `json-schema-validator`, Delta/Iceberg/Hive/Avro/ClickHouse connector
    runtimes, H2, the Arrow `dependencyOverrides`) — CI/dev-machine attack
@@ -57,11 +123,12 @@ to decide how urgently each alert actually matters:
    an engine release.
 5. **GitHub Actions pins** — CI supply-chain risk (a compromised action
    version could exfiltrate secrets or tamper with a build). Treat like
-   category 1 despite being "just tooling" — this is the one category where
+   bucket 1 despite being "just tooling" — this is the one category where
    underestimating harness/CI status is a real mistake.
 
-Record which bucket an alert falls into when triaging it; it's most of the
-prioritization decision.
+Record both which bucket an alert falls into *and* whether it clears the
+"would a downstream user inherit this" check above — together they're
+most of the prioritization decision.
 
 ## 3. Reporting
 
@@ -218,16 +285,33 @@ was judged disproportionate. CI's own `test.yml` matrix runs it on push.
 ## 7. Worked example: the 8 critical alerts
 
 GitHub's 8 critical Dependabot alerts, worked end-to-end per §4/§5's
-process, produced two real lessons worth keeping alongside the process
-itself — both found by actually running the tests, not by reading the
-advisory and assuming a version bump is safe:
+process, produced three real lessons worth keeping alongside the process
+itself — found by actually running the tests and actually checking Maven
+scope, not by reading the advisory and assuming a version bump is safe
+or that "critical" means "our users are exposed":
 
-| Artifact | Module(s) | Before | After | CVE |
-|---|---|---|---|---|
-| `org.apache.avro:avro` | `plugin`, `runner`, `spark-adapter` | 1.11.2 | 1.11.4 | CVE-2024-47561 |
-| `org.apache.zookeeper:zookeeper` | `plugin`, `runner`, `spark-adapter` | 3.6.3 | 3.9.2 | CVE-2023-44981 |
-| `org.codehaus.jackson:jackson-mapper-asl` | `spark-adapter` | 1.9.13 | excluded (no fix exists) | CVE-2019-10202 |
-| `org.apache.derby:derby` | `spark-adapter` | 10.14.2.0 | **not changed** — accepted risk | CVE-2022-46337 |
+| Artifact | Module(s) | Scope | Downstream-inherited? (§2) | Before | After | CVE |
+|---|---|---|---|---|---|---|
+| `org.apache.avro:avro` | `plugin`, `runner`, `spark-adapter` | `provided` (`plugin`/`spark-adapter`), compile (`runner`) | **No** via `plugin`/`spark-adapter` (non-transitive); n/a via `runner` (never a dependency) | 1.11.2 | 1.11.4 | CVE-2024-47561 |
+| `org.apache.zookeeper:zookeeper` | `plugin`, `runner`, `spark-adapter` | same as above | same as above | 3.6.3 | 3.9.2 | CVE-2023-44981 |
+| `org.codehaus.jackson:jackson-mapper-asl` | `spark-adapter` | `test` (via `spark-hive`) | **No** — excluded from the published POM entirely | 1.9.13 | excluded (no fix exists) | CVE-2019-10202 |
+| `org.apache.derby:derby` | `spark-adapter` | `test` (via `spark-hive`) | **No** — same as above | 10.14.2.0 | **not changed** — accepted risk | CVE-2022-46337 |
+
+**None of the 8 critical alerts were in the externally-facing (compile-scope,
+`contract`/`ir`/`spark-adapter`) bucket §2 says to check first** — every one
+was `provided` or `test`, confirmed empirically, not assumed: `unzip -l` on
+`plugin`'s and `spark-adapter`'s own assembled jars shows zero `avro`/
+`zookeeper`/`spark` classes bundled (`provided` genuinely isn't in the
+jar, let alone propagated to a consumer), while `runner`'s assembled jar
+has 13,230 such classes — but `runner` is never a Maven dependency of
+anyone's. So a real user who depends on `com.example %% invaract-spark-adapter`
+today would not have inherited a single one of these 8 criticals through
+us, regardless of severity. That doesn't make the work worthless — Delta/
+Iceberg/Hive/ClickHouse-dependent tests, `./dev/test`'s demo run, and this
+repo's own CI all exercise these versions for real — but it does mean the
+*next* alert to prioritize is whatever's flagged against `snakeyaml` (§2's
+one true externally-facing coordinate today), not whatever GitHub happens
+to label Critical elsewhere in the tree.
 
 **A "safe" transitive bump broke something two hops away.** The
 ZooKeeper 3.6.3 → 3.9.2 bump pulls a newer Netty (4.1.105.Final for 9
@@ -288,13 +372,26 @@ confirmed absent (`0` matches) from the assembled `spark-adapter` jar.
       (this change) — see §6's correction for what this does and doesn't
       fix.
 - [x] Fix the 8 critical alerts (this change) — see §7 for the worked
-      example, including the one left as an accepted risk.
+      example, including the one left as an accepted risk, and the
+      finding that none of the 8 were externally-facing per §2.
+- [x] **First**, every triage pass: check whether any open alert names
+      `snakeyaml` (`contract`) — today's *entire* externally-facing,
+      downstream-inherited surface across `contract`/`ir`/`spark-adapter`
+      per §2, and the one check that outranks severity. Checked now:
+      `snakeyaml 2.2` has no known CVE (the two historical SnakeYAML CVEs,
+      2022-1471 and 2022-25857, were both fixed before 2.2). **As of this
+      writing, zero of the 238 open alerts fall in the bucket that would
+      reach a real downstream user** — re-run this check every pass, since
+      that can change the moment `snakeyaml` gets bumped or a new
+      compile-scope dependency is added to `contract`/`ir`/`spark-adapter`.
 - [ ] Triage the remaining alerts (97 high / 121 moderate / 12 low) into
-      the buckets in §2; bucket-1 (runtime/compile-scope engine) and
-      bucket-5 (Actions) first.
+      the buckets in §2's "blast radius" list; bucket 1 (any *new*
+      compile-scope dependency in `contract`/`ir`/`spark-adapter`) and
+      bucket 5 (Actions) next after the snakeyaml check above.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7's
-      Netty lesson) at a time, real test suite run after each.
+      Netty lesson) at a time, real test suite run after each. Record each
+      one's scope/inheritance status per §2's table format (see §7).
 - [ ] Fix or explicitly document-and-accept every alert with no available
       patched version, per §3 — Derby (§7) is the template for how to
       document one.
