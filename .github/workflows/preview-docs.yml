@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Full history, so "changed documentation pages" below can diff
           # against the PR's base branch (a shallow clone only has HEAD).
