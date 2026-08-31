@@ -223,7 +223,7 @@ jobs:
       # changed, even though the final `RUN ./dev/build` layer still
       # re-runs on any source change (it comes after COPY . .).
       - name: Build regression image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
