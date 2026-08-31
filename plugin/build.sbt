@@ -31,7 +31,38 @@ libraryDependencies ++= Seq(
 // 3.9.2 one of the advisory's own named recommended patches.
 dependencyOverrides ++= Seq(
   "org.apache.avro" % "avro" % "1.11.4",
-  "org.apache.zookeeper" % "zookeeper" % "3.9.2"
+  "org.apache.zookeeper" % "zookeeper" % "3.9.2",
+  // Netty pinned to a single consistent version across every io.netty
+  // artifact Spark's own tree resolves here (confirmed via
+  // `sbt Test/dependencyTree`) - same coordinate set and reasoning as
+  // spark-adapter/build.sbt's override (see its comment for the full
+  // detail): 4.1.96.Final is vulnerable to CVE-2025-24970 (SslHandler
+  // packet validation, fixed 4.1.118.Final) and CVE-2026-33871 (HTTP/2
+  // CONTINUATION-frame flood DoS, fixed 4.1.132.Final); 4.1.132.Final
+  // covers both. This module has no Arrow dependency, so none of
+  // spark-adapter's PoolArena fragility applies - still pinned as one
+  // consistent set rather than per-artifact, to avoid a split-version
+  // classpath on principle.
+  "io.netty" % "netty-all" % "4.1.132.Final",
+  "io.netty" % "netty-buffer" % "4.1.132.Final",
+  "io.netty" % "netty-codec" % "4.1.132.Final",
+  "io.netty" % "netty-codec-http" % "4.1.132.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.132.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.132.Final",
+  "io.netty" % "netty-common" % "4.1.132.Final",
+  "io.netty" % "netty-handler" % "4.1.132.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.132.Final",
+  "io.netty" % "netty-resolver" % "4.1.132.Final",
+  "io.netty" % "netty-transport" % "4.1.132.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.132.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.132.Final",
+  // CVE-2022-46751 (GHSA-hedq-r4mx-jhh8, XXE in Ivy's XML parsing), fixed
+  // in 2.5.2. Confirmed via `sbt Test/dependencyTree` that 2.5.1 is this
+  // module's actual resolved winner.
+  "org.apache.ivy" % "ivy" % "2.5.2"
 )
 
 assembly / assemblyJarName := "invaract-spark-plugin-0.1.0.jar"

@@ -158,17 +158,56 @@ libraryDependencies ++= {
 // (apache/arrow#35053, fixed in Arrow 13.0.0). Not fixable via
 // --add-opens (both java.base/java.nio and jdk.unsupported/sun.misc are
 // already open below; the failure is a missing constructor overload, not
-// a reflective-access denial). Overridden to 14.0.1 for the *test*
-// classpath only - confirmed compatible with Spark 3.5.1's own Arrow use
-// elsewhere in this suite (every other spec exercising Arrow-adjacent
-// code paths still passes). This does not affect the shipped
-// spark-adapter jar's runtime behavior for real users: Arrow itself is
-// never a compile/runtime dependency of this module, only pulled in
-// transitively by Spark's `provided`/test dependencies.
+// a reflective-access denial).
+//
+// Bumped again, from the 14.0.1 this override originally landed at, to
+// 17.0.0 - not for the JDK 21 fix (already covered by anything >= 13.0.0)
+// but because 14.0.1's `arrow-memory-netty` reflectively reaches into
+// Netty-internal `PoolArena` fields in a way that broke against *every*
+// Netty version this module tried pinning for the CVE-2025-24970/
+// CVE-2026-33871 fixes below (4.1.105.Final and then 4.1.132.Final both
+// produced the identical `NoSuchFieldError: Class io.netty.buffer.PoolArena
+// does not have member field 'int chunkSize'` on every ClickHouse write
+// test). Root-caused, not just retried: Netty's own PR #13613 restructured
+// `PoolArena` to hold `SizeClasses` as a field instead of extending it,
+// landing somewhere around Netty 4.1.7x - meaning arrow-memory-netty
+// 14.0.1 was never going to work with *any* Netty version modern enough to
+// carry the CVE fixes, independent of which one was tried. Arrow's own
+// issue tracker (apache/arrow#36713, apache/arrow#39265) confirms this is
+// a known arrow-memory-netty/Netty compatibility break, resolved from
+// Arrow's side in 17.0.0 - re-verified against this module's own full
+// suite before relying on the issue tracker alone (see
+// docs/CVE_REMEDIATION.md's worked examples for the run this landed on).
+// Overridden for the *test* classpath only, same as before: Arrow itself
+// is never a compile/runtime dependency of this module, only pulled in
+// transitively by Spark's `provided`/test dependencies, so this does not
+// affect the shipped spark-adapter jar's runtime behavior for real users.
 dependencyOverrides ++= Seq(
-  "org.apache.arrow" % "arrow-vector" % "14.0.1",
-  "org.apache.arrow" % "arrow-memory-core" % "14.0.1",
-  "org.apache.arrow" % "arrow-memory-netty" % "14.0.1",
+  "org.apache.arrow" % "arrow-vector" % "17.0.0",
+  "org.apache.arrow" % "arrow-memory-core" % "17.0.0",
+  "org.apache.arrow" % "arrow-memory-netty" % "17.0.0",
+  // Confirmed via a real test failure, not assumed: Arrow 17.0.0's own
+  // dependency management pulls jackson-core/jackson-databind/
+  // jackson-annotations 2.17.1, which wins eviction over Spark 3.5.1's
+  // own 2.15.2 - and Spark's `jackson-module-scala_2.12:2.15.2` (still on
+  // the classpath, untouched) enforces a strict version check on init:
+  // `JsonMappingException: Scala module 2.15.2 requires Jackson Databind
+  // version >= 2.15.0 and < 2.16.0 - Found jackson-databind version
+  // 2.17.1`. Since that check runs in a static initializer Spark's own
+  // error-formatting machinery depends on
+  // (org.apache.spark.ErrorClassesJsonReader), this broke nearly every
+  // suite in the module, not just Arrow-adjacent ones. Pinned the three
+  // Jackson core artifacts back to 2.15.2 - what jackson-module-scala
+  // actually requires and what Spark 3.5.1 already ships - rather than
+  // letting Arrow's newer preference win. Arrow's own use of Jackson is
+  // for schema/metadata (de)serialization via jackson-databind's stable
+  // public ObjectMapper API, not the kind of thing that needs the latest
+  // patch version; downgrading it 2 minor versions is a smaller,
+  // better-understood risk than leaving two incompatible Jackson stacks
+  // on the same classpath.
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.2",
   // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
   // pulled in by Spark/Delta/Hive's own dependency trees - same
   // dependencyOverrides pattern as Arrow above, not a change to what this
@@ -193,35 +232,92 @@ dependencyOverrides ++= Seq(
   // Spark/Hive - nothing here runs a quorum or configures SASL peer auth -
   // but the classpath should carry the fixed version regardless.
   "org.apache.zookeeper" % "zookeeper" % "3.9.2",
-  // Confirmed via a real test failure, not assumed: the zookeeper override
-  // above pulls in Netty 4.1.105.Final for 9 artifacts
-  // (netty-buffer/common/codec/handler/resolver/transport and its
-  // native-epoll/unix-common/classes-epoll variants - confirmed via
-  // `sbt Test/dependencyTree`), while everything else in this tree still
-  // resolves the same artifacts to 4.1.96.Final. Ivy doesn't evict these
-  // to one consistent version, so both jars end up on the classpath - and
-  // Arrow's `arrow-memory-netty` (pinned above for the JDK 21 fix)
-  // reflectively reaches into Netty-internal `PoolArena` fields in a way
-  // that only works against the specific Netty version it was validated
-  // against: `NoSuchFieldError: Class io.netty.buffer.PoolArena does not
-  // have member field 'int chunkSize'` on every ClickHouse write test
-  // (ClickHouseArrowStreamWriter -> Arrow's NettyAllocationManager) once
-  // whichever netty-buffer.jar the classloader picks doesn't match. Pinned
-  // back to 4.1.96.Final - the version already validated against
-  // arrow-memory-netty 14.0.1 above - rather than forward to 4.1.105.Final,
-  // since ZooKeeper is only ever a transitive, unexercised client library
-  // in this module's own tests (nothing here runs a real quorum or client
-  // connection), so there's no reason to prefer whichever Netty version it
-  // happens to want over the one already proven compatible with Arrow.
-  "io.netty" % "netty-buffer" % "4.1.96.Final",
-  "io.netty" % "netty-common" % "4.1.96.Final",
-  "io.netty" % "netty-codec" % "4.1.96.Final",
-  "io.netty" % "netty-handler" % "4.1.96.Final",
-  "io.netty" % "netty-resolver" % "4.1.96.Final",
-  "io.netty" % "netty-transport" % "4.1.96.Final",
-  "io.netty" % "netty-transport-classes-epoll" % "4.1.96.Final",
-  "io.netty" % "netty-transport-native-epoll" % "4.1.96.Final",
-  "io.netty" % "netty-transport-native-unix-common" % "4.1.96.Final"
+  // Netty pinned to a single consistent version across every io.netty
+  // artifact this tree resolves (confirmed the full set via
+  // `sbt Test/dependencyTree` - `netty-tcnative-*` excluded, since those
+  // use OpenSSL's own version line, not Netty's 4.1.x one, and no CVE was
+  // flagged against them). Two real reasons to pin explicitly rather than
+  // let Ivy pick a winner, both learned the hard way in this module:
+  //
+  //  1. **Consistency, not just currency**: the ZooKeeper 3.9.2 override
+  //     above, on its own, pulled Netty 4.1.105.Final for 9 of these
+  //     artifacts while everything else stayed on 4.1.96.Final - Ivy
+  //     doesn't evict cleanly across a tree this deep, so both jars ended
+  //     up on the classpath simultaneously. Arrow's `arrow-memory-netty`
+  //     (pinned above for the JDK 21 fix) reflectively reaches into
+  //     Netty-internal `PoolArena` fields in a way that only works
+  //     against the exact version it was validated against:
+  //     `NoSuchFieldError: Class io.netty.buffer.PoolArena does not have
+  //     member field 'int chunkSize'` on every ClickHouse write test the
+  //     first time this happened. Every `io.netty` artifact in the tree
+  //     must move together, never partially.
+  //  2. **CVE remediation** (see docs/CVE_REMEDIATION.md): 4.1.96.Final
+  //     itself is vulnerable to CVE-2025-24970 (SslHandler packet
+  //     validation, native-SSLEngine crash, fixed 4.1.118.Final) and
+  //     CVE-2026-33871 (HTTP/2 CONTINUATION-frame flood DoS via a
+  //     zero-byte-frame bypass, fixed 4.1.132.Final). 4.1.132.Final is
+  //     the highest of the two fix floors, so it covers both.
+  //
+  // This exact 4.1.132.Final target was first tried against
+  // arrow-memory-netty 14.0.1 and failed with the identical PoolArena
+  // error from lesson 1 - see the Arrow override's own comment above for
+  // the root cause and the fix, which was bumping Arrow to 17.0.0, not
+  // backing off this Netty version. Left at 4.1.132.Final rather than
+  // reconsidered, since the actual incompatibility was never with this
+  // specific Netty version - it was arrow-memory-netty 14.0.1 being
+  // incompatible with *any* modern Netty, which is fixed on Arrow's side.
+  "io.netty" % "netty-all" % "4.1.132.Final",
+  "io.netty" % "netty-buffer" % "4.1.132.Final",
+  "io.netty" % "netty-codec" % "4.1.132.Final",
+  "io.netty" % "netty-codec-http" % "4.1.132.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.132.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.132.Final",
+  "io.netty" % "netty-common" % "4.1.132.Final",
+  "io.netty" % "netty-handler" % "4.1.132.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.132.Final",
+  "io.netty" % "netty-resolver" % "4.1.132.Final",
+  "io.netty" % "netty-transport" % "4.1.132.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.132.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.132.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.132.Final",
+  // CVE-2022-46751 (GHSA-hedq-r4mx-jhh8, XXE - Ivy's XML parsing of its
+  // own config/Ivy files/Maven POMs allowed external DTD expansion),
+  // fixed in 2.5.2. Confirmed via `sbt Test/dependencyTree` that 2.5.1 is
+  // this module's actual resolved winner (2.4.0 already evicted by it).
+  "org.apache.ivy" % "ivy" % "2.5.2",
+  // 0.12.0 -> 0.13.0 ONLY, not further. Pulled in transitively by
+  // spark-hive's Hive 2.3.9 dependency tree (the only module libthrift
+  // appears in - confirmed via `sbt Test/dependencyTree`, same
+  // Thrift-based Hive metastore client path as the Derby entry below).
+  // Two real CVEs here, and - like Derby - a real Hive-compatibility wall
+  // found by testing, not assumed:
+  //
+  //  - CVE-2019-0205 (loop with an unreachable exit condition - a
+  //    malicious payload can put a client/server into an infinite loop),
+  //    fixed in 0.13.0. Safe to take.
+  //  - CVE-2020-13949 (a short malicious RPC message can trigger a large
+  //    memory allocation), fixed in 0.14.0 - NOT safe to take. Tried it
+  //    first; broke HiveConnectorSpec outright with
+  //    `NoClassDefFoundError: org/apache/thrift/transport/TFramedTransport`.
+  //    Confirmed by inspecting the actual jars (`unzip -l`) across every
+  //    0.1x release: 0.13.0 still has
+  //    `org/apache/thrift/transport/TFramedTransport.class`; 0.14.0
+  //    onward moved it to `org/apache/thrift/transport/layered/`
+  //    (0.14.1/0.14.2 confirmed same). Hive 2.3.9's compiled code
+  //    references the pre-0.14.0 package by name, exactly like Derby's
+  //    EmbeddedDriver - no libthrift release both fixes CVE-2020-13949
+  //    and keeps that package path.
+  //
+  // Accepted risk for CVE-2020-13949 (see docs/CVE_REMEDIATION.md section
+  // 3): not reachable through this module's own tests regardless -
+  // HiveConnectorSpec's `enableHiveSupport()` session sets no
+  // `hive.metastore.uris`, so it runs Hive's *embedded* metastore
+  // (in-process calls, per Hive's own architecture), never a real Thrift
+  // RPC server that could receive the "malicious RPC client" payload this
+  // CVE describes.
+  "org.apache.thrift" % "libthrift" % "0.13.0"
 )
 
 // NOT overridden, unlike Avro/ZooKeeper/Netty above - CVE-2022-46337
