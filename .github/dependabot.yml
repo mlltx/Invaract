@@ -1,0 +1,73 @@
+# Dependency update automation.
+#
+# Covers only the ecosystems Dependabot actually has an updater for in this
+# repo: npm (web/, docs-site/) and github-actions (workflow pins). There is
+# no `maven`/sbt entry here on purpose — Dependabot has no build.sbt parser,
+# so it cannot open version-bump PRs for contract/ir/spark-adapter/plugin/
+# runner's dependencies even though dependency-graph.yml (which submits
+# those modules' resolved deps via scalacenter/sbt-dependency-submission)
+# makes Dependabot *alerts* fire for them. That gap is why those alerts are
+# handled manually — see docs/CVE_REMEDIATION.md, section 4.
+version: 2
+
+updates:
+  # Demo results viewer (harness, not the verification engine — see
+  # CLAUDE.md's "What's the product" section). Still kept current: it's a
+  # real Next.js app serving a real port.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "web"
+    groups:
+      # Batch routine bumps into one PR; leave majors (a Next.js/React
+      # major especially) as their own PR for manual review, per
+      # docs/CVE_REMEDIATION.md section 4/5 — batching unrelated bumps
+      # together makes a CI failure impossible to attribute.
+      web-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # User-facing docs site (Astro Starlight). Build-time only — see
+  # CLAUDE.md's Documentation Policy: a break here is caught by
+  # deploy-docs.yml's `npm run build` gate, not by the demo harness.
+  - package-ecosystem: "npm"
+    directory: "/docs-site"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "docs-site"
+    groups:
+      docs-site-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # CI workflow action pins (.github/workflows/*.yml) — CI supply-chain
+  # surface, not just tooling; see docs/CVE_REMEDIATION.md section 2,
+  # bucket 5.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

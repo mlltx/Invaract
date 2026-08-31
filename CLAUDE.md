@@ -868,6 +868,9 @@ On mobile network, the web UI may be slower due to data volume (~100KB report).
 - [ROADMAP.md](ROADMAP.md) — phase-by-phase plan and status
 - [docs/ADDING_A_SPARK_CONNECTOR.md](docs/ADDING_A_SPARK_CONNECTOR.md) —
   reusable process for adding a new Spark connector to `spark-adapter`
+- [docs/CVE_REMEDIATION.md](docs/CVE_REMEDIATION.md) — process for
+  triaging and fixing Dependabot/CVE alerts without regressing the
+  guardrails above
 - [Apache Spark](https://spark.apache.org/)
 - [Scala 2.12](https://docs.scala-lang.org/2.12/)
 - [sbt](https://www.scala-sbt.org/)
