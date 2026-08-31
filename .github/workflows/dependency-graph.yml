@@ -15,6 +15,16 @@ on:
     branches:
       - main
 
+# scalacenter/sbt-dependency-submission POSTs a snapshot via GitHub's
+# Dependency Submission API, which needs `contents: write` on the
+# workflow's GITHUB_TOKEN - without this, every submission is rejected
+# with "403 Resource not accessible by integration" regardless of the
+# repo's own default token permissions (confirmed empirically: this
+# workflow failed on every one of its runs since it was introduced,
+# always at this exact step, until this permission was added).
+permissions:
+  contents: write
+
 jobs:
   dependency-graph:
     name: Submit dependency graph (${{ matrix.module }})
