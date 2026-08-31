@@ -91,7 +91,25 @@ libraryDependencies ++= Seq(
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-  "com.h2database" % "h2" % "2.2.224" % "test"
+  "com.h2database" % "h2" % "2.2.224" % "test",
+  // org.lz4:lz4-java is unmaintained (the upstream project archived) and
+  // vulnerable to CVE-2025-12183 (GHSA-vqf4-7m7x-wgfc, out-of-bounds
+  // memory read via untrusted compressed input) and CVE-2025-66566
+  // (GHSA-cmp6-m4wj-q63q, information leak via an insufficiently-cleared
+  // output buffer). No fix was ever published under org.lz4 - confirmed
+  // directly against Maven Central's own relocation POM for
+  // org.lz4:lz4-java:1.8.1 (`<relocation><groupId>at.yawk.lz4</groupId>
+  // </relocation>`), which points at the community fork that continues
+  // receiving fixes. Added directly at 1.11.1 (the latest release,
+  // covering both CVEs - 1.8.1 alone only fixes the first) rather than
+  // relying on Ivy to follow the relocation, which sbt/Ivy has
+  // historically been inconsistent about; the org.lz4 coordinate is
+  // excluded below. Same `net.jpountz.lz4` Java package namespace as the
+  // original (confirmed a drop-in replacement, not a rewrite), so
+  // Spark's own shuffle-compression code - a real, exercised code path
+  // even under local[*] for any shuffle stage, unlike some of the other
+  // overrides in this file - needs no changes to keep working.
+  "at.yawk.lz4" % "lz4-java" % "1.11.1" % "test"
 )
 
 // Not a plain unconditional entry, unlike every other test dependency
@@ -231,7 +249,18 @@ dependencyOverrides ++= Seq(
   // ever uses ZooKeeper as a transitive client library pulled in by
   // Spark/Hive - nothing here runs a quorum or configures SASL peer auth -
   // but the classpath should carry the fixed version regardless.
-  "org.apache.zookeeper" % "zookeeper" % "3.9.2",
+  //
+  // 3.9.2 -> 3.9.5: two more CVEs found in a later alert batch, both
+  // fixed within the 3.9.x line this module is already on. CVE-2026-24308
+  // (ZKConfig logs configuration values, including potential credentials/
+  // connection strings, at INFO level - fixed 3.9.5) and CVE-2024-51504
+  // (Admin Server's IPAuthenticationProvider trusts a spoofable
+  // X-Forwarded-For header for IP-based auth - fixed 3.9.3, so 3.9.5
+  // covers it too). Same "transitive, unexercised client library" caveat
+  // as above - this module runs no ZooKeeper Admin Server and does no
+  // config-value logging of its own - but the classpath should still
+  // carry the fixed version.
+  "org.apache.zookeeper" % "zookeeper" % "3.9.5",
   // Netty pinned to a single consistent version across every io.netty
   // artifact this tree resolves (confirmed the full set via
   // `sbt Test/dependencyTree` - `netty-tcnative-*` excluded, since those
@@ -252,36 +281,44 @@ dependencyOverrides ++= Seq(
   //     first time this happened. Every `io.netty` artifact in the tree
   //     must move together, never partially.
   //  2. **CVE remediation** (see docs/CVE_REMEDIATION.md): 4.1.96.Final
-  //     itself is vulnerable to CVE-2025-24970 (SslHandler packet
-  //     validation, native-SSLEngine crash, fixed 4.1.118.Final) and
-  //     CVE-2026-33871 (HTTP/2 CONTINUATION-frame flood DoS via a
-  //     zero-byte-frame bypass, fixed 4.1.132.Final). 4.1.132.Final is
-  //     the highest of the two fix floors, so it covers both.
+  //     itself was vulnerable to CVE-2025-24970 (SslHandler packet
+  //     validation, fixed 4.1.118.Final) and CVE-2026-33871 (HTTP/2
+  //     CONTINUATION-frame flood DoS, fixed 4.1.132.Final) - the first
+  //     bump this override made. A later alert batch found four more,
+  //     all fixed at or below 4.1.136.Final: CVE-2025-55163 (MadeYouReset
+  //     HTTP/2 DDoS - malformed control frames bypass the max-concurrent-
+  //     streams limit, fixed 4.1.124.Final), CVE-2026-44249 (IPv6 subnet
+  //     filter bypass via incorrect comparator masking in
+  //     IpSubnetFilterRule, fixed 4.1.135.Final), and two ByteBuf-leak/
+  //     infinite-loop DoS bugs in SpdyHttpDecoder and Bzip2Decoder (both
+  //     fixed 4.1.136.Final). 4.1.136.Final is the highest of all six fix
+  //     floors, so it covers every one of them.
   //
-  // This exact 4.1.132.Final target was first tried against
-  // arrow-memory-netty 14.0.1 and failed with the identical PoolArena
-  // error from lesson 1 - see the Arrow override's own comment above for
-  // the root cause and the fix, which was bumping Arrow to 17.0.0, not
-  // backing off this Netty version. Left at 4.1.132.Final rather than
-  // reconsidered, since the actual incompatibility was never with this
-  // specific Netty version - it was arrow-memory-netty 14.0.1 being
-  // incompatible with *any* modern Netty, which is fixed on Arrow's side.
-  "io.netty" % "netty-all" % "4.1.132.Final",
-  "io.netty" % "netty-buffer" % "4.1.132.Final",
-  "io.netty" % "netty-codec" % "4.1.132.Final",
-  "io.netty" % "netty-codec-http" % "4.1.132.Final",
-  "io.netty" % "netty-codec-http2" % "4.1.132.Final",
-  "io.netty" % "netty-codec-socks" % "4.1.132.Final",
-  "io.netty" % "netty-common" % "4.1.132.Final",
-  "io.netty" % "netty-handler" % "4.1.132.Final",
-  "io.netty" % "netty-handler-proxy" % "4.1.132.Final",
-  "io.netty" % "netty-resolver" % "4.1.132.Final",
-  "io.netty" % "netty-transport" % "4.1.132.Final",
-  "io.netty" % "netty-transport-classes-epoll" % "4.1.132.Final",
-  "io.netty" % "netty-transport-classes-kqueue" % "4.1.132.Final",
-  "io.netty" % "netty-transport-native-epoll" % "4.1.132.Final",
-  "io.netty" % "netty-transport-native-kqueue" % "4.1.132.Final",
-  "io.netty" % "netty-transport-native-unix-common" % "4.1.132.Final",
+  // 4.1.132.Final (this override's first CVE-motivated target) was tried
+  // against arrow-memory-netty 14.0.1 and failed with the identical
+  // PoolArena error from lesson 1 - see the Arrow override's own comment
+  // above for the root cause and the fix, which was bumping Arrow to
+  // 17.0.0, not backing off Netty. The later bump to 4.1.136.Final (a
+  // 4-patch-version delta, not a 36-version jump like 96->132) still gets
+  // the same full-suite check before merging, per docs/CVE_REMEDIATION.md
+  // section 5 - never assumed safe just because a bigger jump already
+  // cleared.
+  "io.netty" % "netty-all" % "4.1.136.Final",
+  "io.netty" % "netty-buffer" % "4.1.136.Final",
+  "io.netty" % "netty-codec" % "4.1.136.Final",
+  "io.netty" % "netty-codec-http" % "4.1.136.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.136.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.136.Final",
+  "io.netty" % "netty-common" % "4.1.136.Final",
+  "io.netty" % "netty-handler" % "4.1.136.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.136.Final",
+  "io.netty" % "netty-resolver" % "4.1.136.Final",
+  "io.netty" % "netty-transport" % "4.1.136.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.136.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.136.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.136.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.136.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.136.Final",
   // CVE-2022-46751 (GHSA-hedq-r4mx-jhh8, XXE - Ivy's XML parsing of its
   // own config/Ivy files/Maven POMs allowed external DTD expansion),
   // fixed in 2.5.2. Confirmed via `sbt Test/dependencyTree` that 2.5.1 is
@@ -317,8 +354,46 @@ dependencyOverrides ++= Seq(
   // (in-process calls, per Hive's own architecture), never a real Thrift
   // RPC server that could receive the "malicious RPC client" payload this
   // CVE describes.
-  "org.apache.thrift" % "libthrift" % "0.13.0"
+  "org.apache.thrift" % "libthrift" % "0.13.0",
+  // 0.25 -> 0.27: CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every Aircompressor
+  // decompressor (LZ4/LZO/Snappy/Zstandard) uses sun.misc.Unsafe for
+  // unchecked out-of-bounds memory access, which malformed input can turn
+  // into a JVM crash or a leak of adjacent process memory. 0.26 alone
+  // wasn't sufficient (the advisory names 0.27 as the real fix). Notably,
+  // this is the same version Spark's own upstream moved to for the 3.5.x
+  // line (SPARK-48494, backported to branch-3.5) - a real signal this
+  // bump is safe within Spark 3.5.1, not just a hopeful guess.
+  "io.airlift" % "aircompressor" % "0.27",
+  // 3.14.0 -> 3.18.0: CVE-2025-48924 (GHSA-j288-q9x7-2f5v) -
+  // ClassUtils.getClass(...) recurses without a depth limit and can
+  // StackOverflowError on a sufficiently long class-name input.
+  "org.apache.commons" % "commons-lang3" % "3.18.0",
+  // 1.1.10.3 -> 1.1.10.4: CVE-2023-43642 (GHSA-55g7-9cwv-5qfv) -
+  // SnappyInputStream has no upper-bound check on the declared chunk
+  // length, so a crafted input can force an inappropriately large heap
+  // allocation (OutOfMemoryError DoS).
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.4"
 )
+
+// NOT overridden, unlike everything above - commons-lang:commons-lang
+// (the pre-package-rename 2.x line, distinct from org.apache.commons:
+// commons-lang3 above - they coexist on the classpath and are not
+// interchangeable) has CVE-2025-48924 too (same ClassUtils.getClass(...)
+// recursion bug, in the 2.x codebase this was forked from) with no
+// available fix: the CVE's affected range is 2.0-2.6, this module
+// resolves the actual last-ever 2.x release (2.6, confirmed via
+// `sbt Test/dependencyTree`), and the fix landed only in commons-lang3
+// 3.18.0 above - there is no 2.7 and never will be, the 2.x line is EOL
+// (confirmed: multiple downstream trackers list "no fix planned" for the
+// legacy 2.x branch). Excluding it outright, the way jackson-mapper-asl
+// was excluded above, was considered and rejected: unlike that case,
+// commons-lang 2.x's org.apache.commons.lang package (pre-rename) is a
+// real, separate namespace from commons-lang3's org.apache.commons.lang3
+// - old Hadoop-ecosystem code transitively pulling this in may reference
+// org.apache.commons.lang.* classes directly that commons-lang3 does not
+// provide, so removing the jar risks a NoClassDefFoundError this module
+// has no way to verify is safe without exercising every code path that
+// might reach it. Accepted risk (see docs/CVE_REMEDIATION.md section 3).
 
 // NOT overridden, unlike Avro/ZooKeeper/Netty above - CVE-2022-46337
 // (GHSA-rcjc-c4pj-xxrp, LDAP injection in Derby's
@@ -373,7 +448,36 @@ dependencyOverrides ++= Seq(
 // org.codehaus.jackson.* directly (confirmed via grep), so it's dead
 // weight pulled in for Hive-internal JSON serde this module's own tests
 // never exercise, not something removing it can plausibly break.
-excludeDependencies += ExclusionRule("org.codehaus.jackson", "jackson-mapper-asl")
+excludeDependencies ++= Seq(
+  ExclusionRule("org.codehaus.jackson", "jackson-mapper-asl"),
+  // See the at.yawk.lz4 addition in libraryDependencies above for the
+  // full CVE detail and why the fork exists - this is the other half of
+  // that fix, removing the unmaintained org.lz4 coordinate so only the
+  // fork's classes are on the classpath.
+  ExclusionRule("org.lz4", "lz4-java")
+)
+
+// NOT overridden - com.google.guava:guava:16.0.1 (CVE-2018-10237,
+// GHSA-w787-jrh4-2xh8, unbounded memory allocation via
+// AtomicDoubleArray/CompoundOrdering serialization, fixed 24.1.1+).
+// Traced to its actual source, not assumed: `sbt Test/dependencyTree`
+// shows it arrives via org.apache.curator:curator-client:2.13.0, which
+// backs Spark's ZooKeeper-based standalone-cluster recovery mode
+// (`spark.deploy.recoveryMode=ZOOKEEPER`) - infrastructure this module
+// never configures or exercises, since CLAUDE.md's Execution Model has
+// every test and the demo harness run against a `local[*]` master, which
+// never touches Curator/cluster-recovery code at all. That reachability
+// gap is also why a full-suite pass here couldn't actually prove a bump
+// safe the way it did for Netty/Avro/ZooKeeper: if Curator's own
+// compiled code (built against Guava 16.0.1's decade-old API surface)
+// never gets loaded under local[*], a version conflict wouldn't surface
+// as a test failure regardless of whether it's really compatible - a
+// green run would be confirming nothing. Given that and the CVE's
+// Moderate severity (the lowest-urgency tier in
+// docs/CVE_REMEDIATION.md's bucket list), left as an accepted risk
+// rather than pushed through on an assumption a passing suite can't
+// back up. Re-evaluate if this module ever needs to exercise Spark's
+// cluster-recovery code paths for real.
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
 unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")

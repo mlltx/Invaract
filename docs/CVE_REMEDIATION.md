@@ -445,6 +445,110 @@ pattern as Derby (not reachable — `HiveConnectorSpec` runs Hive's
 *embedded* metastore, never a real Thrift RPC server that could receive
 the malicious-client payload this CVE describes).
 
+## 7b. Worked example: a second high-severity batch, a clean run, and two new accepted risks
+
+The next batch — a mix of alerts GitHub's own scan turned up against
+artifacts already touched by §7a, plus several new ones — is a useful
+contrast to §7a: same modules, same kind of coordinate bumps, but no
+cascading regression this time, because the bumps were smaller and closer
+to what had already been proven compatible.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `org.apache.zookeeper:zookeeper` | all three | 3.9.2 | 3.9.5 | CVE-2026-24308 (config-value log exposure), CVE-2024-51504 (Admin Server IP-auth bypass) |
+| `io.netty:*` (same 16 artifacts as §7a) | all three | 4.1.132.Final | 4.1.136.Final | CVE-2025-55163 (MadeYouReset HTTP/2 DDoS), CVE-2026-44249 (IPv6 subnet filter bypass), plus ByteBuf-leak/infinite-loop DoS bugs in `SpdyHttpDecoder`/`Bzip2Decoder` |
+| `io.airlift:aircompressor` | all three | 0.25 | 0.27 | CVE-2024-36114 (unchecked `sun.misc.Unsafe` access — JVM crash / memory leak) |
+| `org.apache.commons:commons-lang3` | all three | 3.12.0–3.14.0 | 3.18.0 | CVE-2025-48924 (`ClassUtils.getClass` uncontrolled recursion) |
+| `org.xerial.snappy:snappy-java` | all three | 1.1.10.3 | 1.1.10.4 | CVE-2023-43642 (`SnappyInputStream` unbounded chunk-length allocation) |
+| `org.lz4:lz4-java` → `at.yawk.lz4:lz4-java` | all three | `org.lz4:lz4-java:1.8.0` | `at.yawk.lz4:lz4-java:1.11.1` | CVE-2025-12183, CVE-2025-66566 |
+| `org.codehaus.jackson:jackson-mapper-asl` (XXE variant) | `spark-adapter` | already excluded | no change needed | — |
+| `com.google.protobuf:protobuf-java` | all three | already 3.19.6 | no change needed | — |
+| `commons-lang:commons-lang` (2.x — not itself alerted, found while researching the commons-lang3 CVE) | `spark-adapter` | 2.6 | **not changed** — accepted risk | CVE-2025-48924 also affects this pre-rename 2.x line |
+| `com.google.guava:guava` | all three | 16.0.1 | **not changed** — accepted risk | CVE-2018-10237 |
+
+**Two alerts, again, needed zero code change**: the `jackson-mapper-asl`
+alert this batch cites is a different CVE flavor (XXE) against the exact
+artifact already excluded in §7 — one exclusion still covers it.
+`protobuf-java` remains resolved at the already-fixed `3.19.6`, unchanged
+since §7a.
+
+**`lz4-java` needed an actual coordinate switch, not a version bump.**
+The upstream `org.lz4:lz4-java` project is archived; no fix for either
+CVE was ever published under that groupId. Confirmed directly against
+Maven Central: `org.lz4:lz4-java:1.8.1`'s own POM is a real Sonatype
+relocation pointing at `at.yawk.lz4:lz4-java`, the community fork that
+continues shipping fixes (up through `1.11.1`, which covers both CVEs).
+Rather than lean on Ivy to follow that relocation — sbt/Ivy's handling of
+Maven relocation POMs has a history of being inconsistent — the old
+coordinate was excluded outright and the fork added directly. Verified
+concretely, not just assumed compatible: the fork kept the same
+`net.jpountz.lz4` Java package namespace as the original (confirmed via
+`unzip -l` on the rebuilt `invaract-spark-runner.jar` — 48 matching class
+files), so Spark's own shuffle-compression code, a real code path
+exercised by any shuffle stage even under `local[*]`, needed no changes
+to keep working.
+
+**Two new accepted risks, each for a different reason than Derby/libthrift's
+"the fix breaks Hive" pattern:**
+
+- **`commons-lang` (2.x)**: this is not the same artifact as
+  `commons-lang3` above — the pre-rename `org.apache.commons.lang`
+  package and `commons-lang3`'s `org.apache.commons.lang3` package
+  coexist on the classpath and are not interchangeable, so old
+  Hadoop-ecosystem code that imports the former can't simply be pointed
+  at the latter. CVE-2025-48924 affects the 2.x line too (2.0–2.6, the
+  same `ClassUtils.getClass` recursion bug, in the codebase
+  `commons-lang3` was forked from) but no 2.x fix was ever released — the
+  line is EOL, confirmed via multiple downstream trackers listing "no fix
+  planned." Excluding it outright (the `jackson-mapper-asl` playbook) was
+  considered and rejected here specifically because, unlike
+  `jackson-mapper-asl`, this module's own source doesn't establish that
+  nothing transitively needs `org.apache.commons.lang.*` — removing it
+  risks a `NoClassDefFoundError` with no way to verify safety short of
+  exercising every transitive code path that might reach it.
+- **`guava`**: traced to its actual source rather than assumed —
+  `sbt Test/dependencyTree` shows it arrives via
+  `org.apache.curator:curator-client:2.13.0`, which backs Spark's
+  ZooKeeper-based standalone-cluster recovery mode
+  (`spark.deploy.recoveryMode=ZOOKEEPER`). CLAUDE.md's Execution Model
+  has every test and the demo harness running against a `local[*]`
+  master, which never touches this code at all. That's a materially
+  different situation from every other override in this doc: a full
+  suite pass couldn't actually *prove* a Guava bump safe here, because if
+  Curator's own code (compiled against Guava 16.0.1's decade-old API
+  surface) never loads under `local[*]`, an incompatibility simply
+  wouldn't surface as a test failure regardless of whether it's real — a
+  green run would be confirming nothing. Combined with the CVE's
+  Moderate severity (§2's lowest-urgency tier), left as an accepted risk
+  rather than pushed through on a test result that couldn't actually back
+  it up.
+
+**No regression this time** — `spark-adapter`'s full suite passed
+286/286 on the first attempt for the ZooKeeper/Netty/aircompressor/
+commons-lang3/snappy-java bumps, and again on the first attempt once the
+`lz4-java` fork switch was added. The Netty delta here (4.1.132.Final →
+4.1.136.Final, four patch versions) was far smaller than §7a's 96 → 132
+jump that broke Arrow, which is the likely reason nothing broke — but
+this was *confirmed* by running the real suite both times, not inferred
+from the delta being small.
+
+**Deliberately not touched in this batch**, each held as its own future,
+isolated pass given how much a single Netty/Arrow bump already cascaded
+in §7a:
+
+- Two `jackson-databind` CVEs (CVE-2026-54512, CVE-2026-54513 —
+  `PolymorphicTypeValidator` bypasses) and one `jackson-core` CVE
+  (GHSA-r7wm-3cxj-wff9 — async-parser number-length bypass), all fixed at
+  `2.18.x`. This module's `jackson-core`/`jackson-databind`/
+  `jackson-annotations` are currently pinned to `2.15.2` *specifically*
+  because `jackson-module-scala_2.12:2.15.2` (Spark's own, unchanged)
+  enforces that exact range — see §7a. `jackson-module-scala:2.18.8`
+  does exist on Maven Central, so the fix is plausible, but it needs its
+  own dedicated verification pass given this exact dependency corner's
+  track record in §7a.
+- The Spark History Server RCE (CVE-2025-54920, Direct dependency, High)
+  — still held for its own isolated Spark 3.5.1 → 3.5.7 pass, per §7a.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -474,6 +578,18 @@ the malicious-client payload this CVE describes).
       low) into the buckets in §2's "blast radius" list; bucket 1 (any
       *new* compile-scope dependency in `contract`/`ir`/`spark-adapter`)
       and bucket 5 (Actions) next after the snakeyaml check above.
+- [x] Fix the second high-severity batch (ZooKeeper, Netty, aircompressor,
+      commons-lang3, snappy-java, lz4-java fork switch; this change) —
+      see §7b, including two new accepted risks (`commons-lang` 2.x EOL;
+      `guava`, unreachable through this module's `local[*]`-only testing)
+      and the `jackson-mapper-asl`/`protobuf-java` alerts already resolved
+      without a code change.
+- [ ] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
+      §7b — needs bumping `jackson-core`/`jackson-databind`/
+      `jackson-annotations` *and* `jackson-module-scala` together to
+      `2.18.x` (confirmed available on Maven Central), as its own isolated
+      pass with full-suite verification, given this exact dependency
+      corner's track record in §7a.
 - [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
       High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
       far: unlike a transitive-jar override, a Spark version bump can
@@ -485,10 +601,12 @@ the malicious-client payload this CVE describes).
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
       each, no matter how confident the reasoning sounds. Record each
-      one's scope/inheritance status per §2's table format (see §7/§7a).
+      one's scope/inheritance status per §2's table format (see §7/§7a/§7b).
 - [ ] Fix or explicitly document-and-accept every alert with no available
-      patched version, per §3 — Derby (§7) is the template for how to
-      document one.
+      patched version, per §3 — Derby (§7) and `commons-lang`/`guava`
+      (§7b) are templates for how to document one, each for a different
+      underlying reason (no fix exists at all; fix exists but breaks a
+      dependent; fix exists but can't be verified reachable).
 - [ ] Once the backlog is current, treat "zero unaddressed alerts older than
       the SLA in §3" as the steady-state target, not "zero alerts" — new
       ones will always arrive with new versions of Spark's own dependency
