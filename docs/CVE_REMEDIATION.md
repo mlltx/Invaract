@@ -215,19 +215,89 @@ environment has no Spark distribution installed, and pulling one down
 solely to validate a private-method change scoped entirely to `contract`
 was judged disproportionate. CI's own `test.yml` matrix runs it on push.
 
-## 7. Next steps checklist
+## 7. Worked example: the 8 critical alerts
+
+GitHub's 8 critical Dependabot alerts, worked end-to-end per §4/§5's
+process, produced two real lessons worth keeping alongside the process
+itself — both found by actually running the tests, not by reading the
+advisory and assuming a version bump is safe:
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.apache.avro:avro` | `plugin`, `runner`, `spark-adapter` | 1.11.2 | 1.11.4 | CVE-2024-47561 |
+| `org.apache.zookeeper:zookeeper` | `plugin`, `runner`, `spark-adapter` | 3.6.3 | 3.9.2 | CVE-2023-44981 |
+| `org.codehaus.jackson:jackson-mapper-asl` | `spark-adapter` | 1.9.13 | excluded (no fix exists) | CVE-2019-10202 |
+| `org.apache.derby:derby` | `spark-adapter` | 10.14.2.0 | **not changed** — accepted risk | CVE-2022-46337 |
+
+**A "safe" transitive bump broke something two hops away.** The
+ZooKeeper 3.6.3 → 3.9.2 bump pulls a newer Netty (4.1.105.Final for 9
+`io.netty` artifacts) that Ivy doesn't cleanly evict against the rest of
+the tree's 4.1.96.Final — both versions end up on the classpath. Every
+`ClickHouseConnectorSpec` write test started failing with
+`NoSuchFieldError: Class io.netty.buffer.PoolArena does not have member
+field 'int chunkSize'`, because `arrow-memory-netty` (already pinned
+in `spark-adapter/build.sbt` for the JDK 21 fix) reflects into
+Netty-internal fields that only exist in the specific version it was
+validated against. Fixed by explicitly pinning those 9 `io.netty`
+coordinates back to 4.1.96.Final alongside the ZooKeeper bump — running
+only the two modules that actually declare Delta/Iceberg/Hive/ClickHouse
+as test deps (`plugin`/`runner` don't touch Arrow at all, and their own
+test suites passed with the ZooKeeper bump alone) would have missed this
+entirely. This is exactly why §5 says to run the real test suite after
+every bump, not just trust that a "transitive-only" dependency can't
+affect anything else on the classpath.
+
+**Sometimes there really is no fix, even when a newer artifact exists.**
+Derby 10.17.1.0 is the only version on Maven Central that actually fixes
+CVE-2022-46337 (the advisory's other named fixed releases —
+10.14.3/10.15.2.1/10.16.1.2 — were apparently never published; see
+[DERBY-7178](https://issues.apache.org/jira/browse/DERBY-7178)). It was
+tried anyway, JDK 21+-only (Derby's own release notes say 10.17 doesn't
+support Java below 21) — and it broke `HiveConnectorSpec` outright:
+`unzip -l` on the actual jar shows Derby restructured its packaging
+between these releases, and 10.17.1.0 no longer contains
+`org/apache/derby/jdbc/EmbeddedDriver.class` at all, while Hive 2.3.9's
+own metastore code hardcodes that exact class name. There is no version
+of Derby that is simultaneously CVE-2022-46337-fixed and compatible with
+this Hive version's metastore client. This is left as a **documented
+accepted risk** (see `spark-adapter/build.sbt`'s comment at the
+`dependencyOverrides` block) rather than forced through: the mitigating
+factor is that `HiveConnectorSpec`'s embedded-metastore JDBC URL
+configures no LDAP authenticator at all, so the specific vulnerable code
+path is never reachable through this module's own tests regardless of
+version — but the alert itself stays open until Hive's own metastore
+client moves off this Derby generation, which isn't something a
+dependency override can fix.
+
+Verification for all four: `spark-adapter`'s full suite (286/286,
+twice — once to catch the Netty regression, once clean after fixing it),
+`plugin`'s suite (4/4), `sbt mimaReportBinaryIssues` skipped for
+`spark-adapter` specifically since the diff is 100% `build.sbt` (no
+`.scala` touched, so binary API cannot have changed) but run for
+`contract` per §6, and the actual shipped jars inspected directly
+(`unzip -l`/`dependencyTree`) rather than trusting the build log — the
+`invaract-spark-runner.jar` DemoJobHarness assembles resolves
+`avro:1.11.4`/`zookeeper:3.9.2` for real, and `jackson-mapper-asl` is
+confirmed absent (`0` matches) from the assembled `spark-adapter` jar.
+
+## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
       (this change).
 - [x] Switch `ContractParser` to `SafeConstructor` as defense-in-depth
       (this change) — see §6's correction for what this does and doesn't
       fix.
-- [ ] Triage the 238 open alerts into the buckets in §2; file the bucket-1
-      (runtime/compile-scope engine) and bucket-5 (Actions) alerts as
-      near-term work first.
-- [ ] Walk the Scala/Maven bucket per §4's manual workflow, batched per §5.
+- [x] Fix the 8 critical alerts (this change) — see §7 for the worked
+      example, including the one left as an accepted risk.
+- [ ] Triage the remaining alerts (97 high / 121 moderate / 12 low) into
+      the buckets in §2; bucket-1 (runtime/compile-scope engine) and
+      bucket-5 (Actions) first.
+- [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
+      batched per §5 — one coordinate (or tightly-related group, per §7's
+      Netty lesson) at a time, real test suite run after each.
 - [ ] Fix or explicitly document-and-accept every alert with no available
-      patched version, per §3.
+      patched version, per §3 — Derby (§7) is the template for how to
+      document one.
 - [ ] Once the backlog is current, treat "zero unaddressed alerts older than
       the SLA in §3" as the steady-state target, not "zero alerts" — new
       ones will always arrive with new versions of Spark's own dependency

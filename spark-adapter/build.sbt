@@ -168,8 +168,116 @@ libraryDependencies ++= {
 dependencyOverrides ++= Seq(
   "org.apache.arrow" % "arrow-vector" % "14.0.1",
   "org.apache.arrow" % "arrow-memory-core" % "14.0.1",
-  "org.apache.arrow" % "arrow-memory-netty" % "14.0.1"
+  "org.apache.arrow" % "arrow-memory-netty" % "14.0.1",
+  // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
+  // pulled in by Spark/Delta/Hive's own dependency trees - same
+  // dependencyOverrides pattern as Arrow above, not a change to what this
+  // module compiles or ships (all four coordinates below arrive via
+  // `provided`/`test`-scope Spark deps, confirmed via
+  // `sbt Test/dependencyTree`), just what version lands on the classpath
+  // this module's tests actually run against.
+  //
+  // 1.11.2 -> 1.11.4: CVE-2024-47561 (GHSA-r7pg-v2c8-mfg3, CVSS 9.3,
+  // arbitrary code execution when parsing an untrusted Avro schema),
+  // fixed in 1.11.4/1.12.0. 1.11.4 chosen over 1.12.0 to stay in the same
+  // minor line Spark 3.5.1 already resolves (org.apache.avro:avro:1.11.2,
+  // confirmed via dependencyTree), minimizing behavioral drift for a
+  // security-only patch release.
+  "org.apache.avro" % "avro" % "1.11.4",
+  // 3.6.3 -> 3.9.2: CVE-2023-44981 (authorization bypass when SASL Quorum
+  // Peer authentication is enabled - an attacker omits the instance part
+  // of the SASL auth ID to bypass the server-list check). 3.9.2 is one of
+  // the advisory's own named fixed releases (3.7.2/3.8.3/3.9.1+, with
+  // 3.9.2/3.8.4 called out as the recommended patch). This module only
+  // ever uses ZooKeeper as a transitive client library pulled in by
+  // Spark/Hive - nothing here runs a quorum or configures SASL peer auth -
+  // but the classpath should carry the fixed version regardless.
+  "org.apache.zookeeper" % "zookeeper" % "3.9.2",
+  // Confirmed via a real test failure, not assumed: the zookeeper override
+  // above pulls in Netty 4.1.105.Final for 9 artifacts
+  // (netty-buffer/common/codec/handler/resolver/transport and its
+  // native-epoll/unix-common/classes-epoll variants - confirmed via
+  // `sbt Test/dependencyTree`), while everything else in this tree still
+  // resolves the same artifacts to 4.1.96.Final. Ivy doesn't evict these
+  // to one consistent version, so both jars end up on the classpath - and
+  // Arrow's `arrow-memory-netty` (pinned above for the JDK 21 fix)
+  // reflectively reaches into Netty-internal `PoolArena` fields in a way
+  // that only works against the specific Netty version it was validated
+  // against: `NoSuchFieldError: Class io.netty.buffer.PoolArena does not
+  // have member field 'int chunkSize'` on every ClickHouse write test
+  // (ClickHouseArrowStreamWriter -> Arrow's NettyAllocationManager) once
+  // whichever netty-buffer.jar the classloader picks doesn't match. Pinned
+  // back to 4.1.96.Final - the version already validated against
+  // arrow-memory-netty 14.0.1 above - rather than forward to 4.1.105.Final,
+  // since ZooKeeper is only ever a transitive, unexercised client library
+  // in this module's own tests (nothing here runs a real quorum or client
+  // connection), so there's no reason to prefer whichever Netty version it
+  // happens to want over the one already proven compatible with Arrow.
+  "io.netty" % "netty-buffer" % "4.1.96.Final",
+  "io.netty" % "netty-common" % "4.1.96.Final",
+  "io.netty" % "netty-codec" % "4.1.96.Final",
+  "io.netty" % "netty-handler" % "4.1.96.Final",
+  "io.netty" % "netty-resolver" % "4.1.96.Final",
+  "io.netty" % "netty-transport" % "4.1.96.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.96.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.96.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.96.Final"
 )
+
+// NOT overridden, unlike Avro/ZooKeeper/Netty above - CVE-2022-46337
+// (GHSA-rcjc-c4pj-xxrp, LDAP injection in Derby's
+// LDAPAuthenticationSchemeImpl) has no compatible fix for this module's
+// Derby use, on any JDK. Investigated, not assumed:
+//
+//  - Confirmed against Maven Central's own version listing that
+//    10.17.1.0 is the *only* published fixed coordinate at all - the
+//    advisory names 10.14.3/10.15.2.1/10.16.1.2 as lower-JDK backports,
+//    but none of those three were ever actually published (see
+//    DERBY-7178, "Wrong 10.14 backport patch version"); only
+//    10.14.1.0/10.14.2.0 (both still vulnerable), 10.15.1.3, 10.15.2.0,
+//    10.16.1.1 (also vulnerable per the advisory's own ranges), and
+//    10.17.1.0 exist.
+//  - Tried 10.17.1.0 anyway (JDK 21+-only, since Derby's own release
+//    notes say 10.17 doesn't support Java below 21) and it broke
+//    HiveConnectorSpec outright: confirmed by inspecting the actual jars
+//    (`unzip -l`) that 10.17.1.0 no longer contains
+//    `org/apache/derby/jdbc/EmbeddedDriver.class` at all - Derby
+//    restructured its packaging between these releases - while Hive
+//    2.3.9's own metastore code (DataNucleus/JDO, not this repo's code)
+//    hardcodes exactly that class name as its default
+//    `javax.jdo.option.ConnectionDriverName`. The real failure:
+//    `DatastoreDriverNotFoundException: The specified datastore driver
+//    ("org.apache.derby.jdbc.EmbeddedDriver") was not found in the
+//    CLASSPATH`. Fixing this would mean patching Hive's own metastore
+//    config, not a dependency bump - out of scope for a transitive CVE
+//    override, and this module's tests only use the embedded metastore
+//    as test-scope plumbing (see HiveConnectorSpec's own doc comment),
+//    not something worth that risk to fix.
+//
+// Accepted risk (see docs/CVE_REMEDIATION.md section 3): this module's
+// own test setup never configures LDAP authentication at all -
+// HiveConnectorSpec's embedded metastore JDBC URL
+// (`jdbc:derby:;databaseName=...;create=true`) sets no
+// `derby.authentication.provider`, so the specific vulnerable code path
+// (LDAPAuthenticationSchemeImpl) is never reachable through this module's
+// tests regardless of version. Re-check when Hive's own metastore client
+// moves off Derby 10.14.x-era packaging expectations (a Spark/Hive
+// version bump, not something fixable here).
+
+// org.codehaus.jackson:jackson-mapper-asl:1.9.13, pulled in transitively
+// by spark-hive's own Hive 2.3.9 dependency tree (hive-common/hive-exec/
+// hive-metastore - confirmed the single occurrence via
+// `sbt Test/dependencyTree`), has CVE-2019-10202 (GHSA-c27h-mcmw-48hv,
+// CVSS 9.8, unsafe polymorphic deserialization) with no available fix:
+// this is old Jackson 1.x (Codehaus, not FasterXML), abandoned since
+// 2013 - 1.9.13 is the artifact's last-ever release, so there is no
+// version to override to (see docs/CVE_REMEDIATION.md section 3's
+// "no available patched version" case). Excluded outright rather than
+// accepted: no source file in this module imports
+// org.codehaus.jackson.* directly (confirmed via grep), so it's dead
+// weight pulled in for Hive-internal JSON serde this module's own tests
+// never exercise, not something removing it can plausibly break.
+excludeDependencies += ExclusionRule("org.codehaus.jackson", "jackson-mapper-asl")
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
 unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")

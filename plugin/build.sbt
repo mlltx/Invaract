@@ -13,6 +13,27 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
 )
 
+// CVE remediation (see docs/CVE_REMEDIATION.md) for two transitive jars
+// Spark 3.5.1's own dependency tree resolves (org.apache.avro:avro:1.11.2,
+// org.apache.zookeeper:zookeeper:3.6.3 - confirmed via
+// `sbt Test/dependencyTree`, since spark-core/spark-sql are `provided`
+// here and don't show under Compile/dependencyTree). This module never
+// itself calls Avro or ZooKeeper - both come along for the ride as part
+// of Spark's own dependency footprint - so this changes only what version
+// lands on the test classpath, not this module's own compiled code.
+//
+// avro 1.11.2 -> 1.11.4: CVE-2024-47561 (GHSA-r7pg-v2c8-mfg3, CVSS 9.3,
+// arbitrary code execution when parsing an untrusted Avro schema), fixed
+// in 1.11.4/1.12.0; 1.11.4 chosen to stay in Spark 3.5.1's own resolved
+// minor line.
+// zookeeper 3.6.3 -> 3.9.2: CVE-2023-44981 (authorization bypass when
+// SASL Quorum Peer auth is enabled), fixed in 3.7.2/3.8.3/3.9.1+, with
+// 3.9.2 one of the advisory's own named recommended patches.
+dependencyOverrides ++= Seq(
+  "org.apache.avro" % "avro" % "1.11.4",
+  "org.apache.zookeeper" % "zookeeper" % "3.9.2"
+)
+
 assembly / assemblyJarName := "invaract-spark-plugin-0.1.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
