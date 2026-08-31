@@ -207,7 +207,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Validates the same path a contributor with only Docker installed
       # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
