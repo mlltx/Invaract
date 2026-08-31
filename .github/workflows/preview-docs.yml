@@ -136,7 +136,7 @@ jobs:
 
       - name: Comment on PR
         if: github.event.action != 'closed'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: docs-preview
           message: |
@@ -149,7 +149,7 @@ jobs:
 
       - name: Remove comment when preview is closed
         if: github.event.action == 'closed'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: docs-preview
           delete: true
