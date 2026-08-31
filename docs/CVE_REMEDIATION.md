@@ -592,6 +592,60 @@ no certificate to mis-validate, full stop.
 batch's alert cited — still resolving to `3.19.6` tree-wide, unchanged
 since §7a first found this.
 
+## 7d. Worked example: the Jackson stack bump — held back three times, passed clean the fourth
+
+The Jackson stack bump (`jackson-core`/`jackson-databind`/
+`jackson-annotations`/`jackson-module-scala`, all moved together to
+`2.18.8`) was deliberately kept out of every batch since §7a first
+flagged it, specifically because that section's Netty→Arrow→Jackson
+chain happened in this exact corner of the dependency graph. It got its
+own fully isolated pass, run and verified before anything else touched
+it.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `com.fasterxml.jackson.core:jackson-core` | all three | 2.15.2 | 2.18.8 | GHSA-r7wm-3cxj-wff9 |
+| `com.fasterxml.jackson.core:jackson-databind` | all three | 2.15.2 | 2.18.8 | CVE-2026-54512, CVE-2026-54513 |
+| `com.fasterxml.jackson.core:jackson-annotations` | all three | 2.15.2 | 2.18.8 | (moved in lockstep, not itself alerted) |
+| `com.fasterxml.jackson.module:jackson-module-scala` | all three | 2.15.2 (unpinned, Spark's own default) | 2.18.8 | (moved in lockstep — this is what actually resolves the version-check conflict) |
+
+**It passed clean, first attempt, both directions.** §7a's regression
+happened because Arrow's *own* dependency management pulled a newer
+Jackson than `jackson-module-scala` would tolerate — an unplanned side
+effect of a different bump. This time the Jackson bump was the deliberate,
+direct target, with all four related artifacts moved to a single
+version that's actually a real `jackson-module-scala` release (`2.18.8`
+exists as a genuine, matched set — confirmed on Maven Central before
+touching anything), rather than one artifact racing ahead of what
+another still expected. `spark-adapter`'s full suite passed 286/286 on
+the first run; `plugin`'s passed 4/4. The lesson isn't "Jackson bumps are
+actually safe" — it's that *this specific* bump was safe because the
+four pieces that need to agree on a version were bumped as the matched
+set they actually are, not because bumping Jackson is inherently
+lower-risk than bumping Netty.
+
+**`plugin` and `runner` needed the override added, not adjusted** — unlike
+`spark-adapter`, neither had ever needed to pin Jackson before (no Arrow,
+no prior regression to fix), so they were still resolving Spark's own
+unpinned `2.15.2` default. Confirmed via `dependencyTree` that both
+modules genuinely resolved the vulnerable version, even though this
+alert batch (like the critical-alert Avro/ZooKeeper case in §7) only
+named `spark-adapter/build.sbt`.
+
+**Verified past the build log, one more time**: `runner`'s assembled
+`invaract-spark-runner.jar` was rebuilt (`sbt clean assembly`, not just
+relying on `assembly`'s own staleness check, which reported "up to date"
+against a jar from *before* the Jackson bump on the first attempt — a
+real trap this session hit directly) and the embedded
+`com/fasterxml/jackson/databind/cfg/PackageVersion.class` was extracted
+and inspected directly, confirming `2.18.8` is what a real
+`spark-submit` of that jar would run. `spark-adapter`'s and `plugin`'s
+own assembled jars, by contrast, are byte-identical before and after
+this bump (confirmed via jar hash) — expected and correct, since their
+Jackson override is `test`/`provided`-scope only, exactly like every
+other CVE fix in those two modules; only `runner`'s compile-scope
+dependencies actually ship.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -631,14 +685,15 @@ since §7a first found this.
       change) — see §7c, including a third Thrift CVE left as accepted
       risk without needing to re-run the §7a Hive-compatibility
       experiment, and `protobuf-java` reconfirmed already-fixed.
-- [ ] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
-      §7b/§7c — needs bumping `jackson-core`/`jackson-databind`/
-      `jackson-annotations` *and* `jackson-module-scala` together to
-      `2.18.8` (confirmed the exact version on Maven Central, and that
-      2.18.8 is the *complete* fix for all three — the jackson-core CVE's
-      first advisory, GHSA-72hv-8253-57qq, had an incomplete fix at
-      2.18.6), as its own isolated pass with full-suite verification,
-      given this exact dependency corner's track record in §7a.
+- [x] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
+      §7b/§7c (this change) — see §7d. Bumped `jackson-core`/
+      `jackson-databind`/`jackson-annotations`/`jackson-module-scala`
+      together to `2.18.8`, as its own fully isolated pass given this
+      exact corner's §7a history. Passed clean on the first attempt in
+      both `spark-adapter` and `plugin` — the earlier regression was
+      Arrow racing ahead of what `jackson-module-scala` tolerated, not
+      evidence that Jackson bumps themselves are risky; this one moved
+      all four pieces that need to agree as the matched set they are.
 - [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
       High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
       far: unlike a transitive-jar override, a Spark version bump can

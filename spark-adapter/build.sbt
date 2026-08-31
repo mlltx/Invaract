@@ -207,25 +207,38 @@ dependencyOverrides ++= Seq(
   // Confirmed via a real test failure, not assumed: Arrow 17.0.0's own
   // dependency management pulls jackson-core/jackson-databind/
   // jackson-annotations 2.17.1, which wins eviction over Spark 3.5.1's
-  // own 2.15.2 - and Spark's `jackson-module-scala_2.12:2.15.2` (still on
-  // the classpath, untouched) enforces a strict version check on init:
-  // `JsonMappingException: Scala module 2.15.2 requires Jackson Databind
-  // version >= 2.15.0 and < 2.16.0 - Found jackson-databind version
-  // 2.17.1`. Since that check runs in a static initializer Spark's own
-  // error-formatting machinery depends on
-  // (org.apache.spark.ErrorClassesJsonReader), this broke nearly every
-  // suite in the module, not just Arrow-adjacent ones. Pinned the three
-  // Jackson core artifacts back to 2.15.2 - what jackson-module-scala
-  // actually requires and what Spark 3.5.1 already ships - rather than
-  // letting Arrow's newer preference win. Arrow's own use of Jackson is
-  // for schema/metadata (de)serialization via jackson-databind's stable
-  // public ObjectMapper API, not the kind of thing that needs the latest
-  // patch version; downgrading it 2 minor versions is a smaller,
-  // better-understood risk than leaving two incompatible Jackson stacks
-  // on the same classpath.
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.2",
+  // own 2.15.2 - and Spark's `jackson-module-scala_2.12` enforces a
+  // strict version check on init: `JsonMappingException: Scala module
+  // 2.15.2 requires Jackson Databind version >= 2.15.0 and < 2.16.0 -
+  // Found jackson-databind version 2.17.1`. Since that check runs in a
+  // static initializer Spark's own error-formatting machinery depends on
+  // (org.apache.spark.ErrorClassesJsonReader), a mismatch here breaks
+  // nearly every suite in the module, not just Arrow-adjacent ones - so
+  // whatever these four are pinned to, they move together, never
+  // partially, the same discipline as the Netty family above.
+  //
+  // 2.15.2 -> 2.18.8: two jackson-databind CVEs found in a later alert
+  // batch - CVE-2026-54512 (PolymorphicTypeValidator bypass via generic
+  // type parameters - a type ID like "java.util.ArrayList<com.evil.Gadget>"
+  // only validates the raw container class, not the nested type argument)
+  // and CVE-2026-54513 (a parallel bypass via allowIfSubTypeIsArray -
+  // an array's component type isn't validated, only that the value is
+  // *an* array) - plus one jackson-core CVE (GHSA-r7wm-3cxj-wff9, an
+  // incomplete-fix follow-up to GHSA-72hv-8253-57qq: the async parser's
+  // maxNumberLength limit isn't enforced when a number's digits arrive
+  // split across chunks and the buffer is still mid-accumulation).
+  // 2.18.8 is the complete fix for all three (the jackson-core CVE's
+  // first advisory was only partially fixed at 2.18.6). Bumped
+  // jackson-module-scala to the matching 2.18.8 alongside the other
+  // three, rather than just raising the pin on the first three again -
+  // that's what actually resolves the strict-version-check conflict from
+  // the paragraph above, this time in the other direction (Jackson
+  // ahead of what jackson-module-scala's own pin expects, instead of
+  // behind it).
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8",
   // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
   // pulled in by Spark/Delta/Hive's own dependency trees - same
   // dependencyOverrides pattern as Arrow above, not a change to what this

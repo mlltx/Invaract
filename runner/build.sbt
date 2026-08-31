@@ -90,7 +90,20 @@ dependencyOverrides ++= Seq(
   // 1.1.10.3 -> 1.1.10.4: CVE-2023-43642 (GHSA-55g7-9cwv-5qfv) -
   // SnappyInputStream has no upper bound on the declared chunk length,
   // so a crafted input can force an oversized heap allocation.
-  "org.xerial.snappy" % "snappy-java" % "1.1.10.4"
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 2.15.2 -> 2.18.8 (jackson-core/databind/annotations and
+  // jackson-module-scala, moved together - see spark-adapter/build.sbt's
+  // comment for the full detail, including why these four have to move
+  // as one unit): CVE-2026-54512 and CVE-2026-54513 (two
+  // PolymorphicTypeValidator bypasses in jackson-databind) plus
+  // GHSA-r7wm-3cxj-wff9 (an incomplete-fix follow-up in jackson-core's
+  // async parser). This is the one module where the fix actually changes
+  // what ships in invaract-spark-runner.jar, not just this module's own
+  // test classpath (same note as the other overrides above).
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8"
 )
 
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar")
