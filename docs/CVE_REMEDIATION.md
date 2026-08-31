@@ -187,33 +187,47 @@ machinery for it — the same machinery CLAUDE.md requires for any change to
 ## 6. What Dependabot alerts won't catch
 
 Dependency version alerts only find *known-vulnerable versions* — they
-don't find *unsafe usage* of an otherwise-fine version. One concrete example
-already present in this codebase, found while writing this doc, not from a
-Dependabot alert: `ContractParser.scala` parses contract YAML via
-`new Yaml().load(...)` — SnakeYAML's default `Constructor`, not
-`SafeConstructor`/`SafeLoader`. That constructor honors YAML type tags and
-can be used to instantiate arbitrary Java classes from crafted input,
-independent of which SnakeYAML version is installed; bumping `snakeyaml`
-for an unrelated CVE will not change this. Legitimate contract documents
-never need custom-tag deserialization (they're maps/lists/scalars — see
-`docs/CONTRACT_MODEL.md`'s "Contract Document Shape"), so switching to a
-safe loader should be behavior-preserving for every real contract, but it
-is a separate, deliberate fix — not a version bump — and should go through
-`ContractParser`'s own test suite plus the MiMa/`./dev/test` gates in §5
-like any other `contract` change. Flagging it here rather than folding it
-into this remediation pass, since it's a code fix, not a dependency fix.
+don't find *unsafe usage* of an otherwise-fine version, so it's worth
+checking dependency call sites for this pattern independent of the alert
+backlog. One example investigated while writing this doc, not from a
+Dependabot alert: `ContractParser.scala` parsed contract YAML via
+`new Yaml().load(...)` — SnakeYAML's default `Constructor` rather than
+`SafeConstructor`.
+
+**Important correction, found by actually testing it rather than assuming
+from the class name**: this is *not* a live exploitable gap in the version
+pinned here. SnakeYAML 2.2's `Yaml.load` rejects `!!`-tag-directed class
+resolution during composing by default (a `TagInspector` check added
+library-wide as the real fix for CVE-2022-1471) — confirmed empirically:
+both the default `Constructor` and `SafeConstructor` throw the identical
+`ComposerException: Global tag is not allowed: ...` for a
+`!!java.net.URL`-tagged document, because the check happens in the shared
+Composer stage, before either constructor's own class-resolution logic
+runs at all. No input distinguishes the two loaders for this vector on
+2.2. `ContractParser` was switched to `SafeConstructor` anyway (see its
+`newSafeYaml` comment) as defense-in-depth — a positive allowlist that
+doesn't depend on that `TagInspector` default staying in force — not
+because the prior code was actively exploitable. Verified via the
+`contract` module's full test suite (48/48, unchanged) and
+`sbt mimaReportBinaryIssues` (clean; the change is a private method) run
+directly in-session; `./dev/test`'s real-Spark run was not — this
+environment has no Spark distribution installed, and pulling one down
+solely to validate a private-method change scoped entirely to `contract`
+was judged disproportionate. CI's own `test.yml` matrix runs it on push.
 
 ## 7. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
       (this change).
+- [x] Switch `ContractParser` to `SafeConstructor` as defense-in-depth
+      (this change) — see §6's correction for what this does and doesn't
+      fix.
 - [ ] Triage the 238 open alerts into the buckets in §2; file the bucket-1
       (runtime/compile-scope engine) and bucket-5 (Actions) alerts as
       near-term work first.
 - [ ] Walk the Scala/Maven bucket per §4's manual workflow, batched per §5.
 - [ ] Fix or explicitly document-and-accept every alert with no available
       patched version, per §3.
-- [ ] Evaluate the `ContractParser` SafeConstructor fix (§6) as its own PR.
 - [ ] Once the backlog is current, treat "zero unaddressed alerts older than
       the SLA in §3" as the steady-state target, not "zero alerts" — new
       ones will always arrive with new versions of Spark's own dependency

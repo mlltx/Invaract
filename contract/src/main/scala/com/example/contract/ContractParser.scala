@@ -3,7 +3,8 @@
 
 package com.example.contract
 
-import org.yaml.snakeyaml.{DumperOptions, Yaml}
+import org.yaml.snakeyaml.constructor.SafeConstructor
+import org.yaml.snakeyaml.{DumperOptions, LoaderOptions, Yaml}
 
 import java.io.{File, FileInputStream, InputStream}
 import scala.collection.JavaConverters._
@@ -20,7 +21,7 @@ import scala.collection.JavaConverters._
 object ContractParser {
 
   def parse(yamlText: String): Contract = {
-    val raw = loadMap(new Yaml().load[Any](yamlText), "contract")
+    val raw = loadMap(newSafeYaml().load[Any](yamlText), "contract")
     parseContract(raw)
   }
 
@@ -43,9 +44,26 @@ object ContractParser {
   }
 
   def parseStream(stream: InputStream): Contract = {
-    val raw = loadMap(new Yaml().load[Any](stream), "contract")
+    val raw = loadMap(newSafeYaml().load[Any](stream), "contract")
     parseContract(raw)
   }
+
+  // Defense-in-depth, not a fix for a live gap: as of SnakeYAML 2.2 (the
+  // version pinned above), `new Yaml()`'s default `TagInspector` already
+  // rejects `!!`-tag-directed class resolution during composing, for both
+  // the default `Constructor` and `SafeConstructor` alike - confirmed
+  // empirically (both throw the identical
+  // `ComposerException: Global tag is not allowed: ...` for a
+  // `!!java.net.URL`-tagged document). SafeConstructor is used here anyway
+  // because it doesn't rely on that TagInspector default staying in force
+  // - it's a positive allowlist of YAML's built-in safe types
+  // (maps/lists/scalars, everything a contract document legitimately
+  // needs - see docs/CONTRACT_MODEL.md's "Contract Document Shape") rather
+  // than a denylist that could be loosened by a future LoaderOptions change
+  // anywhere on this call path. A fresh instance per call, like the
+  // `new Yaml()` it replaces: SnakeYAML's `Yaml` is not thread-safe for
+  // reuse across calls.
+  private def newSafeYaml(): Yaml = new Yaml(new SafeConstructor(new LoaderOptions()))
 
   /** Serializes `contract` back to a YAML document `parse`/`parseFile` can
     * read — the inverse of this object's parsing direction. Round-trips
