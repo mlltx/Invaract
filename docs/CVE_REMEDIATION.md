@@ -364,6 +364,87 @@ twice — once to catch the Netty regression, once clean after fixing it),
 `avro:1.11.4`/`zookeeper:3.9.2` for real, and `jackson-mapper-asl` is
 confirmed absent (`0` matches) from the assembled `spark-adapter` jar.
 
+## 7a. Worked example: a high-severity batch, and a three-deep regression chain
+
+The next batch — a mix of high-severity alerts across `plugin`/`runner`/
+`spark-adapter` — is the clearest illustration yet of why §5 insists on
+running the real suite after every bump, not trusting that a fix is safe
+because the reasoning sounds right. One coordinate bump here triggered a
+chain of three distinct regressions, each only visible by actually
+running `spark-adapter`'s full suite and reading the real exception —
+never by inspecting the diff or trusting the previous fix's success.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `org.apache.avro:avro` (already fixed, unaffected by this batch) | — | — | — | — |
+| `org.codehaus.jackson:jackson-mapper-asl` (XXE, #34) | `spark-adapter` | already excluded | no change needed | CVE unspecified — same artifact already excluded entirely in the critical-alert pass |
+| `com.google.protobuf:protobuf-java` (#205/#131/#52) | all three | already 3.19.6 (fixed) | no change needed | CVE-2024-7254 — vulnerable `2.5.0` node present but evicted, confirmed via `dependencyTree` |
+| `commons-io:commons-io` (#206/#132/#53) | all three | already 2.16.1 (fixed) | no change needed | CVE-2024-47554 (fixed 2.14.0) — same eviction story |
+| `org.apache.ivy:ivy` (#191/#117/#38) | all three | 2.5.1 | 2.5.2 | CVE-2022-46751 (XXE) |
+| `io.netty:*` (16 artifacts, #223/#149/#73, #208/#134/#57, + more) | all three | 4.1.96.Final | 4.1.132.Final | CVE-2025-24970 (SslHandler), CVE-2026-33871 (HTTP/2 CONTINUATION flood) |
+| `org.apache.arrow:arrow-{vector,memory-core,memory-netty}` (not itself alerted — broke as a side effect) | `spark-adapter` | 14.0.1 | 17.0.0 | n/a — required by the Netty bump above, not a CVE fix in its own right |
+| `com.fasterxml.jackson.core:{jackson-core,jackson-databind,jackson-annotations}` (not itself alerted — broke as a side effect) | `spark-adapter` | Spark's own 2.15.2 | pinned back to 2.15.2 | n/a — Arrow 17.0.0 tried to pull 2.17.1; pinned back down |
+| `org.apache.thrift:libthrift` (#35/#36) | `spark-adapter` | 0.12.0 | 0.13.0 | CVE-2019-0205 fixed; CVE-2020-13949 left as accepted risk (0.14.0's fix is incompatible with Hive 2.3.9) |
+
+**Three alerts needed zero code change.** `jackson-mapper-asl`'s XXE
+alert (#34) is against the exact artifact already excluded entirely for
+its earlier CVE-2019-10202 alert — one exclusion, multiple alerts closed.
+`protobuf-java` and `commons-io` both already resolve, tree-wide, to
+versions past their fix floor (`3.19.6` and `2.16.1` respectively); the
+vulnerable nodes GitHub's graph still shows are evicted losers, never on
+the real classpath. Worth checking before assuming every alert needs a
+`build.sbt` edit.
+
+**The regression chain, in the order it was actually found:**
+
+1. **Netty 4.1.96.Final → 4.1.132.Final alone**: broke `ClickHouseConnectorSpec`
+   with the identical `NoSuchFieldError: ... PoolArena ... 'int chunkSize'`
+   from §7's Arrow lesson — except this time pinning Netty back to
+   4.1.96.Final wasn't an option, since 4.1.96.Final is exactly what's
+   vulnerable. Root-caused properly this time instead of just reverting:
+   Netty's own PR #13613 restructured `PoolArena` (moved `chunkSize` out
+   of it, into a `SizeClasses` field) somewhere around Netty 4.1.7x —
+   meaning `arrow-memory-netty:14.0.1` was never going to survive *any*
+   Netty version modern enough to carry these CVE fixes, independent of
+   which one got picked. Confirmed against Arrow's own issue tracker
+   (apache/arrow#36713, apache/arrow#39265), which points at Arrow 17.0.0
+   as the version that fixed this on Arrow's side.
+2. **Arrow 14.0.1 → 17.0.0 fixed that — and broke almost everything else.**
+   245→286 tests now failing in 15 seconds (a real run takes minutes),
+   the signature of a startup-level break, not scattered test failures:
+   `JsonMappingException: Scala module 2.15.2 requires Jackson Databind
+   version >= 2.15.0 and < 2.16.0 - Found jackson-databind version
+   2.17.1`. Arrow 17.0.0's own dependency management pulls a newer
+   Jackson (2.17.1) that wins eviction over Spark 3.5.1's own 2.15.2 —
+   and Spark's `jackson-module-scala_2.12:2.15.2` (untouched, still on
+   the classpath) enforces that version range in a static initializer
+   that Spark's own error-formatting path (`ErrorClassesJsonReader`)
+   depends on, so the break surfaced everywhere an exception got
+   formatted, not just in Arrow-adjacent tests.
+3. **Pinned `jackson-core`/`jackson-databind`/`jackson-annotations` back
+   to 2.15.2** — what `jackson-module-scala` actually needs and what
+   Spark 3.5.1 already ships — overriding Arrow's newer preference.
+   `spark-adapter`'s full suite finally passed clean, 286/286, on the
+   third attempt.
+
+Each of the three attempts was verified by actually running the suite,
+not by inspecting the diff or by extrapolating from the previous fix's
+success — the second regression in particular (Jackson) was not
+predictable from the first one's lesson (Netty/Arrow) at all; it's a
+different dependency, a different mechanism, only visible by running the
+real tests again after the "fix" for the first problem.
+
+`libthrift` got the same Derby-style check as before: 0.14.2 (the
+version needed for CVE-2020-13949) repackages `TFramedTransport` into a
+`layered` subpackage — confirmed via `unzip -l` across every 0.1x
+release, which pinpointed 0.14.0 as exactly where the move happens —
+while Hive 2.3.9's compiled code references the pre-0.14.0 package by
+name. 0.13.0 fixes CVE-2019-0205 alone while keeping the old package, so
+that's what shipped; CVE-2020-13949 is accepted risk, same reasoning
+pattern as Derby (not reachable — `HiveConnectorSpec` runs Hive's
+*embedded* metastore, never a real Thrift RPC server that could receive
+the malicious-client payload this CVE describes).
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -384,14 +465,27 @@ confirmed absent (`0` matches) from the assembled `spark-adapter` jar.
       reach a real downstream user** — re-run this check every pass, since
       that can change the moment `snakeyaml` gets bumped or a new
       compile-scope dependency is added to `contract`/`ir`/`spark-adapter`.
-- [ ] Triage the remaining alerts (97 high / 121 moderate / 12 low) into
-      the buckets in §2's "blast radius" list; bucket 1 (any *new*
-      compile-scope dependency in `contract`/`ir`/`spark-adapter`) and
-      bucket 5 (Actions) next after the snakeyaml check above.
+- [x] Fix the first high-severity batch (Ivy, Netty, libthrift; this
+      change) — see §7a for the worked example, including the three-deep
+      Netty→Arrow→Jackson regression chain it triggered, and
+      `jackson-mapper-asl`/`protobuf-java`/`commons-io` alerts in this
+      batch that were already resolved without a code change.
+- [ ] Triage the remaining alerts (down from 97 high / 121 moderate / 12
+      low) into the buckets in §2's "blast radius" list; bucket 1 (any
+      *new* compile-scope dependency in `contract`/`ir`/`spark-adapter`)
+      and bucket 5 (Actions) next after the snakeyaml check above.
+- [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
+      High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
+      far: unlike a transitive-jar override, a Spark version bump can
+      shift *many* other pinned transitive versions at once (as §7a's
+      chain shows even a single-jar bump can cascade), so it needs its own
+      isolated pass with its own full-suite verification before merging
+      with anything else.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
-      batched per §5 — one coordinate (or tightly-related group, per §7's
-      Netty lesson) at a time, real test suite run after each. Record each
-      one's scope/inheritance status per §2's table format (see §7).
+      batched per §5 — one coordinate (or tightly-related group, per §7a's
+      Netty→Arrow→Jackson chain) at a time, real test suite run after
+      each, no matter how confident the reasoning sounds. Record each
+      one's scope/inheritance status per §2's table format (see §7/§7a).
 - [ ] Fix or explicitly document-and-accept every alert with no available
       patched version, per §3 — Derby (§7) is the template for how to
       document one.
