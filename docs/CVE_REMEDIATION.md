@@ -549,6 +549,49 @@ in §7a:
 - The Spark History Server RCE (CVE-2025-54920, Direct dependency, High)
   — still held for its own isolated Spark 3.5.1 → 3.5.7 pass, per §7a.
 
+## 7c. Worked example: a version-numbering jump, and a second CVE on an already-fixed artifact
+
+A small batch, closing out most of what remained after §7a/§7b:
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `io.airlift:aircompressor` | all three | 0.27 (already fixed for CVE-2024-36114) | 2.0.3 | CVE-2025-67721 |
+| `org.apache.thrift:libthrift` | `spark-adapter` | 0.13.0 | **not changed** — accepted risk | CVE-2026-43869 |
+| `org.apache.thrift:libthrift` (revisited) | `spark-adapter` | 0.13.0 | unchanged, already accepted per §7 | CVE-2020-13949 (reconfirmed) |
+| `com.google.protobuf:protobuf-java` | all three | already 3.19.6 | no change needed | CVE unspecified in this batch — already fixed |
+
+**A second, distinct CVE landed on an artifact already bumped once.**
+`aircompressor` was already moved to 0.27 in §7b for CVE-2024-36114; this
+batch found CVE-2025-67721 still present *at* 0.27 — a different bug (a
+crafted zero-offset input makes the Snappy/LZ4 decompressors copy from
+not-yet-written positions in a *reused* output buffer, leaking prior
+contents), fixed only in 2.0.3. Worth noting because Aircompressor's own
+versioning jumped straight from the `0.x` line to `2.0.x` with nothing
+published in between — exactly the shape of jump that broke Derby's and
+libthrift's packaging in §7/§7a. Checked for the same failure mode before
+trusting it, not assumed safe because the previous 0.27 bump had been:
+`unzip -l` on both jars shows an identical class list end to end,
+including the `io.airlift.compress.hadoop` adapter package Spark's own
+codec integration actually calls into. Confirmed via the real suite
+regardless (286/286) rather than resting on the jar comparison alone.
+
+**A third Thrift CVE, and the clearest illustration yet that "the fix
+breaks Hive" doesn't need re-testing every time.** CVE-2026-43869 (TLS
+hostname-verification bypass in `TSSLTransportFactory.java`) is fixed in
+`0.23.0` — a version *nine* minors past `0.14.0`, the exact point §7a
+already proved breaks Hive 2.3.9's `TFramedTransport` package
+expectations by testing it directly. There was no reason to re-run that
+experiment at a larger delta to learn the same lesson again; accepted as
+risk on that basis, plus an even more direct reachability argument than
+CVE-2020-13949's: this CVE is specifically about certificate validation
+on a *TLS* Thrift connection, and `HiveConnectorSpec`'s embedded
+metastore never opens a real socket at all, TLS or otherwise — there's
+no certificate to mis-validate, full stop.
+
+**`protobuf-java` reconfirmed already-fixed** for whatever CVE this
+batch's alert cited — still resolving to `3.19.6` tree-wide, unchanged
+since §7a first found this.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -584,12 +627,18 @@ in §7a:
       `guava`, unreachable through this module's `local[*]`-only testing)
       and the `jackson-mapper-asl`/`protobuf-java` alerts already resolved
       without a code change.
+- [x] Fix the third high-severity batch (aircompressor's second CVE; this
+      change) — see §7c, including a third Thrift CVE left as accepted
+      risk without needing to re-run the §7a Hive-compatibility
+      experiment, and `protobuf-java` reconfirmed already-fixed.
 - [ ] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
-      §7b — needs bumping `jackson-core`/`jackson-databind`/
+      §7b/§7c — needs bumping `jackson-core`/`jackson-databind`/
       `jackson-annotations` *and* `jackson-module-scala` together to
-      `2.18.x` (confirmed available on Maven Central), as its own isolated
-      pass with full-suite verification, given this exact dependency
-      corner's track record in §7a.
+      `2.18.8` (confirmed the exact version on Maven Central, and that
+      2.18.8 is the *complete* fix for all three — the jackson-core CVE's
+      first advisory, GHSA-72hv-8253-57qq, had an incomplete fix at
+      2.18.6), as its own isolated pass with full-suite verification,
+      given this exact dependency corner's track record in §7a.
 - [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
       High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
       far: unlike a transitive-jar override, a Spark version bump can

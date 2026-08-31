@@ -354,16 +354,42 @@ dependencyOverrides ++= Seq(
   // (in-process calls, per Hive's own architecture), never a real Thrift
   // RPC server that could receive the "malicious RPC client" payload this
   // CVE describes.
+  //
+  // A third CVE, found in a later alert batch: CVE-2026-43869 (CWE-297,
+  // Improper Validation of Certificate with Host Mismatch -
+  // TSSLTransportFactory.java's Java TLS transport skips hostname
+  // verification, so a client will trust a certificate issued for the
+  // wrong host), fixed in 0.23.0. Not even attempted - 0.23.0 is far
+  // past 0.14.0, the exact point already confirmed above to break Hive
+  // 2.3.9's package expectations, so it carries the same packaging-break
+  // risk at a larger version delta, with no reason to expect it resolved
+  // itself in between. Also accepted risk, for an even more direct
+  // reachability reason than CVE-2020-13949 above: this CVE is
+  // specifically about validating the hostname on a *TLS* Thrift
+  // connection, and
+  // HiveConnectorSpec's embedded metastore is not just non-networked but
+  // never establishes a real socket connection of any kind, TLS or
+  // otherwise - there's no certificate to mis-validate.
   "org.apache.thrift" % "libthrift" % "0.13.0",
-  // 0.25 -> 0.27: CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every Aircompressor
-  // decompressor (LZ4/LZO/Snappy/Zstandard) uses sun.misc.Unsafe for
-  // unchecked out-of-bounds memory access, which malformed input can turn
-  // into a JVM crash or a leak of adjacent process memory. 0.26 alone
-  // wasn't sufficient (the advisory names 0.27 as the real fix). Notably,
-  // this is the same version Spark's own upstream moved to for the 3.5.x
-  // line (SPARK-48494, backported to branch-3.5) - a real signal this
-  // bump is safe within Spark 3.5.1, not just a hopeful guess.
-  "io.airlift" % "aircompressor" % "0.27",
+  // 0.25 -> 2.0.3 (via 0.27). CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every
+  // Aircompressor decompressor (LZ4/LZO/Snappy/Zstandard) used
+  // sun.misc.Unsafe for unchecked out-of-bounds memory access, malformed
+  // input turning into a JVM crash or a leak of adjacent process memory;
+  // 0.26 alone wasn't sufficient (the advisory names 0.27 as the real
+  // fix), and 0.27 is the same version Spark's own upstream moved to for
+  // the 3.5.x line (SPARK-48494, backported to branch-3.5). A later
+  // alert batch found a second, more specific issue still present at
+  // 0.27: CVE-2025-67721 (GHSA-vx9q-rhv9-3jvg) - a crafted zero-offset
+  // input makes the Snappy/LZ4 decompressors copy from not-yet-written
+  // positions in a *reused* output buffer, leaking prior buffer contents
+  // - fixed in 2.0.3 (the project renumbered from the 0.x line directly
+  // to 2.0.x; nothing published in between). Checked the jump for a
+  // Derby/Thrift-style repackaging break before trusting it, not
+  // assumed: `unzip -l` on both jars shows an identical class list,
+  // including the io.airlift.compress.hadoop adapter package Spark's own
+  // codec integration actually touches - same classes, same names, in
+  // both versions.
+  "io.airlift" % "aircompressor" % "2.0.3",
   // 3.14.0 -> 3.18.0: CVE-2025-48924 (GHSA-j288-q9x7-2f5v) -
   // ClassUtils.getClass(...) recurses without a depth limit and can
   // StackOverflowError on a sufficiently long class-name input.

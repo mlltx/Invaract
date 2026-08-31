@@ -77,12 +77,12 @@ dependencyOverrides ++= Seq(
   // in 2.5.2. Confirmed via `sbt Compile/dependencyTree` that 2.5.1 is
   // this module's actual resolved winner.
   "org.apache.ivy" % "ivy" % "2.5.2",
-  // 0.25 -> 0.27: CVE-2024-36114 (GHSA-973x-65j7-xcf4) - Aircompressor's
-  // decompressors use sun.misc.Unsafe for unchecked memory access,
-  // exploitable via malformed input for a JVM crash or a leak of adjacent
-  // process memory. Same version Spark's own upstream moved to for 3.5.x
-  // (SPARK-48494, backported to branch-3.5).
-  "io.airlift" % "aircompressor" % "0.27",
+  // 0.25 -> 2.0.3: CVE-2024-36114 (Unsafe-based OOB access) plus
+  // CVE-2025-67721 (reused-output-buffer leak in Snappy/LZ4, still
+  // present at 0.27) - see spark-adapter/build.sbt's comment for the
+  // full detail, including the jar-level check that ruled out a
+  // Derby/Thrift-style repackaging break across this version jump.
+  "io.airlift" % "aircompressor" % "2.0.3",
   // 3.12.0 -> 3.18.0: CVE-2025-48924 (GHSA-j288-q9x7-2f5v) -
   // ClassUtils.getClass(...) recurses without a depth limit, StackOverflowError
   // on a long enough class-name input.
