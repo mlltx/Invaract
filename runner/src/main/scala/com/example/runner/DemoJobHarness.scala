@@ -6,7 +6,8 @@ package com.example.runner
 import com.example.contract.ContractParser
 import com.example.ir.Lineage
 import com.example.ir.PlanPrinter
-import com.example.sparkadapter.{ContractEnforcementRule, ContractViolationException, SparkAdapterListener, TranslationResult}
+import com.example.sparkadapter.{ContractEnforcementRule, ContractViolationException, SparkAdapterListener, TranslationResult, VerificationOptions}
+import com.example.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -57,6 +58,11 @@ object DemoJobHarness {
     val outputPath = positional.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
     val reportPath = positional.applyOrElse(2, (_: Int) => "demo/output/report.json")
     val contractPath = positional.applyOrElse(3, (_: Int) => "demo/contracts/invaract_output.yaml")
+    // Optional and empty by default: notification (ROADMAP.md's "Notification
+    // sinks" feature) is entirely opt-in, so omitting this argument changes
+    // nothing about how this harness behaves - see
+    // com.example.sparkadapter.notification's package for the mechanism.
+    val notifyConfigPath = positional.applyOrElse(4, (_: Int) => "")
 
     val startTime = System.currentTimeMillis()
 
@@ -68,6 +74,16 @@ object DemoJobHarness {
       // ignored entirely, not just left unvalidated.
       val contract = if (dryRun) None else Some(ContractParser.parseFile(contractPath))
 
+      // Off by default (empty path -> NotificationConfig.disabled ->
+      // NotificationSinkFactory.create returns None): see
+      // com.example.sparkadapter.notification's package doc. Loaded
+      // before the SparkSession for the same reason the contract is -
+      // both the check rule and the listener below need it at
+      // construction time.
+      val notifySink =
+        if (notifyConfigPath.isEmpty) None
+        else NotificationSinkFactory.create(NotificationConfig.load(notifyConfigPath))
+
       // Least invasive way to observe a write's real logical plan for
       // *reporting*: a QueryExecutionListener, registered once, requires no
       // change to how outputDf.write below is called. See spark-adapter's
@@ -76,7 +92,7 @@ object DemoJobHarness {
       // purpose. It is not, however, sufficient to *gate* a write: it only
       // fires after Spark has already executed the query. Enforcement (see
       // below) needs a different mechanism entirely.
-      val irListener = new SparkAdapterListener
+      val irListener = new SparkAdapterListener(notifySink, contract)
 
       // Only dry-run mode ever writes to this; a mutable cell is the
       // simplest way to get a value out of a check-rule callback (the same
@@ -100,8 +116,12 @@ object DemoJobHarness {
         // installs the analogous observe-only rule instead — see
         // ContractEnforcementRule.dryRun's class doc.
         .withExtensions(_.injectCheckRule(contract match {
-          case Some(c) => ContractEnforcementRule.forContract(c)
-          case None    => ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
+          case Some(c) =>
+            notifySink match {
+              case Some(sink) => ContractEnforcementRule.forContract(c, VerificationOptions(), sink)
+              case None       => ContractEnforcementRule.forContract(c)
+            }
+          case None => ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
         }))
         .getOrCreate()
 

@@ -722,6 +722,105 @@ passes real enforcement of the write it came from") failing this way
 before the fix. `ContractInference.normalizeLocation` strips the prefix
 inferred locations the same way `locationsMatch` expects.
 
+## Notification sinks
+
+Everything above answers "does this write satisfy its contract" and, if
+not, aborts it. `com.example.sparkadapter.notification`
+(`spark-adapter/src/main/scala/com/example/sparkadapter/notification/`)
+answers a different, additive question: how does an external system find
+out that a check happened at all — PASS or FAIL — or that a write actually
+completed? This is opt-in observability, not a new enforcement mechanism:
+with no sink configured, nothing here runs, and every code path above is
+unaffected.
+
+**Two events, two moments, matching the two mechanisms already documented
+above.**
+
+- `ContractValidationEvent` — published by `ContractEnforcementRule` for
+  every check it performs (the `ir.Write` branch, the state-changing-CALL
+  branch, and both fail-closed branches — `UnverifiableWrite` and
+  `InvalidContract`), always *before* a FAILED result's
+  `ContractViolationException` is thrown. This is "the contract was
+  evaluated, with this result," at analysis time — a FAILED event here
+  means the write never executed.
+- `WriteEvent` — published by `SparkAdapterListener`'s `onSuccess`, the
+  same post-execution observation point `demo/output/report.json`'s
+  `transformationIR` section already uses. This is "the write actually
+  completed," strictly later than (and independent of) the check above —
+  a write `ContractEnforcementRule` rejects never reaches this event,
+  since Spark never executes it.
+
+Both carry `metadata: Map[String, Any]`, copied verbatim from the active
+contract's own `Contract.extensions` bag (see docs/CONTRACT_MODEL.md) —
+whatever a contract author already recorded there (owner, team, upstream
+system, anything ODCS or this project doesn't itself interpret) rides
+along on every event, without a second, parallel metadata vocabulary.
+
+**Configuration is a plain `.properties` file, deliberately not YAML and
+deliberately not part of the contract document.** Sink configuration (an
+endpoint, a file path, possibly credentials) is a deployment-environment
+concern that varies independently of the contract, and `java.util.Properties`
+needs no new dependency — this module has no direct dependency on
+SnakeYAML (`contract`'s own YAML parser does, but nothing here reaches it
+for this). `NotificationConfig.load` recognizes `sink.enabled`,
+`sink.class` (a `NotificationSink` implementation's fully-qualified class
+name, needing a public no-arg constructor), and `sink.property.<name>`
+(passed to that sink's `configure` with the prefix stripped). See
+docs-site's "Notification sinks" guide for the full worked example and key
+reference.
+
+**Reflective sink loading fails loudly at setup, quietly at publish time —
+deliberately asymmetric, the same pattern `ContractEnforcementRule`'s own
+fail-closed design uses elsewhere in this module.**
+`NotificationSinkFactory.create` throws immediately for a misconfigured
+sink (missing/misspelled class, no no-arg constructor, `configure`
+rejecting its properties) — the same "fail loudly, at setup time"
+treatment `ContractParser.parseFile` gives a malformed contract, since a
+typo'd sink class silently producing zero events forever is worse than a
+job that won't start. Once built, though, every sink is wrapped in
+`SafeNotificationSink`, which catches and logs (never rethrows) any
+exception a `publish` call raises — a broken or slow sink (a network call
+timing out, an implementation bug) must never turn an otherwise-successful
+contract check or write into a job failure, since notification is a
+best-effort side channel, not part of enforcement.
+
+**Two built-in sinks**, both dependency-free: `LoggingNotificationSink`
+(one JSON line per event via SLF4J, at INFO) and `FileNotificationSink`
+(appends one JSON line per event to a configured `path` — what
+`./dev/test`/`./dev/regression` use to prove this against a real Spark
+job; see below). A real destination (a message queue, an HTTP endpoint) is
+ordinary user code implementing `NotificationSink` — nothing here requires
+it to live in this module or even this repository.
+
+**API shape: additive overloads, not new parameters on existing
+signatures**, per CLAUDE.md's "API Compatibility Requirement" — adding a
+parameter to `ContractEnforcementRule.forContract`'s existing signature
+(even with a default) changes its compiled descriptor, a binary break for
+any already-compiled caller. Instead: `forContract(contract, options,
+sink: NotificationSink)` is a new overload; the original
+`forContract(contract, options = ...)` is untouched, delegating to the new
+one with no sink. `SparkAdapterListener` similarly gained two new
+auxiliary constructors (`(sink, contractRef, metadata)` and the
+`(sink, contract: Option[Contract])` convenience) alongside its original,
+still-present zero-arg constructor — every existing `new
+SparkAdapterListener()` call site in this repo (and any real user's code)
+keeps compiling and keeps its exact prior behavior unchanged. Confirmed by
+`sbt mimaReportBinaryIssues` staying clean.
+
+**Live-demonstrated against a real Spark job, not just unit-tested.**
+`demo/notify.properties` configures a `FileNotificationSink` writing to
+`demo/output/events.jsonl`; `./dev/test` passes it to `DemoJobHarness` and
+asserts both a `CONTRACT_VALIDATION` and a `WRITE` event actually landed
+in that file from a real `spark-submit` run. `./dev/regression` goes
+further, using two more instances of the same config
+(`demo/regression-notify-{pass,fail}.properties`) to prove the asymmetry
+that matters most: the PASS case's events file contains both a PASSED
+`ContractValidationEvent` and a `WriteEvent` (the write really happened),
+while the FAIL case's contains a FAILED `ContractValidationEvent` and *no*
+`WriteEvent` at all (the write never executed) — the same "no output file
+on disk" proof the FAIL case's enforcement assertion already relies on,
+now extended to the notification side of the same rejection.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s

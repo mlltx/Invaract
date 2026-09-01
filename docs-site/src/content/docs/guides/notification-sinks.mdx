@@ -1,0 +1,153 @@
+---
+title: Configure a Notification Sink
+description: Publish an event every time Invaract checks or completes a write, to a destination of your choosing.
+sidebar:
+  order: 8
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide wires up a notification sink so an external system finds out, in real time,
+that Invaract checked a write (and what it decided) or that a write actually completed.
+This is entirely opt-in: with no sink configured, nothing here runs, and
+[the enforcement rule](/guides/installing-the-enforcement-rule/) behaves exactly as it
+would without this guide.
+
+<Aside type="note" title="Two events, two moments">
+`ContractValidationEvent` fires when `ContractEnforcementRule` checks a write, before
+Spark executes anything — a FAILED event means the write never ran. `WriteEvent` fires
+later, only once Spark reports a write actually completed. See
+[Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for why these are
+two separate mechanisms.
+</Aside>
+
+<Steps>
+
+1. ### Write a sink configuration file
+
+   Sink configuration lives in a plain `.properties` file, separate from your contract —
+   it's a deployment concern (an endpoint, a file path, possibly credentials), not
+   something that belongs alongside a contract describing data shape.
+
+   ```properties
+   # notify.properties
+   sink.enabled=true
+   sink.class=com.example.sparkadapter.notification.FileNotificationSink
+   sink.property.path=/var/log/invaract/events.jsonl
+   ```
+
+   | Key | Required | Meaning |
+   | --- | --- | --- |
+   | `sink.enabled` | No (default `false`) | Master switch. Every other key is ignored when this is `false`. |
+   | `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
+   | `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
+
+2. ### Load it and build the sink before constructing your session
+
+   ```scala
+   import com.example.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+
+   val notifyConfig = NotificationConfig.load("notify.properties")
+   val sink = NotificationSinkFactory.create(notifyConfig) // None if sink.enabled=false
+   ```
+
+   A misconfigured sink (an unresolvable class, a class with no no-arg constructor, a
+   sink that rejects its own properties) throws immediately here — the same "fail loudly,
+   at setup time" treatment a malformed contract gets, so a typo doesn't silently produce
+   zero events forever.
+
+3. ### Pass it to the enforcement rule and the listener
+
+   ```scala
+   import com.example.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
+   import org.apache.spark.sql.SparkSession
+
+   val irListener = new SparkAdapterListener(sink, Some(contract))
+
+   val spark = SparkSession
+     .builder()
+     .appName("MyJob")
+     .master("local[*]")
+     .withExtensions(_.injectCheckRule(sink match {
+       case Some(s) => ContractEnforcementRule.forContract(contract, VerificationOptions(), s)
+       case None    => ContractEnforcementRule.forContract(contract)
+     }))
+     .getOrCreate()
+
+   spark.listenerManager.register(irListener)
+   ```
+
+   From this point on, every check `ContractEnforcementRule` performs publishes a
+   `ContractValidationEvent` to your sink — PASS or FAIL — and every write Spark actually
+   completes publishes a `WriteEvent` once `SparkAdapterListener` observes it.
+
+</Steps>
+
+## What an event looks like
+
+Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}}
+```
+
+...and a `WriteEvent`, once the write completes:
+
+```json
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}}
+```
+
+`metadata` is copied verbatim from your contract's own `extensions:` block — see
+[Contract Format](/reference/contract-format/) — so anything you've already recorded
+there (an owning team, an upstream system) rides along on every event without a second
+metadata vocabulary to maintain.
+
+## Built-in sinks
+
+Two ship with Invaract, both with no extra dependency:
+
+- **`LoggingNotificationSink`** — logs each event as one JSON line via SLF4J, at `INFO`.
+  Needs no `sink.property.*` configuration.
+- **`FileNotificationSink`** — appends each event as one JSON line to `sink.property.path`.
+  This is what [the regression pack](/guides/running-the-regression-pack/) uses to prove
+  events are published against a real Spark job.
+
+## Writing your own sink
+
+A real destination — a message queue, an HTTP endpoint, a metrics system — is ordinary
+code implementing `NotificationSink`:
+
+```scala
+import com.example.sparkadapter.notification.{NotificationEvent, NotificationSink}
+
+class MySink extends NotificationSink {
+  private var endpoint: String = _
+
+  override def configure(properties: Map[String, String]): Unit =
+    endpoint = properties("endpoint")
+
+  override def publish(event: NotificationEvent): Unit = {
+    // event is one of ContractValidationEvent or WriteEvent - send it however
+    // your destination expects.
+  }
+}
+```
+
+Point `sink.class` at it (it needs a public no-arg constructor — configuration happens
+separately, via `configure`) and it's picked up the same way the built-in sinks are.
+
+<Aside type="tip" title="A broken sink can't break your job">
+Every sink returned by `NotificationSinkFactory.create` is wrapped so that an exception
+from `publish` — a network timeout, a bug in your sink — is caught and logged, never
+propagated. Notification is a best-effort side channel; it can never turn an otherwise
+successful contract check or write into a job failure. Construction-time misconfiguration
+(the previous step) is the only thing that throws.
+</Aside>
+
+## What's next
+
+See [View Verification Results](/guides/viewing-results/) for the other way to inspect
+what Invaract decided, and
+[Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/) for
+how this repository's own CI proves notification events are published on both the PASS
+and FAIL path against a real Spark job.

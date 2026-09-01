@@ -67,6 +67,7 @@ export default defineConfig({
 							label: 'Check Contract Compatibility',
 							slug: 'guides/checking-contract-compatibility',
 						},
+						{ label: 'Configure a Notification Sink', slug: 'guides/notification-sinks' },
 					],
 				},
 				{
