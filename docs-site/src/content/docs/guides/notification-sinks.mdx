@@ -88,19 +88,32 @@ two separate mechanisms.
 Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000"}
 ```
 
 ...and a `WriteEvent`, once the write completes:
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}}
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000"}
 ```
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
 [Contract Format](/reference/contract-format/) — so anything you've already recorded
 there (an owning team, an upstream system) rides along on every event without a second
 metadata vocabulary to maintain.
+
+`applicationId` is the Spark application's own ID (`sparkContext.applicationId`) on
+both event types — useful for grouping events from the same job run when a sink
+aggregates events across many jobs.
+
+`WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
+callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal
+`SQLMetric`s and are only populated for plain file-format writes (Parquet, CSV, JSON,
+ORC) via `DataFrameWriter.save`/`.parquet`/etc. **They are `null` for Delta Lake and
+Iceberg writes** — neither connector populates these particular metrics on the plan
+node Invaract observes, confirmed against a real local write of each. A sink
+implementation should treat these three fields as always-optional, not assume they're
+present just because the write succeeded.
 
 ## Built-in sinks
 

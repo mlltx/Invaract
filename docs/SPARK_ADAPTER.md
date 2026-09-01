@@ -756,6 +756,48 @@ whatever a contract author already recorded there (owner, team, upstream
 system, anything ODCS or this project doesn't itself interpret) rides
 along on every event, without a second, parallel metadata vocabulary.
 
+**Both events also carry `applicationId: Option[String]`** — the owning
+`SparkSession`'s `sparkContext.applicationId`, so a consumer aggregating
+events from many concurrent jobs (or many runs of the same job over time)
+can group by run without inventing its own correlation ID.
+`ContractValidationEvent` gets it from the `SparkSession` captured by
+`ContractEnforcementRule.forContract`'s closure at rule-installation time;
+`WriteEvent` gets it from `qe.sparkSession` on the `QueryExecution`
+`SparkAdapterListener.onSuccess` is handed. Always `Some` in practice for
+both — there is no code path that constructs either event without a live
+`SparkSession` — but kept `Option` rather than a bare `String` since a
+`NotificationSink` implementation should not have to trust that no future
+call site will ever construct one without a session in hand.
+
+**`WriteEvent` additionally carries `durationMs: Long` and three
+connector-dependent `Option[Long]` fields — `rowCount`, `bytesWritten`,
+`fileCount`.** `durationMs` comes straight from the `durationNs` argument
+Spark's own `QueryExecutionListener.onSuccess` callback already provides,
+converted to milliseconds — always populated, no connector dependency.
+
+The other three come from `qe.executedPlan.metrics` — Spark's own
+`SQLMetric` map on the executed physical plan, read for the well-known
+keys `numOutputRows`/`numOutputBytes`/`numFiles`. This was **confirmed
+empirically, not assumed**, to behave differently across connectors:
+
+- **Populated** for ordinary V1 writes (`InsertIntoHadoopFsRelationCommand`
+  → `DataWritingCommandExec`) — plain Parquet/CSV/JSON/ORC writes via
+  `DataFrameWriter.save`/`.parquet`/etc. all take this path, so
+  `rowCount`/`bytesWritten`/`fileCount` are `Some` for the demo harness's
+  own writes and are asserted as such in
+  `SparkAdapterListenerSpec`.
+- **Absent (`None`)** for Delta writes (`SaveIntoDataSourceCommand`/
+  `AppendDataExecV1`) and Iceberg writes (`AppendDataExec`) — neither
+  connector's write command populates these particular `SQLMetric` keys on
+  the node this listener inspects, confirmed by a real local Delta write in
+  `SparkAdapterListenerSpec` asserting all three are `None`. This is *not*
+  a bug or an oversight to fix later by digging harder into the same
+  mechanism — it is why these fields are honestly typed `Option[Long]`
+  rather than `Long`, and why the docs-site guide below tells a reader not
+  to expect them for Delta/Iceberg outputs. Getting equivalent numbers for
+  those two connectors needs connector-specific investigation — see
+  ROADMAP.md for status — not a different `SQLMetric` key.
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment
