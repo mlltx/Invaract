@@ -96,4 +96,33 @@ class HttpNotificationSinkSpec extends AnyFunSuite with BeforeAndAfterAll {
     sink.configure(Map("url" -> s"http://127.0.0.1:$deadPort/unreachable", "timeoutMs" -> "1000"))
     sink.publish(sampleEvent) // connection failure is delivered async - must not throw synchronously
   }
+
+  // failureMessage is publish's async-callback decision, pulled out
+  // specifically so these branches (a real behavioral choice - log or
+  // don't, throwable vs. status code) are directly testable rather than
+  // only reachable via a real async HTTP round trip whose only observable
+  // effect (a log line) these tests have no way to assert on.
+  test("failureMessage describes a connection failure via the throwable, without evaluating statusCode") {
+    val ex = new RuntimeException("boom")
+    val msg = HttpNotificationSink.failureMessage(ex, throw new AssertionError("statusCode must not be evaluated when throwable is set"), "WRITE", "http://x")
+    assert(msg.exists(_.contains("WRITE")))
+    assert(msg.exists(_.contains("http://x")))
+  }
+
+  test("failureMessage describes a non-2xx response when there is no throwable") {
+    val msg = HttpNotificationSink.failureMessage(null, 500, "CONTRACT_VALIDATION", "http://x")
+    assert(msg.exists(_.contains("500")))
+    assert(msg.exists(_.contains("CONTRACT_VALIDATION")))
+  }
+
+  test("failureMessage returns None for a successful (2xx) response with no throwable") {
+    assert(HttpNotificationSink.failureMessage(null, 200, "WRITE", "http://x").isEmpty)
+    assert(HttpNotificationSink.failureMessage(null, 299, "WRITE", "http://x").isEmpty)
+  }
+
+  test("failureMessage boundary: 299 is success, 300 is not, 199 is not") {
+    assert(HttpNotificationSink.failureMessage(null, 299, "x", "u").isEmpty)
+    assert(HttpNotificationSink.failureMessage(null, 300, "x", "u").isDefined)
+    assert(HttpNotificationSink.failureMessage(null, 199, "x", "u").isDefined)
+  }
 }

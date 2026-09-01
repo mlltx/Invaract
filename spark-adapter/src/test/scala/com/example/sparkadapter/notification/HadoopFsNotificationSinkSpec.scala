@@ -113,4 +113,35 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
       Files.walk(dir).sorted(java.util.Comparator.reverseOrder()).forEach(p => Files.deleteIfExists(p))
     }
   }
+
+  // The real UUID-based filename is unpredictable from outside, so
+  // overwrite=false's actual effect (reject a collision instead of
+  // silently replacing the earlier event) is otherwise never exercised -
+  // forcing a fixed name via the protected `newFileName` seam is the only
+  // way to make that flag's value actually observable under test.
+  test("publish never silently overwrites: a forced filename collision throws on the second call") {
+    val dir = Files.createTempDirectory("invaract-hadoopfs-sink-test")
+    try {
+      val sink = new HadoopFsNotificationSink {
+        override def newFileName(event: NotificationEvent): String = "fixed-name.json"
+      }
+      sink.configure(Map("path" -> s"file://${dir.toString}"))
+
+      sink.publish(sampleEvent.copy(contract = "first@1.0.0")) // must not throw
+
+      intercept[java.io.IOException] {
+        sink.publish(sampleEvent.copy(contract = "second@1.0.0"))
+      }
+
+      val fs = FileSystem.get(new java.net.URI(s"file://${dir.toString}"), new org.apache.hadoop.conf.Configuration())
+      val content = {
+        val in = fs.open(new Path(dir.toString, "fixed-name.json"))
+        try new String(in.readAllBytes(), "UTF-8")
+        finally in.close()
+      }
+      assert(content.contains("\"first@1.0.0\""), "the original event's file must survive the rejected second write")
+    } finally {
+      Files.walk(dir).sorted(java.util.Comparator.reverseOrder()).forEach(p => Files.deleteIfExists(p))
+    }
+  }
 }

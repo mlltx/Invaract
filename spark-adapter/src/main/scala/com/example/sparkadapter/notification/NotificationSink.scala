@@ -166,13 +166,36 @@ class HttpNotificationSink extends NotificationSink {
     client
       .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
       .whenComplete { (response, throwable) =>
-        if (throwable != null) {
-          logger.warn(s"HttpNotificationSink failed to publish a ${event.eventType} event to $url", throwable)
-        } else if (response.statusCode() / 100 != 2) {
-          logger.warn(s"HttpNotificationSink got HTTP ${response.statusCode()} publishing a ${event.eventType} event to $url")
+        HttpNotificationSink.failureMessage(throwable, response.statusCode(), event.eventType, url).foreach { msg =>
+          if (throwable != null) logger.warn(msg, throwable) else logger.warn(msg)
         }
       }
   }
+}
+
+private[notification] object HttpNotificationSink {
+
+  /** The decision of *whether* (and what) to log, pulled out of `publish`'s
+    * async callback so it's directly unit-testable: a mutation on the
+    * status-code/throwable branches there is a real behavioral bug (log a
+    * genuine failure, or don't), not a `StringLiteral` mutant on message
+    * text, so CLAUDE.md's mutation-testing bar requires it actually be
+    * killed — asserting only "no exception, no crash" (the shape every
+    * other async-callback test here was limited to before this existed)
+    * never observes which branch ran. `statusCode` is by-name specifically
+    * so a test can pass a literal that would blow up if evaluated (proving
+    * the `throwable != null` branch never touches it, the same short-
+    * circuit `publish`'s own callback relies on when the response is
+    * `null` on failure).
+    */
+  private[notification] def failureMessage(throwable: Throwable, statusCode: => Int, eventType: String, url: String): Option[String] =
+    if (throwable != null) {
+      Some(s"HttpNotificationSink failed to publish a $eventType event to $url")
+    } else if (statusCode / 100 != 2) {
+      Some(s"HttpNotificationSink got HTTP $statusCode publishing a $eventType event to $url")
+    } else {
+      None
+    }
 }
 
 /** Writes every event, as its own JSON object, under a configured path
@@ -242,10 +265,19 @@ class HadoopFsNotificationSink extends NotificationSink {
     */
   private[notification] def configurationForTesting: org.apache.hadoop.conf.Configuration = conf
 
+  /** Pulled out so a test can force a filename collision (by overriding
+    * this in an anonymous subclass to return a fixed name) and observe
+    * that the second `publish` throws rather than silently replacing the
+    * first event — the only way to make `create`'s `overwrite = false`
+    * argument actually matter under test, since the real UUID-based name
+    * below is deliberately unpredictable from outside.
+    */
+  protected def newFileName(event: NotificationEvent): String =
+    s"${event.timestamp}-${event.eventType}-${java.util.UUID.randomUUID()}.json"
+
   override def publish(event: NotificationEvent): Unit = {
     val fs = basePath.getFileSystem(conf)
-    val fileName = s"${event.timestamp}-${event.eventType}-${java.util.UUID.randomUUID()}.json"
-    val target = new org.apache.hadoop.fs.Path(basePath, fileName)
+    val target = new org.apache.hadoop.fs.Path(basePath, newFileName(event))
     val out = fs.create(target, /* overwrite = */ false)
     try {
       out.write(NotificationJson.toJson(event).getBytes("UTF-8"))
