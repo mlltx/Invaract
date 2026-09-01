@@ -104,7 +104,7 @@ metadata vocabulary to maintain.
 
 ## Built-in sinks
 
-Three ship in `spark-adapter` itself, all with no extra dependency:
+Four ship in `spark-adapter` itself, all with no extra dependency:
 
 - **`LoggingNotificationSink`** — logs each event as one JSON line via SLF4J, at `INFO`.
   Needs no `sink.property.*` configuration.
@@ -122,6 +122,34 @@ Three ship in `spark-adapter` itself, all with no extra dependency:
   sink.class=com.example.sparkadapter.notification.HttpNotificationSink
   sink.property.url=https://example.com/invaract-events
   ```
+
+- **`HadoopFsNotificationSink`** — writes each event as its own JSON object under
+  `sink.property.path`, on **any filesystem Hadoop's own `FileSystem` API supports**:
+  S3 (`s3a://`), GCS (`gs://`, with that connector installed), HDFS (`hdfs://`), Azure
+  (`abfs://`), or plain `file://`. One sink, not one per vendor — the URI scheme picks
+  the backend, exactly like `df.write.parquet("s3a://...")` already does in your own
+  job. If your contract's own `location:` already points at cloud storage, your job's
+  classpath already carries whatever connector that needs, so this sink adds nothing
+  new to it either.
+
+  ```properties
+  sink.enabled=true
+  sink.class=com.example.sparkadapter.notification.HadoopFsNotificationSink
+  sink.property.path=s3a://my-bucket/invaract-events/
+  sink.property.hadoop.fs.s3a.access.key=...
+  sink.property.hadoop.fs.s3a.secret.key=...
+  ```
+
+  Every `sink.property.hadoop.<key>` is set on the underlying Hadoop `Configuration` —
+  Hadoop's own config keys, not a separate vocabulary; credentials already configured
+  in your cluster's `core-site.xml` apply the normal way and don't need repeating here.
+
+  <Aside type="note" title="One file per event, not an appended log">
+  S3 objects are immutable — `FileSystem.append` isn't reliably supported across
+  backends, and never on S3A. This sink writes a new, uniquely-named object per event
+  instead of appending to one growing file, so it behaves the same way on every
+  backend the path might point at.
+  </Aside>
 
 ## The Kafka sink is a separate module
 

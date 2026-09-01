@@ -784,13 +784,16 @@ timing out, an implementation bug) must never turn an otherwise-successful
 contract check or write into a job failure, since notification is a
 best-effort side channel, not part of enforcement.
 
-**Three built-in sinks ship in `spark-adapter` itself, all dependency-free:**
+**Four built-in sinks ship in `spark-adapter` itself, all dependency-free:**
 `LoggingNotificationSink` (one JSON line per event via SLF4J, at INFO),
 `FileNotificationSink` (appends one JSON line per event to a configured
 `path` — what `./dev/test`/`./dev/regression` use to prove this against a
-real Spark job; see below), and `HttpNotificationSink` (POSTs each
+real Spark job; see below), `HttpNotificationSink` (POSTs each
 event's JSON to a configured `url`, via `java.net.http.HttpClient` — part
-of the JDK since Java 11, so this needs no new dependency either). Requests
+of the JDK since Java 11, so this needs no new dependency either), and
+`HadoopFsNotificationSink` (below).
+
+Requests from `HttpNotificationSink`
 are sent with `HttpClient.sendAsync`, not blocking whatever thread
 `publish` was called on; a connection failure or non-2xx response is
 logged at WARN once the async response lands, since by then there's no
@@ -798,6 +801,58 @@ call stack left for `SafeNotificationSink` to catch an exception on.
 Tested against a real, local `com.sun.net.httpserver.HttpServer` (also
 JDK-bundled) rather than a mocked `HttpClient` — the same "real thing over
 a mock" discipline this module's Spark-facing specs already use.
+
+**`HadoopFsNotificationSink`: one sink for S3, GCS, and HDFS, not three.**
+Built on `org.apache.hadoop.fs.{FileSystem, Path}` — the exact same
+abstraction Spark's own `DataFrameWriter` already dispatches every write
+through, where the URI scheme (`s3a://`, `gs://`, `hdfs://`, `abfs://`,
+plain `file://`) picks the concrete implementation at runtime via Hadoop's
+own configuration-driven lookup, never a compile-time link to a vendor
+SDK. This needs no new dependency in `spark-adapter` itself:
+`hadoop-client-api`/`hadoop-client-runtime` (confirmed via
+`sbt Test/dependencyTree` to be the shaded 3.3.4 artifacts Spark 3.5.7
+actually resolves — not the classic unshaded `hadoop-common`) already
+carry `FileSystem`/`Path` transitively through the existing `provided`
+`spark-core`/`spark-sql` dependencies. It costs a real user nothing extra
+either, for a structural reason, not a coincidence: if a contract's own
+`location:` already points at `s3a://`/`gs://`, the job's runtime
+classpath already carries `hadoop-aws`/the GCS connector for that write to
+succeed at all — this sink piggybacks on exactly that, the same way
+`FileNotificationSink` piggybacks on `java.io.FileWriter` already being
+part of the JDK.
+
+Configuration: `sink.property.path` (required, treated as a directory
+prefix, not a single file) and `sink.property.hadoop.<key>` passthrough
+into the `Configuration` this sink builds — Hadoop's own configuration
+keys, not a second vocabulary. **One JSON object per event, not an
+appended log** — deliberately, not an oversight:
+`FileSystem.append` is not reliably supported across implementations, and
+S3A in particular has never supported real append (S3 objects are
+immutable) — an append-based design that works for `FileNotificationSink`'s
+local files would silently misbehave the moment `sink.property.path`
+pointed at `s3a://`. Writing each event as its own object under the
+configured prefix, named `<timestamp>-<eventType>-<uuid>.json` to avoid
+collisions, needs nothing more than `create`, universally supported.
+
+Tested against a real `file://` `LocalFileSystem` — Hadoop's own built-in
+`FileSystem` implementation, exercising the identical API surface
+`hdfs://`/`s3a://`/`gs://` all implement, which is precisely the point of
+the abstraction (Hadoop itself tests every `FileSystem` implementation
+for consistent semantics against the same contract). Deliberately
+*not* tested against a real HDFS cluster in this repository: Hadoop's own
+`MiniDFSCluster` would need to be added as a dependency, and it pulls in
+the classic, unshaded `hadoop-common`/`hadoop-hdfs` artifacts alongside
+the shaded `hadoop-client-api`/`hadoop-client-runtime` Spark 3.5.7 already
+resolves — real risk of reopening exactly the kind of transitive
+classpath conflict this module's own `build.sbt` has extensively
+documented fighting for Netty/Jackson/Arrow, for a test whose real
+assertions are about this sink's own logic (path resolution, one-file-
+per-event, the `hadoop.*` passthrough), not about Hadoop's `FileSystem`
+contract itself. Real S3/GCS backends are further out of reach for this
+repository's test environment entirely (no cluster, no cloud credentials)
+— confirmed structurally correct via the shared `FileSystem` contract, not
+separately verified end-to-end, and documented as such rather than forced
+into a false claim of full verification.
 
 **A fourth sink, Kafka, deliberately ships as a separate module/artifact
 instead — `notification-kafka/`, not part of `spark-adapter`.** Unlike an

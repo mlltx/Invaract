@@ -328,7 +328,7 @@ would be.
 │   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
 │   │   └── notification/              # Notification sinks (opt-in event publishing)
 │   │       ├── NotificationEvent.scala      # ContractValidationEvent / WriteEvent
-│   │       ├── NotificationSink.scala       # trait + Logging/File/Http built-ins
+│   │       ├── NotificationSink.scala       # trait + Logging/File/Http/HadoopFs built-ins
 │   │       ├── NotificationConfig.scala     # .properties-based sink configuration
 │   │       └── NotificationSinkFactory.scala # reflective sink loading
 │   └── src/test/scala/com/example/sparkadapter/
