@@ -58,30 +58,33 @@ dependencyOverrides ++= Seq(
   // artifact Spark's own tree resolves here (confirmed via
   // `sbt Compile/dependencyTree`) - same coordinate set and reasoning as
   // spark-adapter/build.sbt's override (see its comment for the full
-  // detail, including a later alert batch that found four more CVEs
-  // fixed at or below 4.1.136.Final): 4.1.96.Final was vulnerable to
-  // CVE-2025-24970, CVE-2026-33871, CVE-2025-55163, CVE-2026-44249, and
-  // two ByteBuf-leak/infinite-loop bugs in SpdyHttpDecoder/Bzip2Decoder;
-  // 4.1.136.Final is the highest of all six fix floors. This is the one
-  // module (see the note above) where the fix actually changes what
+  // detail, including two later alert batches that found five more
+  // CVEs fixed at or below 4.1.137.Final): 4.1.96.Final was vulnerable
+  // to CVE-2025-24970, CVE-2026-33871, CVE-2025-55163, CVE-2026-44249,
+  // two ByteBuf-leak/infinite-loop bugs in SpdyHttpDecoder/Bzip2Decoder,
+  // and CVE-2026-59903 (netty-codec-http's CorsHandler silently
+  // overwrites an application's own Vary header with Vary: Origin,
+  // enabling cache poisoning/cross-user response disclosure);
+  // 4.1.137.Final is the highest of all seven fix floors. This is the
+  // one module (see the note above) where the fix actually changes what
   // ships in invaract-spark-runner.jar, not just this module's own test
   // classpath.
-  "io.netty" % "netty-all" % "4.1.136.Final",
-  "io.netty" % "netty-buffer" % "4.1.136.Final",
-  "io.netty" % "netty-codec" % "4.1.136.Final",
-  "io.netty" % "netty-codec-http" % "4.1.136.Final",
-  "io.netty" % "netty-codec-http2" % "4.1.136.Final",
-  "io.netty" % "netty-codec-socks" % "4.1.136.Final",
-  "io.netty" % "netty-common" % "4.1.136.Final",
-  "io.netty" % "netty-handler" % "4.1.136.Final",
-  "io.netty" % "netty-handler-proxy" % "4.1.136.Final",
-  "io.netty" % "netty-resolver" % "4.1.136.Final",
-  "io.netty" % "netty-transport" % "4.1.136.Final",
-  "io.netty" % "netty-transport-classes-epoll" % "4.1.136.Final",
-  "io.netty" % "netty-transport-classes-kqueue" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-epoll" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-kqueue" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-unix-common" % "4.1.136.Final",
+  "io.netty" % "netty-all" % "4.1.137.Final",
+  "io.netty" % "netty-buffer" % "4.1.137.Final",
+  "io.netty" % "netty-codec" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.137.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.137.Final",
+  "io.netty" % "netty-common" % "4.1.137.Final",
+  "io.netty" % "netty-handler" % "4.1.137.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.137.Final",
+  "io.netty" % "netty-resolver" % "4.1.137.Final",
+  "io.netty" % "netty-transport" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.137.Final",
   // CVE-2022-46751 (GHSA-hedq-r4mx-jhh8, XXE in Ivy's XML parsing), fixed
   // in 2.5.2. Confirmed via `sbt Compile/dependencyTree` that 2.5.1 is
   // this module's actual resolved winner.
@@ -109,11 +112,35 @@ dependencyOverrides ++= Seq(
   // async parser). This is the one module where the fix actually changes
   // what ships in invaract-spark-runner.jar, not just this module's own
   // test classpath (same note as the other overrides above).
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8"
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.9",
+  // log4j-core/log4j-api/log4j-1.2-api/log4j-slf4j2-impl, 2.20.0 -> 2.25.5
+  // - see spark-adapter/build.sbt's comment for the full detail on all
+  // four CVEs fixed (CVE-2025-68161, CVE-2026-34477, CVE-2026-34480/
+  // 34479, CVE-2026-49844) and why all four artifacts move together.
+  // This is another module where the fix actually changes what ships in
+  // invaract-spark-runner.jar, not just this module's own test classpath
+  // (same note as the other overrides above).
+  "org.apache.logging.log4j" % "log4j-core" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-api" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-1.2-api" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-slf4j2-impl" % "2.25.5"
 )
+
+// NOT overridden - com.google.guava:guava:16.0.1, same two CVEs and same
+// accepted-risk reasoning as spark-adapter/build.sbt's own comment (see
+// there for the full detail): CVE-2018-10237 and CVE-2020-8908, both
+// arriving via org.apache.curator:curator-client:2.13.0 (confirmed via
+// `sbt Compile/dependencyTree`), which backs Spark's ZooKeeper-based
+// standalone-cluster recovery mode - infrastructure DemoJobHarness's
+// `local[*]` master never configures or exercises, so a passing
+// `./dev/test` run couldn't prove a bump safe either. Unlike every
+// other override in this file, this one being unfixed does carry into
+// invaract-spark-runner.jar's compile-scope dependency tree - re-evaluate
+// if this harness ever needs to exercise Spark's cluster-recovery code
+// paths for real, per the same note in spark-adapter/build.sbt.
 
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar")
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
