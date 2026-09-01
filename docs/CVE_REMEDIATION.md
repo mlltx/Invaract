@@ -549,6 +549,182 @@ in §7a:
 - The Spark History Server RCE (CVE-2025-54920, Direct dependency, High)
   — still held for its own isolated Spark 3.5.1 → 3.5.7 pass, per §7a.
 
+## 7c. Worked example: a version-numbering jump, and a second CVE on an already-fixed artifact
+
+A small batch, closing out most of what remained after §7a/§7b:
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `io.airlift:aircompressor` | all three | 0.27 (already fixed for CVE-2024-36114) | 2.0.3 | CVE-2025-67721 |
+| `org.apache.thrift:libthrift` | `spark-adapter` | 0.13.0 | **not changed** — accepted risk | CVE-2026-43869 |
+| `org.apache.thrift:libthrift` (revisited) | `spark-adapter` | 0.13.0 | unchanged, already accepted per §7 | CVE-2020-13949 (reconfirmed) |
+| `com.google.protobuf:protobuf-java` | all three | already 3.19.6 | no change needed | CVE unspecified in this batch — already fixed |
+
+**A second, distinct CVE landed on an artifact already bumped once.**
+`aircompressor` was already moved to 0.27 in §7b for CVE-2024-36114; this
+batch found CVE-2025-67721 still present *at* 0.27 — a different bug (a
+crafted zero-offset input makes the Snappy/LZ4 decompressors copy from
+not-yet-written positions in a *reused* output buffer, leaking prior
+contents), fixed only in 2.0.3. Worth noting because Aircompressor's own
+versioning jumped straight from the `0.x` line to `2.0.x` with nothing
+published in between — exactly the shape of jump that broke Derby's and
+libthrift's packaging in §7/§7a. Checked for the same failure mode before
+trusting it, not assumed safe because the previous 0.27 bump had been:
+`unzip -l` on both jars shows an identical class list end to end,
+including the `io.airlift.compress.hadoop` adapter package Spark's own
+codec integration actually calls into. Confirmed via the real suite
+regardless (286/286) rather than resting on the jar comparison alone.
+
+**A third Thrift CVE, and the clearest illustration yet that "the fix
+breaks Hive" doesn't need re-testing every time.** CVE-2026-43869 (TLS
+hostname-verification bypass in `TSSLTransportFactory.java`) is fixed in
+`0.23.0` — a version *nine* minors past `0.14.0`, the exact point §7a
+already proved breaks Hive 2.3.9's `TFramedTransport` package
+expectations by testing it directly. There was no reason to re-run that
+experiment at a larger delta to learn the same lesson again; accepted as
+risk on that basis, plus an even more direct reachability argument than
+CVE-2020-13949's: this CVE is specifically about certificate validation
+on a *TLS* Thrift connection, and `HiveConnectorSpec`'s embedded
+metastore never opens a real socket at all, TLS or otherwise — there's
+no certificate to mis-validate, full stop.
+
+**`protobuf-java` reconfirmed already-fixed** for whatever CVE this
+batch's alert cited — still resolving to `3.19.6` tree-wide, unchanged
+since §7a first found this.
+
+## 7d. Worked example: the Jackson stack bump — held back three times, passed clean the fourth
+
+The Jackson stack bump (`jackson-core`/`jackson-databind`/
+`jackson-annotations`/`jackson-module-scala`, all moved together to
+`2.18.8`) was deliberately kept out of every batch since §7a first
+flagged it, specifically because that section's Netty→Arrow→Jackson
+chain happened in this exact corner of the dependency graph. It got its
+own fully isolated pass, run and verified before anything else touched
+it.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `com.fasterxml.jackson.core:jackson-core` | all three | 2.15.2 | 2.18.8 | GHSA-r7wm-3cxj-wff9 |
+| `com.fasterxml.jackson.core:jackson-databind` | all three | 2.15.2 | 2.18.8 | CVE-2026-54512, CVE-2026-54513 |
+| `com.fasterxml.jackson.core:jackson-annotations` | all three | 2.15.2 | 2.18.8 | (moved in lockstep, not itself alerted) |
+| `com.fasterxml.jackson.module:jackson-module-scala` | all three | 2.15.2 (unpinned, Spark's own default) | 2.18.8 | (moved in lockstep — this is what actually resolves the version-check conflict) |
+
+**It passed clean, first attempt, both directions.** §7a's regression
+happened because Arrow's *own* dependency management pulled a newer
+Jackson than `jackson-module-scala` would tolerate — an unplanned side
+effect of a different bump. This time the Jackson bump was the deliberate,
+direct target, with all four related artifacts moved to a single
+version that's actually a real `jackson-module-scala` release (`2.18.8`
+exists as a genuine, matched set — confirmed on Maven Central before
+touching anything), rather than one artifact racing ahead of what
+another still expected. `spark-adapter`'s full suite passed 286/286 on
+the first run; `plugin`'s passed 4/4. The lesson isn't "Jackson bumps are
+actually safe" — it's that *this specific* bump was safe because the
+four pieces that need to agree on a version were bumped as the matched
+set they actually are, not because bumping Jackson is inherently
+lower-risk than bumping Netty.
+
+**`plugin` and `runner` needed the override added, not adjusted** — unlike
+`spark-adapter`, neither had ever needed to pin Jackson before (no Arrow,
+no prior regression to fix), so they were still resolving Spark's own
+unpinned `2.15.2` default. Confirmed via `dependencyTree` that both
+modules genuinely resolved the vulnerable version, even though this
+alert batch (like the critical-alert Avro/ZooKeeper case in §7) only
+named `spark-adapter/build.sbt`.
+
+**Verified past the build log, one more time**: `runner`'s assembled
+`invaract-spark-runner.jar` was rebuilt (`sbt clean assembly`, not just
+relying on `assembly`'s own staleness check, which reported "up to date"
+against a jar from *before* the Jackson bump on the first attempt — a
+real trap this session hit directly) and the embedded
+`com/fasterxml/jackson/databind/cfg/PackageVersion.class` was extracted
+and inspected directly, confirming `2.18.8` is what a real
+`spark-submit` of that jar would run. `spark-adapter`'s and `plugin`'s
+own assembled jars, by contrast, are byte-identical before and after
+this bump (confirmed via jar hash) — expected and correct, since their
+Jackson override is `test`/`provided`-scope only, exactly like every
+other CVE fix in those two modules; only `runner`'s compile-scope
+dependencies actually ship.
+
+## 7e. Worked example: the Spark version bump, and a fourth regression it uncovered
+
+The Spark History Server RCE (CVE-2025-54920, GHSA-jwp6-cvj8-fw65) is a
+Direct dependency, not a transitive jar — Spark's own event-log
+deserialization bug, fixed in 3.5.7. There's no `dependencyOverrides`
+workaround for a bug in Spark's own code, so unlike every other fix in
+this document, this one is a real `sparkVersion` bump. It was held back
+from every prior batch specifically because a Spark bump can shift many
+other pinned transitive versions at once — confirmed necessary caution,
+not just caution for its own sake, since it did exactly that.
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.apache.spark:spark-core`/`spark-sql` | `spark-adapter` (`provided`), `plugin` (`provided`), `runner` (compile-scope) | 3.5.1 | 3.5.7 | CVE-2025-54920 |
+| `io.delta:delta-spark` | `spark-adapter` (`test`-only) | 3.2.0 | 3.3.3 | not itself CVE-driven — see below |
+
+**Checked before touching it, not assumed:** fetched `spark-core_2.12:
+3.5.7`'s own published POM and confirmed it still declares
+`fasterxml.jackson.version=2.15.2` and `jackson-module-scala_2.12:
+2.15.2`, identical to 3.5.1 — since `dependencyOverrides` always wins
+regardless of what any POM in the tree declares, this ruled out the
+bump reopening §7a/§7d's Netty→Arrow→Jackson conflict class before a
+single test ran.
+
+**It still found a real regression — just not the one already
+guarded against.** `spark-adapter`'s full suite failed 1/286 on the
+first attempt: `ContractEnforcementRuleSpec`'s
+`.format("delta").saveAsTable()` case on a *brand-new* table started
+failing Spark's own analysis with `Table ... does not support truncate
+in batch mode.`, before `ContractEnforcementRule` ever got a chance to
+run. Root-caused rather than reverted, the same discipline as §7a's
+chain:
+
+1. Confirmed it wasn't a stale-warehouse artifact or test-order
+   collision — isolating just `ContractEnforcementRuleSpec` with a wiped
+   `spark-warehouse/` reproduced it standalone, so it was real.
+2. Diffed `TableCapabilityCheck.scala` and `DataFrameWriter`'s
+   `saveAsTable` logic between Spark 3.5.1 and 3.5.7 directly (bytecode
+   diff for the former, source fetch for the latter) — both were
+   unchanged in the ways that would matter here; `SaveMode.Overwrite`
+   still always builds `ReplaceTableAsSelect(orCreate = true)`
+   regardless of whether the table exists, exactly as this module's own
+   pre-existing test comment already documented.
+3. The actual failing plan (`OverwriteByExpression` against a
+   placeholder `DataSourceV2Relation` reporting neither `TRUNCATE` nor
+   `OVERWRITE_BY_FILTER`) pointed at the target catalog, not Spark's
+   analyzer: `delta-spark:3.2.0`'s `DeltaCatalog` predates whatever
+   Spark 3.5.x point release changed about the DSv2 write path it
+   exercises here. Checked delta-io/delta's own release metadata (each
+   git tag's `build.sbt` sets `LATEST_RELEASED_SPARK_VERSION` — `3.2.0`
+   was built/tested against Spark `3.5.0`; `3.3.3`, the newest published
+   `delta-spark_2.12` release at the time, against `3.5.6`) rather than
+   guessing a version to try.
+4. `3.3.3` is also safely past the reason `3.2.0` was pinned in the
+   first place: [delta-io/delta#3737](https://github.com/delta-io/delta/issues/3737),
+   a `NoSuchMethodError` the issue's own thread isolates to exactly
+   Scala 2.12 + Spark 3.5.1 + Delta 3.2.1, naming "upgrade past Spark
+   3.5.3" as a workaround — moot at Spark 3.5.7.
+
+Bumped `deltaVersion` to `3.3.3` alongside the Spark bump (both land in
+the same commit, since the Delta move exists *because of* the Spark
+move, not independently of it). `ContractEnforcementRuleSpec` alone then
+passed 49/49; the full `spark-adapter` suite passed 286/286;
+`plugin` (no Delta dependency, never hit this) passed 4/4 unchanged.
+
+**Verified past the unit suites, per this repo's Critical Requirement**:
+this environment didn't have a `spark-submit` binary on `PATH` at all —
+`./dev/test`'s local-execution fallback path isn't a substitute for it
+(it hit its own unrelated log4j2 classloading error, a pre-existing gap
+in that fallback, not a regression from this change), so a matching
+Spark 3.5.7 binary distribution was installed before treating anything
+as verified. With real `spark-submit` in place: `./dev/test` passed,
+`report.json` shows `"sparkVersion": "3.5.7"` and
+`"contractVerification": {"status": "PASSED", "violations": []}`; and
+`./dev/regression` passed both cases (2/2) — a satisfying transformation
+still writes normally, and a violating one is still aborted with zero
+bytes written, proving `ContractEnforcementRule` itself is unaffected by
+either version bump, not just that a harness run completed.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -584,19 +760,26 @@ in §7a:
       `guava`, unreachable through this module's `local[*]`-only testing)
       and the `jackson-mapper-asl`/`protobuf-java` alerts already resolved
       without a code change.
-- [ ] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
-      §7b — needs bumping `jackson-core`/`jackson-databind`/
-      `jackson-annotations` *and* `jackson-module-scala` together to
-      `2.18.x` (confirmed available on Maven Central), as its own isolated
-      pass with full-suite verification, given this exact dependency
-      corner's track record in §7a.
-- [ ] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
-      High) — Spark 3.5.1 → 3.5.7. Deliberately held out of every batch so
-      far: unlike a transitive-jar override, a Spark version bump can
-      shift *many* other pinned transitive versions at once (as §7a's
-      chain shows even a single-jar bump can cascade), so it needs its own
-      isolated pass with its own full-suite verification before merging
-      with anything else.
+- [x] Fix the third high-severity batch (aircompressor's second CVE; this
+      change) — see §7c, including a third Thrift CVE left as accepted
+      risk without needing to re-run the §7a Hive-compatibility
+      experiment, and `protobuf-java` reconfirmed already-fixed.
+- [x] Fix the two `jackson-databind` CVEs and one `jackson-core` CVE from
+      §7b/§7c (this change) — see §7d. Bumped `jackson-core`/
+      `jackson-databind`/`jackson-annotations`/`jackson-module-scala`
+      together to `2.18.8`, as its own fully isolated pass given this
+      exact corner's §7a history. Passed clean on the first attempt in
+      both `spark-adapter` and `plugin` — the earlier regression was
+      Arrow racing ahead of what `jackson-module-scala` tolerated, not
+      evidence that Jackson bumps themselves are risky; this one moved
+      all four pieces that need to agree as the matched set they are.
+- [x] Fix the Spark History Server RCE (CVE-2025-54920, Direct dependency,
+      High) — Spark 3.5.1 → 3.5.7 (this change). See §7e: it needed its
+      own isolated pass, and it found a fourth regression (this one in
+      `delta-spark:3.2.0`'s compatibility with the bumped Spark's DSv2
+      write path, fixed by moving `deltaVersion` to `3.3.3` alongside it)
+      — confirmed via `./dev/test` and `./dev/regression` with a real
+      `spark-submit` 3.5.7, not just the unit suites.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after

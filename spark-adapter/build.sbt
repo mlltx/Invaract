@@ -3,7 +3,27 @@ version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
 
-val sparkVersion = "3.5.1"
+// 3.5.1 -> 3.5.7: CVE-2025-54920 (GHSA-jwp6-cvj8-fw65, Spark History
+// Server Code Execution) - the Spark History Web UI's overly permissive
+// Jackson polymorphic deserialization of event-log data lets an attacker
+// with access to the event-log directory inject a malicious JSON payload
+// that instantiates arbitrary classes, fixed in 3.5.7/4.0.1. A Direct
+// (not transitive) dependency, unlike every other CVE fix in this file -
+// there's no dependencyOverrides workaround for a bug in Spark's own
+// code, so this is a real version bump, held back from every prior
+// batch (see docs/CVE_REMEDIATION.md's worked examples) specifically
+// because a Spark bump can shift many other pinned transitive versions
+// at once. Checked before touching it, not assumed: fetched
+// spark-core_2.12:3.5.7's own published POM and confirmed it still
+// declares fasterxml.jackson.version=2.15.2 and
+// jackson-module-scala_2.12:2.15.2, identical to 3.5.1 - the
+// dependencyOverrides below win regardless of what any POM in the tree
+// declares, so this doesn't reopen the Netty->Arrow->Jackson class of
+// conflict. Delta/Iceberg/ClickHouse connector versions below are pinned
+// independently of sparkVersion and stay as they were; only spark-core/
+// spark-sql/spark-hive/spark-avro (Spark's own per-release artifacts)
+// move with this bump.
+val sparkVersion = "3.5.7"
 
 // Test-scope only, not provided: empirical investigation (see
 // docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta
@@ -14,10 +34,31 @@ val sparkVersion = "3.5.1"
 // up a real Delta-enabled session to test against (the same role
 // com.h2database plays for the JDBC precedent below), never to compile
 // or run the main translation code.
-// 3.2.0, not the latest 3.x release: a confirmed real bug in 3.2.1 affects
-// exactly this combination (Scala 2.12 + Spark 3.5.1) - see
-// docs/SPARK_ADAPTER.md's Delta section for the citation.
-val deltaVersion = "3.2.0"
+// 3.2.0 -> 3.3.3, moved together with the Spark 3.5.1 -> 3.5.7 bump above:
+// staying on 3.2.0 while Spark moved to 3.5.7 broke this module's own
+// ContractEnforcementRuleSpec (a genuine regression, confirmed by
+// isolating the spec and by diffing Spark's DataFrameWriter/
+// TableCapabilityCheck bytecode between 3.5.1 and 3.5.7 - the check logic
+// itself is byte-identical, so the break is Delta 3.2.0 not having been
+// built/tested against anything past Spark 3.5.0's DSv2 write path).
+// `.format("delta").saveAsTable()` on a brand-new table started failing
+// analysis with "Table ... does not support truncate in batch mode.",
+// because Spark's ReplaceTableAsSelect(orCreate = true) gets rewritten to
+// an OverwriteByExpression against a placeholder v2 relation whose
+// capability set no longer includes TRUNCATE/OVERWRITE_BY_FILTER under
+// 3.5.7 for a delta-spark 3.2.0-vintage DeltaCatalog. delta-io/delta's
+// own release metadata (LATEST_RELEASED_SPARK_VERSION in build.sbt at
+// each tag) shows 3.2.0 was built against Spark 3.5.0 and 3.3.3 against
+// 3.5.6 - the closest published delta-spark release to our new Spark
+// 3.5.7, and current enough that it no longer hits the previous pin's
+// reason (delta-io/delta#3737, a NoSuchMethodError isolated to exactly
+// Scala 2.12 + Spark 3.5.1 + Delta 3.2.1, whose own thread names
+// upgrading past Spark 3.5.3 as a workaround - moot now at Spark 3.5.7).
+// Confirmed by re-running ContractEnforcementRuleSpec (and the rest of
+// this module's suite) against 3.3.3 before settling on it - see
+// docs/SPARK_ADAPTER.md's Delta section / docs/connectors/delta.md for
+// the full citation trail.
+val deltaVersion = "3.3.3"
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
 // for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
@@ -207,25 +248,38 @@ dependencyOverrides ++= Seq(
   // Confirmed via a real test failure, not assumed: Arrow 17.0.0's own
   // dependency management pulls jackson-core/jackson-databind/
   // jackson-annotations 2.17.1, which wins eviction over Spark 3.5.1's
-  // own 2.15.2 - and Spark's `jackson-module-scala_2.12:2.15.2` (still on
-  // the classpath, untouched) enforces a strict version check on init:
-  // `JsonMappingException: Scala module 2.15.2 requires Jackson Databind
-  // version >= 2.15.0 and < 2.16.0 - Found jackson-databind version
-  // 2.17.1`. Since that check runs in a static initializer Spark's own
-  // error-formatting machinery depends on
-  // (org.apache.spark.ErrorClassesJsonReader), this broke nearly every
-  // suite in the module, not just Arrow-adjacent ones. Pinned the three
-  // Jackson core artifacts back to 2.15.2 - what jackson-module-scala
-  // actually requires and what Spark 3.5.1 already ships - rather than
-  // letting Arrow's newer preference win. Arrow's own use of Jackson is
-  // for schema/metadata (de)serialization via jackson-databind's stable
-  // public ObjectMapper API, not the kind of thing that needs the latest
-  // patch version; downgrading it 2 minor versions is a smaller,
-  // better-understood risk than leaving two incompatible Jackson stacks
-  // on the same classpath.
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.2",
+  // own 2.15.2 - and Spark's `jackson-module-scala_2.12` enforces a
+  // strict version check on init: `JsonMappingException: Scala module
+  // 2.15.2 requires Jackson Databind version >= 2.15.0 and < 2.16.0 -
+  // Found jackson-databind version 2.17.1`. Since that check runs in a
+  // static initializer Spark's own error-formatting machinery depends on
+  // (org.apache.spark.ErrorClassesJsonReader), a mismatch here breaks
+  // nearly every suite in the module, not just Arrow-adjacent ones - so
+  // whatever these four are pinned to, they move together, never
+  // partially, the same discipline as the Netty family above.
+  //
+  // 2.15.2 -> 2.18.8: two jackson-databind CVEs found in a later alert
+  // batch - CVE-2026-54512 (PolymorphicTypeValidator bypass via generic
+  // type parameters - a type ID like "java.util.ArrayList<com.evil.Gadget>"
+  // only validates the raw container class, not the nested type argument)
+  // and CVE-2026-54513 (a parallel bypass via allowIfSubTypeIsArray -
+  // an array's component type isn't validated, only that the value is
+  // *an* array) - plus one jackson-core CVE (GHSA-r7wm-3cxj-wff9, an
+  // incomplete-fix follow-up to GHSA-72hv-8253-57qq: the async parser's
+  // maxNumberLength limit isn't enforced when a number's digits arrive
+  // split across chunks and the buffer is still mid-accumulation).
+  // 2.18.8 is the complete fix for all three (the jackson-core CVE's
+  // first advisory was only partially fixed at 2.18.6). Bumped
+  // jackson-module-scala to the matching 2.18.8 alongside the other
+  // three, rather than just raising the pin on the first three again -
+  // that's what actually resolves the strict-version-check conflict from
+  // the paragraph above, this time in the other direction (Jackson
+  // ahead of what jackson-module-scala's own pin expects, instead of
+  // behind it).
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8",
   // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
   // pulled in by Spark/Delta/Hive's own dependency trees - same
   // dependencyOverrides pattern as Arrow above, not a change to what this
@@ -354,16 +408,42 @@ dependencyOverrides ++= Seq(
   // (in-process calls, per Hive's own architecture), never a real Thrift
   // RPC server that could receive the "malicious RPC client" payload this
   // CVE describes.
+  //
+  // A third CVE, found in a later alert batch: CVE-2026-43869 (CWE-297,
+  // Improper Validation of Certificate with Host Mismatch -
+  // TSSLTransportFactory.java's Java TLS transport skips hostname
+  // verification, so a client will trust a certificate issued for the
+  // wrong host), fixed in 0.23.0. Not even attempted - 0.23.0 is far
+  // past 0.14.0, the exact point already confirmed above to break Hive
+  // 2.3.9's package expectations, so it carries the same packaging-break
+  // risk at a larger version delta, with no reason to expect it resolved
+  // itself in between. Also accepted risk, for an even more direct
+  // reachability reason than CVE-2020-13949 above: this CVE is
+  // specifically about validating the hostname on a *TLS* Thrift
+  // connection, and
+  // HiveConnectorSpec's embedded metastore is not just non-networked but
+  // never establishes a real socket connection of any kind, TLS or
+  // otherwise - there's no certificate to mis-validate.
   "org.apache.thrift" % "libthrift" % "0.13.0",
-  // 0.25 -> 0.27: CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every Aircompressor
-  // decompressor (LZ4/LZO/Snappy/Zstandard) uses sun.misc.Unsafe for
-  // unchecked out-of-bounds memory access, which malformed input can turn
-  // into a JVM crash or a leak of adjacent process memory. 0.26 alone
-  // wasn't sufficient (the advisory names 0.27 as the real fix). Notably,
-  // this is the same version Spark's own upstream moved to for the 3.5.x
-  // line (SPARK-48494, backported to branch-3.5) - a real signal this
-  // bump is safe within Spark 3.5.1, not just a hopeful guess.
-  "io.airlift" % "aircompressor" % "0.27",
+  // 0.25 -> 2.0.3 (via 0.27). CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every
+  // Aircompressor decompressor (LZ4/LZO/Snappy/Zstandard) used
+  // sun.misc.Unsafe for unchecked out-of-bounds memory access, malformed
+  // input turning into a JVM crash or a leak of adjacent process memory;
+  // 0.26 alone wasn't sufficient (the advisory names 0.27 as the real
+  // fix), and 0.27 is the same version Spark's own upstream moved to for
+  // the 3.5.x line (SPARK-48494, backported to branch-3.5). A later
+  // alert batch found a second, more specific issue still present at
+  // 0.27: CVE-2025-67721 (GHSA-vx9q-rhv9-3jvg) - a crafted zero-offset
+  // input makes the Snappy/LZ4 decompressors copy from not-yet-written
+  // positions in a *reused* output buffer, leaking prior buffer contents
+  // - fixed in 2.0.3 (the project renumbered from the 0.x line directly
+  // to 2.0.x; nothing published in between). Checked the jump for a
+  // Derby/Thrift-style repackaging break before trusting it, not
+  // assumed: `unzip -l` on both jars shows an identical class list,
+  // including the io.airlift.compress.hadoop adapter package Spark's own
+  // codec integration actually touches - same classes, same names, in
+  // both versions.
+  "io.airlift" % "aircompressor" % "2.0.3",
   // 3.14.0 -> 3.18.0: CVE-2025-48924 (GHSA-j288-q9x7-2f5v) -
   // ClassUtils.getClass(...) recurses without a depth limit and can
   // StackOverflowError on a sufficiently long class-name input.

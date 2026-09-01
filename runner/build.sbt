@@ -3,7 +3,16 @@ version := "0.1.0"
 scalaVersion := "2.12.18"
 organization := "com.example"
 
-val sparkVersion = "3.5.1"
+// 3.5.1 -> 3.5.7: CVE-2025-54920 (Spark History Server Code Execution,
+// a Direct dependency, not transitive - no dependencyOverrides
+// workaround for a bug in Spark's own code) - see spark-adapter/build.sbt's
+// comment for the full detail, including confirming Spark 3.5.7's own
+// POM still declares the same jackson-module-scala:2.15.2 as 3.5.1 does,
+// so this doesn't reopen that module's Netty->Arrow->Jackson conflict
+// class. This is the one module where the fix actually changes what
+// ships in invaract-spark-runner.jar (compile-scope spark-core/spark-sql
+// here, unlike plugin/spark-adapter's provided scope).
+val sparkVersion = "3.5.7"
 
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion,
@@ -77,12 +86,12 @@ dependencyOverrides ++= Seq(
   // in 2.5.2. Confirmed via `sbt Compile/dependencyTree` that 2.5.1 is
   // this module's actual resolved winner.
   "org.apache.ivy" % "ivy" % "2.5.2",
-  // 0.25 -> 0.27: CVE-2024-36114 (GHSA-973x-65j7-xcf4) - Aircompressor's
-  // decompressors use sun.misc.Unsafe for unchecked memory access,
-  // exploitable via malformed input for a JVM crash or a leak of adjacent
-  // process memory. Same version Spark's own upstream moved to for 3.5.x
-  // (SPARK-48494, backported to branch-3.5).
-  "io.airlift" % "aircompressor" % "0.27",
+  // 0.25 -> 2.0.3: CVE-2024-36114 (Unsafe-based OOB access) plus
+  // CVE-2025-67721 (reused-output-buffer leak in Snappy/LZ4, still
+  // present at 0.27) - see spark-adapter/build.sbt's comment for the
+  // full detail, including the jar-level check that ruled out a
+  // Derby/Thrift-style repackaging break across this version jump.
+  "io.airlift" % "aircompressor" % "2.0.3",
   // 3.12.0 -> 3.18.0: CVE-2025-48924 (GHSA-j288-q9x7-2f5v) -
   // ClassUtils.getClass(...) recurses without a depth limit, StackOverflowError
   // on a long enough class-name input.
@@ -90,7 +99,20 @@ dependencyOverrides ++= Seq(
   // 1.1.10.3 -> 1.1.10.4: CVE-2023-43642 (GHSA-55g7-9cwv-5qfv) -
   // SnappyInputStream has no upper bound on the declared chunk length,
   // so a crafted input can force an oversized heap allocation.
-  "org.xerial.snappy" % "snappy-java" % "1.1.10.4"
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 2.15.2 -> 2.18.8 (jackson-core/databind/annotations and
+  // jackson-module-scala, moved together - see spark-adapter/build.sbt's
+  // comment for the full detail, including why these four have to move
+  // as one unit): CVE-2026-54512 and CVE-2026-54513 (two
+  // PolymorphicTypeValidator bypasses in jackson-databind) plus
+  // GHSA-r7wm-3cxj-wff9 (an incomplete-fix follow-up in jackson-core's
+  // async parser). This is the one module where the fix actually changes
+  // what ships in invaract-spark-runner.jar, not just this module's own
+  // test classpath (same note as the other overrides above).
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8"
 )
 
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar")
