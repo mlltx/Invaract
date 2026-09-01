@@ -33,7 +33,8 @@ object NotificationJson {
         "contract" -> e.contract,
         "status" -> e.status,
         "violations" -> e.violations.map(_.toMap),
-        "metadata" -> e.metadata
+        "metadata" -> e.metadata,
+        "applicationId" -> e.applicationId
       )
     case e: WriteEvent =>
       Map(
@@ -44,7 +45,12 @@ object NotificationJson {
         "format" -> e.format,
         "saveMode" -> e.saveMode,
         "schema" -> e.schema.map(f => Map("name" -> f.name, "type" -> f.dataType, "nullable" -> f.nullable)),
-        "metadata" -> e.metadata
+        "metadata" -> e.metadata,
+        "durationMs" -> e.durationMs,
+        "rowCount" -> e.rowCount,
+        "bytesWritten" -> e.bytesWritten,
+        "fileCount" -> e.fileCount,
+        "applicationId" -> e.applicationId
       )
   }
 

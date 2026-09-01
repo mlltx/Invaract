@@ -65,6 +65,14 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"metadata\": {}"))
   }
 
+  test("toJson for ContractValidationEvent renders applicationId, None as null and Some as a plain value") {
+    val withoutAppId = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(withoutAppId).contains("\"applicationId\": null"))
+
+    val withAppId = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty, applicationId = Some("app-123"))
+    assert(NotificationJson.toJson(withAppId).contains("\"applicationId\": \"app-123\""))
+  }
+
   test("toJson for WriteEvent includes location/format/saveMode/schema/contract, with None fields as null") {
     val event = WriteEvent(
       contract = None,
@@ -102,5 +110,38 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"format\": \"parquet\""))
     assert(json.contains("\"saveMode\": \"overwrite\""))
     assert(json.contains("\"schema\": []"))
+  }
+
+  test("toJson for WriteEvent renders durationMs/rowCount/bytesWritten/fileCount/applicationId") {
+    val withMetrics = WriteEvent(
+      contract = None,
+      location = "file:/tmp/out.parquet",
+      format = None,
+      saveMode = None,
+      schema = Nil,
+      timestamp = 0L,
+      metadata = Map.empty,
+      durationMs = 42L,
+      rowCount = Some(5L),
+      bytesWritten = Some(1024L),
+      fileCount = Some(2L),
+      applicationId = Some("app-123")
+    )
+    val json = NotificationJson.toJson(withMetrics)
+    assert(json.contains("\"durationMs\": 42"))
+    assert(json.contains("\"rowCount\": 5"))
+    assert(json.contains("\"bytesWritten\": 1024"))
+    assert(json.contains("\"fileCount\": 2"))
+    assert(json.contains("\"applicationId\": \"app-123\""))
+  }
+
+  test("toJson for WriteEvent renders default durationMs=0 and None metrics as null, not omitted") {
+    val defaults = WriteEvent(None, "file:/tmp/out.parquet", None, None, Nil, 0L, Map.empty)
+    val json = NotificationJson.toJson(defaults)
+    assert(json.contains("\"durationMs\": 0"))
+    assert(json.contains("\"rowCount\": null"))
+    assert(json.contains("\"bytesWritten\": null"))
+    assert(json.contains("\"fileCount\": null"))
+    assert(json.contains("\"applicationId\": null"))
   }
 }

@@ -32,6 +32,14 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
       .builder()
       .master("local[*]")
       .appName("SparkAdapterListenerSpec")
+      // Delta's session extension/catalog only activate for `.format("delta")`
+      // usage - confirmed harmless to every other test in this suite by
+      // the full suite still passing with this enabled (see
+      // ContractEnforcementRuleSpec's own beforeAll for the same pattern).
+      // Needed for the rowCount/bytesWritten/fileCount-are-None Delta test
+      // below.
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .config("spark.sql.shuffle.partitions", "1")
       .config("spark.ui.enabled", "false")
       .getOrCreate()
@@ -60,6 +68,34 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.saveMode.contains("overwrite"))
     assert(event.schema.exists(f => f.name == "id" && f.dataType == "long"))
     assert(event.schema.exists(f => f.name == "doubled" && f.dataType == "long"))
+    // rowCount/bytesWritten/fileCount come from Spark's own SQLMetrics on
+    // the executed plan - confirmed empirically present for this exact
+    // write shape (InsertIntoHadoopFsRelationCommand / DataWritingCommandExec).
+    assert(event.rowCount.contains(5L), s"expected 5 rows, got ${event.rowCount}")
+    assert(event.bytesWritten.exists(_ > 0L), s"expected a positive byte count, got ${event.bytesWritten}")
+    assert(event.fileCount.exists(_ > 0L), s"expected a positive file count, got ${event.fileCount}")
+    assert(event.durationMs >= 0L)
+    assert(event.applicationId.contains(spark.sparkContext.applicationId))
+  }
+
+  // Confirmed empirically (see docs/SPARK_ADAPTER.md's "Notification
+  // sinks" section): Delta's write shapes never populate Spark's own
+  // SQLMetric keys on the executed plan node SparkAdapterListener
+  // observes - None is the honest, correct value here, not a bug.
+  test("a Delta write publishes a WriteEvent with rowCount/bytesWritten/fileCount all None") {
+    val outputPath = scratchDir.resolve("listener_delta_write").toString
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.format("delta").mode("overwrite").save(outputPath)
+
+    val event = awaitEvent(sink)
+    assert(event.format.contains("delta"))
+    assert(event.rowCount.isEmpty, s"expected None for a Delta write, got ${event.rowCount}")
+    assert(event.bytesWritten.isEmpty, s"expected None for a Delta write, got ${event.bytesWritten}")
+    assert(event.fileCount.isEmpty, s"expected None for a Delta write, got ${event.fileCount}")
+    assert(event.applicationId.contains(spark.sparkContext.applicationId))
   }
 
   test("no sink configured: onSuccess still captures lastWrite, publishing nothing (no crash either)") {

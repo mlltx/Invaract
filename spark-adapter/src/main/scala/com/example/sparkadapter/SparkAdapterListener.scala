@@ -76,6 +76,18 @@ class SparkAdapterListener(
     WriteCommandSupport.combined.lift(qe.analyzed).foreach { info =>
       _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
       sink.foreach { s =>
+        // rowCount/bytesWritten/fileCount come from Spark's own SQLMetrics
+        // on the executed plan - confirmed empirically (not assumed)
+        // present for a plain V1 write (InsertIntoHadoopFsRelationCommand,
+        // wrapped as DataWritingCommandExec: "numOutputRows"/
+        // "numOutputBytes"/"numFiles") and confirmed *absent* for every
+        // Delta/Iceberg write shape probed (SaveIntoDataSourceCommand,
+        // AppendDataExecV1, DSv2 AppendDataExec never populate these keys
+        // at all) - .get on a Map that doesn't have the key correctly
+        // yields None rather than a wrong guess. See WriteEvent's own doc
+        // for why Delta/Iceberg need a separate, connector-specific
+        // mechanism for the same counts, not attempted here.
+        val metrics = qe.executedPlan.metrics
         s.publish(
           WriteEvent(
             contract = contractRef,
@@ -84,7 +96,12 @@ class SparkAdapterListener(
             saveMode = info.saveMode,
             schema = info.outputSchema.fields.map(f => WriteFieldInfo(f.name, f.dataType.typeName, f.nullable)).toList,
             timestamp = System.currentTimeMillis(),
-            metadata = metadata
+            metadata = metadata,
+            durationMs = durationNs / 1000000L,
+            rowCount = metrics.get("numOutputRows").map(_.value),
+            bytesWritten = metrics.get("numOutputBytes").map(_.value),
+            fileCount = metrics.get("numFiles").map(_.value),
+            applicationId = Some(qe.sparkSession.sparkContext.applicationId)
           )
         )
       }

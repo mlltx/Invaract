@@ -164,6 +164,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.status == "PASSED")
     assert(event.violations.isEmpty)
     assert(event.contract == "enforcement_demo@1.0.0")
+    // This suite's shared check rule calls verifyOrThrow directly (not
+    // through forContract), so no applicationId is ever supplied - None
+    // is the correct default, not an oversight, confirmed alongside the
+    // forContract(contract, options, sink) test below which does thread a
+    // real one through.
+    assert(event.applicationId.isEmpty)
   }
 
   test("FAIL: a violated contract publishes a ContractValidationEvent (status FAILED, carrying the violation) before throwing") {
@@ -2009,6 +2015,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val events = sink.events.collect { case e: com.example.sparkadapter.notification.ContractValidationEvent => e }
     assert(events.nonEmpty)
     assert(events.last.status == "PASSED")
+    assert(events.last.applicationId.contains(spark.sparkContext.applicationId))
   }
 
   // Added while raising the module's mutation-testing score (see

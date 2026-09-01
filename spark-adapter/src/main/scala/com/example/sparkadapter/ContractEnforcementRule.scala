@@ -98,7 +98,7 @@ object ContractEnforcementRule {
     * example.
     */
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
-    _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink))
+    session => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -187,7 +187,8 @@ object ContractEnforcementRule {
       contract: Contract,
       plan: LogicalPlan,
       options: VerificationOptions,
-      sink: Option[NotificationSink] = None
+      sink: Option[NotificationSink] = None,
+      applicationId: Option[String] = None
   ): Unit = {
     val translated = SparkPlanAdapter.translate(plan)
     translated.plan match {
@@ -205,7 +206,7 @@ object ContractEnforcementRule {
         // else on this path did either - exactly how a missing `outputs:`
         // key used to crash verify() with an unguarded
         // NoSuchElementException instead of a clean, actionable rejection.
-        requireValidContract(contract, sink)
+        requireValidContract(contract, sink, applicationId)
 
         // Collects every recognized *read* shape found anywhere in the
         // plan via `recognizedRead` above - LogicalRelation for batch V1
@@ -279,7 +280,7 @@ object ContractEnforcementRule {
           case None => Nil
         }
         val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
-        publishValidation(contract, result, sink)
+        publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
@@ -295,9 +296,9 @@ object ContractEnforcementRule {
           case Some(info) =>
             // Same reasoning as the ir.Write branch above: verifyStateChange
             // assumes a structurally sound contract too.
-            requireValidContract(contract, sink)
+            requireValidContract(contract, sink, applicationId)
             val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
-            publishValidation(contract, result, sink)
+            publishValidation(contract, result, sink, applicationId)
             if (!result.passed) {
               // No ir.Plan translation exists for a state-changing CALL
               // (there's no Spark write/query to translate) - a plain
@@ -320,7 +321,7 @@ object ContractEnforcementRule {
                   "\"Fail-closed on unverifiable writes\" section."
             )
             val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-            publishValidation(contract, result, sink)
+            publishValidation(contract, result, sink, applicationId)
             throw new ContractViolationException(result, explain(contract, translated.plan, result))
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
@@ -352,7 +353,7 @@ object ContractEnforcementRule {
     * own comments for why it's scoped to just the write and state-changing-
     * CALL branches.
     */
-  private def requireValidContract(contract: Contract, sink: Option[NotificationSink]): Unit = {
+  private def requireValidContract(contract: Contract, sink: Option[NotificationSink], applicationId: Option[String]): Unit = {
     val validation = ContractValidator.validate(contract)
     if (!validation.isValid) {
       val contractRef = s"${contract.id}@${contract.version}"
@@ -365,7 +366,7 @@ object ContractEnforcementRule {
         )
       }
       val result = VerificationResult.of(contractRef, violations)
-      publishValidation(contract, result, sink)
+      publishValidation(contract, result, sink, applicationId)
       val describedPlan = com.example.ir.Unsupported("(contract validation failed before any plan was checked)")
       throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
@@ -378,7 +379,12 @@ object ContractEnforcementRule {
     * every call site above), so a subscriber observes the rejection at the
     * same moment the writing job does.
     */
-  private def publishValidation(contract: Contract, result: VerificationResult, sink: Option[NotificationSink]): Unit =
+  private def publishValidation(
+      contract: Contract,
+      result: VerificationResult,
+      sink: Option[NotificationSink],
+      applicationId: Option[String]
+  ): Unit =
     sink.foreach { s =>
       s.publish(
         ContractValidationEvent(
@@ -386,7 +392,8 @@ object ContractEnforcementRule {
           status = result.status,
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
-          metadata = contract.extensions
+          metadata = contract.extensions,
+          applicationId = applicationId
         )
       )
     }

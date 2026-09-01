@@ -45,13 +45,19 @@ sealed trait NotificationEvent {
   * result's `ContractViolationException` is thrown, so a subscriber sees
   * the rejection at the same moment the writing job does, not only once
   * some later retry succeeds.
+  *
+  * `applicationId` is the checking session's `SparkContext.applicationId`
+  * — always present for a real, running Spark session (`Option` here only
+  * because `verifyOrThrow` is also exercised directly in tests without a
+  * session in scope).
   */
 case class ContractValidationEvent(
   contract: String,
   status: String,
   violations: List[Violation],
   timestamp: Long,
-  metadata: Map[String, Any]
+  metadata: Map[String, Any],
+  applicationId: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }
@@ -67,6 +73,26 @@ case class WriteFieldInfo(name: String, dataType: String, nullable: Boolean)
   * when the session that captured this write was never given a contract at
   * all (dry-run mode); a write rejected by `ContractEnforcementRule` never
   * reaches this event, since Spark never executes it.
+  *
+  * `durationMs` is `SparkAdapterListener.onSuccess`'s own `durationNs`
+  * parameter, converted — always present. `rowCount`/`bytesWritten`/
+  * `fileCount` come from Spark's own `SQLMetric`s
+  * (`qe.executedPlan.metrics`) and are populated only when that specific
+  * executed-plan node actually carries them — confirmed empirically (not
+  * assumed) present for a plain V1 write (`InsertIntoHadoopFsRelationCommand`,
+  * i.e. ordinary Parquet/CSV/JSON/ORC/Hive), and confirmed *absent* for
+  * every Delta/Iceberg write shape probed (`SaveIntoDataSourceCommand`,
+  * `AppendDataExecV1`, DSv2 `AppendDataExec`) — the physical node Spark
+  * executes for those never populates `numOutputRows`/`numOutputBytes`/
+  * `numFiles` at all. `None` there is an honest "not available through
+  * this mechanism," not a bug — Delta and Iceberg both track equivalent
+  * counts through their own connector-specific commit metadata instead
+  * (Delta's `CommitInfo.operationMetrics`, Iceberg's
+  * `Table.currentSnapshot().summary()`/`MetricsReporter`), which would
+  * need the same connector-specific investigation as their version/
+  * snapshot identifiers — not attempted here. `applicationId` is
+  * `qe.sparkSession.sparkContext.applicationId` — always present for a
+  * real write.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -75,7 +101,12 @@ case class WriteEvent(
   saveMode: Option[String],
   schema: List[WriteFieldInfo],
   timestamp: Long,
-  metadata: Map[String, Any]
+  metadata: Map[String, Any],
+  durationMs: Long = 0L,
+  rowCount: Option[Long] = None,
+  bytesWritten: Option[Long] = None,
+  fileCount: Option[Long] = None,
+  applicationId: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }
