@@ -276,10 +276,34 @@ dependencyOverrides ++= Seq(
   // the paragraph above, this time in the other direction (Jackson
   // ahead of what jackson-module-scala's own pin expects, instead of
   // behind it).
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.8",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.8",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.8",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.8",
+  //
+  // 2.18.8 -> 2.18.9 (all four, same "move together" discipline): two
+  // more jackson-databind CVEs found in a later alert batch.
+  // CVE-2026-59889 (GHSA - @JsonView bypass for a property carrying both
+  // @JsonView and @JsonUnwrapped: UnwrappedPropertyHandler.processUnwrapped
+  // replays the buffered JSON via deserializeAndSet() without ever calling
+  // prop.visibleInView(activeView), so a less-privileged view can still
+  // write the property) and CVE-2026-54515 (case-insensitive
+  // deserialization, via @JsonFormat(ACCEPT_CASE_INSENSITIVE_PROPERTIES),
+  // rebuilds its property map from the deserializer's original
+  // this._beanProperties instead of the already-@JsonIgnoreProperties-
+  // filtered contextual._beanProperties, silently restoring properties a
+  // per-property @JsonIgnoreProperties had just excluded). Both fixed in
+  // 2.18.9 (confirmed on Maven Central for all four coordinates before
+  // touching this). A third jackson-databind CVE from the same batch, a
+  // @JsonView bypass for creator properties combined with
+  // @JsonTypeInfo(include=As.EXTERNAL_PROPERTY) (GHSA-mhm7-754m-9p8w), is
+  // NOT fixed here - checked, not assumed: the advisory itself states the
+  // fix landed only on the Jackson 3.x line (a different groupId,
+  // tools.jackson.core, and a wholesale migration out of scope for a
+  // transitive-CVE override) and was never backported to the 2.18/2.21
+  // lines this module and Spark 3.5.7 both depend on. Accepted risk (see
+  // docs/CVE_REMEDIATION.md section 3's "no available patched version"
+  // case) - re-evaluate if FasterXML ever backports it to 2.x.
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.9",
   // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
   // pulled in by Spark/Delta/Hive's own dependency trees - same
   // dependencyOverrides pattern as Arrow above, not a change to what this
@@ -345,34 +369,41 @@ dependencyOverrides ++= Seq(
   //     filter bypass via incorrect comparator masking in
   //     IpSubnetFilterRule, fixed 4.1.135.Final), and two ByteBuf-leak/
   //     infinite-loop DoS bugs in SpdyHttpDecoder and Bzip2Decoder (both
-  //     fixed 4.1.136.Final). 4.1.136.Final is the highest of all six fix
-  //     floors, so it covers every one of them.
+  //     fixed 4.1.136.Final) - the second bump. A third alert batch found
+  //     a seventh: CVE-2026-59903 (netty-codec-http's CorsHandler
+  //     unconditionally overwrites any existing response `Vary` header
+  //     with `Vary: Origin`, silently discarding `Vary: Authorization`/
+  //     `Vary: Cookie` an application had set - a caching proxy or CDN
+  //     that only sees `Vary: Origin` can then serve one user's
+  //     authenticated response to another), fixed 4.1.137.Final. That's
+  //     now the highest of all seven fix floors, so it covers every one
+  //     of them.
   //
   // 4.1.132.Final (this override's first CVE-motivated target) was tried
   // against arrow-memory-netty 14.0.1 and failed with the identical
   // PoolArena error from lesson 1 - see the Arrow override's own comment
   // above for the root cause and the fix, which was bumping Arrow to
-  // 17.0.0, not backing off Netty. The later bump to 4.1.136.Final (a
-  // 4-patch-version delta, not a 36-version jump like 96->132) still gets
-  // the same full-suite check before merging, per docs/CVE_REMEDIATION.md
-  // section 5 - never assumed safe just because a bigger jump already
-  // cleared.
-  "io.netty" % "netty-all" % "4.1.136.Final",
-  "io.netty" % "netty-buffer" % "4.1.136.Final",
-  "io.netty" % "netty-codec" % "4.1.136.Final",
-  "io.netty" % "netty-codec-http" % "4.1.136.Final",
-  "io.netty" % "netty-codec-http2" % "4.1.136.Final",
-  "io.netty" % "netty-codec-socks" % "4.1.136.Final",
-  "io.netty" % "netty-common" % "4.1.136.Final",
-  "io.netty" % "netty-handler" % "4.1.136.Final",
-  "io.netty" % "netty-handler-proxy" % "4.1.136.Final",
-  "io.netty" % "netty-resolver" % "4.1.136.Final",
-  "io.netty" % "netty-transport" % "4.1.136.Final",
-  "io.netty" % "netty-transport-classes-epoll" % "4.1.136.Final",
-  "io.netty" % "netty-transport-classes-kqueue" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-epoll" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-kqueue" % "4.1.136.Final",
-  "io.netty" % "netty-transport-native-unix-common" % "4.1.136.Final",
+  // 17.0.0, not backing off Netty. Each later bump (4.1.132.Final ->
+  // 4.1.136.Final -> 4.1.137.Final, patch-level deltas, not 36-version
+  // jumps like 96->132) still gets the same full-suite check before
+  // merging, per docs/CVE_REMEDIATION.md section 5 - never assumed safe
+  // just because a bigger jump already cleared.
+  "io.netty" % "netty-all" % "4.1.137.Final",
+  "io.netty" % "netty-buffer" % "4.1.137.Final",
+  "io.netty" % "netty-codec" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http" % "4.1.137.Final",
+  "io.netty" % "netty-codec-http2" % "4.1.137.Final",
+  "io.netty" % "netty-codec-socks" % "4.1.137.Final",
+  "io.netty" % "netty-common" % "4.1.137.Final",
+  "io.netty" % "netty-handler" % "4.1.137.Final",
+  "io.netty" % "netty-handler-proxy" % "4.1.137.Final",
+  "io.netty" % "netty-resolver" % "4.1.137.Final",
+  "io.netty" % "netty-transport" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-classes-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-epoll" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-kqueue" % "4.1.137.Final",
+  "io.netty" % "netty-transport-native-unix-common" % "4.1.137.Final",
   // CVE-2022-46751 (GHSA-hedq-r4mx-jhh8, XXE - Ivy's XML parsing of its
   // own config/Ivy files/Maven POMs allowed external DTD expansion),
   // fixed in 2.5.2. Confirmed via `sbt Test/dependencyTree` that 2.5.1 is
@@ -452,7 +483,45 @@ dependencyOverrides ++= Seq(
   // SnappyInputStream has no upper-bound check on the declared chunk
   // length, so a crafted input can force an inappropriately large heap
   // allocation (OutOfMemoryError DoS).
-  "org.xerial.snappy" % "snappy-java" % "1.1.10.4"
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // log4j-core/log4j-api/log4j-1.2-api/log4j-slf4j2-impl pinned to a
+  // single consistent version, 2.20.0 -> 2.25.5 - the same "move
+  // together" discipline as Netty/Jackson above, since these four ship
+  // as one release train (confirmed identical version lines published
+  // for all four on Maven Central at every point checked) and Spark's
+  // own logging bridge (log4j-slf4j2-impl backing SLF4J) sits on top of
+  // whatever log4j-core/log4j-api provide. Four CVEs found across two
+  // alert batches, none reachable through this module's own
+  // `local[*]`-only tests (none of them configure a Socket/SMTP/Syslog
+  // appender or log a MapMessage) but fixed anyway since a real fix
+  // exists and moves cleanly within the 2.25.x line - no packaging
+  // break like Derby/Thrift's, confirmed via a real full-suite run
+  // before relying on that:
+  //  - CVE-2025-68161 (Socket Appender's TLS connection never verified
+  //    the peer certificate's hostname, even with verifyHostName/
+  //    log4j2.sslVerifyHostName set - a MITM could present any
+  //    CA-trusted certificate), fixed 2.25.3.
+  //  - CVE-2026-34477 (the above fix was incomplete: it covered the
+  //    system-property route but not the `verifyHostName` XML attribute
+  //    on the `<Ssl>` element, so hostname verification was still
+  //    silently skipped when configured that way), fixed 2.25.4.
+  //  - CVE-2026-34480 (log4j-core's XmlLayout doesn't sanitize
+  //    characters XML 1.0 forbids before writing them, producing
+  //    malformed XML a conforming parser must reject - silently
+  //    dropping the log event from whatever's consuming the XML output)
+  //    and CVE-2026-34479 (the same bug in log4j-1.2-api's
+  //    Log4j1XmlLayout, the Log4j-1-to-2 bridge's own equivalent),
+  //    both fixed 2.25.4.
+  //  - CVE-2026-49844 (a follow-up to CVE-2026-34480/34479 that missed
+  //    a code path: log4j-api's MapMessage.asJson() emits bare
+  //    NaN/Infinity/-Infinity tokens for non-finite floating-point
+  //    values, which RFC 8259 forbids, so JsonTemplateLayout's
+  //    MapMessage-resolver output isn't valid JSON either), fixed
+  //    2.25.5 (2.26.1 also fixes it, on the newer minor line).
+  "org.apache.logging.log4j" % "log4j-core" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-api" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-1.2-api" % "2.25.5",
+  "org.apache.logging.log4j" % "log4j-slf4j2-impl" % "2.25.5"
 )
 
 // NOT overridden, unlike everything above - commons-lang:commons-lang
@@ -515,6 +584,49 @@ dependencyOverrides ++= Seq(
 // moves off Derby 10.14.x-era packaging expectations (a Spark/Hive
 // version bump, not something fixable here).
 
+// NOT overridden, unlike Avro/ZooKeeper/Netty/Jackson/log4j above -
+// two Apache Hive CVEs found in a later alert batch, both requiring a
+// major-version Hive bump this module's own Spark 3.5.7/spark-hive
+// dependency can't absorb:
+//
+//  - CVE-2024-23953 (GHSA-p953-3j66-hg45, in hive-llap-common:
+//    LlapSignerImpl uses Arrays.equals() - not a constant-time
+//    comparison - to verify a signed LLAP work-fragment, so a timing
+//    side-channel lets an already-authorized LLAP client forge a valid
+//    signature byte by byte), fixed 4.0.0.
+//  - CVE-2024-29869 (GHSA-c476-j253-5rgq, in hive-exec: a credentials
+//    file Hive writes to a temp directory is created with mode 644 by
+//    default, readable by any other local user with access to that
+//    directory), fixed 4.0.1.
+//
+// Tried the override anyway rather than assuming it's infeasible from
+// the version gap alone - `org.apache.hive % hive-exec/hive-llap-common/
+// hive-llap-client % 4.0.1` alongside Spark 3.5.7's own spark-hive
+// (built against Hive 2.3.9). `Test/compile` succeeded (this module
+// never imports Hive classes directly, only via reflection/class-name
+// matching per WriteCommandSupport's own convention, so a compile pass
+// here proves nothing about runtime compatibility), but a real
+// HiveConnectorSpec run failed all 14 tests, 1 suite aborted:
+// `ClassNotFoundException: org.apache.hadoop.hive.ql.metadata.
+// HiveException` while Spark's own `HiveExternalCatalog` reflectively
+// constructs itself. Root cause: overriding only three of the many
+// `org.apache.hive` artifacts leaves the rest (hive-common,
+// hive-metastore, etc., all pulled in at 2.3.9 by spark-hive itself, not
+// this override) on the old version - a split Hive 2.3.9/4.0.1
+// classpath, and `HiveException` isn't where the 4.0.1 jars put it (or
+// isn't visible from) whatever 2.3.9-era class expects it. Overriding
+// every `org.apache.hive` artifact to 4.0.1 to fix the split would mean
+// replacing spark-hive's entire bundled Hive client wholesale - not a
+// transitive-CVE override at that point, but reimplementing Spark's own
+// Hive integration against a metastore-client generation it was never
+// built for (Hive 4.0's metastore/HiveConf changes are extensive, not
+// just a version bump - matching how Derby's and libthrift's own
+// packaging changes above already broke this exact test suite at far
+// smaller version deltas). Accepted risk (see docs/CVE_REMEDIATION.md
+// section 3): re-evaluate only alongside a Spark version that itself
+// bundles a newer Hive client (Spark's own `spark-hive` artifact, not
+// something this module can override independently of Spark's release).
+//
 // org.codehaus.jackson:jackson-mapper-asl:1.9.13, pulled in transitively
 // by spark-hive's own Hive 2.3.9 dependency tree (hive-common/hive-exec/
 // hive-metastore - confirmed the single occurrence via
@@ -558,6 +670,18 @@ excludeDependencies ++= Seq(
 // rather than pushed through on an assumption a passing suite can't
 // back up. Re-evaluate if this module ever needs to exercise Spark's
 // cluster-recovery code paths for real.
+//
+// A second Guava CVE found in a later alert batch, same accepted-risk
+// reasoning exactly (same jar, same sole source, same untestable
+// reachability gap): CVE-2020-8908 (GHSA-c2vm-c9v4-fj6q,
+// Files.createTempDir() creates world-readable (mode 0755) temp
+// directories on Unix, an information-disclosure risk to any other local
+// user), fixed 30.0+. Confirmed via `sbt Test/dependencyTree` that this
+// module's own tests never call Files.createTempDir() themselves (all of
+// this module's temp-directory handling goes through Java's own
+// java.nio.file.Files.createTempDirectory, a different, unrelated API) -
+// so even setting reachability aside, there's no first-party call site
+// here that could be affected either way.
 
 unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
 unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")

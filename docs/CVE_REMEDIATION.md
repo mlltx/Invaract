@@ -725,6 +725,92 @@ still writes normally, and a violating one is still aborted with zero
 bytes written, proving `ContractEnforcementRule` itself is unaffected by
 either version bump, not just that a harness run completed.
 
+## 7f. Worked example: a 14-alert moderate batch, a real Hive-version spike, and two duplicate alerts
+
+The first batch drawn from the moderate tier rather than critical/high —
+a useful test of whether this document's triage framework (§2) still
+holds up once severity alone no longer forces the pace. All 14 alerts
+named `spark-adapter/build.sbt` specifically.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `com.fasterxml.jackson.core:jackson-databind` (+core/annotations/module-scala) | all three | 2.18.8 | 2.18.9 | CVE-2026-59889, CVE-2026-54515 |
+| `io.netty:netty-codec-http` (+15 other `io.netty` artifacts) | all three | 4.1.136.Final | 4.1.137.Final | CVE-2026-59903 |
+| `org.apache.logging.log4j:log4j-core`/`log4j-api`/`log4j-1.2-api`/`log4j-slf4j2-impl` | `spark-adapter`, `plugin`, `runner` (newly added — see below) | 2.20.0 | 2.25.5 | CVE-2025-68161, CVE-2026-34477, CVE-2026-34480, CVE-2026-34479, CVE-2026-49844 |
+| `com.google.guava:guava` | `spark-adapter`, `plugin`, `runner` (newly documented — see below) | 16.0.1 | unchanged, accepted risk | CVE-2020-8908 (new); CVE-2018-10237 (duplicate of an existing accepted risk) |
+| `commons-lang:commons-lang` | `spark-adapter` | 2.6 | unchanged, already accepted | CVE-2025-48924 (duplicate of an existing accepted risk) |
+| `org.apache.hive:hive-llap-common` | `spark-adapter` | 2.3.9 | unchanged, accepted risk | CVE-2024-23953 |
+| `org.apache.hive:hive-exec` | `spark-adapter` | 2.3.9 | unchanged, accepted risk | CVE-2024-29869 |
+| `com.fasterxml.jackson.core:jackson-databind` (EXTERNAL_PROPERTY creator bypass) | `spark-adapter`, `plugin`, `runner` | 2.18.9 | unchanged, accepted risk | GHSA-mhm7-754m-9p8w |
+
+**Two of the fourteen were already-decided duplicates, not new work.**
+The Guava DoS alert and the `commons-lang` recursion alert are the exact
+same CVEs (CVE-2018-10237, CVE-2025-48924) §7b already investigated and
+accepted as risk, with the reasoning already sitting in
+`spark-adapter/build.sbt`'s own comments — Dependabot re-surfacing an
+alert doesn't mean re-deriving the decision, just confirming the
+existing one still applies (it does; nothing about the dependency tree
+or this module's test reachability changed).
+
+**A third Jackson-databind CVE in this batch has no available fix in the
+2.x line at all**, a case this document hadn't hit before for Jackson
+specifically: GHSA-mhm7-754m-9p8w (a `@JsonView` bypass for a creator
+property that also carries `@JsonTypeInfo(include = As.EXTERNAL_PROPERTY)`)
+was fixed only on Jackson's 3.x line (a different Maven groupId,
+`tools.jackson.core` — a full migration, not a version bump) and was
+never backported to 2.18/2.21. Accepted risk, same "no available patched
+version" bucket as the Derby/`jackson-mapper-asl` precedents in §7,
+just the first time this document has hit it for an *actively
+maintained* library rather than an abandoned one.
+
+**The real work of this batch was the Hive pair, and it's the first time
+this document tried a fix and disproved it via a real test run rather
+than reasoning about it up front.** Both Hive CVEs (CVE-2024-23953 in
+`hive-llap-common`, CVE-2024-29869 in `hive-exec`) require Hive `4.0.x`
+— a major-version jump from the `2.3.9` Spark 3.5.7's own `spark-hive`
+bundles. Rather than assuming that's too large a jump (the instinct
+`§7`'s Derby/libthrift entries warn against), it was tried: overriding
+just `hive-exec`/`hive-llap-common`/`hive-llap-client` to `4.0.1`.
+`Test/compile` passed — meaningless on its own, since this module never
+imports Hive classes directly, only via reflection/class-name matching
+(`WriteCommandSupport`'s own convention) — so the real check was running
+`HiveConnectorSpec` for real. It failed all 14 of its own tests, 1 suite
+aborted: `ClassNotFoundException:
+org.apache.hadoop.hive.ql.metadata.HiveException` while Spark's
+`HiveExternalCatalog` reflectively constructs itself. Root cause: only
+three of the many `org.apache.hive` artifacts were overridden, leaving
+the rest (`hive-common`, `hive-metastore`, etc., still pulled at `2.3.9`
+by `spark-hive` itself) on the old version — a split-version classpath,
+the same class of failure the Netty/PoolArena lesson in `spark-adapter/
+build.sbt`'s own comments already warns about, just for a different
+library. Overriding *every* `org.apache.hive` artifact to `4.0.1` to
+close that gap would mean replacing `spark-hive`'s entire bundled Hive
+client — no longer a transitive-CVE override at that point, but
+reimplementing Spark's own Hive integration against a metastore-client
+generation it was never built for. Accepted risk; reverted the override
+back to `2.3.9` (implicit, via `spark-hive`'s own resolution) and
+documented the finding directly in `spark-adapter/build.sbt`'s comment,
+the same place Derby's and libthrift's own disproved attempts live.
+
+**`plugin`/`runner` got the Jackson/Netty/log4j fixes and the Guava
+accepted-risk documentation too, matching §7d's precedent** — this
+alert batch named only `spark-adapter/build.sbt`, but `dependencyTree`
+confirmed both modules resolve the identical vulnerable Jackson/Netty/
+log4j/Guava versions via the same Spark dependency footprint. Hive and
+`commons-lang` 2.x, by contrast, don't appear in `plugin`/`runner`'s
+trees at all (neither module depends on `spark-hive`), so those two
+stayed `spark-adapter`-only — confirmed via `dependencyTree`, not
+assumed from the alert batch's own file list either way.
+
+`spark-adapter`'s full suite passed 286/286 with the confirmed fixes in
+place (Jackson `2.18.9`, Netty `4.1.137.Final`, log4j `2.25.5`, Hive
+reverted to `2.3.9`); `plugin` passed 4/4. `runner`'s `sparkVersion`/
+`deltaVersion` aren't touched by this batch, but its own log4j pin is
+newly added here and does change what `invaract-spark-runner.jar`
+bundles (compile-scope, like every other override in that module) — a
+full `./dev/test` run with real `spark-submit` confirmed `Status: PASS`
+and contract verification still passing after the rebuild.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
@@ -780,6 +866,14 @@ either version bump, not just that a harness run completed.
       write path, fixed by moving `deltaVersion` to `3.3.3` alongside it)
       — confirmed via `./dev/test` and `./dev/regression` with a real
       `spark-submit` 3.5.7, not just the unit suites.
+- [x] Fix the first moderate-severity batch (this change) — see §7f:
+      Jackson/Netty/log4j bumped across all three modules, two Hive CVEs
+      tried and disproved via a real `HiveConnectorSpec` run (accepted
+      risk — a split Hive 2.3.9/4.0.1 classpath breaks
+      `HiveExternalCatalog`), a Jackson-databind CVE with no available
+      2.x-line fix accepted as risk, and two alerts (Guava DoS,
+      `commons-lang` recursion) confirmed as duplicates of §7b's existing
+      accepted-risk decisions rather than new work.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
