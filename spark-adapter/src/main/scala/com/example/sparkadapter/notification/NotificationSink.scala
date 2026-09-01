@@ -166,8 +166,14 @@ class HttpNotificationSink extends NotificationSink {
     client
       .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
       .whenComplete { (response, throwable) =>
+        // A null throwable is a legal, documented SafeLogger#warn(String,
+        // Throwable) argument (it just omits a stack trace) - passing it
+        // through unconditionally, rather than branching on it here too,
+        // removes an untested duplicate of failureMessage's own
+        // throwable != null check instead of needing a second test to
+        // cover it.
         HttpNotificationSink.failureMessage(throwable, response.statusCode(), event.eventType, url).foreach { msg =>
-          if (throwable != null) logger.warn(msg, throwable) else logger.warn(msg)
+          logger.warn(msg, throwable)
         }
       }
   }
