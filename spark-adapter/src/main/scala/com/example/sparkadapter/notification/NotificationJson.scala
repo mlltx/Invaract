@@ -3,17 +3,20 @@
 
 package com.example.sparkadapter.notification
 
-/** Renders a `NotificationEvent` as JSON for the two built-in sinks
-  * (`LoggingNotificationSink`/`FileNotificationSink`) — a small, dependency-
-  * free encoder in the same hand-rolled style
+/** Renders a `NotificationEvent` as JSON for the built-in sinks
+  * (`LoggingNotificationSink`/`FileNotificationSink`/`HttpNotificationSink`)
+  * — a small, dependency-free encoder in the same hand-rolled style
   * `runner.DemoJobHarness.reportToJson`/`anyToJson` already use for
   * `demo/output/report.json`, rather than pulling in a JSON library this
   * module has never otherwise needed (see CLAUDE.md's dependency
-  * discipline). A custom `NotificationSink` implementation is free to
-  * ignore this entirely and serialize `NotificationEvent` however its
+  * discipline). Public, not `private[sparkadapter]`: a custom
+  * `NotificationSink` — including one living in a separate module/jar,
+  * like `invaract-notification-kafka`'s `KafkaNotificationSink` — is free
+  * to reuse this rather than reinventing an event's JSON rendering, or to
+  * ignore it entirely and serialize `NotificationEvent` however its own
   * destination expects.
   */
-private[sparkadapter] object NotificationJson {
+object NotificationJson {
 
   /** Each event type's own fixed field order — deliberately not routed
     * through a generic case-class-to-map reflection, so the JSON shape is

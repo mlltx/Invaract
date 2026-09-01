@@ -784,13 +784,57 @@ timing out, an implementation bug) must never turn an otherwise-successful
 contract check or write into a job failure, since notification is a
 best-effort side channel, not part of enforcement.
 
-**Two built-in sinks**, both dependency-free: `LoggingNotificationSink`
-(one JSON line per event via SLF4J, at INFO) and `FileNotificationSink`
-(appends one JSON line per event to a configured `path` — what
-`./dev/test`/`./dev/regression` use to prove this against a real Spark
-job; see below). A real destination (a message queue, an HTTP endpoint) is
-ordinary user code implementing `NotificationSink` — nothing here requires
-it to live in this module or even this repository.
+**Three built-in sinks ship in `spark-adapter` itself, all dependency-free:**
+`LoggingNotificationSink` (one JSON line per event via SLF4J, at INFO),
+`FileNotificationSink` (appends one JSON line per event to a configured
+`path` — what `./dev/test`/`./dev/regression` use to prove this against a
+real Spark job; see below), and `HttpNotificationSink` (POSTs each
+event's JSON to a configured `url`, via `java.net.http.HttpClient` — part
+of the JDK since Java 11, so this needs no new dependency either). Requests
+are sent with `HttpClient.sendAsync`, not blocking whatever thread
+`publish` was called on; a connection failure or non-2xx response is
+logged at WARN once the async response lands, since by then there's no
+call stack left for `SafeNotificationSink` to catch an exception on.
+Tested against a real, local `com.sun.net.httpserver.HttpServer` (also
+JDK-bundled) rather than a mocked `HttpClient` — the same "real thing over
+a mock" discipline this module's Spark-facing specs already use.
+
+**A fourth sink, Kafka, deliberately ships as a separate module/artifact
+instead — `notification-kafka/`, not part of `spark-adapter`.** Unlike an
+HTTP client, there's no JDK-bundled Kafka client, and unlike Delta/
+Iceberg's narrow set of internal case classes (which `WriteCommandSupport`
+reaches via reflection precisely so `spark-adapter` never needs those
+libraries as a real dependency), `KafkaProducer`'s API is broad enough
+that reflecting the whole thing would be unidiomatic — this needed a real,
+unscoped `kafka-clients` dependency somewhere. Putting that somewhere in
+its own module (mirroring how Spark itself ships `spark-sql-kafka-0-10`
+as a wholly separate artifact from `spark-sql`, not bundled into it) means
+a user who wants Kafka builds `notification-kafka`'s own assembled jar
+(`cd notification-kafka && sbt assembly`) and adds it to their classpath;
+a user who doesn't never resolves `kafka-clients` at all — `spark-adapter`'s
+own `build.sbt` declares no dependency on it whatsoever, a stronger
+guarantee than even the `test`-scoped connector dependencies (Delta,
+Iceberg, Hive, Avro, ClickHouse) get, since those are still resolved to
+build/test `spark-adapter` itself.
+
+`KafkaNotificationSink.configure` treats `sink.property.topic` specially
+(the destination topic) and passes every *other* `sink.property.*` key
+straight through as a Kafka producer config
+(`sink.property.bootstrap.servers`, `sink.property.security.protocol`,
+...) — Kafka's own producer configuration keys, not a second vocabulary
+this sink would otherwise have to invent and keep in sync with Kafka's.
+Tested against `MockProducer` — `kafka-clients`' own officially-supported
+test double for exactly this purpose, substituted via a `private[kafka]`
+constructor the reflective `NotificationSinkFactory` path never uses —
+rather than a hand-rolled mock or standing up a real broker.
+
+A real destination beyond these four (a different message queue, a metrics
+system, cloud pub/sub) is ordinary user code implementing
+`NotificationSink` — nothing here requires it to live in this module, this
+repository, or even the JVM ecosystem's dependency-free constraints these
+four happen to satisfy. `NotificationJson.toJson` is public specifically
+so such a sink can reuse this module's event serialization instead of
+reinventing it, whether or not it lives in the same jar.
 
 **API shape: additive overloads, not new parameters on existing
 signatures**, per CLAUDE.md's "API Compatibility Requirement" — adding a

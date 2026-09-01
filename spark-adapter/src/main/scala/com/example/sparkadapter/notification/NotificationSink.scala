@@ -109,3 +109,68 @@ class FileNotificationSink extends NotificationSink {
     }
   }
 }
+
+/** POSTs every event, as JSON, to an HTTP endpoint — configured with a
+  * required `url` property (`sink.property.url=...`) and an optional
+  * `timeoutMs` property (`sink.property.timeoutMs=...`, default `5000`)
+  * bounding how long a single request may run. Built on
+  * `java.net.http.HttpClient`, part of the JDK since Java 11 — this needs
+  * no new dependency, the same reasoning `FileNotificationSink` and
+  * `NotificationConfig` already give for staying dependency-free.
+  *
+  * Requests are sent via `HttpClient.sendAsync`, not blocking `publish`'s
+  * caller on the network round-trip: `NotificationSink.publish`'s own doc
+  * already warns that a slow implementation adds real latency to whatever
+  * thread called it (Spark's analysis path for a `ContractValidationEvent`,
+  * its listener thread for a `WriteEvent`), and this sink's entire purpose
+  * is calling an external service whose latency is out of this module's
+  * control. A connection failure or non-2xx response is logged at WARN
+  * once the async response arrives — by then there is no longer a call
+  * stack for `SafeNotificationSink` to catch an exception on, so this sink
+  * does its own equivalent logging for the async case.
+  */
+class HttpNotificationSink extends NotificationSink {
+  private val logger = LoggerFactory.getLogger(classOf[HttpNotificationSink])
+  private var url: String = _
+  private var timeout: java.time.Duration = _
+  private var client: java.net.http.HttpClient = _
+
+  override def configure(properties: Map[String, String]): Unit = {
+    url = properties.getOrElse(
+      "url",
+      throw new IllegalArgumentException("HttpNotificationSink requires a 'url' property (sink.property.url=...)")
+    )
+    val timeoutMs = properties.get("timeoutMs") match {
+      case Some(v) =>
+        try {
+          v.toLong
+        } catch {
+          case _: NumberFormatException =>
+            throw new IllegalArgumentException(s"HttpNotificationSink's 'timeoutMs' property must be a number, got '$v'")
+        }
+      case None => 5000L
+    }
+    timeout = java.time.Duration.ofMillis(timeoutMs)
+    client = java.net.http.HttpClient.newBuilder().connectTimeout(timeout).build()
+  }
+
+  override def publish(event: NotificationEvent): Unit = {
+    val request = java.net.http.HttpRequest
+      .newBuilder()
+      .uri(java.net.URI.create(url))
+      .timeout(timeout)
+      .header("Content-Type", "application/json")
+      .POST(java.net.http.HttpRequest.BodyPublishers.ofString(NotificationJson.toJson(event)))
+      .build()
+
+    client
+      .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
+      .whenComplete { (response, throwable) =>
+        if (throwable != null) {
+          logger.warn(s"HttpNotificationSink failed to publish a ${event.eventType} event to $url", throwable)
+        } else if (response.statusCode() / 100 != 2) {
+          logger.warn(s"HttpNotificationSink got HTTP ${response.statusCode()} publishing a ${event.eventType} event to $url")
+        }
+      }
+  }
+}

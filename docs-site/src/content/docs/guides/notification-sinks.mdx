@@ -104,13 +104,59 @@ metadata vocabulary to maintain.
 
 ## Built-in sinks
 
-Two ship with Invaract, both with no extra dependency:
+Three ship in `spark-adapter` itself, all with no extra dependency:
 
 - **`LoggingNotificationSink`** — logs each event as one JSON line via SLF4J, at `INFO`.
   Needs no `sink.property.*` configuration.
 - **`FileNotificationSink`** — appends each event as one JSON line to `sink.property.path`.
   This is what [the regression pack](/guides/running-the-regression-pack/) uses to prove
   events are published against a real Spark job.
+- **`HttpNotificationSink`** — POSTs each event's JSON to `sink.property.url`, with an
+  optional `sink.property.timeoutMs` (default `5000`). Built on
+  `java.net.http.HttpClient`, part of the JDK since Java 11 — no extra dependency here
+  either. Requests are sent asynchronously, so a slow or unreachable endpoint doesn't
+  block your job; a connection failure or non-2xx response is logged, not thrown.
+
+  ```properties
+  sink.enabled=true
+  sink.class=com.example.sparkadapter.notification.HttpNotificationSink
+  sink.property.url=https://example.com/invaract-events
+  ```
+
+## The Kafka sink is a separate module
+
+Unlike the three sinks above, `KafkaNotificationSink` isn't part of `spark-adapter` — it
+ships as its own module, `notification-kafka/`, with a real dependency on
+`kafka-clients`. This is deliberate: most users of the verification engine don't need
+Kafka, and `kafka-clients` is a real, sizeable dependency that would otherwise land on
+every user's classpath whether they use it or not (the same reasoning behind Delta,
+Iceberg, Hive, Avro, and ClickHouse all being handled without spark-adapter itself
+depending on their client libraries — see
+[Connector Support](/reference/connector-support/)).
+
+To use it, build the module's own jar and add it alongside `spark-adapter`'s:
+
+```bash
+cd notification-kafka && sbt assembly
+```
+
+Then point `sink.class` at it, with `sink.property.topic` naming the destination topic.
+Every *other* `sink.property.*` key is passed straight through as a Kafka producer
+config — `sink.property.bootstrap.servers`, `sink.property.security.protocol`, and so
+on, exactly as [Kafka's own producer configuration reference](https://kafka.apache.org/documentation/#producerconfigs)
+documents them:
+
+```properties
+sink.enabled=true
+sink.class=com.example.sparkadapter.notification.kafka.KafkaNotificationSink
+sink.property.topic=invaract-events
+sink.property.bootstrap.servers=localhost:9092
+```
+
+<Aside type="note" title="A user who doesn't want Kafka never resolves kafka-clients">
+`spark-adapter`'s own `build.sbt` declares no dependency on `kafka-clients` at all — not
+even a test-scoped one. Only building `notification-kafka` itself pulls it in.
+</Aside>
 
 ## Writing your own sink
 
