@@ -8,7 +8,7 @@ Invaract maintains compatibility across multiple versions of Java, Scala, and Ap
 |-----------|---------|--------|-------|
 | **Java** | 11, 17, 21 | ✓ Supported | 21 recommended (latest LTS) |
 | **Scala** | 2.12.18 | ✓ Supported | Standard for Spark 3.5.x |
-| **Apache Spark** | 3.5.1 | ✓ Primary | Latest stable, well-tested |
+| **Apache Spark** | 3.5.7 | ✓ Primary | Latest stable, well-tested |
 | **sbt** | 1.9+ | ✓ Supported | Build tool for plugin/runner |
 | **Node.js** | 20 | ✓ Supported | For web UI development |
 
@@ -66,7 +66,7 @@ CI/CD pipeline tests all supported JDK versions:
 
 ### Current Release (0.1.0)
 
-- **Scala 2.12.18** (standard binary for Spark 3.5.1)
+- **Scala 2.12.18** (standard binary for Spark 3.5.7)
 - Binary compiled once, works across Java 11+
 - No cross-compilation needed for Phase 0
 
@@ -81,20 +81,26 @@ CI/CD pipeline tests all supported JDK versions:
 
 ### Supported Versions
 
-| Spark | Status | Tested | Adapter |
-|-------|--------|--------|---------|
-| 3.5.1 | ✓ Primary | Ubuntu, macOS, Windows | Native |
-| 3.5.x | ✓ Supported | Spot checks | Native (may differ in edge cases) |
-| 3.4.x | ◐ Untested | Not yet | Manual testing required |
-| 3.6.x+ | ◐ Planned (Phase 2) | Future | Adapter pattern |
+This is now a real, CI-enforced matrix, not a projection — CI's `spark-version-matrix` job
+(`.github/workflows/test.yml`) runs `spark-adapter`'s full test suite against every row
+marked "Verified" on every push, not a one-time spot check. See
+`docs/SPARK_ADAPTER.md`'s "Spark version compatibility" section for how the job works, and
+`docs-site`'s [Spark Version Support](https://github.com/mlltx/invaract/blob/main/docs-site/src/content/docs/reference/spark-version-support.mdx) page for the user-facing version.
 
-### Why Spark 3.5.1
+| Spark | Status | Notes |
+|-------|--------|-------|
+| 3.5.1 | ✓ Verified | Floor of the supported range. |
+| 3.5.7 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
+| 3.5.9 | ✓ Verified | Newest verified patch. |
+| Other 3.5.x | Expected, unverified | Spark's own patch releases don't change Catalyst's plan shapes, but only the three rows above are actually CI-checked. |
+| 3.4.x | Not supported | Never verified; not a claim this repo makes. |
+| 4.x | Not supported | Requires Scala 2.13 (Spark 4.0 dropped 2.12); this repo has no Scala cross-build. A real project, not a CI-leg addition — see `docs/SPARK_ADAPTER.md`'s "Deferred: Spark 4.x" note. |
 
-- Latest stable release (Aug 2024)
-- Long-term support planned
-- Excellent Scala integration
+### Why Spark 3.5.x
+
+- Long-term support line
+- Excellent Scala 2.12 integration
 - Rich DataFrame API
-- Performance improvements
 - Compatible with JDK 21
 
 ### Test Environment
@@ -102,39 +108,44 @@ CI/CD pipeline tests all supported JDK versions:
 ```bash
 # Current test environment
 spark-submit --version
-# Apache Spark 3.5.1
+# Apache Spark 3.5.7
 ```
 
-### Using Older Spark Versions
+### Using a different Spark 3.5.x patch
 
-If your environment requires Spark 3.4.x:
+`spark-adapter/build.sbt`'s `sparkVersion` reads an `INVARACT_TEST_SPARK_VERSION`
+environment variable (falling back to `3.5.7` when unset), so testing against any 3.5.x
+patch — including ones outside the three CI-verified rows above — doesn't require editing
+`build.sbt`:
 
-1. Test plugin locally: `./dev/test`
-2. If tests pass, integration should work
-3. Report any issues: [GitHub Issues](https://github.com/mlltx/Invaract/issues)
-4. Phase 2 will add official multi-version support
+```bash
+cd spark-adapter
+INVARACT_TEST_SPARK_VERSION=3.5.4 sbt test
+```
 
-### Newer Spark Versions (3.6.x+)
+Report any issues on a patch outside the verified set:
+[GitHub Issues](https://github.com/mlltx/Invaract/issues).
 
-Spark 3.6.x is not yet released but will be tested when available.
+### Spark 3.4.x and 4.x
 
-Expected compatibility:
-- Logical plan API should be stable
-- May require adapter for schema handling
-- Phase 2 introduces adapter pattern for multi-engine support
+Neither is supported today. 3.4.x has simply never been verified — there's no known
+incompatibility, just no evidence either way. 4.x is a real gap: this repo compiles for
+Scala 2.12 only, and Spark 4.0 requires Scala 2.13. Supporting it means a genuine
+cross-compilation project (see `docs/SPARK_ADAPTER.md`), not an addition to the CI matrix
+above.
 
 ## Execution Environment
 
 ### Local Development
 
 **GitHub Codespaces (Recommended):**
-- Auto-provisioned: JDK 21, sbt, Spark 3.5.1, Node.js 20
+- Auto-provisioned: JDK 21, sbt, Spark 3.5.7, Node.js 20
 - Works from any browser (including mobile)
 - No local setup required
 - Port forwarding available
 
 **Local Machine:**
-- Manual installation of: JDK 21, sbt, Spark 3.5.1, Node.js 20
+- Manual installation of: JDK 21, sbt, Spark 3.5.7, Node.js 20
 - Supported on: Linux, macOS, Windows (with WSL2)
 - See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup
 
@@ -194,7 +205,7 @@ Plugin and runner are built for Maven publication:
 
 **Plugin dependencies (build.sbt):**
 ```scala
-"org.apache.spark" %% "spark-sql" % "3.5.1" % "provided"
+"org.apache.spark" %% "spark-sql" % "3.5.7" % "provided"
 "org.scalatest" %% "scalatest" % "3.2.18" % "test"
 ```
 
@@ -204,8 +215,8 @@ Plugin and runner are built for Maven publication:
 
 **Runner dependencies (build.sbt):**
 ```scala
-"org.apache.spark" %% "spark-sql" % "3.5.1"
-"org.apache.spark" %% "spark-core" % "3.5.1"
+"org.apache.spark" %% "spark-sql" % "3.5.7"
+"org.apache.spark" %% "spark-core" % "3.5.7"
 ```
 
 - Full Spark bundled with runner
@@ -233,12 +244,15 @@ No changes needed to code; backward compatible.
 
 ### Upgrading Spark
 
-To test with Spark 3.5.0 or 3.6.0:
+For `spark-adapter`'s own suite against a different 3.5.x patch, see "Using a different
+Spark 3.5.x patch" above (`INVARACT_TEST_SPARK_VERSION`, no `build.sbt` edit needed). To
+exercise the full end-to-end harness (`./dev/test`, real `spark-submit`) against a
+different Spark distribution:
 
 1. Download from [archive.apache.org/dist/spark](https://archive.apache.org/dist/spark/)
-2. Set environment: `export SPARK_HOME=/path/to/spark-3.5.0-bin-hadoop3`
+2. Set environment: `export SPARK_HOME=/path/to/spark-<version>-bin-hadoop3`
 3. Test: `./dev/test`
-4. Report results if different from 3.5.1
+4. Report results if different from 3.5.7 (the current default both approaches share)
 
 ### Upgrading Dependencies
 

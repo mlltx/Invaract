@@ -74,9 +74,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.1-hadoop3
+          key: spark-${{ runner.os }}-3.5.7-hadoop3
 
-      - name: Download Spark 3.5.1
+      - name: Download Spark 3.5.7
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
@@ -87,7 +87,7 @@ jobs:
         # path everywhere; it's a no-op passthrough on Linux/macOS where
         # cygpath doesn't exist.
         run: |
-          SPARK_VERSION="3.5.1"
+          SPARK_VERSION="3.5.7"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
 
@@ -98,7 +98,7 @@ jobs:
           fi
           SPARK_DIR="${RUNNER_TEMP_POSIX}/spark"
 
-          echo "Installing Apache Spark 3.5.1..."
+          echo "Installing Apache Spark 3.5.7..."
           curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP_POSIX}/spark.tgz"
           mkdir -p "$SPARK_DIR"
           tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
@@ -211,7 +211,7 @@ jobs:
 
       # Validates the same path a contributor with only Docker installed
       # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
-      # sbt, Spark 3.5.1, every module built at image-build time) and run
+      # sbt, Spark 3.5.7, every module built at image-build time) and run
       # it. docker run's exit code is dev/regression's — non-zero fails
       # this step, and therefore the job, exactly as a local run would.
       #
@@ -340,13 +340,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.1-hadoop3
+          key: spark-${{ runner.os }}-3.5.7-hadoop3
 
-      - name: Download Spark 3.5.1
+      - name: Download Spark 3.5.7
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          SPARK_VERSION="3.5.1"
+          SPARK_VERSION="3.5.7"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
           SPARK_DIR="${RUNNER_TEMP}/spark"
@@ -441,6 +441,68 @@ jobs:
           name: mutation-report-spark-adapter
           path: spark-adapter/target/stryker4s-report/**
           if-no-files-found: warn
+
+  spark-version-matrix:
+    name: Spark version compatibility (spark-adapter, ${{ matrix.spark-version }})
+    runs-on: ubuntu-latest
+    # This is the "multi-Spark-version compatibility matrix" ROADMAP.md and
+    # CLAUDE.md's "Supporting Multiple Spark Versions" section named as
+    # still-outstanding: proof that spark-adapter's own suite actually
+    # passes against more than the single Spark patch its build.sbt happens
+    # to be pinned to, catching Catalyst plan-shape drift across patches
+    # the adapter would otherwise silently mistranslate. Scoped to
+    # spark-adapter's own `sbt test` (not the full 5-module ./dev/test
+    # harness, which stays pinned to one real Spark runtime by design) and
+    # to the Spark 3.5.x line specifically (the currently-supported floor -
+    # see docs/SPARK_ADAPTER.md's "Spark version compatibility" section for
+    # why a 4.x line is out of scope here).
+    #
+    # No Spark binary install here, unlike `test`/`mutation-testing-spark-
+    # adapter`/`docker-regression` above: those exist to run real
+    # spark-submit against DemoJobHarness, which does need SPARK_HOME on
+    # PATH. This job only runs spark-adapter's own sbt test suite, which
+    # resolves Spark as an ordinary managed dependency (the `provided`/
+    # `test`-scope `sparkVersion` val in spark-adapter/build.sbt, now
+    # overridable via INVARACT_TEST_SPARK_VERSION below) and spins up its
+    # own in-process `local[*]` SparkSession - confirmed via a repo-wide
+    # search that no spark-adapter source references SPARK_HOME, so a real
+    # Spark distribution on PATH is not something this suite needs.
+    strategy:
+      fail-fast: false
+      matrix:
+        spark-version: ["3.5.1", "3.5.7", "3.5.9"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # spark-adapter's build.sbt reads ../ir and ../contract's jars
+      # directly off disk (unmanagedJars — there's no aggregating root
+      # build), so both need to be assembled first, same as the mutation-
+      # testing job above. These are Spark-version-independent (contract/ir
+      # have no Spark dependency at all), so they're built once per matrix
+      # leg rather than shared - simpler than rigging a cross-job artifact
+      # hand-off for a build that only takes a few seconds.
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
+
+      - name: Test spark-adapter against Spark ${{ matrix.spark-version }}
+        shell: bash
+        env:
+          INVARACT_TEST_SPARK_VERSION: ${{ matrix.spark-version }}
+        run: cd spark-adapter && sbt test
 
   api-compatibility:
     name: API compatibility (contract, ir, spark-adapter)
@@ -627,12 +689,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, api-compatibility, sbom]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, spark-version-matrix, api-compatibility, sbom]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

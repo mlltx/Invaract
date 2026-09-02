@@ -23,7 +23,20 @@ organization := "com.invaract"
 // independently of sparkVersion and stay as they were; only spark-core/
 // spark-sql/spark-hive/spark-avro (Spark's own per-release artifacts)
 // move with this bump.
-val sparkVersion = "3.5.7"
+//
+// Overridable via INVARACT_TEST_SPARK_VERSION for the spark-version-matrix
+// CI job (.github/workflows/test.yml), which runs this module's full suite
+// against every Spark 3.5.x patch this repo claims to support (currently
+// 3.5.1/3.5.7/3.5.9 - see docs/SPARK_ADAPTER.md's "Spark version
+// compatibility" section), without editing this file per matrix leg. A
+// plain local `sbt test` is unaffected - the env var is unset, so this
+// still resolves to 3.5.7, today's real pin. Only the Spark-version-owned
+// artifacts below (spark-core/spark-sql/spark-hive/spark-avro) move with
+// this override; Delta/Iceberg/ClickHouse stay pinned independently since
+// they're not part of what the matrix is proving (Catalyst plan-shape
+// stability across Spark 3.5.x patches), and their own artifacts are
+// already confirmed compatible across this same 3.5.x line.
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
 
 // Test-scope only, not provided: empirical investigation (see
 // docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta

@@ -160,7 +160,8 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 - [ ] **Spark compatibility**
   - Supported Spark versions
-  - Test matrix for multiple Spark versions
+  - Test matrix for multiple Spark versions — done for the Spark 3.5.x
+    line, see Phase 1c's "Spark version compatibility matrix" sub-phase
   - Adapter pattern for different Spark APIs
 
 - [ ] **Scala compatibility**
@@ -758,10 +759,11 @@ coverage (see the sub-phase above for the first three).
 
 The first of several regression-testing guardrails identified when
 assessing what "market leading" regression coverage would need beyond the
-example-based suites above: property-based fuzzing, mutation testing, and
-API-compatibility checking are done (this sub-phase, the one below it, and
-"API compatibility checking" further down); a multi-Spark-version
-compatibility matrix and coverage gating remain future scope. (An initial
+example-based suites above: property-based fuzzing, mutation testing,
+API-compatibility checking, and a multi-Spark-version compatibility
+matrix are done (this sub-phase, the one below it, "API compatibility
+checking" further down, and "Spark version compatibility matrix" further
+below); coverage gating remains future scope. (An initial
 idea to add golden-file snapshots of `report.json` was reconsidered and
 redirected — that file is an internal test-harness artifact with no
 external consumers, not a public interface worth pinning; the JSON Schema
@@ -942,6 +944,54 @@ catch it.
     - Full detail in each module's doc: docs/CONTRACT_MODEL.md,
       docs/TRANSFORMATION_IR.md, and docs/SPARK_ADAPTER.md's "API
       compatibility" sections.
+
+#### Sub-phase: Spark version compatibility matrix (done)
+
+The last of the regression-testing guardrails named above: `SparkPlanAdapter`
+translates Catalyst's `LogicalPlan`, an internal Spark API not guaranteed
+stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
+"Empirical findings" section). Passing tests against the single Spark patch
+`build.sbt` happens to be pinned to proved nothing about any other patch.
+
+- [x] **CI job (`spark-version-matrix`, `.github/workflows/test.yml`)**
+      runs `spark-adapter`'s full `sbt test` suite — not a "core" subset —
+      against every Spark 3.5.x patch this repo claims to support: 3.5.1
+      (the floor), 3.5.7 (the current pin), and 3.5.9 (newest). One job
+      per patch, `fail-fast: false` so a failure on one patch doesn't hide
+      results for the others. Added to the `summary` gate like every other
+      guardrail here.
+    - No Spark binary install needed, unlike `test`/`mutation-testing-
+      spark-adapter`/`docker-regression`: `sbt test` resolves Spark as an
+      ordinary managed dependency and spins up its own in-process
+      `local[*]` `SparkSession` — confirmed via a repo-wide search that no
+      spark-adapter source references `SPARK_HOME`.
+    - **Mechanism**: `spark-adapter/build.sbt`'s `sparkVersion` val reads
+      an `INVARACT_TEST_SPARK_VERSION` environment variable, falling back
+      to `3.5.7` when unset so a plain local `sbt test` is unaffected —
+      only the CI matrix sets it per leg.
+    - Every connector's test-scope dependency
+      (`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
+      `spark-hive`/`spark-avro`) is published per-Spark-*minor*-line, not
+      per-patch, so all three matrix legs stay within the same resolvable
+      set — no need to split the suite into "core" vs. "connector" subsets
+      for this floor. That split would only become necessary for a
+      different Spark *minor* line.
+    - Fixed a real, pre-existing inconsistency found while building this:
+      the `test`/`mutation-testing-spark-adapter`/`docker-regression`
+      jobs, `docker/Dockerfile`, `.devcontainer/post-create.sh`, and
+      `docs-site`'s installation guide all still installed Spark 3.5.1 as
+      the real `spark-submit` runtime, while `spark-adapter`'s (and
+      `runner`'s/`plugin`'s) own `build.sbt` had already moved to 3.5.7 for
+      a CVE fix (docs/CVE_REMEDIATION.md) — the bump never propagated.
+      Brought all of them to 3.5.7 to match.
+    - **Deferred, not attempted**: Spark 4.x. Every module here pins
+      `scalaVersion := "2.12.18"` with no cross-build configured, and
+      Spark 4.0 requires Scala 2.13 — supporting 4.x is a real
+      cross-compilation project (all 5 modules, likely new connector
+      version pins too) plus a fresh Catalyst plan-shape investigation,
+      not an additional matrix leg. Tracked here, not silently dropped.
+    - Full detail in docs/SPARK_ADAPTER.md's "Spark version compatibility"
+      section and docs-site's "Spark Version Support" reference page.
 
 #### Sub-phase: Delta Lake support (done)
 

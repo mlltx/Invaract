@@ -1,0 +1,47 @@
+---
+title: Spark Version Support
+description: Which Apache Spark versions Invaract's verification engine is tested against.
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`spark-adapter` translates Spark's Catalyst logical plan into Invaract's engine-independent
+IR (see [The Transformation IR](/concepts/transformation-ir/)) — an internal Spark API that
+isn't guaranteed stable node-by-node release to release. This page states what's actually
+been verified, not just what the code happens to compile against.
+
+## Supported versions
+
+| Spark version | Status | Notes |
+|---|---|---|
+| 3.5.1 | ✅ Verified | Floor of the supported range. |
+| 3.5.7 | ✅ Verified | Current primary version — what a real `./dev/test` run installs and what `spark-adapter` is built against by default. |
+| 3.5.9 | ✅ Verified | Newest verified patch. |
+
+Every other 3.5.x patch between these is expected to work (Spark's own patch releases
+don't change Catalyst's plan shapes), but is only a claim, not something CI checks for you —
+treat the three rows above as what's actually proven.
+
+<Aside type="caution" title="Spark 4.x is not supported">
+Invaract is built for Scala 2.12, and Spark 4.0 requires Scala 2.13. Running Invaract
+against a Spark 4.x cluster isn't a configuration a real user has today.
+</Aside>
+
+## How this is verified
+
+Every one of the versions above is exercised by `spark-adapter`'s own full test suite,
+automatically, on every change — not a claim taken on faith. See
+[docs/SPARK_ADAPTER.md's "Spark version compatibility" section](https://github.com/mlltx/invaract/blob/main/docs/SPARK_ADAPTER.md)
+for how that CI job works if you're contributing to `spark-adapter` itself.
+
+## Java and Scala
+
+| Component | Version |
+|---|---|
+| Java | 21 (runtime); compiled to JVM 1.8 bytecode, so a JDK 11+ runtime also works |
+| Scala | 2.12.18 |
+
+Scala 2.13 cross-compilation isn't done — see the Spark 4.x note above for why it would be
+needed before a newer Spark line could be supported.

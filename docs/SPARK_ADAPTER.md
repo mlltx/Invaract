@@ -1494,3 +1494,66 @@ To see the translation adapter running against the actual demo pipeline:
 # rendered plan, lineage, and diagnostics.
 ```
 
+### Spark version compatibility
+
+`SparkPlanAdapter` translates Catalyst's `LogicalPlan` — an API this module
+does not own and Spark does not guarantee stable node-by-node across
+releases (see "Empirical findings" above: "Catalyst's node shapes vary
+across Spark versions and are not fully specified"). Passing tests against
+the single Spark patch `build.sbt`'s `sparkVersion` happens to be pinned to
+proves nothing about any other patch — a real risk this module already
+works around structurally in a few places (`WriteFiles` unwrapped by
+`getClass.getSimpleName` rather than a typed import, Delta/Hive command
+recognition by class name rather than a compile-time dependency — see
+"The write path wraps the query in an internal `WriteFiles` node" above and
+"Write command recognition: a single registry"), but that's a design
+mitigation, not proof it actually holds across versions. ROADMAP.md named
+this gap explicitly: a multi-Spark-version compatibility matrix was
+still-outstanding future scope until now.
+
+CI's `spark-version-matrix` job (`.github/workflows/test.yml`) closes it
+for the currently-supported floor, Spark 3.5.x: it runs this module's
+**full** `sbt test` suite — the same suite `sbt test` runs locally, no
+subset — against every 3.5.x patch this repo claims to support (currently
+3.5.1, 3.5.7, 3.5.9), one job per patch. `spark-adapter/build.sbt`'s
+`sparkVersion` val reads an `INVARACT_TEST_SPARK_VERSION` environment
+variable (falling back to `3.5.7`, today's real pin, when unset — so a
+plain local `sbt test` is unaffected):
+
+```scala
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
+```
+
+Run a single leg locally with:
+
+```bash
+cd spark-adapter
+INVARACT_TEST_SPARK_VERSION=3.5.1 sbt test
+```
+
+**Why the full suite, not just the connector-agnostic specs**: Delta/
+Iceberg/ClickHouse/Hive/Avro's own test-scope dependencies
+(`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
+`spark-hive`/`spark-avro` at `sparkVersion`) are all published per-Spark-
+*minor*-line, not per-patch — so every one of them stays resolvable and
+correct across every 3.5.x patch in the matrix. Splitting the suite into a
+"core" subset would only be necessary for a different Spark *minor* line
+(3.4.x, or a hypothetical future line), where those connector artifacts
+might not exist or might not have been validated — out of scope for now,
+since Spark 3.5.x is the confirmed supported floor (see the "No Spark
+binary install" note in `spark-version-matrix`'s own comment in
+`test.yml`: this job resolves Spark as an ordinary managed dependency and
+never needs `spark-submit`, unlike the `test`/`mutation-testing-spark-
+adapter`/`docker-regression` jobs).
+
+**Deferred: Spark 4.x.** Every module in this repo pins `scalaVersion :=
+"2.12.18"` with no cross-build configured anywhere, and Spark 4.0 dropped
+Scala 2.12 in favor of Scala 2.13-only builds. Supporting a 4.x line is
+therefore not an additional matrix leg — it would need a real Scala 2.13
+cross-compilation project across all 5 modules (likely new Delta/Iceberg/
+Hive/ClickHouse version pins too, since those publish per-Scala-version)
+plus a fresh empirical plan-shape investigation, the same rigor
+`docs/ADDING_A_SPARK_CONNECTOR.md` requires for a new connector — not
+something to assume compatible. See ROADMAP.md's compatibility-matrix
+entry for tracking.
+

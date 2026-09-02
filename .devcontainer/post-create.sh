@@ -12,7 +12,7 @@ rm cs
 
 # Install Spark (for spark-submit)
 echo "Installing Apache Spark..."
-SPARK_VERSION="3.5.1"
+SPARK_VERSION="3.5.7"
 HADOOP_VERSION="3"
 SPARK_DIST="spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz"
 SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_DIST}"
