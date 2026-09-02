@@ -1019,12 +1019,29 @@ holds against a different release of the library itself.
       the job runs the three specs that actually build a Delta-extended
       session (`ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
       `SparkPlanAdapterSpec` — Delta has no dedicated spec file, unlike
-      Iceberg) against `3.3.0` and `3.3.3`. No newer leg exists: confirmed
-      via `delta-spark_2.12`'s own `maven-metadata.xml` that 3.3.3 is
-      already the latest published release. `3.2.x` deliberately excluded
-      — its incompatibility with this repo's Spark pin is a Spark-side
-      issue (see the sub-phase above), not a Delta-version question this
-      matrix answers.
+      Iceberg). Ended up a **single-leg matrix against `3.3.3` only**, not
+      the originally-planned floor-plus-current pair — a real finding, not
+      a design choice:
+    - **`3.3.0` was tried as the floor candidate and failed for real**,
+      with the identical `TableCapabilityCheck` "does not support truncate
+      in batch mode" error that excluded the `3.2.x` line in the first
+      place. Root-caused rather than swapped for another guess: checked
+      delta-io/delta's own `LATEST_RELEASED_SPARK_VERSION` constant
+      directly at each `3.3.x` tag — `3.3.0`/`3.3.1`/`3.3.2` all still
+      target Spark `3.5.3`, only `3.3.3` moved to `3.5.6` (this repo's own
+      Spark floor). So `3.3.3` isn't just the current pin, it's the
+      *only* `delta-spark` release compatible with this repo's supported
+      Spark range at all — there's no working floor below it to matrix
+      against today.
+    - No newer leg exists either: confirmed via `delta-spark_2.12`'s own
+      `maven-metadata.xml` that `3.3.3` is already the latest published
+      release.
+    - `3.2.x` remains excluded for the same reason, now generalized: not
+      a Delta-version question this matrix answers, a Spark-compatibility
+      floor delta-io itself hasn't cleared yet for any pre-3.3.3 release.
+    - Kept as its own CI job anyway, not folded away: it gains a real
+      second leg for free the moment delta-io publishes a release that
+      also targets Spark 3.5.6+.
 - [x] **`iceberg-version-matrix` CI job** — `icebergVersion` reads
       `INVARACT_TEST_ICEBERG_VERSION` (falls back to `1.11.0`), and the job
       runs the two Iceberg-dependent specs (`IcebergConnectorSpec`,

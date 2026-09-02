@@ -403,15 +403,32 @@ dedicated spec file the way Iceberg does, but these three are the complete
 set that touch it; a full-suite rerun per Delta version would spend most of
 its time on code no Delta-version change can affect).
 
-**Versions tested**: `3.3.0` and `3.3.3` (the current pin). Confirmed via
-`delta-spark_2.12`'s own `maven-metadata.xml` that `3.3.3` is already the
-latest published release — there is no newer version to add as a forward-
-looking leg today. `3.2.x` is deliberately excluded: that line's
-incompatibility with this repo's pinned Spark version (3.5.7) is a
-*Spark*-side DSv2 write-path issue confirmed by bytecode diff, not a
-Delta-version question (see "Why 3.2.0 → 3.3.3" above) — including it here
-would just re-fail for an already-diagnosed, unrelated reason instead of
-testing anything about Delta itself.
+**Versions tested**: `3.3.3` only — a single-leg matrix, not a
+floor-plus-current pair, and that's a real finding rather than a design
+choice. `3.3.0` was the original floor candidate; the matrix's first real
+CI run tried it and hit the *identical* `TableCapabilityCheck` failure
+("Table ... does not support truncate in batch mode") that excluded
+`3.2.x` in the first place (see "Why 3.2.0 → 3.3.3" above). Checked
+delta-io/delta's own `LATEST_RELEASED_SPARK_VERSION` constant directly at
+each `3.3.x` tag rather than assuming a shared floor across a minor line:
+
+| Tag | `LATEST_RELEASED_SPARK_VERSION` |
+|-----|----------------------------------|
+| `v3.3.0` | `3.5.3` |
+| `v3.3.1` | `3.5.3` |
+| `v3.3.2` | `3.5.3` |
+| `v3.3.3` | `3.5.6` |
+
+Only `3.3.3` moved to `3.5.6` — the Spark version this repo's own floor
+(`docs/SPARK_ADAPTER.md`'s "Spark version compatibility" section) already
+requires. So `3.3.3` isn't just the current pin, it's currently the
+**only** `delta-spark` release compatible with this repo's supported Spark
+range at all, and (confirmed via `delta-spark_2.12`'s own
+`maven-metadata.xml`) also the latest published release — there is neither
+a working floor below it nor a newer release above it to test today. The
+`delta-version-matrix` CI job is still kept as its own job rather than
+folded away, so it picks up a second leg for free the moment delta-io
+publishes a release that also targets Spark 3.5.6+.
 
 **Mechanism**: `deltaVersion` reads an `INVARACT_TEST_DELTA_VERSION`
 environment variable, falling back to `3.3.3` when unset, so a plain local
@@ -419,15 +436,15 @@ environment variable, falling back to `3.3.3` when unset, so a plain local
 
 ```bash
 cd spark-adapter
-INVARACT_TEST_DELTA_VERSION=3.3.0 sbt "testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec"
+INVARACT_TEST_DELTA_VERSION=3.3.3 sbt "testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec"
 ```
 
-**If a leg fails for real** (not the case as of this writing — both legs
-pass): per `docs/ADDING_A_SPARK_CONNECTOR.md`'s "verify, don't assert" step
-and the precedent set by the Spark-version matrix's own 3.5.1→3.5.6 floor
-correction, the failure gets root-caused before the matrix's version list
-is adjusted — not just swapped to a version that happens to pass. A few
-places in this module's own code already anticipate this kind of drift
+**If a leg fails for real**: per `docs/ADDING_A_SPARK_CONNECTOR.md`'s
+"verify, don't assert" step and the precedent set by both the Spark-version
+matrix's own 3.5.1→3.5.6 floor correction and this section's own 3.3.0
+finding above, the failure gets root-caused before the matrix's version
+list is adjusted — not just swapped to a version that happens to pass. A
+few places in this module's own code already anticipate this kind of drift
 rather than assume it can't happen: `WriteCommandSupport.deltaRowLevelDml`
 wraps its Delta-command-class matching in `Try`, and
 `RowMutationSupport.scala`'s own comment flags "a future Delta version

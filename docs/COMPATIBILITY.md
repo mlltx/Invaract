@@ -151,9 +151,14 @@ sections for the full mechanism and rationale.
 
 | Version | Status | Notes |
 |---------|--------|-------|
-| 3.3.0 | ✓ Verified | Floor of the supported range within the current minor line. |
-| 3.3.3 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `deltaVersion`). Also the newest published release — confirmed via `delta-spark_2.12`'s own `maven-metadata.xml`. |
-| 3.2.x | Not supported | Incompatible with this repo's pinned Spark version (3.5.7) for a Spark-side DSv2 write-path reason, not a Delta-version question this matrix is built to answer — see `docs/connectors/delta.md`. |
+| 3.3.3 | ✓ Verified, Primary and only supported release | Current default (`spark-adapter/build.sbt`'s `deltaVersion`). Also the newest published release — confirmed via `delta-spark_2.12`'s own `maven-metadata.xml`. |
+| 3.3.0 – 3.3.2 | Not supported | Confirmed by a real CI failure (the identical `TableCapabilityCheck` error 3.2.x hits), then root-caused: delta-io's own `LATEST_RELEASED_SPARK_VERSION` shows these three still target Spark 3.5.3 — only 3.3.3 moved to 3.5.6. |
+| 3.2.x | Not supported | Same underlying reason as above — targets Spark 3.5.0/3.5.3, below this repo's Spark floor. See `docs/connectors/delta.md`. |
+
+Unlike Iceberg below, Delta currently has **no working floor below the current pin** — `3.3.3`
+is the only `delta-spark` release compatible with this repo's supported Spark range at all, not
+just the newest. The `delta-version-matrix` CI job stays a single-leg job until delta-io
+publishes a release that also targets Spark 3.5.6+.
 
 ### Iceberg
 

@@ -86,13 +86,18 @@ val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
 // Delta-touching specs (ContractEnforcementRuleSpec, SparkAdapterListenerSpec,
 // SparkPlanAdapterSpec - the only ones that build a Delta-extended session,
 // per docs/connectors/delta.md) against every delta-spark release this repo
-// claims to support (currently 3.3.0/3.3.3 - see that doc's "Version
-// compatibility" section for why: confirmed via delta-spark_2.12's own
-// maven-metadata.xml that 3.3.3 is already the latest published release,
-// so there is no newer leg to test, and 3.2.x is excluded as a known
-// Spark-side incompatibility unrelated to the Delta version itself, not a
-// Delta-version question this matrix answers). A plain local `sbt test` is
-// unaffected - the env var is unset, so this still resolves to 3.3.3.
+// claims to support - currently just 3.3.3 itself, not a floor+current
+// pair: a real CI run tried 3.3.0 as a floor candidate and it hit the
+// identical "does not support truncate in batch mode" TableCapabilityCheck
+// failure that excluded 3.2.x. Checked delta-io/delta's own
+// LATEST_RELEASED_SPARK_VERSION constant at each 3.3.x tag directly, not
+// assumed: 3.3.0/3.3.1/3.3.2 all target Spark 3.5.3, only 3.3.3 moved to
+// 3.5.6 - so 3.3.3 is currently the only delta-spark release compatible
+// with this repo's Spark floor at all, confirmed via delta-spark_2.12's
+// own maven-metadata.xml to also be the latest published release. See
+// docs/connectors/delta.md's "Version compatibility" section for the full
+// citation trail. A plain local `sbt test` is unaffected - the env var is
+// unset, so this still resolves to 3.3.3.
 val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", "3.3.3")
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
