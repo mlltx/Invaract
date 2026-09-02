@@ -3,6 +3,26 @@ version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
+// Single source of truth for the verified/primary Spark, Delta, and Iceberg
+// versions - see src/main/resources/supported-versions.properties for the
+// data and the rationale for why it exists (avoids the version claim being
+// hand-copied - and drifting - across build.sbt, the runtime compatibility
+// guard, CI's matrix jobs, and the generated docs tables).
+val supportedVersionsProps: java.util.Properties = {
+  val props = new java.util.Properties()
+  val in = new java.io.FileInputStream(
+    new java.io.File("src/main/resources/supported-versions.properties")
+  )
+  try props.load(in)
+  finally in.close()
+  props
+}
+def primaryVersion(key: String): String = {
+  val value = supportedVersionsProps.getProperty(key)
+  require(value != null, s"supported-versions.properties is missing required key '$key'")
+  value
+}
+
 // 3.5.1 -> 3.5.7: CVE-2025-54920 (GHSA-jwp6-cvj8-fw65, Spark History
 // Server Code Execution) - the Spark History Web UI's overly permissive
 // Jackson polymorphic deserialization of event-log data lets an attacker
@@ -36,7 +56,7 @@ organization := "com.invaract"
 // they're not part of what the matrix is proving (Catalyst plan-shape
 // stability across Spark 3.5.x patches), and their own artifacts are
 // already confirmed compatible across this same 3.5.x line.
-val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", primaryVersion("spark.primary"))
 
 // Test-scope only, not provided: empirical investigation (see
 // docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta
@@ -98,7 +118,7 @@ val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
 // docs/connectors/delta.md's "Version compatibility" section for the full
 // citation trail. A plain local `sbt test` is unaffected - the env var is
 // unset, so this still resolves to 3.3.3.
-val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", "3.3.3")
+val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", primaryVersion("delta.primary"))
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
 // for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
@@ -126,7 +146,7 @@ val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", "3.3.3")
 // leg, but the extra CI complexity of an expected-failure leg was traded
 // away for a simpler job). A plain local `sbt test` is unaffected - the
 // env var is unset, so this still resolves to 1.11.0.
-val icebergVersion = sys.env.getOrElse("INVARACT_TEST_ICEBERG_VERSION", "1.11.0")
+val icebergVersion = sys.env.getOrElse("INVARACT_TEST_ICEBERG_VERSION", primaryVersion("iceberg.primary"))
 
 // Hive support, unlike Delta/Iceberg above, is not an external connector
 // library - it's Spark's own first-party integration module, split out of

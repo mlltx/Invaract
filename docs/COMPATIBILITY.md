@@ -90,9 +90,9 @@ marked "Verified" on every push, not a one-time spot check. See
 | Spark | Status | Notes |
 |-------|--------|-------|
 | < 3.5.6 (incl. 3.5.1) | Not supported | Fails for real, confirmed by CI, not assumed: `delta-spark` 3.3.3 (this module's pinned Delta version) needs a class (`SupportsNonDeterministicExpression`) that doesn't exist before Spark 3.5.6, so any spec building a Delta-extended session aborts with `ClassNotFoundException`. |
-| 3.5.6 | ✓ Verified | Floor of the supported range — the actual, CI-confirmed floor, not 3.5.1. |
-| 3.5.7 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
-| 3.5.9 | ✓ Verified | Newest verified patch. |
+| 3.5.6 | <!-- generate-version-docs:BEGIN spark 3.5.6 -->✓ Verified<!-- generate-version-docs:END --> | Floor of the supported range — the actual, CI-confirmed floor, not 3.5.1. |
+| 3.5.7 | <!-- generate-version-docs:BEGIN spark 3.5.7 -->✓ Verified, Primary<!-- generate-version-docs:END --> | Current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
+| 3.5.9 | <!-- generate-version-docs:BEGIN spark 3.5.9 -->✓ Verified<!-- generate-version-docs:END --> | Newest verified patch. |
 | Other 3.5.x ≥ 3.5.6 | Expected, unverified | Spark's own patch releases don't change Catalyst's plan shapes, but only the three rows above are actually CI-checked. |
 | 3.4.x | Not supported | Never verified; not a claim this repo makes. |
 | 4.x | Not supported | Requires Scala 2.13 (Spark 4.0 dropped 2.12); this repo has no Scala cross-build. A real project, not a CI-leg addition — see `docs/SPARK_ADAPTER.md`'s "Deferred: Spark 4.x" note. |
@@ -151,7 +151,7 @@ sections for the full mechanism and rationale.
 
 | Version | Status | Notes |
 |---------|--------|-------|
-| 3.3.3 | ✓ Verified, Primary and only supported release | Current default (`spark-adapter/build.sbt`'s `deltaVersion`). Also the newest published release — confirmed via `delta-spark_2.12`'s own `maven-metadata.xml`. |
+| 3.3.3 | <!-- generate-version-docs:BEGIN delta 3.3.3 -->✓ Verified, Primary and only supported release<!-- generate-version-docs:END --> | Current default (`spark-adapter/build.sbt`'s `deltaVersion`). Also the newest published release — confirmed via `delta-spark_2.12`'s own `maven-metadata.xml`. |
 | 3.3.0 – 3.3.2 | Not supported | Confirmed by a real CI failure (the identical `TableCapabilityCheck` error 3.2.x hits), then root-caused: delta-io's own `LATEST_RELEASED_SPARK_VERSION` shows these three still target Spark 3.5.3 — only 3.3.3 moved to 3.5.6. |
 | 3.2.x | Not supported | Same underlying reason as above — targets Spark 3.5.0/3.5.3, below this repo's Spark floor. See `docs/connectors/delta.md`. |
 
@@ -165,8 +165,8 @@ publishes a release that also targets Spark 3.5.6+.
 | Version | Status | Notes |
 |---------|--------|-------|
 | 1.10.0 | Not supported | Confirmed real bug inside this release (`apache/iceberg#14232`, Avro API mismatch) — this is why the repo never pinned it, not something re-tested by the matrix. |
-| 1.10.2 | ✓ Verified | Latest patch of the previous minor line. |
-| 1.11.0 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `icebergVersion`). Also the newest published release — confirmed via `iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml`. |
+| 1.10.2 | <!-- generate-version-docs:BEGIN iceberg 1.10.2 -->✓ Verified<!-- generate-version-docs:END --> | Latest patch of the previous minor line. |
+| 1.11.0 | <!-- generate-version-docs:BEGIN iceberg 1.11.0 -->✓ Verified, Primary<!-- generate-version-docs:END --> | Current default (`spark-adapter/build.sbt`'s `icebergVersion`). Also the newest published release — confirmed via `iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml`. |
 
 ## Execution Environment
 

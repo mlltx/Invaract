@@ -599,10 +599,20 @@ jobs:
     # confirms these are the only two Iceberg-dependent test sources.
     # Runs on JDK 21 (set up below), satisfying Iceberg's own JDK17+
     # class-file-version requirement with no extra gating needed.
+    #
+    # 1.9.2 (latest patch of the prior 1.9.x minor line) is a candidate leg,
+    # not yet promoted into supported-versions.properties's iceberg.verified
+    # (see version-matrix-drift-check's own comment for why the matrix is
+    # allowed to carry an unproven candidate) - added to push the verified
+    # floor down one step below 1.10.2, mirroring exactly how 1.10.2 itself
+    # was chosen (the latest patch of the minor line below the previous
+    # floor). If this leg passes, iceberg.verified and the generated docs
+    # get updated in the same PR to promote it for real; if not, this
+    # comment's own follow-up records why.
     strategy:
       fail-fast: false
       matrix:
-        iceberg-version: ["1.10.2", "1.11.0"]
+        iceberg-version: ["1.9.2", "1.10.2", "1.11.0"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -630,6 +640,124 @@ jobs:
         run: |
           cd spark-adapter
           sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec"
+
+  version-matrix-drift-check:
+    name: Version matrix drift check
+    runs-on: ubuntu-latest
+    # spark-adapter/src/main/resources/supported-versions.properties is the
+    # single canonical claim of which Spark/Delta/Iceberg versions this repo
+    # has real CI evidence for (build.sbt's defaults, the runtime
+    # compatibility guard, and the generated docs tables all read it - see
+    # that file's own header comment). The three *-version-matrix jobs above
+    # stay hand-written strategy.matrix arrays rather than being generated
+    # from that file (lowest-risk choice: they already work, and a dynamic
+    # fromJSON()-driven matrix would restructure proven jobs for marginal
+    # benefit) - which means nothing stops the two from silently disagreeing.
+    # That's not hypothetical: this session already found and fixed a stale
+    # hand-copied version claim twice before this file existed. This job
+    # fails CI the moment supported-versions.properties claims a "verified"
+    # version that isn't actually exercised by the matching *-version-matrix
+    # job's own array, so a doc claiming CI evidence it doesn't have is a
+    # same-PR failure instead of a quietly stale claim.
+    #
+    # One-directional (verified ⊆ matrix), not exact-set equality: a matrix
+    # job's array is allowed to carry a *candidate* version supported-
+    # versions.properties doesn't claim yet - that's exactly the real
+    # workflow used to find this repo's actual Spark/Delta floors (a
+    # version is added to the matrix first, proven or disproven by a real
+    # CI run, and only then promoted into the properties file - see
+    # docs/connectors/iceberg.md's "Version compatibility" section for the
+    # Iceberg case this was written for). Exact equality would make that
+    # workflow impossible post-this-job: the moment you added an
+    # unproven candidate leg to try it out, this check would fail before
+    # the real Iceberg job even got a chance to run.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Compare supported-versions.properties against this workflow's matrix arrays
+        shell: python3 {0}
+        run: |
+          import re
+          import sys
+
+          def parse_properties(path):
+              values = {}
+              with open(path) as f:
+                  for line in f:
+                      line = line.strip()
+                      if not line or line.startswith("#") or "=" not in line:
+                          continue
+                      key, _, value = line.partition("=")
+                      values[key.strip()] = [v for v in value.strip().split(",") if v]
+              return values
+
+          def parse_matrix(path, job, key):
+              with open(path) as f:
+                  text = f.read()
+              # Isolate the named job's block (up to the next top-level - 2-space
+              # indented - job key) so this can't accidentally match another
+              # job's matrix array of the same key name.
+              job_match = re.search(rf"(?m)^  {re.escape(job)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text, re.S)
+              if not job_match:
+                  sys.exit(f"Could not find job '{job}' in {path}")
+              block = job_match.group(1)
+              array_match = re.search(rf"{re.escape(key)}:\s*\[([^\]]*)\]", block)
+              if not array_match:
+                  sys.exit(f"Could not find matrix key '{key}' in job '{job}' in {path}")
+              return [v.strip().strip('"') for v in array_match.group(1).split(",") if v.strip()]
+
+          props = parse_properties("spark-adapter/src/main/resources/supported-versions.properties")
+          workflow_path = ".github/workflows/test.yml"
+
+          checks = [
+              ("spark", "spark-version-matrix", "spark-version"),
+              ("delta", "delta-version-matrix", "delta-version"),
+              ("iceberg", "iceberg-version-matrix", "iceberg-version"),
+          ]
+
+          drifted = False
+          for prop_prefix, job, key in checks:
+              expected = set(props.get(f"{prop_prefix}.verified", []))
+              actual = set(parse_matrix(workflow_path, job, key))
+              missing = expected - actual
+              if missing:
+                  drifted = True
+                  print(f"DRIFT in {prop_prefix}: supported-versions.properties claims {sorted(missing)} as "
+                        f"verified, but {job}'s {key} matrix ({sorted(actual)}) doesn't test it")
+              primary_key = f"{prop_prefix}.primary"
+              primary = props.get(primary_key, [None])[0]
+              if primary not in expected:
+                  drifted = True
+                  print(f"DRIFT in {prop_prefix}: {primary_key}={primary} is not in its own 'verified' list {sorted(expected)}")
+
+          if drifted:
+              sys.exit(1)
+          print("No drift: every version supported-versions.properties claims as verified is exercised by its *-version-matrix job.")
+
+  docs-drift-check:
+    name: Version docs drift check
+    runs-on: ubuntu-latest
+    # dev/generate-version-docs regenerates the "Supported versions"
+    # sections of docs-site/src/content/docs/reference/spark-version-
+    # support.mdx, connector-support.mdx, and docs/COMPATIBILITY.md from
+    # supported-versions.properties (see that file's own header comment,
+    # and dev/generate-version-docs's own comment for the exact scope - the
+    # investigative prose around each table stays hand-written, only the
+    # version enumeration and status badges are generated). This job runs
+    # unconditionally, the same as version-matrix-drift-check above, rather
+    # than being folded into deploy-docs.yml/preview-docs.yml: those only
+    # trigger on pushes that touch docs-site/ itself, so a change to
+    # supported-versions.properties alone (with no docs-site/ edit in the
+    # same push) would never be checked there - exactly the drift this job
+    # exists to catch.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check generated version docs are up to date
+        shell: bash
+        run: ./dev/generate-version-docs --check
 
   api-compatibility:
     name: API compatibility (contract, ir, spark-adapter)
@@ -860,12 +988,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, api-compatibility, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

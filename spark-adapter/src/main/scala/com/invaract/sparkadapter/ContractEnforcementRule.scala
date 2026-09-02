@@ -78,7 +78,10 @@ object ContractEnforcementRule {
     * `ContractViolationException` to abort it if verification fails.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
-    _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, None)
+    session => {
+      VersionCompatibilityGuard.check(session)
+      (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, None)
+    }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
     * `ContractValidationEvent` to `sink` for every check this session's
@@ -98,7 +101,10 @@ object ContractEnforcementRule {
     * example.
     */
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
-    session => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
+    session => {
+      VersionCompatibilityGuard.check(session)
+      (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
+    }
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -128,7 +134,10 @@ object ContractEnforcementRule {
     * post-execution case.
     */
   def dryRun(onInferred: Contract => Unit): SparkSession => LogicalPlan => Unit =
-    _ => (plan: LogicalPlan) => inferOrIgnore(plan, onInferred)
+    session => {
+      VersionCompatibilityGuard.check(session)
+      (plan: LogicalPlan) => inferOrIgnore(plan, onInferred)
+    }
 
   /** Every recognized *read* shape's location/schema extraction, in one
     * place - shared by both `plan.collect` sites in `verifyOrThrow` below

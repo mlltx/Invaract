@@ -105,6 +105,28 @@ val result = irListener.lastWrite // Option[TranslationResult]
 See [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for
 why these are two separate mechanisms rather than one.
 
+## Version compatibility warnings
+
+Every time you build a `SparkSession` with `ContractEnforcementRule` installed (`forContract`
+or [dry-run mode](/reference/dev-commands/)), it also checks the running Spark version — and,
+if either is on the classpath, the running Delta Lake/Iceberg version — against this
+project's own [verified-version list](/reference/spark-version-support/). Running an
+unverified version doesn't block your job: verification proceeds normally, but a line like
+
+```
+WARN VersionCompatibilityGuard: Invaract is running against Spark 3.5.1, which is not in
+this project's verified-version list (verified: 3.5.6, 3.5.7, 3.5.9). This is advisory
+only - verification will continue normally - but Spark 3.5.1's compatibility with
+Invaract has not been checked by this project's own CI. See
+https://mlltx.github.io/Invaract/reference/spark-version-support/ for the current
+verified-version list.
+```
+
+is logged so you have a concrete signal (not a raw stack trace, if something does go
+wrong) that you're outside what's been tested. See
+[Troubleshooting](/troubleshooting/common-problems/) for the two known failure modes this
+warning would predict.
+
 ## What gets checked
 
 Only a plan that translates to a recognized write is verified — everything else (reads,

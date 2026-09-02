@@ -80,6 +80,37 @@ If a match still fails, double-check for a typo in the declared path relative to
 your job actually runs from, since the suffix match still requires a real path-boundary
 match, not a substring anywhere in the string.
 
+## `ClassNotFoundException: ...SupportsNonDeterministicExpression` installing the enforcement rule
+
+This means you're running a Spark version below this project's verified floor. Invaract's
+Delta Lake support depends on `delta-spark` 3.3.3, which requires a class
+(`SupportsNonDeterministicExpression`) that Spark only introduced in **3.5.6** — on an
+older 3.5.x patch (3.5.1–3.5.5), installing the enforcement rule into a Delta-extended
+`SparkSession` throws this exception before your job's own code runs at all.
+
+Upgrade to Spark 3.5.6 or later. See
+[Reference → Spark Version Support](/reference/spark-version-support/) for the exact
+verified range, and — if you're on a version recent enough to also install
+`ContractEnforcementRule`'s own runtime compatibility guard — check your job's logs for
+an `Invaract is running against Spark ...` warning naming the version it actually
+detected, which points at the same page.
+
+## `does not support truncate in batch mode` / `TableCapabilityCheck` writing to Delta
+
+This is a Delta Lake/Spark version mismatch, not a bug in your job or your contract.
+`delta-spark` releases before 3.3.3 (3.3.0–3.3.2, and the entire 3.2.x line) were built
+against an older Spark line than this project's supported Spark floor — running one of
+those `delta-spark` releases against a newer Spark session hits exactly this
+`TableCapabilityCheck` failure on an ordinary Delta write. There is currently no
+`delta-spark` release below **3.3.3** that works with this project's supported Spark
+range at all.
+
+Pin `delta-spark` to 3.3.3. See
+[Reference → Connector Support](/reference/connector-support/#supported-connectors) for
+the current verified Delta version, and (same as above) check for an
+`Invaract is running against Delta Lake ...` warning in your job's logs if you're on a
+version new enough for the runtime compatibility guard to have run.
+
 ## Still stuck
 
 1. Re-check [CLAUDE.md](https://github.com/mlltx/Invaract/blob/main/CLAUDE.md) in the

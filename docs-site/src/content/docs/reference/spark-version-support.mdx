@@ -14,11 +14,16 @@ been verified, not just what the code happens to compile against.
 
 ## Supported versions
 
+{/* generate-version-docs:BEGIN spark-table */}
+{/* Generated from spark-adapter/src/main/resources/supported-versions.properties by
+    dev/generate-version-docs — do not hand-edit the table below; edit that file and
+    re-run the script instead. */}
 | Spark version | Status | Notes |
 |---|---|---|
 | 3.5.6 | ✅ Verified | Floor of the supported range. |
 | 3.5.7 | ✅ Verified | Current primary version — what a real `./dev/test` run installs and what `spark-adapter` is built against by default. |
 | 3.5.9 | ✅ Verified | Newest verified patch. |
+{/* generate-version-docs:END */}
 
 Every other 3.5.x patch at or above 3.5.6 is expected to work (Spark's own patch releases
 don't change Catalyst's plan shapes), but is only a claim, not something CI checks for you —
@@ -42,6 +47,11 @@ Every one of the versions above is exercised by `spark-adapter`'s own full test 
 automatically, on every change — not a claim taken on faith. See
 [docs/SPARK_ADAPTER.md's "Spark version compatibility" section](https://github.com/mlltx/invaract/blob/main/docs/SPARK_ADAPTER.md)
 for how that CI job works if you're contributing to `spark-adapter` itself.
+
+`ContractEnforcementRule` also checks this same verified list at runtime, in your own job —
+see [Install the Enforcement Rule → Version compatibility warnings](/guides/installing-the-enforcement-rule/#version-compatibility-warnings).
+Running an unverified version doesn't block your job, but logs a warning naming the
+version it detected, so you have a concrete signal if something related goes wrong.
 
 ## Java and Scala
 
