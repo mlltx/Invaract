@@ -46,6 +46,30 @@ class SparkAdapterListenerIcebergSpec extends AnyFunSuite with BeforeAndAfterAll
       sink.events.collectFirst { case e: WriteEvent => e }.getOrElse(fail("listener has not published a WriteEvent yet"))
     }
 
+  /** Like `awaitEvent`, but for a row-level DML (MERGE/UPDATE/DELETE)
+    * assertion specifically: `sink` is created and registered right after
+    * this test's own `writeTo(...).append()` setup call, but that setup
+    * write's own `WriteEvent` (`operation = None`, `saveMode =
+    * Some("append")`) can - confirmed empirically, the hard way, via a
+    * real flaky test failure, not assumed - still arrive at the
+    * newly-registered listener *after* registration, racing with the DML
+    * statement that follows: Iceberg's own write-completion notification
+    * isn't guaranteed to have fully reached every registered
+    * `QueryExecutionListener` by the time `.append()` returns to the
+    * calling thread. A plain "first `WriteEvent` in the sink" assertion
+    * (`awaitEvent`) is therefore order-dependent and intermittently picks
+    * up that unrelated setup event instead of the DML's own - filtering on
+    * `operation.isDefined` (true only for row-level DML, never for a
+    * plain append) sidesteps the race entirely rather than depending on
+    * arrival order.
+    */
+  private def awaitOperationEvent(sink: TestNotificationSink): WriteEvent =
+    eventually(timeout(Span(5, Seconds))) {
+      sink.events
+        .collectFirst { case e: WriteEvent if e.operation.isDefined => e }
+        .getOrElse(fail("listener has not published a row-level-DML WriteEvent yet"))
+    }
+
   test("a real Iceberg write publishes a WriteEvent with a populated icebergSnapshotId and no deltaVersion") {
     val sink = new TestNotificationSink
     val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
@@ -69,6 +93,7 @@ class SparkAdapterListenerIcebergSpec extends AnyFunSuite with BeforeAndAfterAll
       .head
       .getLong(0)
     assert(event.icebergSnapshotId.contains(trueSnapshotId), s"expected snapshot $trueSnapshotId, got ${event.icebergSnapshotId}")
+    assert(event.operation.isEmpty, s"expected no operation for a plain append, got ${event.operation}")
   }
 
   test("a second Iceberg write to the same table reports a different (newer) snapshot ID") {
@@ -92,5 +117,61 @@ class SparkAdapterListenerIcebergSpec extends AnyFunSuite with BeforeAndAfterAll
       secondEvent.icebergSnapshotId != firstEvent.icebergSnapshotId,
       "a second, independent commit must report a different snapshot ID, not a stale/cached one"
     )
+  }
+
+  test("an Iceberg MERGE INTO publishes a WriteEvent with operation = Some(\"merge\")") {
+    val tableName = "local.db.listener_merge_tbl"
+    spark.sql("CREATE NAMESPACE IF NOT EXISTS local.db")
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", org.apache.spark.sql.functions.col("id") * 2).writeTo(tableName).append()
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark
+      .sql(s"""MERGE INTO $tableName t
+              |USING (SELECT 99L as id, 198L as doubled) s
+              |ON t.id = s.id
+              |WHEN MATCHED THEN UPDATE SET *
+              |WHEN NOT MATCHED THEN INSERT *
+              |""".stripMargin)
+      .collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("merge"), s"expected operation 'merge', got ${event.operation}")
+    assert(event.saveMode.isEmpty, "in-place mutation isn't append/overwrite/ignore/error")
+  }
+
+  test("an Iceberg UPDATE publishes a WriteEvent with operation = Some(\"update\")") {
+    val tableName = "local.db.listener_update_tbl"
+    spark.sql("CREATE NAMESPACE IF NOT EXISTS local.db")
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", org.apache.spark.sql.functions.col("id") * 2).writeTo(tableName).append()
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("update"), s"expected operation 'update', got ${event.operation}")
+  }
+
+  test("an Iceberg DELETE publishes a WriteEvent with operation = Some(\"delete\")") {
+    val tableName = "local.db.listener_delete_tbl"
+    spark.sql("CREATE NAMESPACE IF NOT EXISTS local.db")
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", org.apache.spark.sql.functions.col("id") * 2).writeTo(tableName).append()
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("delete"), s"expected operation 'delete', got ${event.operation}")
   }
 }

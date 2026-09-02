@@ -844,6 +844,66 @@ instead — the public interface — fixes it: `invoke` still dispatches
 virtually to the real `BaseSnapshot` instance, but the accessibility check
 now passes against a public declaring class.
 
+**`WriteEvent` also carries `operation: Option[String]`, distinguishing
+MERGE/UPDATE/DELETE for the row-level-DML write shapes where `saveMode` is
+already `None` and thus can't tell them apart.** `Some("merge")`,
+`Some("update")`, or `Some("delete")` for a row-level mutation; `None` for
+every append/overwrite-shaped write, the same way `saveMode` is `None` for
+one and `Some(...)` for the other — the two fields are complementary, never
+both populated. Two independent mechanisms populate it, matching
+`WriteCommandSupport`'s existing per-connector split for row-level DML
+(see "Write command recognition" above):
+
+- **Delta**: a small `Map[String, String]` from the row-level command's
+  fully-qualified class name (`MergeIntoCommand`/`UpdateCommand`/
+  `DeleteCommand`) to `"merge"`/`"update"`/`"delete"` — the same
+  class-name-keyed convention `deltaRowLevelDml` already uses for
+  everything else about these commands, since Delta's DML classes are
+  connector-internal (reflection, no compile-time dependency).
+- **Iceberg / any DSv2 `SupportsRowLevelOperations` connector**: read
+  directly off `cmd.operation.command()` — `RowLevelOperation.Command` is
+  a real, public, stable enum on Spark's own `connector.write` API, so
+  this needs no reflection at all, unlike the Delta case. Any future
+  connector using Spark's standard row-level-operation mechanism gets this
+  for free, not just Iceberg.
+
+`DELETE FROM <v2-table> WHERE <predicate>` against a connector using plain
+`SupportsDelete` rather than `SupportsRowLevelOperations` (a
+`DeleteFromTable` node that never gets rewritten into a `RowLevelWrite`,
+confirmed empirically for ClickHouse — see "Write command recognition")
+still gets `operation = Some("delete")`, hard-coded at that case site,
+since there is no `RowLevelOperation.Command` to read in that shape at
+all.
+
+**A real, empirically-confirmed test-isolation pitfall surfaced while
+testing this against Iceberg specifically, worth documenting since it
+looks exactly like a production bug at first glance and isn't one.** Each
+DML test in `SparkAdapterListenerIcebergSpec` does a `writeTo(...).append()`
+setup write, then registers a fresh `SparkAdapterListener`/sink, then runs
+the MERGE/UPDATE/DELETE statement under test. Occasionally (roughly half
+the runs, under a specific test-ordering combination) the *setup* write's
+own `WriteEvent` — `operation = None`, `saveMode = Some("append")` — showed
+up in the freshly-registered sink ahead of the DML's own event, making a
+correct `operation = Some("merge")` assertion fail with `None`. Confirmed,
+the hard way, via a debug `QueryExecutionListener` dumping every analyzed
+plan's class name and `WriteCommandSupport.combined.lift` result: the
+underlying translation was correct on *every single firing*, for both the
+row-level command and the setup append, in every run — the race was purely
+about which of the two already-correct events a freshly-registered
+listener happened to observe first, not about either one being wrong.
+Iceberg's own write-completion notification isn't guaranteed to have
+reached every registered `QueryExecutionListener` by the time
+`.append()` returns to the calling thread, so a listener registered
+immediately afterward can still catch that preceding write's event. The
+fix lives entirely in the test: assert on the WriteEvent matching
+`operation.isDefined` rather than "the first WriteEvent in the sink" —
+this sidesteps the ordering race instead of trying to eliminate it, since
+there's no synchronous way to know a preceding write's listener
+notifications have all been delivered. `SparkAdapterListenerSpec`'s
+equivalent Delta DML tests got the same treatment defensively, since the
+underlying race is about `QueryExecutionListener` delivery timing, not
+anything Iceberg-specific.
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment
@@ -994,19 +1054,69 @@ SparkAdapterListener()` call site in this repo (and any real user's code)
 keeps compiling and keeps its exact prior behavior unchanged. Confirmed by
 `sbt mimaReportBinaryIssues` staying clean.
 
+**A third event, `JobSummaryEvent`, and two sink decorators built on top of
+the two above — not published by the enforcement/listener machinery
+directly, but assembled on demand from what already flows through
+`ContractValidationEvent`/`WriteEvent`.** Where those two events are
+per-check and per-write respectively, `JobSummaryEvent` answers a
+coarser question a consumer watching many jobs actually asks first: "did
+this run go fine overall, and how much happened?" — `totalWrites`,
+`checksPassed`, `checksFailed`, `totalViolations` (summed across every
+FAILED check's own violation count, not just a count of FAILED checks),
+`durationMs` (wall-clock since construction or the last summary), and the
+same `metadata`/`applicationId` fields the other two events carry, for the
+same reason.
+
+- **`SummarizingNotificationSink(delegate: NotificationSink)`** wraps
+  another sink: every event still reaches `delegate` unchanged (this is
+  additive observability, not a filter), while `SummarizingNotificationSink`
+  itself tallies `ContractValidationEvent`/`WriteEvent` traffic into
+  in-memory counters. Calling its `publishSummary()` builds a
+  `JobSummaryEvent` from the current tallies, publishes it to `delegate`,
+  and atomically resets the counters (`AtomicLong.getAndSet(0L)`) — so the
+  same sink instance supports both "call `publishSummary()` once at job
+  end" (this harness's own use, below) and "call it periodically for a
+  rolling window" without double-counting either way. A rolling window
+  simply calls it more than once; there is no separate API for that case.
+- **`FailureOnlyNotificationSink(delegate: NotificationSink)`** wraps
+  another sink and forwards only the events an on-call consumer actually
+  wants paged for: a FAILED `ContractValidationEvent`, and every
+  `JobSummaryEvent` (since a summary is itself already a rate-limited,
+  aggregate signal, not raw per-check noise) — PASSED checks and every
+  `WriteEvent` are dropped. Composes with `SummarizingNotificationSink`
+  freely (wrap the summarizing sink in a failure-only one, or vice versa,
+  depending on whether the underlying `delegate` should also see the raw
+  passing traffic).
+
+Both are plain constructors, not `NotificationConfig`-loadable classes —
+`NotificationSinkFactory`'s reflective loading only supports a public
+no-arg constructor (see below), and both of these require a `delegate`
+argument by design, so they're meant to be composed directly in code
+around whatever sink `NotificationSinkFactory.create` returns, the way
+`DemoJobHarness` does (below).
+
 **Live-demonstrated against a real Spark job, not just unit-tested.**
 `demo/notify.properties` configures a `FileNotificationSink` writing to
-`demo/output/events.jsonl`; `./dev/test` passes it to `DemoJobHarness` and
-asserts both a `CONTRACT_VALIDATION` and a `WRITE` event actually landed
-in that file from a real `spark-submit` run. `./dev/regression` goes
-further, using two more instances of the same config
-(`demo/regression-notify-{pass,fail}.properties`) to prove the asymmetry
-that matters most: the PASS case's events file contains both a PASSED
-`ContractValidationEvent` and a `WriteEvent` (the write really happened),
-while the FAIL case's contains a FAILED `ContractValidationEvent` and *no*
-`WriteEvent` at all (the write never executed) — the same "no output file
-on disk" proof the FAIL case's enforcement assertion already relies on,
-now extended to the notification side of the same rejection.
+`demo/output/events.jsonl`; `DemoJobHarness` wraps whatever
+`NotificationSinkFactory.create` returns in a `SummarizingNotificationSink`
+before installing it (this harness runs exactly one job, so it's the
+natural place to demonstrate the "per-job summary" use case — see its own
+comments), and `./dev/test` asserts a `CONTRACT_VALIDATION`, a `WRITE`,
+*and* a `JOB_SUMMARY` event all actually landed in that file from a real
+`spark-submit` run. `./dev/regression` goes further, using two more
+instances of the same config (`demo/regression-notify-{pass,fail}.properties`)
+to prove the asymmetry that matters most: the PASS case's events file
+contains a PASSED `ContractValidationEvent`, a `WriteEvent` (the write
+really happened), and a `JobSummaryEvent` with `checksPassed=1`/
+`checksFailed=0`, while the FAIL case's contains a FAILED
+`ContractValidationEvent`, *no* `WriteEvent` at all (the write never
+executed) — the same "no output file on disk" proof the FAIL case's
+enforcement assertion already relies on — and *still* a `JobSummaryEvent`,
+now with `checksPassed=0`/`checksFailed=1`: `DemoJobHarness` publishes the
+summary once the job's outcome is known, success or failure alike, since
+"this job failed" is exactly the kind of thing a per-job summary should be
+able to report, not something a thrown exception should be allowed to
+silently skip.
 
 ## DML rule verification
 

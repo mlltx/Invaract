@@ -7,7 +7,7 @@ import com.example.contract.ContractParser
 import com.example.ir.Lineage
 import com.example.ir.PlanPrinter
 import com.example.sparkadapter.{ContractEnforcementRule, ContractViolationException, SparkAdapterListener, TranslationResult, VerificationOptions}
-import com.example.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+import com.example.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -66,6 +66,14 @@ object DemoJobHarness {
 
     val startTime = System.currentTimeMillis()
 
+    // Escapes the Try block below (unlike inferredContract, which doesn't
+    // need to) because the job's summary must be published once the
+    // outcome is known - success *or* failure alike, since "this job
+    // failed" is exactly the kind of thing a JobSummaryEvent should be
+    // able to report - and the Success/Failure match arms that determine
+    // that outcome live outside this Try.
+    @volatile var summarizingSink: Option[SummarizingNotificationSink] = None
+
     val report = Try {
       // Loaded before the SparkSession, since ContractEnforcementRule must
       // be installed at session-construction time (SparkSessionExtensions
@@ -80,9 +88,20 @@ object DemoJobHarness {
       // before the SparkSession for the same reason the contract is -
       // both the check rule and the listener below need it at
       // construction time.
-      val notifySink =
+      //
+      // Wrapped in a SummarizingNotificationSink rather than passed
+      // through directly: this harness runs exactly one job (one write,
+      // one contract check), so it's the natural place to demonstrate the
+      // "per-job summary" use case that decorator exists for - every
+      // ContractValidationEvent/WriteEvent this run produces still reaches
+      // the configured sink unchanged (SummarizingNotificationSink always
+      // forwards first), plus one JobSummaryEvent published explicitly
+      // below once the job's own outcome is known.
+      val configuredSink: Option[NotificationSink] =
         if (notifyConfigPath.isEmpty) None
         else NotificationSinkFactory.create(NotificationConfig.load(notifyConfigPath))
+      summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
+      val notifySink: Option[NotificationSink] = summarizingSink
 
       // Least invasive way to observe a write's real logical plan for
       // *reporting*: a QueryExecutionListener, registered once, requires no
@@ -266,6 +285,16 @@ object DemoJobHarness {
           error = Some(e.getMessage)
         )
     }
+
+    // Published once, here, now that this job's outcome (success or
+    // failure alike - a ContractViolationException may have thrown well
+    // before this job ever reached the write, in which case
+    // summarizingSink was still assigned before the throw) is known:
+    // everything this run's ContractValidationEvent/WriteEvent traffic
+    // tallied up to (see SummarizingNotificationSink's own doc) is exactly
+    // this job's outcome, so "per job" and "since the last
+    // publishSummary() call" coincide for this single-write harness.
+    summarizingSink.foreach(_.publishSummary())
 
     // Write report
     new File(reportPath).getParentFile.mkdirs()

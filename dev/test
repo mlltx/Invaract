@@ -142,7 +142,12 @@ if ! grep -q '"eventType": "WRITE"' "$EVENTS_FILE"; then
   cat "$EVENTS_FILE"
   exit 1
 fi
-echo "  Notification events: $(wc -l < "$EVENTS_FILE" | tr -d ' ') line(s) in $EVENTS_FILE (CONTRACT_VALIDATION and WRITE both present)"
+if ! grep -q '"eventType": "JOB_SUMMARY"' "$EVENTS_FILE"; then
+  echo -e "${RED}✗ No JOB_SUMMARY event found in $EVENTS_FILE${NC}"
+  cat "$EVENTS_FILE"
+  exit 1
+fi
+echo "  Notification events: $(wc -l < "$EVENTS_FILE" | tr -d ' ') line(s) in $EVENTS_FILE (CONTRACT_VALIDATION, WRITE, and JOB_SUMMARY all present)"
 
 echo ""
 echo -e "${GREEN}✓ All validation passed${NC}"

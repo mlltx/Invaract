@@ -53,6 +53,31 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
       sink.events.collectFirst { case e: WriteEvent => e }.getOrElse(fail("listener has not published a WriteEvent yet"))
     }
 
+  /** Like `awaitEvent`, but for a row-level DML (MERGE/UPDATE/DELETE)
+    * assertion specifically: `sink` is created and registered right after
+    * this test's own setup `.write.format("delta")...save(...)` call, but
+    * that setup write's own `WriteEvent` (`operation = None`, `saveMode =
+    * Some("overwrite")`) can - confirmed empirically, the hard way, via a
+    * real flaky failure on the equivalent Iceberg tests in
+    * `SparkAdapterListenerIcebergSpec` - still arrive at the
+    * newly-registered listener *after* registration, racing with the DML
+    * statement that follows: a write's completion notification isn't
+    * guaranteed to have fully reached every registered
+    * `QueryExecutionListener` by the time the write call returns to the
+    * calling thread. A plain "first `WriteEvent` in the sink" assertion
+    * (`awaitEvent`) is therefore order-dependent and could intermittently
+    * pick up that unrelated setup event instead of the DML's own -
+    * filtering on `operation.isDefined` (true only for row-level DML,
+    * never for a plain overwrite) sidesteps the race entirely rather than
+    * depending on arrival order.
+    */
+  private def awaitOperationEvent(sink: TestNotificationSink): WriteEvent =
+    eventually(timeout(Span(5, Seconds))) {
+      sink.events
+        .collectFirst { case e: WriteEvent if e.operation.isDefined => e }
+        .getOrElse(fail("listener has not published a row-level-DML WriteEvent yet"))
+    }
+
   test("a real write publishes a WriteEvent with location/format/saveMode/schema, once Spark reports success") {
     val outputPath = scratchDir.resolve("listener_write.parquet").toString
     val sink = new TestNotificationSink
@@ -86,6 +111,9 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     // Neither connector-specific field applies to a plain Parquet write.
     assert(event.deltaVersion.isEmpty, s"expected no deltaVersion for a Parquet write, got ${event.deltaVersion}")
     assert(event.icebergSnapshotId.isEmpty, s"expected no icebergSnapshotId for a Parquet write, got ${event.icebergSnapshotId}")
+    // A plain append already has its operation conveyed by saveMode -
+    // operation is reserved for the three shapes where saveMode is None.
+    assert(event.operation.isEmpty, s"expected no operation for a plain append, got ${event.operation}")
   }
 
   // Confirmed empirically (see docs/SPARK_ADAPTER.md's "Notification
@@ -129,6 +157,61 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
       sink.events.collect { case e: WriteEvent => e }.lastOption.filter(_ ne firstEvent).getOrElse(fail("second WriteEvent not published yet"))
     }
     assert(secondEvent.deltaVersion.contains(1L), s"expected deltaVersion 1 after a second write, got ${secondEvent.deltaVersion}")
+  }
+
+  test("a Delta MERGE INTO publishes a WriteEvent with operation = Some(\"merge\")") {
+    val tablePath = scratchDir.resolve("listener_delta_merge").toString
+    val tableName = "listener_merge_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark
+      .sql(s"""MERGE INTO $tableName t
+              |USING (SELECT 99L as id, 198L as doubled) s
+              |ON t.id = s.id
+              |WHEN NOT MATCHED THEN INSERT *
+              |""".stripMargin)
+      .collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("merge"), s"expected operation 'merge', got ${event.operation}")
+    assert(event.saveMode.isEmpty, "in-place mutation isn't append/overwrite/ignore/error")
+  }
+
+  test("a Delta UPDATE publishes a WriteEvent with operation = Some(\"update\")") {
+    val tablePath = scratchDir.resolve("listener_delta_update").toString
+    val tableName = "listener_update_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.sql(s"UPDATE $tableName SET doubled = doubled + 1 WHERE id > 2").collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("update"), s"expected operation 'update', got ${event.operation}")
+  }
+
+  test("a Delta DELETE publishes a WriteEvent with operation = Some(\"delete\")") {
+    val tablePath = scratchDir.resolve("listener_delta_delete").toString
+    val tableName = "listener_delete_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.sql(s"DELETE FROM $tableName WHERE id > 2").collect()
+
+    val event = awaitOperationEvent(sink)
+    assert(event.operation.contains("delete"), s"expected operation 'delete', got ${event.operation}")
   }
 
   test("no sink configured: onSuccess still captures lastWrite, publishing nothing (no crash either)") {

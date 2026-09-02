@@ -7,8 +7,7 @@ import com.example.sparkadapter.Violation
 
 /** One thing worth telling an external system about, published through a
   * `NotificationSink` when one is configured and enabled (see
-  * `NotificationConfig`/`NotificationSinkFactory`). Two kinds exist, matching
-  * the two moments Invaract's engine has something to report about a write:
+  * `NotificationConfig`/`NotificationSinkFactory`). Three kinds exist:
   *
   *   - `ContractValidationEvent` — a write (or state-changing CALL) was
   *     checked against a contract. Published by `ContractEnforcementRule`
@@ -18,6 +17,11 @@ import com.example.sparkadapter.Violation
   *     `SparkAdapterListener`, which (unlike the check rule) only observes
   *     Spark after real execution succeeds — see that class's doc for why
   *     that's a structurally different moment.
+  *   - `JobSummaryEvent` — an aggregate over however many of the two events
+  *     above a job produced, published once, on demand, by
+  *     `SummarizingNotificationSink` (see its own doc for why this is a
+  *     sink decorator rather than something `ContractEnforcementRule`/
+  *     `SparkAdapterListener` publish themselves).
   *
   * Plain case classes crossing a JSON boundary to an external system, the
   * same "closed vocabulary, not an open trait hierarchy a sink must
@@ -120,6 +124,13 @@ case class WriteFieldInfo(name: String, dataType: String, nullable: Boolean)
   * same class of problem for exactly this reason: `DeltaLog.forTable` was
   * already a fresh-by-path lookup, not a captured object, before this was
   * even a known risk for Iceberg.
+  *
+  * `operation` distinguishes which row-level DML this write actually was —
+  * `"merge"`/`"update"`/`"delete"` — for the three write shapes where
+  * `saveMode` is `None` because in-place mutation isn't append/overwrite/
+  * ignore/error. `None` for a plain append/overwrite/create, where
+  * `saveMode` already conveys the operation and this would only duplicate
+  * it.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -135,7 +146,36 @@ case class WriteEvent(
   fileCount: Option[Long] = None,
   applicationId: Option[String] = None,
   deltaVersion: Option[Long] = None,
-  icebergSnapshotId: Option[Long] = None
+  icebergSnapshotId: Option[Long] = None,
+  operation: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
+}
+
+/** An aggregate over every `ContractValidationEvent`/`WriteEvent` a
+  * `SummarizingNotificationSink` observed since it was constructed (or
+  * since the last `publishSummary()` call — see that class's doc for
+  * exactly when this is built and published, since nothing publishes it
+  * automatically). `checksPassed`/`checksFailed` and `totalViolations`
+  * count `ContractValidationEvent`s; `totalWrites` counts `WriteEvent`s;
+  * `durationMs` is wall-clock time since the sink was constructed, not a
+  * sum of individual write durations (those can overlap under
+  * concurrent writes, wall-clock time can't).
+  *
+  * Exists for exactly the case `WriteEvent`/`ContractValidationEvent`
+  * don't cover well: a job with many writes produces many events, useful
+  * for a stream processor but noisy for a human — one `JobSummaryEvent`
+  * gives a single Slack message or email per run instead.
+  */
+case class JobSummaryEvent(
+  totalWrites: Long,
+  checksPassed: Long,
+  checksFailed: Long,
+  totalViolations: Long,
+  durationMs: Long,
+  timestamp: Long,
+  metadata: Map[String, Any],
+  applicationId: Option[String] = None
+) extends NotificationEvent {
+  val eventType: String = "JOB_SUMMARY"
 }

@@ -107,7 +107,8 @@ class SparkAdapterListener(
             deltaVersion = if (info.format.contains("delta")) SparkAdapterListener.deltaVersionOf(qe.sparkSession, info.location) else None,
             icebergSnapshotId = info.catalogTableRef.flatMap { case (catalog, identifier) =>
               SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
-            }
+            },
+            operation = info.operation
           )
         )
       }

@@ -94,7 +94,7 @@ Both event types are plain JSON. A `ContractValidationEvent`, from a passing che
 ...and a `WriteEvent`, once the write completes:
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null}
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null}
 ```
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
@@ -126,6 +126,18 @@ Iceberg write (`null` for everything else, Delta included):
 
 ```json
 {"...": "...", "format": "iceberg", "deltaVersion": null, "icebergSnapshotId": 5964503180593669213}
+```
+
+`operation` distinguishes a MERGE/UPDATE/DELETE from a plain append or overwrite —
+`saveMode` is always `null` for these (in-place mutation isn't append/overwrite/ignore/
+error), so `operation` is the field that tells them apart:
+
+```json
+{"...": "...", "saveMode": null, "operation": "merge"}
+```
+
+```json
+{"...": "...", "saveMode": null, "operation": "delete"}
 ```
 
 ## Built-in sinks
@@ -177,6 +189,57 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
   backend the path might point at.
   </Aside>
 
+## Summaries and failure-only filtering
+
+Two more classes wrap an existing sink to change *what* it receives, rather than *where*
+events go — useful once you have more than a couple of jobs publishing events and want
+either a coarser per-job rollup or a page-only-on-failure feed instead of every raw
+event.
+
+- **`SummarizingNotificationSink(delegate)`** forwards every event to `delegate`
+  unchanged, and also tallies `ContractValidationEvent`/`WriteEvent` traffic in memory.
+  Call `publishSummary()` whenever you want a `JobSummaryEvent` — totals since
+  construction or the last call — published to `delegate`, with the counters reset
+  afterward:
+
+  ```json
+  {"eventType": "JOB_SUMMARY", "timestamp": 1735689600200, "totalWrites": 1, "checksPassed": 1, "checksFailed": 0, "totalViolations": 0, "durationMs": 9676, "metadata": {}, "applicationId": "local-1735689599000"}
+  ```
+
+  A single job (like `DemoJobHarness`) calls `publishSummary()` once, right after its
+  one write's outcome is known — success or failure alike, so "this job failed" is
+  itself part of what the summary reports. A long-running job with many writes can
+  instead call it periodically for a rolling window; nothing about the API changes
+  between the two uses.
+
+- **`FailureOnlyNotificationSink(delegate)`** forwards only what's worth paging someone
+  for: a FAILED `ContractValidationEvent`, and every `JobSummaryEvent` (a summary is
+  already a rate-limited, aggregate signal, not raw noise). PASSED checks and every
+  `WriteEvent` are dropped before reaching `delegate`.
+
+Both take the sink to wrap as a constructor argument, so build them directly in code
+around whatever `NotificationSinkFactory.create` returns — they're not something
+`sink.class` can name on its own, since reflective loading only supports a public
+no-arg constructor:
+
+```scala
+import com.example.sparkadapter.notification.{NotificationSinkFactory, SummarizingNotificationSink}
+
+val configuredSink = NotificationSinkFactory.create(notifyConfig)
+val summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
+
+// ... pass summarizingSink to the enforcement rule and the listener, same as
+// any other Option[NotificationSink] ...
+
+// once the job's outcome is known:
+summarizingSink.foreach(_.publishSummary())
+```
+
+Compose the two in either order — wrap a `SummarizingNotificationSink` in a
+`FailureOnlyNotificationSink` to page only on a failed check or a job summary, or wrap a
+`FailureOnlyNotificationSink` in a `SummarizingNotificationSink` if the *tallies*
+themselves should reflect only failures.
+
 ## The Kafka sink is a separate module
 
 Unlike the three sinks above, `KafkaNotificationSink` isn't part of `spark-adapter` — it
@@ -227,8 +290,9 @@ class MySink extends NotificationSink {
     endpoint = properties("endpoint")
 
   override def publish(event: NotificationEvent): Unit = {
-    // event is one of ContractValidationEvent or WriteEvent - send it however
-    // your destination expects.
+    // event is one of ContractValidationEvent, WriteEvent, or (if you're
+    // behind a SummarizingNotificationSink) JobSummaryEvent - send it
+    // however your destination expects.
   }
 }
 ```

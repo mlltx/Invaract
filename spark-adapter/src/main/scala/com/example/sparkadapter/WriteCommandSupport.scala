@@ -67,7 +67,15 @@ private[sparkadapter] case class WriteCommandInfo(
   // `reflectiveSinkPath` already use below.
   catalogTableRef: Option[
     (org.apache.spark.sql.connector.catalog.CatalogPlugin, org.apache.spark.sql.connector.catalog.Identifier)
-  ] = None
+  ] = None,
+  // Which row-level DML this write actually was - "merge"/"update"/
+  // "delete" - populated only by the three write shapes where `saveMode`
+  // is `None` (in-place mutation isn't append/overwrite/ignore/error, so
+  // saveMode can't carry this) and set by `deltaRowLevelDml`/
+  // `dsv2RowLevelWrite`/`deleteFromTable` below. `None` everywhere else,
+  // deliberately not duplicating what `saveMode` already conveys for a
+  // plain append/overwrite/create.
+  operation: Option[String] = None
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -793,7 +801,8 @@ private[sparkadapter] object WriteCommandSupport {
             format = Some("delta"),
             saveMode = None, // in-place mutation isn't append/overwrite/ignore/error
             outputSchema = outputSchema,
-            diagnostic = diagnostic.orElse(evolutionDiagnostic)
+            diagnostic = diagnostic.orElse(evolutionDiagnostic),
+            operation = deltaDmlOperationNames.get(plan.getClass.getName)
           )
         }.toOption
     }
@@ -802,6 +811,17 @@ private[sparkadapter] object WriteCommandSupport {
     "org.apache.spark.sql.delta.commands.MergeIntoCommand",
     "org.apache.spark.sql.delta.commands.UpdateCommand",
     "org.apache.spark.sql.delta.commands.DeleteCommand"
+  )
+
+  // The class that matched IS the operation - MergeIntoCommand/
+  // UpdateCommand/DeleteCommand only ever appear for the DML their name
+  // says, so no further inspection (reflective or otherwise) is needed to
+  // tell them apart, unlike everything else deltaRowLevelDml reads off the
+  // instance.
+  private val deltaDmlOperationNames: Map[String, String] = Map(
+    "org.apache.spark.sql.delta.commands.MergeIntoCommand" -> "merge",
+    "org.apache.spark.sql.delta.commands.UpdateCommand" -> "update",
+    "org.apache.spark.sql.delta.commands.DeleteCommand" -> "delete"
   )
 
   // Row-level DML (MERGE/UPDATE/DELETE) for connectors implementing
@@ -842,7 +862,14 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = None,
         outputSchema = cmd.table.schema,
         diagnostic = diagnostic,
-        catalogTableRef = catalogTableRefOf(cmd.table)
+        catalogTableRef = catalogTableRefOf(cmd.table),
+        // Unlike Delta above, this needs no class-name/reflection lookup
+        // at all: RowLevelOperation.Command (DELETE/UPDATE/MERGE) is a
+        // real, public, stable enum on Spark's own connector.write API -
+        // cmd.operation is populated by the DSv2 planner before this node
+        // is ever produced, for any connector using Spark's standard
+        // row-level-operation mechanism, not just Iceberg.
+        operation = Some(cmd.operation.command().toString.toLowerCase)
       )
   }
 
@@ -882,7 +909,8 @@ private[sparkadapter] object WriteCommandSupport {
             format = format,
             saveMode = None,
             outputSchema = relation.schema,
-            diagnostic = diagnostic
+            diagnostic = diagnostic,
+            operation = Some("delete")
           )
         case None =>
           val msg = s"No NamedRelation found under DeleteFromTable's target; " +
@@ -893,7 +921,8 @@ private[sparkadapter] object WriteCommandSupport {
             format = None,
             saveMode = None,
             outputSchema = cmd.table.schema,
-            diagnostic = Some(Diagnostic("DeleteFromTable", msg))
+            diagnostic = Some(Diagnostic("DeleteFromTable", msg)),
+            operation = Some("delete")
           )
       }
   }

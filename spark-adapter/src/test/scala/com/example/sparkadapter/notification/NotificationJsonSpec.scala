@@ -145,6 +145,45 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"applicationId\": null"))
     assert(json.contains("\"deltaVersion\": null"))
     assert(json.contains("\"icebergSnapshotId\": null"))
+    assert(json.contains("\"operation\": null"))
+  }
+
+  test("toJson for WriteEvent renders operation, None as null and Some as a plain string") {
+    val merge = WriteEvent(None, "file:/tmp/out.parquet", Some("delta"), None, Nil, 0L, Map.empty, operation = Some("merge"))
+    assert(NotificationJson.toJson(merge).contains("\"operation\": \"merge\""))
+
+    val plainAppend = WriteEvent(None, "file:/tmp/out.parquet", Some("parquet"), Some("append"), Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(plainAppend).contains("\"operation\": null"))
+  }
+
+  test("toJson for JobSummaryEvent includes every field") {
+    val summary = JobSummaryEvent(
+      totalWrites = 3L,
+      checksPassed = 2L,
+      checksFailed = 1L,
+      totalViolations = 4L,
+      durationMs = 1234L,
+      timestamp = 999L,
+      metadata = Map("team" -> "data-platform"),
+      applicationId = Some("app-123")
+    )
+    val json = NotificationJson.toJson(summary)
+    assert(json.contains("\"eventType\": \"JOB_SUMMARY\""))
+    assert(json.contains("\"timestamp\": 999"))
+    assert(json.contains("\"totalWrites\": 3"))
+    assert(json.contains("\"checksPassed\": 2"))
+    assert(json.contains("\"checksFailed\": 1"))
+    assert(json.contains("\"totalViolations\": 4"))
+    assert(json.contains("\"durationMs\": 1234"))
+    assert(json.contains("\"team\": \"data-platform\""))
+    assert(json.contains("\"applicationId\": \"app-123\""))
+  }
+
+  test("toJson for JobSummaryEvent renders a default (no applicationId) event with null, not omitted") {
+    val summary = JobSummaryEvent(0L, 0L, 0L, 0L, 0L, 0L, Map.empty)
+    val json = NotificationJson.toJson(summary)
+    assert(json.contains("\"totalWrites\": 0"))
+    assert(json.contains("\"applicationId\": null"))
   }
 
   test("toJson for WriteEvent renders deltaVersion/icebergSnapshotId, None as null and Some as a plain value") {

@@ -292,3 +292,104 @@ class HadoopFsNotificationSink extends NotificationSink {
     }
   }
 }
+
+/** Wraps a sink to also tally `WriteEvent`/`ContractValidationEvent` traffic
+  * and, on demand via `publishSummary()`, publish one `JobSummaryEvent`
+  * aggregating everything seen since construction (or since the previous
+  * `publishSummary()` call — each call atomically reads and resets every
+  * counter, so a second call reports only what happened *since* the first,
+  * not a running cumulative total). This makes the same sink work for a
+  * batch job (call `publishSummary()` once, right before the job ends) and
+  * a long-running one (call it periodically for a rolling summary).
+  *
+  * Deliberately a decorator around an ordinary `NotificationSink`, not a
+  * built-in behavior of `ContractEnforcementRule`/`SparkAdapterListener`
+  * themselves: they publish `ContractValidationEvent`/`WriteEvent` as each
+  * one happens and have no natural "the job is over" moment of their own
+  * to hook — the caller wiring a sink into their job already knows exactly
+  * when that is (e.g. `DemoJobHarness` calling `publishSummary()` right
+  * before `spark.stop()`), so it's cheaper and more flexible to let them
+  * decide than to guess at a Spark lifecycle hook. Construct exactly one
+  * instance and pass it as the `sink` to *both*
+  * `ContractEnforcementRule.forContract` and `new SparkAdapterListener` -
+  * two separate instances would each only see half the job's events.
+  *
+  * `applicationId`/`metadata` on the published summary come from whichever
+  * event most recently supplied a non-empty value - `orElse`/plain
+  * reassignment, not `getOrElse`, so an event that happens not to carry an
+  * `applicationId` (there is no such real code path today, but nothing
+  * enforces there never will be) doesn't blank out an already-known one.
+  */
+class SummarizingNotificationSink(delegate: NotificationSink) extends NotificationSink {
+  private val writesPublished = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val checksPassed = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val checksFailed = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val violationsTotal = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val periodStart = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+  @volatile private var lastApplicationId: Option[String] = None
+  @volatile private var lastMetadata: Map[String, Any] = Map.empty
+
+  override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
+
+  override def publish(event: NotificationEvent): Unit = {
+    event match {
+      case e: WriteEvent =>
+        writesPublished.incrementAndGet()
+        lastApplicationId = e.applicationId.orElse(lastApplicationId)
+        lastMetadata = e.metadata
+      case e: ContractValidationEvent =>
+        if (e.status == "PASSED") checksPassed.incrementAndGet() else checksFailed.incrementAndGet()
+        violationsTotal.addAndGet(e.violations.size.toLong)
+        lastApplicationId = e.applicationId.orElse(lastApplicationId)
+        lastMetadata = e.metadata
+      case _: JobSummaryEvent => () // a summary isn't itself summarized
+    }
+    delegate.publish(event)
+  }
+
+  /** Builds and publishes one `JobSummaryEvent` from everything tallied
+    * since construction or the last call, then resets every counter -
+    * see this class's own doc for why that reset makes both a
+    * once-per-job and a periodic call pattern work with the same sink.
+    */
+  def publishSummary(): Unit = {
+    val now = System.currentTimeMillis()
+    delegate.publish(
+      JobSummaryEvent(
+        totalWrites = writesPublished.getAndSet(0L),
+        checksPassed = checksPassed.getAndSet(0L),
+        checksFailed = checksFailed.getAndSet(0L),
+        totalViolations = violationsTotal.getAndSet(0L),
+        durationMs = now - periodStart.getAndSet(now),
+        timestamp = now,
+        metadata = lastMetadata,
+        applicationId = lastApplicationId
+      )
+    )
+  }
+}
+
+/** Wraps a sink to forward only the events a "just tell me when something's
+  * wrong" consumer actually wants: a `ContractValidationEvent` whose
+  * `status` isn't `"PASSED"`, and every `JobSummaryEvent` (a single
+  * once-per-job message is never noise, whatever it says). Every
+  * `WriteEvent` and every PASSED `ContractValidationEvent` is dropped
+  * without reaching the delegate at all.
+  *
+  * For a team that wants PagerDuty or an on-call Slack channel to fire only
+  * on real problems, without drowning it in the routine-success traffic a
+  * job with many writes and checks otherwise produces. Compose it with any
+  * other sink: `new FailureOnlyNotificationSink(new HttpNotificationSink)`,
+  * or wrap a `SummarizingNotificationSink` the same way if only the
+  * end-of-job summary (not every individual failure) should reach a given
+  * destination.
+  */
+class FailureOnlyNotificationSink(delegate: NotificationSink) extends NotificationSink {
+  override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
+
+  override def publish(event: NotificationEvent): Unit = event match {
+    case e: ContractValidationEvent => if (e.status != "PASSED") delegate.publish(e)
+    case e: JobSummaryEvent => delegate.publish(e)
+    case _: WriteEvent => ()
+  }
+}

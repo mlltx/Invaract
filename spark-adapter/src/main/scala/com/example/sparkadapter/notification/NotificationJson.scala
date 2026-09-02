@@ -52,7 +52,20 @@ object NotificationJson {
         "fileCount" -> e.fileCount,
         "applicationId" -> e.applicationId,
         "deltaVersion" -> e.deltaVersion,
-        "icebergSnapshotId" -> e.icebergSnapshotId
+        "icebergSnapshotId" -> e.icebergSnapshotId,
+        "operation" -> e.operation
+      )
+    case e: JobSummaryEvent =>
+      Map(
+        "eventType" -> e.eventType,
+        "timestamp" -> e.timestamp,
+        "totalWrites" -> e.totalWrites,
+        "checksPassed" -> e.checksPassed,
+        "checksFailed" -> e.checksFailed,
+        "totalViolations" -> e.totalViolations,
+        "durationMs" -> e.durationMs,
+        "metadata" -> e.metadata,
+        "applicationId" -> e.applicationId
       )
   }
 
