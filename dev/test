@@ -17,6 +17,7 @@ NC='\033[0m' # No Color
 
 REPORT_DIR="demo/output"
 REPORT_FILE="$REPORT_DIR/report.json"
+EVENTS_FILE="$REPORT_DIR/events.jsonl"
 
 cleanup() {
   local exit_code=$?
@@ -79,7 +80,7 @@ fi
 echo ""
 echo -e "${YELLOW}Step 5/7: Preparing output directory...${NC}"
 mkdir -p "$REPORT_DIR"
-rm -f "$REPORT_FILE"
+rm -f "$REPORT_FILE" "$EVENTS_FILE"
 
 # Step 6: Run Spark Job
 echo ""
@@ -87,8 +88,17 @@ echo -e "${YELLOW}Step 6/7: Executing Spark integration test...${NC}"
 echo "  Input: demo/input/sample.csv"
 echo "  Output: demo/output/result.parquet"
 echo "  Report: $REPORT_FILE"
+echo "  Notification config: demo/notify.properties (events -> $EVENTS_FILE)"
 
-run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE"
+# The 5th argument enables the notification sink (see
+# com.example.sparkadapter.notification's package doc) - demo/notify.properties
+# is a FileNotificationSink writing to $EVENTS_FILE, so this run also proves
+# real ContractValidationEvent/WriteEvent publishing against a real Spark
+# job, not just in isolated unit tests. The 4th argument (contract) has to
+# be given explicitly here since run_demo_job_harness's own EXTRA_ARG
+# passthrough only appends after it.
+run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
+  "demo/contracts/invaract_output.yaml" "demo/notify.properties"
 SPARK_EXIT=$?
 
 # Step 7: Validate Report
@@ -117,6 +127,27 @@ if [ "$STATUS" != "PASS" ]; then
   cat "$REPORT_FILE"
   exit 1
 fi
+
+if [ ! -f "$EVENTS_FILE" ]; then
+  echo -e "${RED}✗ Notification events file not generated: $EVENTS_FILE${NC}"
+  exit 1
+fi
+if ! grep -q '"eventType": "CONTRACT_VALIDATION"' "$EVENTS_FILE"; then
+  echo -e "${RED}✗ No CONTRACT_VALIDATION event found in $EVENTS_FILE${NC}"
+  cat "$EVENTS_FILE"
+  exit 1
+fi
+if ! grep -q '"eventType": "WRITE"' "$EVENTS_FILE"; then
+  echo -e "${RED}✗ No WRITE event found in $EVENTS_FILE${NC}"
+  cat "$EVENTS_FILE"
+  exit 1
+fi
+if ! grep -q '"eventType": "JOB_SUMMARY"' "$EVENTS_FILE"; then
+  echo -e "${RED}✗ No JOB_SUMMARY event found in $EVENTS_FILE${NC}"
+  cat "$EVENTS_FILE"
+  exit 1
+fi
+echo "  Notification events: $(wc -l < "$EVENTS_FILE" | tr -d ' ') line(s) in $EVENTS_FILE (CONTRACT_VALIDATION, WRITE, and JOB_SUMMARY all present)"
 
 echo ""
 echo -e "${GREEN}✓ All validation passed${NC}"

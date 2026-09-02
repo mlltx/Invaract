@@ -1,0 +1,366 @@
+---
+title: Configure a Notification Sink
+description: Publish an event every time Invaract checks or completes a write, to a destination of your choosing.
+sidebar:
+  order: 8
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide wires up a notification sink so an external system finds out, in real time,
+that Invaract checked a write (and what it decided) or that a write actually completed.
+This is entirely opt-in: with no sink configured, nothing here runs, and
+[the enforcement rule](/guides/installing-the-enforcement-rule/) behaves exactly as it
+would without this guide.
+
+<Aside type="note" title="Two events, two moments">
+`ContractValidationEvent` fires when `ContractEnforcementRule` checks a write, before
+Spark executes anything — a FAILED event means the write never ran. `WriteEvent` fires
+later, only once Spark reports a write actually completed. See
+[Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for why these are
+two separate mechanisms.
+</Aside>
+
+<Steps>
+
+1. ### Write a sink configuration file
+
+   Sink configuration lives in a plain `.properties` file, separate from your contract —
+   it's a deployment concern (an endpoint, a file path, possibly credentials), not
+   something that belongs alongside a contract describing data shape.
+
+   ```properties
+   # notify.properties
+   sink.enabled=true
+   sink.class=com.example.sparkadapter.notification.FileNotificationSink
+   sink.property.path=/var/log/invaract/events.jsonl
+   ```
+
+   | Key | Required | Meaning |
+   | --- | --- | --- |
+   | `sink.enabled` | No (default `false`) | Master switch. Every other key is ignored when this is `false`. |
+   | `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
+   | `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
+
+2. ### Load it and build the sink before constructing your session
+
+   ```scala
+   import com.example.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+
+   val notifyConfig = NotificationConfig.load("notify.properties")
+   val sink = NotificationSinkFactory.create(notifyConfig) // None if sink.enabled=false
+   ```
+
+   A misconfigured sink (an unresolvable class, a class with no no-arg constructor, a
+   sink that rejects its own properties) throws immediately here — the same "fail loudly,
+   at setup time" treatment a malformed contract gets, so a typo doesn't silently produce
+   zero events forever.
+
+3. ### Pass it to the enforcement rule and the listener
+
+   ```scala
+   import com.example.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
+   import org.apache.spark.sql.SparkSession
+
+   val irListener = new SparkAdapterListener(sink, Some(contract))
+
+   val spark = SparkSession
+     .builder()
+     .appName("MyJob")
+     .master("local[*]")
+     .withExtensions(_.injectCheckRule(sink match {
+       case Some(s) => ContractEnforcementRule.forContract(contract, VerificationOptions(), s)
+       case None    => ContractEnforcementRule.forContract(contract)
+     }))
+     .getOrCreate()
+
+   spark.listenerManager.register(irListener)
+   ```
+
+   From this point on, every check `ContractEnforcementRule` performs publishes a
+   `ContractValidationEvent` to your sink — PASS or FAIL — and every write Spark actually
+   completes publishes a `WriteEvent` once `SparkAdapterListener` observes it.
+
+</Steps>
+
+## What an event looks like
+
+Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000"}
+```
+
+...and a `WriteEvent`, once the write completes:
+
+```json
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null}
+```
+
+`metadata` is copied verbatim from your contract's own `extensions:` block — see
+[Contract Format](/reference/contract-format/) — so anything you've already recorded
+there (an owning team, an upstream system) rides along on every event without a second
+metadata vocabulary to maintain.
+
+`applicationId` is the Spark application's own ID (`sparkContext.applicationId`) on
+both event types — useful for grouping events from the same job run when a sink
+aggregates events across many jobs.
+
+`WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
+callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal
+`SQLMetric`s and are only populated for plain file-format writes (Parquet, CSV, JSON,
+ORC) via `DataFrameWriter.save`/`.parquet`/etc. **They are `null` for Delta Lake and
+Iceberg writes** — neither connector populates these particular metrics on the plan
+node Invaract observes, confirmed against a real local write of each. A sink
+implementation should treat these three fields as always-optional, not assume they're
+present just because the write succeeded.
+
+`deltaVersion` and `icebergSnapshotId` are the connector's own identifier for the
+commit a write just produced — `deltaVersion` is `Some` only for a Delta write (`null`
+for everything else, Iceberg included), and `icebergSnapshotId` is `Some` only for an
+Iceberg write (`null` for everything else, Delta included):
+
+```json
+{"...": "...", "format": "delta", "deltaVersion": 3, "icebergSnapshotId": null}
+```
+
+```json
+{"...": "...", "format": "iceberg", "deltaVersion": null, "icebergSnapshotId": 5964503180593669213}
+```
+
+`operation` distinguishes a MERGE/UPDATE/DELETE from a plain append or overwrite —
+`saveMode` is always `null` for these (in-place mutation isn't append/overwrite/ignore/
+error), so `operation` is the field that tells them apart:
+
+```json
+{"...": "...", "saveMode": null, "operation": "merge"}
+```
+
+```json
+{"...": "...", "saveMode": null, "operation": "delete"}
+```
+
+## Built-in sinks
+
+Four ship in `spark-adapter` itself, all with no extra dependency:
+
+- **`LoggingNotificationSink`** — logs each event as one JSON line via SLF4J, at `INFO`.
+  Needs no `sink.property.*` configuration.
+- **`FileNotificationSink`** — appends each event as one JSON line to `sink.property.path`.
+  This is what [the regression pack](/guides/running-the-regression-pack/) uses to prove
+  events are published against a real Spark job.
+- **`HttpNotificationSink`** — POSTs each event's JSON to `sink.property.url`, with an
+  optional `sink.property.timeoutMs` (default `5000`). Built on
+  `java.net.http.HttpClient`, part of the JDK since Java 11 — no extra dependency here
+  either. Requests are sent asynchronously, so a slow or unreachable endpoint doesn't
+  block your job; a connection failure or non-2xx response is logged, not thrown.
+
+  ```properties
+  sink.enabled=true
+  sink.class=com.example.sparkadapter.notification.HttpNotificationSink
+  sink.property.url=https://example.com/invaract-events
+  ```
+
+- **`HadoopFsNotificationSink`** — writes each event as its own JSON object under
+  `sink.property.path`, on **any filesystem Hadoop's own `FileSystem` API supports**:
+  S3 (`s3a://`), GCS (`gs://`, with that connector installed), HDFS (`hdfs://`), Azure
+  (`abfs://`), or plain `file://`. One sink, not one per vendor — the URI scheme picks
+  the backend, exactly like `df.write.parquet("s3a://...")` already does in your own
+  job. If your contract's own `location:` already points at cloud storage, your job's
+  classpath already carries whatever connector that needs, so this sink adds nothing
+  new to it either.
+
+  ```properties
+  sink.enabled=true
+  sink.class=com.example.sparkadapter.notification.HadoopFsNotificationSink
+  sink.property.path=s3a://my-bucket/invaract-events/
+  sink.property.hadoop.fs.s3a.access.key=...
+  sink.property.hadoop.fs.s3a.secret.key=...
+  ```
+
+  Every `sink.property.hadoop.<key>` is set on the underlying Hadoop `Configuration` —
+  Hadoop's own config keys, not a separate vocabulary; credentials already configured
+  in your cluster's `core-site.xml` apply the normal way and don't need repeating here.
+
+  <Aside type="note" title="One file per event, not an appended log">
+  S3 objects are immutable — `FileSystem.append` isn't reliably supported across
+  backends, and never on S3A. This sink writes a new, uniquely-named object per event
+  instead of appending to one growing file, so it behaves the same way on every
+  backend the path might point at.
+  </Aside>
+
+## Summaries and failure-only filtering
+
+Two more classes wrap an existing sink to change *what* it receives, rather than *where*
+events go — useful once you have more than a couple of jobs publishing events and want
+either a coarser per-job rollup or a page-only-on-failure feed instead of every raw
+event.
+
+- **`SummarizingNotificationSink(delegate)`** forwards every event to `delegate`
+  unchanged, and also tallies `ContractValidationEvent`/`WriteEvent` traffic in memory.
+  Call `publishSummary()` whenever you want a `JobSummaryEvent` — totals since
+  construction or the last call — published to `delegate`, with the counters reset
+  afterward:
+
+  ```json
+  {"eventType": "JOB_SUMMARY", "timestamp": 1735689600200, "totalWrites": 1, "checksPassed": 1, "checksFailed": 0, "totalViolations": 0, "durationMs": 9676, "metadata": {}, "applicationId": "local-1735689599000"}
+  ```
+
+  A single job (like `DemoJobHarness`) calls `publishSummary()` once, right after its
+  one write's outcome is known — success or failure alike, so "this job failed" is
+  itself part of what the summary reports. A long-running job with many writes can
+  instead call it periodically for a rolling window; nothing about the API changes
+  between the two uses.
+
+- **`FailureOnlyNotificationSink(delegate)`** forwards only what's worth paging someone
+  for: a FAILED `ContractValidationEvent`, and every `JobSummaryEvent` (a summary is
+  already a rate-limited, aggregate signal, not raw noise). PASSED checks and every
+  `WriteEvent` are dropped before reaching `delegate`.
+
+Both take the sink to wrap as a constructor argument, so build them directly in code
+around whatever `NotificationSinkFactory.create` returns — they're not something
+`sink.class` can name on its own, since reflective loading only supports a public
+no-arg constructor:
+
+```scala
+import com.example.sparkadapter.notification.{NotificationSinkFactory, SummarizingNotificationSink}
+
+val configuredSink = NotificationSinkFactory.create(notifyConfig)
+val summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
+
+// ... pass summarizingSink to the enforcement rule and the listener, same as
+// any other Option[NotificationSink] ...
+
+// once the job's outcome is known:
+summarizingSink.foreach(_.publishSummary())
+```
+
+Compose the two in either order — wrap a `SummarizingNotificationSink` in a
+`FailureOnlyNotificationSink` to page only on a failed check or a job summary, or wrap a
+`FailureOnlyNotificationSink` in a `SummarizingNotificationSink` if the *tallies*
+themselves should reflect only failures.
+
+## Retrying a flaky sink, with a dead letter for events that never make it
+
+A network sink — `HttpNotificationSink`, `KafkaNotificationSink`, anything reaching
+outside the JVM — can fail for reasons that have nothing to do with your job: a
+timeout, a momentary outage on the receiving end. `RetryingNotificationSink` wraps
+another sink to retry a failed `publish` a few times, with capped exponential backoff,
+before giving up — and if every attempt fails, it publishes the event to a
+**dead-letter sink** instead of letting it disappear:
+
+```scala
+import com.example.sparkadapter.notification.{
+  FileNotificationSink, HttpNotificationSink, NotificationSinkFactory, RetryingNotificationSink
+}
+
+val configuredSink = NotificationSinkFactory.create(notifyConfig) // e.g. HttpNotificationSink
+
+val deadLetter = new FileNotificationSink
+deadLetter.configure(Map("path" -> "/var/log/invaract/dead-letter.jsonl"))
+
+val retryingSink = configuredSink.map(new RetryingNotificationSink(_, deadLetter))
+
+// ... pass retryingSink to the enforcement rule and the listener, same as any other
+// Option[NotificationSink] ...
+```
+
+The dead-letter sink is any ordinary `NotificationSink` — there's no dedicated
+dead-letter type. Pointing a plain `FileNotificationSink` (or `HadoopFsNotificationSink`,
+for S3/GCS/HDFS) at a separate path is enough to get a durable, replayable record of
+whatever never made it through.
+
+<Aside type="note" title="Defaults and tuning">
+`maxAttempts` defaults to `3`, `initialBackoffMs` to `100`, `backoffMultiplier` to `2.0`
+— so a persistently-failing sink is tried at roughly `t=0`, `t=100ms`, `t=300ms` before
+the event is dead-lettered. All three are constructor arguments:
+`new RetryingNotificationSink(delegate, deadLetter, maxAttempts = 5, initialBackoffMs = 200L, backoffMultiplier = 3.0)`.
+</Aside>
+
+<Aside type="caution" title="Retries are synchronous, not a background queue">
+Each retry blocks whatever thread called `publish` (Spark's own analysis or listener
+thread) for the backoff duration. A bounded number of short retries keeps this
+predictable; there's no scheduled retry-from-dead-letter after that — a sink down for
+longer than a few short retries is treated as down for a while, and the dead-lettered
+events are there for you to replay by hand once it's back.
+</Aside>
+
+Composes with the two sinks above like any other wrapper — retry around a summarizing
+sink, or summarize around a retrying one, depending on whether the retry/dead-letter
+behavior should apply to the raw per-event traffic or only to published summaries.
+
+## The Kafka sink is a separate module
+
+Unlike the three sinks above, `KafkaNotificationSink` isn't part of `spark-adapter` — it
+ships as its own module, `notification-kafka/`, with a real dependency on
+`kafka-clients`. This is deliberate: most users of the verification engine don't need
+Kafka, and `kafka-clients` is a real, sizeable dependency that would otherwise land on
+every user's classpath whether they use it or not (the same reasoning behind Delta,
+Iceberg, Hive, Avro, and ClickHouse all being handled without spark-adapter itself
+depending on their client libraries — see
+[Connector Support](/reference/connector-support/)).
+
+To use it, build the module's own jar and add it alongside `spark-adapter`'s:
+
+```bash
+cd notification-kafka && sbt assembly
+```
+
+Then point `sink.class` at it, with `sink.property.topic` naming the destination topic.
+Every *other* `sink.property.*` key is passed straight through as a Kafka producer
+config — `sink.property.bootstrap.servers`, `sink.property.security.protocol`, and so
+on, exactly as [Kafka's own producer configuration reference](https://kafka.apache.org/documentation/#producerconfigs)
+documents them:
+
+```properties
+sink.enabled=true
+sink.class=com.example.sparkadapter.notification.kafka.KafkaNotificationSink
+sink.property.topic=invaract-events
+sink.property.bootstrap.servers=localhost:9092
+```
+
+<Aside type="note" title="A user who doesn't want Kafka never resolves kafka-clients">
+`spark-adapter`'s own `build.sbt` declares no dependency on `kafka-clients` at all — not
+even a test-scoped one. Only building `notification-kafka` itself pulls it in.
+</Aside>
+
+## Writing your own sink
+
+A real destination — a message queue, an HTTP endpoint, a metrics system — is ordinary
+code implementing `NotificationSink`:
+
+```scala
+import com.example.sparkadapter.notification.{NotificationEvent, NotificationSink}
+
+class MySink extends NotificationSink {
+  private var endpoint: String = _
+
+  override def configure(properties: Map[String, String]): Unit =
+    endpoint = properties("endpoint")
+
+  override def publish(event: NotificationEvent): Unit = {
+    // event is one of ContractValidationEvent, WriteEvent, or (if you're
+    // behind a SummarizingNotificationSink) JobSummaryEvent - send it
+    // however your destination expects.
+  }
+}
+```
+
+Point `sink.class` at it (it needs a public no-arg constructor — configuration happens
+separately, via `configure`) and it's picked up the same way the built-in sinks are.
+
+<Aside type="tip" title="A broken sink can't break your job">
+Every sink returned by `NotificationSinkFactory.create` is wrapped so that an exception
+from `publish` — a network timeout, a bug in your sink — is caught and logged, never
+propagated. Notification is a best-effort side channel; it can never turn an otherwise
+successful contract check or write into a job failure. Construction-time misconfiguration
+(the previous step) is the only thing that throws.
+</Aside>
+
+## What's next
+
+See [View Verification Results](/guides/viewing-results/) for the other way to inspect
+what Invaract decided, and
+[Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/) for
+how this repository's own CI proves notification events are published on both the PASS
+and FAIL path against a real Spark job.

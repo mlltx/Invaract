@@ -77,10 +77,11 @@ echo "  contract: demo/contracts/invaract_output.yaml"
 # path of our choosing the way the report path can.
 PASS_OUTPUT="demo/output/result.parquet"
 PASS_REPORT="demo/output/regression_pass_report.json"
-rm -rf "$PASS_OUTPUT" "$PASS_REPORT"
+PASS_EVENTS="demo/output/regression_pass_events.jsonl"
+rm -rf "$PASS_OUTPUT" "$PASS_REPORT" "$PASS_EVENTS"
 
 run_demo_job_harness "demo/input/sample.csv" "$PASS_OUTPUT" "$PASS_REPORT" \
-  "demo/contracts/invaract_output.yaml"
+  "demo/contracts/invaract_output.yaml" "demo/regression-notify-pass.properties"
 PASS_EXIT=$?
 
 PASS_STATUS="$(report_field "$PASS_REPORT" status)"
@@ -94,6 +95,27 @@ check "report status is PASS (got '$PASS_STATUS')" "$st_ok"
 [ -e "$PASS_OUTPUT" ] && out_ok=true || out_ok=false
 check "output was written to $PASS_OUTPUT" "$out_ok"
 
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$PASS_EVENTS" 2>/dev/null && grep -q '"status": "PASSED"' "$PASS_EVENTS" 2>/dev/null; then
+  pass_event_ok=true
+else
+  pass_event_ok=false
+fi
+check "a PASSED ContractValidationEvent was published to $PASS_EVENTS" "$pass_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$PASS_EVENTS" 2>/dev/null; then
+  pass_write_event_ok=true
+else
+  pass_write_event_ok=false
+fi
+check "a WriteEvent was published to $PASS_EVENTS once the write completed" "$pass_write_event_ok"
+
+if grep -q '"eventType": "JOB_SUMMARY"' "$PASS_EVENTS" 2>/dev/null && grep -q '"checksPassed": 1' "$PASS_EVENTS" 2>/dev/null && grep -q '"checksFailed": 0' "$PASS_EVENTS" 2>/dev/null; then
+  pass_summary_event_ok=true
+else
+  pass_summary_event_ok=false
+fi
+check "a JobSummaryEvent (checksPassed=1, checksFailed=0) was published to $PASS_EVENTS" "$pass_summary_event_ok"
+
 # --- Case 2: contract violated -> abort before write ----------------------
 echo ""
 echo -e "${YELLOW}Case 2/2: contract violated -> write aborted, no output${NC}"
@@ -101,10 +123,11 @@ echo "  contract: demo/contracts/invaract_output_broken_example.yaml"
 
 FAIL_OUTPUT="demo/output/result_broken_example.parquet"
 FAIL_REPORT="demo/output/regression_fail_report.json"
-rm -rf "$FAIL_OUTPUT" "$FAIL_REPORT"
+FAIL_EVENTS="demo/output/regression_fail_events.jsonl"
+rm -rf "$FAIL_OUTPUT" "$FAIL_REPORT" "$FAIL_EVENTS"
 
 run_demo_job_harness "demo/input/sample.csv" "$FAIL_OUTPUT" "$FAIL_REPORT" \
-  "demo/contracts/invaract_output_broken_example.yaml"
+  "demo/contracts/invaract_output_broken_example.yaml" "demo/regression-notify-fail.properties"
 FAIL_EXIT=$?
 
 FAIL_STATUS="$(report_field "$FAIL_REPORT" status)"
@@ -128,6 +151,27 @@ else
   no_output_ok=false
 fi
 check "no output was written at $FAIL_OUTPUT (write was actually aborted)" "$no_output_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$FAIL_EVENTS" 2>/dev/null && grep -q '"status": "FAILED"' "$FAIL_EVENTS" 2>/dev/null; then
+  fail_event_ok=true
+else
+  fail_event_ok=false
+fi
+check "a FAILED ContractValidationEvent was published to $FAIL_EVENTS before the write was aborted" "$fail_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$FAIL_EVENTS" 2>/dev/null; then
+  fail_write_event_ok=false
+else
+  fail_write_event_ok=true
+fi
+check "no WriteEvent was published to $FAIL_EVENTS (the write never executed)" "$fail_write_event_ok"
+
+if grep -q '"eventType": "JOB_SUMMARY"' "$FAIL_EVENTS" 2>/dev/null && grep -q '"checksPassed": 0' "$FAIL_EVENTS" 2>/dev/null && grep -q '"checksFailed": 1' "$FAIL_EVENTS" 2>/dev/null; then
+  fail_summary_event_ok=true
+else
+  fail_summary_event_ok=false
+fi
+check "a JobSummaryEvent (checksPassed=0, checksFailed=1) was published to $FAIL_EVENTS even though the job aborted" "$fail_summary_event_ok"
 
 # --- Summary ---------------------------------------------------------------
 echo ""

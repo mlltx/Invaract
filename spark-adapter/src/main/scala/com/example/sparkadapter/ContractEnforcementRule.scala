@@ -5,6 +5,7 @@ package com.example.sparkadapter
 
 import com.example.contract.{Contract, ContractValidator}
 import com.example.ir.PlanPrinter
+import com.example.sparkadapter.notification.{ContractValidationEvent, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -77,7 +78,27 @@ object ContractEnforcementRule {
     * `ContractViolationException` to abort it if verification fails.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
-    _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options)
+    _ => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, None)
+
+  /** Same as `forContract(contract, options)`, but additionally publishes a
+    * `ContractValidationEvent` to `sink` for every check this session's
+    * enforcement performs — PASS or FAIL, not just the failures a caller
+    * would otherwise only learn about via a thrown `ContractViolationException`.
+    * A new overload rather than a third default parameter on the existing
+    * method (see CLAUDE.md's "API Compatibility Requirement") — adding a
+    * parameter to an already-published method signature is a binary break
+    * for any existing compiled caller.
+    *
+    * This is a different moment than `SparkAdapterListener`'s `WriteEvent`:
+    * this fires at analysis time, before Spark has executed anything (so a
+    * FAILED event here means the write never happened), while `WriteEvent`
+    * only fires once Spark reports a write actually completed. See
+    * `com.example.sparkadapter.notification`'s types for the full
+    * mechanism, and docs-site's "Notification sinks" guide for a worked
+    * example.
+    */
+  def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
+    session => (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -162,7 +183,13 @@ object ContractEnforcementRule {
     * that want to verify without going through `SparkSession` construction
     * (`forContract` is a thin adapter to the shape `injectCheckRule` wants).
     */
-  private[sparkadapter] def verifyOrThrow(contract: Contract, plan: LogicalPlan, options: VerificationOptions): Unit = {
+  private[sparkadapter] def verifyOrThrow(
+      contract: Contract,
+      plan: LogicalPlan,
+      options: VerificationOptions,
+      sink: Option[NotificationSink] = None,
+      applicationId: Option[String] = None
+  ): Unit = {
     val translated = SparkPlanAdapter.translate(plan)
     translated.plan match {
       case _: com.example.ir.Write =>
@@ -179,7 +206,7 @@ object ContractEnforcementRule {
         // else on this path did either - exactly how a missing `outputs:`
         // key used to crash verify() with an unguarded
         // NoSuchElementException instead of a clean, actionable rejection.
-        requireValidContract(contract)
+        requireValidContract(contract, sink, applicationId)
 
         // Collects every recognized *read* shape found anywhere in the
         // plan via `recognizedRead` above - LogicalRelation for batch V1
@@ -253,6 +280,7 @@ object ContractEnforcementRule {
           case None => Nil
         }
         val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
+        publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
         }
@@ -268,8 +296,9 @@ object ContractEnforcementRule {
           case Some(info) =>
             // Same reasoning as the ir.Write branch above: verifyStateChange
             // assumes a structurally sound contract too.
-            requireValidContract(contract)
+            requireValidContract(contract, sink, applicationId)
             val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
+            publishValidation(contract, result, sink, applicationId)
             if (!result.passed) {
               // No ir.Plan translation exists for a state-changing CALL
               // (there's no Spark write/query to translate) - a plain
@@ -292,6 +321,7 @@ object ContractEnforcementRule {
                   "\"Fail-closed on unverifiable writes\" section."
             )
             val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
+            publishValidation(contract, result, sink, applicationId)
             throw new ContractViolationException(result, explain(contract, translated.plan, result))
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
@@ -323,7 +353,7 @@ object ContractEnforcementRule {
     * own comments for why it's scoped to just the write and state-changing-
     * CALL branches.
     */
-  private def requireValidContract(contract: Contract): Unit = {
+  private def requireValidContract(contract: Contract, sink: Option[NotificationSink], applicationId: Option[String]): Unit = {
     val validation = ContractValidator.validate(contract)
     if (!validation.isValid) {
       val contractRef = s"${contract.id}@${contract.version}"
@@ -336,10 +366,37 @@ object ContractEnforcementRule {
         )
       }
       val result = VerificationResult.of(contractRef, violations)
+      publishValidation(contract, result, sink, applicationId)
       val describedPlan = com.example.ir.Unsupported("(contract validation failed before any plan was checked)")
       throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
   }
+
+  /** Publishes a `ContractValidationEvent` to `sink`, if one is configured —
+    * a no-op otherwise, so every call site can invoke this unconditionally
+    * rather than each guarding on `sink.isDefined` itself. Always called
+    * *before* a FAILED result's `ContractViolationException` is thrown (see
+    * every call site above), so a subscriber observes the rejection at the
+    * same moment the writing job does.
+    */
+  private def publishValidation(
+      contract: Contract,
+      result: VerificationResult,
+      sink: Option[NotificationSink],
+      applicationId: Option[String]
+  ): Unit =
+    sink.foreach { s =>
+      s.publish(
+        ContractValidationEvent(
+          contract = result.contract,
+          status = result.status,
+          violations = result.violations,
+          timestamp = System.currentTimeMillis(),
+          metadata = contract.extensions,
+          applicationId = applicationId
+        )
+      )
+    }
 
   /** Builds the full explanation `ContractViolationException.getMessage`
     * carries. Deterministic: built entirely from `result.violations` (an
