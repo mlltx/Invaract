@@ -655,3 +655,63 @@ changed this pass, so CLAUDE.md's mutation-testing requirement (scoped to
 changed/added `src/main/scala` files) doesn't apply; `sbt
 mimaReportBinaryIssues` stayed clean as expected for a test-only change.
 
+## Version compatibility
+
+Everything above was verified against a single pinned `iceberg-spark-runtime`
+release (`spark-adapter/build.sbt`'s `icebergVersion`, currently `1.11.0`) —
+passing tests against one version proves nothing about any other, and this
+module's own history includes a real example of a version-specific bug
+(1.10.0's Avro API mismatch, below). CI's `iceberg-version-matrix` job
+(`.github/workflows/test.yml`) closes that gap for the versions this repo
+claims to support.
+
+**Scope**: the two specs that actually reference Iceberg —
+`IcebergConnectorSpec` and `SparkAdapterListenerIcebergSpec` — confirmed via
+`spark-adapter/build.sbt`'s own JDK17+ exclusion-filter comment as the
+complete set of Iceberg-dependent test sources (`FailClosedCommands.scala`
+also references Iceberg, but only via string-literal class-name matching,
+never a real import or catalog config, so it needs no version-specific
+runtime session to exercise).
+
+**Versions tested**: `1.10.2` and `1.11.0` (the current pin). Confirmed via
+`iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml` that `1.11.0` is
+already the latest published release — no newer version exists to add as a
+forward-looking leg today. `1.10.2` is the latest patch in the `1.10.x`
+line, chosen over the base `1.10.0` release deliberately: `1.10.0`'s own
+Avro-API bug (`NoSuchMethodError` on
+`org.apache.avro.LogicalTypes.timestampNanos`, `apache/iceberg#14232`, see
+above) is real and already diagnosed, and `1.10.0` is *not* included in this
+matrix (see "Deliberately excluded: 1.10.0" below) — but whether that fix
+was backported into the `1.10.x` patch line (plausible) or only landed
+starting at `1.11.0` is exactly the kind of claim this matrix is built to
+confirm or refute for real, not assume before running it.
+
+**Deliberately excluded: 1.10.0.** Its known bug is real and lives inside
+Iceberg's own jar (not a Spark-version interaction the way Delta 3.2.0's
+exclusion is), which would make it a genuinely useful "known-bad,
+expected-to-fail" regression-proof leg — the same validation the fuzz spec
+and API-compatibility check already got by deliberately breaking something
+and confirming the check catches it. Left out anyway: including it would
+require this job to distinguish an expected failure from a real unexpected
+one (special-case handling so `summary` doesn't either block on a known
+issue forever or silently pass through a genuinely new regression on the
+same leg), and the simpler job — every leg expected to pass, no exceptions,
+same shape as every other matrix job in this file — was chosen instead.
+
+**Mechanism**: `icebergVersion` reads an `INVARACT_TEST_ICEBERG_VERSION`
+environment variable, falling back to `1.11.0` when unset, so a plain local
+`sbt test` is unaffected:
+
+```bash
+cd spark-adapter
+INVARACT_TEST_ICEBERG_VERSION=1.10.2 sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec"
+```
+
+**If a leg fails for real**: same discipline as Delta's version matrix and
+the Spark-version matrix's own floor correction — root-caused before the
+version list is adjusted, not just swapped to something that happens to
+pass. `FailClosedCommands.isKnownSafeIcebergProcedureCall`'s reflection
+already anticipates this kind of drift explicitly: a reflection failure
+(e.g. a future Iceberg version reshaping `Call` or its procedure classes)
+returns `false` — fails closed — rather than assuming compatibility.
+

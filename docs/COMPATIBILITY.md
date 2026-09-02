@@ -138,6 +138,31 @@ Scala 2.12 only, and Spark 4.0 requires Scala 2.13. Supporting it means a genuin
 cross-compilation project (see `docs/SPARK_ADAPTER.md`), not an addition to the CI matrix
 above.
 
+## Connector Library Compatibility
+
+`spark-adapter` also pins a single version of each connector library it's tested against
+(`delta-spark`, `iceberg-spark-runtime`), test-scope only. The same "one version proves nothing
+about another" gap the Spark-version matrix closed applied here too — CI's
+`delta-version-matrix` and `iceberg-version-matrix` jobs close it now. See
+`docs/connectors/delta.md` and `docs/connectors/iceberg.md`'s own "Version compatibility"
+sections for the full mechanism and rationale.
+
+### Delta Lake
+
+| Version | Status | Notes |
+|---------|--------|-------|
+| 3.3.0 | ✓ Verified | Floor of the supported range within the current minor line. |
+| 3.3.3 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `deltaVersion`). Also the newest published release — confirmed via `delta-spark_2.12`'s own `maven-metadata.xml`. |
+| 3.2.x | Not supported | Incompatible with this repo's pinned Spark version (3.5.7) for a Spark-side DSv2 write-path reason, not a Delta-version question this matrix is built to answer — see `docs/connectors/delta.md`. |
+
+### Iceberg
+
+| Version | Status | Notes |
+|---------|--------|-------|
+| 1.10.0 | Not supported | Confirmed real bug inside this release (`apache/iceberg#14232`, Avro API mismatch) — this is why the repo never pinned it, not something re-tested by the matrix. |
+| 1.10.2 | ✓ Verified | Latest patch of the previous minor line. |
+| 1.11.0 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `icebergVersion`). Also the newest published release — confirmed via `iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml`. |
+
 ## Execution Environment
 
 ### Local Development

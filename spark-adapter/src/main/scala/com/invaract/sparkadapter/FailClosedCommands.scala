@@ -321,24 +321,29 @@ private[sparkadapter] object FailClosedCommands {
     // procedures. `isKnownSafe` special-cases it: see
     // `isKnownSafeIcebergProcedureCall`/`safeIcebergProcedureClasses` above
     // for per-*procedure* (not per-plan-class) classification, matched on
-    // `Call.procedure()`'s own concrete class via reflection. Ten of
+    // `Call.procedure()`'s own concrete class via reflection. Eleven of
     // Iceberg's twenty system procedures are classified safe there
     // (storage/metadata compaction, GC of already-unreferenced
     // files/snapshots, catalog registration, stats, read-only
-    // introspection); the other ten - rollback_to_snapshot/
-    // rollback_to_timestamp/set_current_snapshot (change which snapshot is
-    // "current"), cherrypick_snapshot/publish_changes/fast_forward (apply
-    // or fast-forward to a different snapshot's changes), add_files
-    // (imports external files as new rows), migrate (converts an existing
-    // table's format in place), snapshot/rewrite_table_path (produce new
-    // persisted table content, even though neither modifies its *source*
-    // table) - stay unmodeled and fail closed, deliberately: each would
-    // need its own new verification mechanism (a target snapshot's
-    // already-recorded schema read from the catalog, or a schema read from
-    // a CALL argument's referenced table/path - neither is "translate a
-    // Spark write," the model every other case here fits), tracked as
-    // separate future work, not attempted in this pass. See
-    // docs/SPARK_ADAPTER.md's "Iceberg CALL procedure classification"
-    // section for the full per-procedure reasoning.
+    // introspection, and rewrite_table_path - produces new persisted table
+    // content but never touches its *source* table's data, so it joined
+    // this list rather than needing a verification mechanism of its own).
+    // The other nine - rollback_to_snapshot/rollback_to_timestamp/
+    // set_current_snapshot (change which snapshot is "current"),
+    // cherrypick_snapshot/publish_changes/fast_forward (apply or
+    // fast-forward to a different snapshot's changes), add_files (imports
+    // external files as new rows), migrate (converts an existing table's
+    // format in place), snapshot (produces new persisted table content
+    // from a source outside this table) - are genuinely verified against a
+    // contract elsewhere (StateChangingCallSupport.scala), not by this
+    // class-name-based safe-list mechanism: each needed its own new
+    // verification path (a target snapshot's already-recorded schema read
+    // from the catalog, or a schema read from a CALL argument's referenced
+    // table/path - neither is "translate a Spark write," the model every
+    // other case here fits). As of that work landing, all twenty of
+    // Iceberg's system procedures have a permanent, evidenced disposition
+    // - none are left unmodeled. See docs/connectors/iceberg.md's "Iceberg
+    // CALL procedure classification" section for the full per-procedure
+    // reasoning.
   )
 }

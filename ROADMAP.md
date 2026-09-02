@@ -1007,6 +1007,68 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
     - Full detail in docs/SPARK_ADAPTER.md's "Spark version compatibility"
       section and docs-site's "Spark Version Support" reference page.
 
+#### Sub-phase: Delta Lake / Iceberg version compatibility matrix (done)
+
+The connector-library counterpart to the Spark-version matrix above:
+`spark-adapter/build.sbt` only ever pins one `deltaVersion`/`icebergVersion`
+at a time, with no CI evidence either connector's command recognition still
+holds against a different release of the library itself.
+
+- [x] **`delta-version-matrix` CI job** — `deltaVersion` reads
+      `INVARACT_TEST_DELTA_VERSION` (falls back to `3.3.3` when unset), and
+      the job runs the three specs that actually build a Delta-extended
+      session (`ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
+      `SparkPlanAdapterSpec` — Delta has no dedicated spec file, unlike
+      Iceberg) against `3.3.0` and `3.3.3`. No newer leg exists: confirmed
+      via `delta-spark_2.12`'s own `maven-metadata.xml` that 3.3.3 is
+      already the latest published release. `3.2.x` deliberately excluded
+      — its incompatibility with this repo's Spark pin is a Spark-side
+      issue (see the sub-phase above), not a Delta-version question this
+      matrix answers.
+- [x] **`iceberg-version-matrix` CI job** — `icebergVersion` reads
+      `INVARACT_TEST_ICEBERG_VERSION` (falls back to `1.11.0`), and the job
+      runs the two Iceberg-dependent specs (`IcebergConnectorSpec`,
+      `SparkAdapterListenerIcebergSpec`) against `1.10.2` and `1.11.0`.
+      Same "no newer release exists" finding, confirmed via
+      `iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml`.
+    - **Deliberately excluded: `1.10.0`.** Its real, already-diagnosed Avro
+      API bug (`apache/iceberg#14232`) — internal to that Iceberg release,
+      unlike Delta 3.2.0's Spark-side issue — would have made it a
+      genuinely useful "known-bad, expected-to-fail" regression-proof leg,
+      the same validation the fuzz spec and API-compatibility check
+      already got. Traded away deliberately (user's call) for a simpler
+      job: every leg in both new matrix jobs is expected to pass, no
+      special-case failure handling needed, same shape as every other
+      guardrail here.
+- [x] Both jobs added to the `summary` gate, same as every other guardrail.
+- [x] **Two pre-existing stale comments found and fixed while researching
+      this, unrelated to version compatibility itself but directly
+      adjacent to the files this work touches:**
+    - `docs/connectors/delta.md` claimed in three separate places (a
+      "Known limitation" paragraph, the operation-surface ledger's
+      "Format-specific DML" row, and the file's closing "Net assessment")
+      that Delta's row-level DML has no rule-based semantic verification —
+      false since the "Interpreting `rules`" and "Predicate-logic
+      `merge_condition`" sub-phases landed (`merge_condition`/
+      `forbid_unconditional_delete`/`allowed_update_columns` are genuinely
+      checked against live Delta MERGE/UPDATE/DELETE via
+      `RowMutationSupport.classifyDelta`/`RuleVerifier`, confirmed by
+      reading that code directly, not assumed from the stale prose). All
+      three corrected to state the real, narrower remaining gap (row-level
+      targeting, DELETE-predicate satisfiability, rule vocabulary beyond
+      these three types).
+    - `spark-adapter/src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala`'s
+      comment said "the other ten [Iceberg CALL procedures]... stay
+      unmodeled and fail closed" — stale relative to the later CALL-
+      procedure-classification sub-phases below: 9 of those 10 are now
+      genuinely verified via `StateChangingCallSupport.scala`, and the
+      10th (`rewrite_table_path`) moved to the safe list. Corrected; no
+      functional code changed, the safe-list itself was already accurate.
+- [x] Full detail in `docs/connectors/delta.md` and
+      `docs/connectors/iceberg.md`'s own "Version compatibility" sections,
+      and `docs/COMPATIBILITY.md`'s "Connector Library Compatibility"
+      section.
+
 #### Sub-phase: Delta Lake support (done)
 
 Closed a real, previously-unknown correctness gap: a Delta Lake write

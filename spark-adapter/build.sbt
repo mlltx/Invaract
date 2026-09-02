@@ -80,7 +80,20 @@ val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
 // inside DeltaSparkSessionExtension, aborting every spec that builds a
 // Delta-extended session. See docs/SPARK_ADAPTER.md's "Spark version
 // compatibility" section.
-val deltaVersion = "3.3.3"
+//
+// Overridable via INVARACT_TEST_DELTA_VERSION for the delta-version-matrix
+// CI job (.github/workflows/test.yml), which runs this module's
+// Delta-touching specs (ContractEnforcementRuleSpec, SparkAdapterListenerSpec,
+// SparkPlanAdapterSpec - the only ones that build a Delta-extended session,
+// per docs/connectors/delta.md) against every delta-spark release this repo
+// claims to support (currently 3.3.0/3.3.3 - see that doc's "Version
+// compatibility" section for why: confirmed via delta-spark_2.12's own
+// maven-metadata.xml that 3.3.3 is already the latest published release,
+// so there is no newer leg to test, and 3.2.x is excluded as a known
+// Spark-side incompatibility unrelated to the Delta version itself, not a
+// Delta-version question this matrix answers). A plain local `sbt test` is
+// unaffected - the env var is unset, so this still resolves to 3.3.3.
+val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", "3.3.3")
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
 // for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
@@ -92,7 +105,23 @@ val deltaVersion = "3.3.3"
 // apache/iceberg#14232), fixed via #14292 and folded into the Avro-1.12.1
 // upgrade that landed before this version - see docs/SPARK_ADAPTER.md's
 // Iceberg section for the citation.
-val icebergVersion = "1.11.0"
+//
+// Overridable via INVARACT_TEST_ICEBERG_VERSION for the
+// iceberg-version-matrix CI job (.github/workflows/test.yml), which runs
+// this module's Iceberg-touching specs (IcebergConnectorSpec,
+// SparkAdapterListenerIcebergSpec - the only two, per this file's own
+// JDK17+ exclusion-filter comment below, plus FailClosedCommands.scala
+// which references Iceberg only via string literals) against every
+// iceberg-spark-runtime release this repo claims to support (currently
+// 1.10.2/1.11.0 - see docs/connectors/iceberg.md's "Version compatibility"
+// section: confirmed via this artifact's own maven-metadata.xml that
+// 1.11.0 is already the latest published release, so there is no newer
+// leg to test; 1.10.0 is deliberately excluded - its real Avro-API bug is
+// exactly what this matrix would otherwise want as a regression-proof
+// leg, but the extra CI complexity of an expected-failure leg was traded
+// away for a simpler job). A plain local `sbt test` is unaffected - the
+// env var is unset, so this still resolves to 1.11.0.
+val icebergVersion = sys.env.getOrElse("INVARACT_TEST_ICEBERG_VERSION", "1.11.0")
 
 // Hive support, unlike Delta/Iceberg above, is not an external connector
 // library - it's Spark's own first-party integration module, split out of
