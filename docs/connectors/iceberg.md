@@ -707,6 +707,40 @@ cd spark-adapter
 INVARACT_TEST_ICEBERG_VERSION=1.10.2 sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec"
 ```
 
+**Investigated and rejected: 1.9.2.** An attempt to push the verified floor
+down one more step (the latest patch of the prior `1.9.x` minor line,
+mirroring exactly how `1.10.2` itself was chosen) was tried as a real
+`iceberg-version-matrix` leg and failed for real, in CI, not assumed:
+`IcebergConnectorSpec`'s tests that build a `JdbcCatalog`-backed session hit
+
+```
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "ICEBERG_TABLES" already exists
+```
+
+Root-caused by comparing `JdbcCatalog.java`'s real source at the
+`apache-iceberg-1.9.2` and `apache-iceberg-1.10.2` tags directly (not
+assumed): `1.9.2`'s `initializeCatalogTables()` checks whether its catalog
+table already exists via `DatabaseMetaData.getTables(..., tableNamePattern,
+...)` using the table's name exactly as declared (lowercase) — but H2 (this
+suite's JDBC catalog backing store) folds unquoted identifiers to uppercase
+by default, confirmed by the error itself naming the table `"ICEBERG_TABLES"`
+(uppercase). The lowercase-only existence check never matches the
+already-created uppercase table, so `1.9.2` attempts to `CREATE TABLE` a
+second time and H2 rejects it. `1.10.2` fixed exactly this: its
+`atomicCreateTable` helper explicitly retries the existence check against
+`name.toUpperCase(Locale.ROOT)` ("some databases force table name to upper
+case"), and additionally treats a `CREATE TABLE` that races against another
+already-successful create as success rather than propagating the exception.
+
+This is a real bug inside `1.9.2`'s own `JdbcCatalog`, not a Spark-version
+interaction or a flake in this repo's CI — the same category of finding as
+`1.10.0`'s Avro mismatch above, just affecting the JDBC catalog path instead
+of Avro. `1.10.2` stays the verified floor;
+`spark-adapter/src/main/resources/supported-versions.properties`'s
+`iceberg.verified` was deliberately **not** extended to include `1.9.2`,
+and the candidate leg was removed from `iceberg-version-matrix` after this
+result rather than left permanently red.
+
 **If a leg fails for real**: same discipline as Delta's version matrix and
 the Spark-version matrix's own floor correction — root-caused before the
 version list is adjusted, not just swapped to something that happens to

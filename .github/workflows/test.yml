@@ -600,19 +600,21 @@ jobs:
     # Runs on JDK 21 (set up below), satisfying Iceberg's own JDK17+
     # class-file-version requirement with no extra gating needed.
     #
-    # 1.9.2 (latest patch of the prior 1.9.x minor line) is a candidate leg,
-    # not yet promoted into supported-versions.properties's iceberg.verified
-    # (see version-matrix-drift-check's own comment for why the matrix is
-    # allowed to carry an unproven candidate) - added to push the verified
-    # floor down one step below 1.10.2, mirroring exactly how 1.10.2 itself
-    # was chosen (the latest patch of the minor line below the previous
-    # floor). If this leg passes, iceberg.verified and the generated docs
-    # get updated in the same PR to promote it for real; if not, this
-    # comment's own follow-up records why.
+    # 1.9.2 (latest patch of the prior 1.9.x minor line) was tried as a
+    # candidate leg to push the verified floor down one step below 1.10.2,
+    # mirroring exactly how 1.10.2 itself was chosen - and failed for real:
+    # IcebergConnectorSpec's JdbcCatalog-backed tests hit a genuine bug in
+    # 1.9.2's own JdbcCatalog.initializeCatalogTables (a lowercase-only
+    # table-existence check that misses H2's uppercase-folded table name,
+    # so it tries to re-create an already-existing table and H2 rejects
+    # it) - fixed in 1.10.2's atomicCreateTable. See docs/connectors/
+    # iceberg.md's "Version compatibility" section, "Investigated and
+    # rejected: 1.9.2" for the full root-cause comparison of both
+    # versions' real source. 1.10.2 stays the floor; not re-added here.
     strategy:
       fail-fast: false
       matrix:
-        iceberg-version: ["1.9.2", "1.10.2", "1.11.0"]
+        iceberg-version: ["1.10.2", "1.11.0"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
