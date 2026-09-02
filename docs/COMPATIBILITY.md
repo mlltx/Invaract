@@ -89,10 +89,11 @@ marked "Verified" on every push, not a one-time spot check. See
 
 | Spark | Status | Notes |
 |-------|--------|-------|
-| 3.5.1 | ✓ Verified | Floor of the supported range. |
+| < 3.5.6 (incl. 3.5.1) | Not supported | Fails for real, confirmed by CI, not assumed: `delta-spark` 3.3.3 (this module's pinned Delta version) needs a class (`SupportsNonDeterministicExpression`) that doesn't exist before Spark 3.5.6, so any spec building a Delta-extended session aborts with `ClassNotFoundException`. |
+| 3.5.6 | ✓ Verified | Floor of the supported range — the actual, CI-confirmed floor, not 3.5.1. |
 | 3.5.7 | ✓ Verified, Primary | Current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
 | 3.5.9 | ✓ Verified | Newest verified patch. |
-| Other 3.5.x | Expected, unverified | Spark's own patch releases don't change Catalyst's plan shapes, but only the three rows above are actually CI-checked. |
+| Other 3.5.x ≥ 3.5.6 | Expected, unverified | Spark's own patch releases don't change Catalyst's plan shapes, but only the three rows above are actually CI-checked. |
 | 3.4.x | Not supported | Never verified; not a claim this repo makes. |
 | 4.x | Not supported | Requires Scala 2.13 (Spark 4.0 dropped 2.12); this repo has no Scala cross-build. A real project, not a CI-leg addition — see `docs/SPARK_ADAPTER.md`'s "Deferred: Spark 4.x" note. |
 
@@ -115,13 +116,16 @@ spark-submit --version
 
 `spark-adapter/build.sbt`'s `sparkVersion` reads an `INVARACT_TEST_SPARK_VERSION`
 environment variable (falling back to `3.5.7` when unset), so testing against any 3.5.x
-patch — including ones outside the three CI-verified rows above — doesn't require editing
-`build.sbt`:
+patch **at or above 3.5.6** — including ones outside the three CI-verified rows above —
+doesn't require editing `build.sbt`:
 
 ```bash
 cd spark-adapter
-INVARACT_TEST_SPARK_VERSION=3.5.4 sbt test
+INVARACT_TEST_SPARK_VERSION=3.5.8 sbt test
 ```
+
+A patch below 3.5.6 will fail the same way 3.5.1 did above — that's not a gap in this
+override mechanism, it's a real Delta version floor.
 
 Report any issues on a patch outside the verified set:
 [GitHub Issues](https://github.com/mlltx/Invaract/issues).

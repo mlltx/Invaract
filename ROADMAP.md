@@ -955,11 +955,23 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
 
 - [x] **CI job (`spark-version-matrix`, `.github/workflows/test.yml`)**
       runs `spark-adapter`'s full `sbt test` suite — not a "core" subset —
-      against every Spark 3.5.x patch this repo claims to support: 3.5.1
+      against every Spark 3.5.x patch this repo claims to support: 3.5.6
       (the floor), 3.5.7 (the current pin), and 3.5.9 (newest). One job
       per patch, `fail-fast: false` so a failure on one patch doesn't hide
       results for the others. Added to the `summary` gate like every other
       guardrail here.
+    - **The floor is 3.5.6, not the originally-planned 3.5.1** — found by
+      the matrix itself, not assumed: the first real CI run of this job
+      failed its 3.5.1 leg with `ClassNotFoundException` on
+      `org.apache.spark.sql.catalyst.plans.logical.SupportsNonDeterministicExpression`
+      inside `DeltaSparkSessionExtension`, aborting every spec that builds
+      a Delta-extended session. Root cause: `delta-spark` 3.3.3 (this
+      module's pinned `deltaVersion`) is only built against Spark 3.5.6+ —
+      `spark-adapter/build.sbt`'s own comment already documented that fact
+      before the matrix existed to prove it by actually failing. Exactly
+      the kind of real, evidence-based correction this repo's own
+      dependency-pinning discipline expects, not a guess accepted without
+      running it.
     - No Spark binary install needed, unlike `test`/`mutation-testing-
       spark-adapter`/`docker-regression`: `sbt test` resolves Spark as an
       ordinary managed dependency and spins up its own in-process
@@ -969,13 +981,15 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
       an `INVARACT_TEST_SPARK_VERSION` environment variable, falling back
       to `3.5.7` when unset so a plain local `sbt test` is unaffected —
       only the CI matrix sets it per leg.
-    - Every connector's test-scope dependency
+    - Iceberg/ClickHouse/Hive/Avro's test-scope dependencies
       (`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
-      `spark-hive`/`spark-avro`) is published per-Spark-*minor*-line, not
-      per-patch, so all three matrix legs stay within the same resolvable
-      set — no need to split the suite into "core" vs. "connector" subsets
-      for this floor. That split would only become necessary for a
-      different Spark *minor* line.
+      `spark-hive`/`spark-avro`) are published per-Spark-*minor*-line, not
+      per-patch, so they stay resolvable and correct across every patch in
+      the matrix — Delta is the one exception (see the floor note above),
+      and its own lower bound is now the matrix's floor rather than
+      something worked around per-leg. Splitting the suite into "core" vs.
+      "connector" subsets would only become necessary for a different
+      Spark *minor* line.
     - Fixed a real, pre-existing inconsistency found while building this:
       the `test`/`mutation-testing-spark-adapter`/`docker-regression`
       jobs, `docker/Dockerfile`, `.devcontainer/post-create.sh`, and

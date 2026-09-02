@@ -467,10 +467,20 @@ jobs:
     # own in-process `local[*]` SparkSession - confirmed via a repo-wide
     # search that no spark-adapter source references SPARK_HOME, so a real
     # Spark distribution on PATH is not something this suite needs.
+    # 3.5.6, not 3.5.1: an initial attempt at 3.5.1 as the floor failed with
+    # a real ClassNotFoundException (org.apache.spark.sql.catalyst.plans.
+    # logical.SupportsNonDeterministicExpression) inside
+    # DeltaSparkSessionExtension whenever a spec builds a Delta-extended
+    # session - confirmed via a real CI run, not assumed. delta-spark 3.3.3
+    # (spark-adapter/build.sbt's pinned version) is only built against
+    # Spark 3.5.6+ (see that file's own delta-version comment, which
+    # already documented this before the matrix existed to prove it: "3.3.3
+    # against 3.5.6 - the closest published delta-spark release"). 3.5.6 is
+    # the real, evidenced floor for this module's full suite, not 3.5.1.
     strategy:
       fail-fast: false
       matrix:
-        spark-version: ["3.5.1", "3.5.7", "3.5.9"]
+        spark-version: ["3.5.6", "3.5.7", "3.5.9"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

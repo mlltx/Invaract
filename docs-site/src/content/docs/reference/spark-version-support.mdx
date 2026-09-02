@@ -16,13 +16,20 @@ been verified, not just what the code happens to compile against.
 
 | Spark version | Status | Notes |
 |---|---|---|
-| 3.5.1 | ✅ Verified | Floor of the supported range. |
+| 3.5.6 | ✅ Verified | Floor of the supported range. |
 | 3.5.7 | ✅ Verified | Current primary version — what a real `./dev/test` run installs and what `spark-adapter` is built against by default. |
 | 3.5.9 | ✅ Verified | Newest verified patch. |
 
-Every other 3.5.x patch between these is expected to work (Spark's own patch releases
+Every other 3.5.x patch at or above 3.5.6 is expected to work (Spark's own patch releases
 don't change Catalyst's plan shapes), but is only a claim, not something CI checks for you —
 treat the three rows above as what's actually proven.
+
+<Aside type="danger" title="Below 3.5.6 does not work">
+Spark 3.5.1 through 3.5.5 are not supported, confirmed by a real CI failure rather than
+assumed: Invaract's Delta Lake support depends on `delta-spark` 3.3.3, which requires a
+class Spark only introduced in 3.5.6. Below that, installing the enforcement rule in a
+Delta-extended session throws `ClassNotFoundException`.
+</Aside>
 
 <Aside type="caution" title="Spark 4.x is not supported">
 Invaract is built for Scala 2.12, and Spark 4.0 requires Scala 2.13. Running Invaract

@@ -27,7 +27,7 @@ organization := "com.invaract"
 // Overridable via INVARACT_TEST_SPARK_VERSION for the spark-version-matrix
 // CI job (.github/workflows/test.yml), which runs this module's full suite
 // against every Spark 3.5.x patch this repo claims to support (currently
-// 3.5.1/3.5.7/3.5.9 - see docs/SPARK_ADAPTER.md's "Spark version
+// 3.5.6/3.5.7/3.5.9 - see docs/SPARK_ADAPTER.md's "Spark version
 // compatibility" section), without editing this file per matrix leg. A
 // plain local `sbt test` is unaffected - the env var is unset, so this
 // still resolves to 3.5.7, today's real pin. Only the Spark-version-owned
@@ -71,6 +71,15 @@ val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
 // this module's suite) against 3.3.3 before settling on it - see
 // docs/SPARK_ADAPTER.md's Delta section / docs/connectors/delta.md for
 // the full citation trail.
+//
+// The "3.5.6+" floor above isn't just delta-io's own metadata - the
+// spark-version-matrix CI job (.github/workflows/test.yml) proved it
+// directly: an initial attempt at a 3.5.1 floor failed with
+// ClassNotFoundException on
+// org.apache.spark.sql.catalyst.plans.logical.SupportsNonDeterministicExpression
+// inside DeltaSparkSessionExtension, aborting every spec that builds a
+// Delta-extended session. See docs/SPARK_ADAPTER.md's "Spark version
+// compatibility" section.
 val deltaVersion = "3.3.3"
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
