@@ -168,9 +168,12 @@ ExecutionReport (Scala case class, runner/DemoJobHarness.scala)
 
 **Rationale:**
 - `ir`'s `Plan`/`Expr` algebra deliberately does not mirror Catalyst's
-  expression class hierarchy (one `FunctionCall` node covers every scalar
-  operator) — see docs/TRANSFORMATION_IR.md's "Critical principle:
-  semantics, not syntax."
+  expression class hierarchy one-for-one: it distinguishes node kinds
+  (`Arithmetic`, `Comparison`, `BooleanExpr`, `Cast`, `Conditional`,
+  `UDF`, ...) only where the distinction is semantically load-bearing,
+  collapsing everything else into one `Function` catch-all — see
+  docs/TRANSFORMATION_IR.md's "Critical principle: semantics, not
+  syntax."
 - This is what makes Phase 2 (a SQL or dbt adapter, per ROADMAP.md)
   additive rather than a rewrite: `contract` and `ir` don't change, only a
   new adapter module translating into the same IR.
@@ -198,7 +201,7 @@ two different jobs, not one mechanism for both.
   of all three mechanisms Spark exposes, including why `.analyzed` rather
   than `.optimizedPlan` was chosen as the plan to translate.
 
-### ADR-003: Never throw — degrade to `Unsupported`/`Diagnostic`
+### ADR-003: Never throw — degrade to `UnknownPlan`/`Diagnostic`
 
 **Decision:** `SparkPlanAdapter.translate` always returns a `Plan`, never
 an exception, even for a Catalyst construct it doesn't recognize.

@@ -59,7 +59,7 @@ class LineageSpec extends AnyFunSuite {
     val orders = Read(DatasetRef("raw.orders"))
     val projected =
       Project(orders, List(NamedExpr("amount", ColumnReference(ColumnRef("amount", Some("raw.orders"))))))
-    val filtered = Filter(projected, FunctionCall(">", List(ColumnReference(ColumnRef("amount")), Literal(0, "integer"))))
+    val filtered = Filter(projected, Comparison(">", ColumnReference(ColumnRef("amount")), Literal(0, "integer")))
     val sorted = Sort(filtered, List(SortOrder(ColumnReference(ColumnRef("amount")))))
     val plan = Write(DatasetRef("gold.amounts"), sorted)
 
@@ -74,12 +74,10 @@ class LineageSpec extends AnyFunSuite {
       orders,
       customers,
       JoinType.Inner,
-      Some(FunctionCall(
+      Some(Comparison(
         "=",
-        List(
-          ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
-          ColumnReference(ColumnRef("id", Some("raw.customers")))
-        )
+        ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
+        ColumnReference(ColumnRef("id", Some("raw.customers")))
       ))
     )
     val projected = Project(
@@ -219,12 +217,10 @@ class LineageSpec extends AnyFunSuite {
         List(
           NamedExpr(
             "flagged_total",
-            FunctionCall(
+            Comparison(
               ">",
-              List(
-                AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders")))),
-                Literal(0, "integer")
-              )
+              AggregateCall("SUM", ColumnReference(ColumnRef("amount", Some("raw.orders")))),
+              Literal(0, "integer")
             )
           )
         )
@@ -254,24 +250,104 @@ class LineageSpec extends AnyFunSuite {
     assert(Lineage.trace(Read(DatasetRef("raw.orders"))).isEmpty)
   }
 
-  test("trace resolves an unsupported reference to no known source instead of crashing") {
+  test("trace resolves a reference against an UnknownPlan to no known source instead of crashing") {
     val plan = Write(
       DatasetRef("gold.out"),
-      Project(Unsupported("Generate(explode)"), List(NamedExpr("x", ColumnReference(ColumnRef("x")))))
+      Project(UnknownPlan("Generate(explode)"), List(NamedExpr("x", ColumnReference(ColumnRef("x")))))
     )
 
     val lineage = Lineage.trace(plan)
     assert(lineage == List(ColumnLineage(ColumnRef("x"), Set.empty, aggregated = false)))
   }
 
-  test("trace treats an UnsupportedExpr as contributing no sources") {
+  test("trace treats a childless UnknownExpression as contributing no sources") {
     val orders = Read(DatasetRef("raw.orders"))
     val plan = Write(
       DatasetRef("gold.out"),
-      Project(orders, List(NamedExpr("mystery", UnsupportedExpr("ScalaUDF(myFunc)"))))
+      Project(orders, List(NamedExpr("mystery", UnknownExpression("ScalaUDF(myFunc)", sourceType = "ScalaUDF"))))
     )
 
     val lineage = Lineage.trace(plan)
     assert(lineage == List(ColumnLineage(ColumnRef("mystery"), Set.empty, aggregated = false)))
+  }
+
+  test("trace still resolves an UnknownExpression's understood children, even though the node itself is opaque") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(
+        orders,
+        List(
+          NamedExpr(
+            "mystery",
+            UnknownExpression(
+              "Generate(explode)",
+              sourceType = "Generate",
+              children = List(ColumnReference(ColumnRef("tags", Some("raw.orders"))))
+            )
+          )
+        )
+      )
+    )
+
+    val lineage = Lineage.trace(plan)
+    assert(lineage == List(ColumnLineage(ColumnRef("mystery"), Set(ColumnRef("tags", Some("raw.orders"))), aggregated = false)))
+  }
+
+  test("trace resolves Cast/Alias/Arithmetic/Comparison/BooleanExpr/Conditional/UDF transparently to their operands' sources") {
+    val orders = Read(DatasetRef("raw.orders"))
+
+    def lineageOf(expr: Expr): ColumnLineage =
+      Lineage.trace(Write(DatasetRef("gold.out"), Project(orders, List(NamedExpr("out", expr))))).head
+
+    val amount = ColumnReference(ColumnRef("amount", Some("raw.orders")))
+    val status = ColumnReference(ColumnRef("status", Some("raw.orders")))
+    val tax = ColumnReference(ColumnRef("tax", Some("raw.orders")))
+
+    assert(lineageOf(Cast(amount, "double")).sources == Set(ColumnRef("amount", Some("raw.orders"))))
+    assert(lineageOf(Alias("renamed", amount)).sources == Set(ColumnRef("amount", Some("raw.orders"))))
+    assert(lineageOf(Arithmetic("*", List(amount, Literal(1.2, "double")))).sources == Set(ColumnRef("amount", Some("raw.orders"))))
+    assert(lineageOf(Comparison("=", status, Literal("ACTIVE", "string"))).sources == Set(ColumnRef("status", Some("raw.orders"))))
+    assert(
+      lineageOf(BooleanExpr("AND", List(Comparison("=", status, Literal("ACTIVE", "string")), Comparison(">", amount, Literal(0, "integer")))))
+        .sources == Set(ColumnRef("status", Some("raw.orders")), ColumnRef("amount", Some("raw.orders")))
+    )
+    assert(
+      lineageOf(UDF(Some("calculateRisk"), List(amount, status))).sources ==
+        Set(ColumnRef("amount", Some("raw.orders")), ColumnRef("status", Some("raw.orders")))
+    )
+    // Every operand is a real column reference here (no literal on either
+    // side) so a mutant that silently drops one operand's contribution
+    // (rather than merely flipping `exists`/`forall` on the aggregation
+    // flag) is actually observable: the resulting sources Set would be
+    // missing one of the two columns.
+    assert(lineageOf(Arithmetic("+", List(amount, tax))).sources == Set(ColumnRef("amount", Some("raw.orders")), ColumnRef("tax", Some("raw.orders"))))
+    assert(lineageOf(Comparison("=", amount, tax)).sources == Set(ColumnRef("amount", Some("raw.orders")), ColumnRef("tax", Some("raw.orders"))))
+    assert(lineageOf(BooleanExpr("AND", List(status, ColumnReference(ColumnRef("active", Some("raw.orders")))))).sources ==
+      Set(ColumnRef("status", Some("raw.orders")), ColumnRef("active", Some("raw.orders"))))
+  }
+
+  test("trace includes a Conditional's branch conditions in its sources, not just its result values") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val status = ColumnReference(ColumnRef("status", Some("raw.orders")))
+    val tier = ColumnReference(ColumnRef("tier", Some("raw.orders")))
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(
+        orders,
+        List(
+          NamedExpr(
+            "priority",
+            Conditional(
+              List((Comparison("=", status, Literal("ACTIVE", "string")), tier)),
+              Some(Literal("none", "string"))
+            )
+          )
+        )
+      )
+    )
+
+    val lineage = Lineage.trace(plan)
+    assert(lineage.head.sources == Set(ColumnRef("status", Some("raw.orders")), ColumnRef("tier", Some("raw.orders"))))
   }
 }

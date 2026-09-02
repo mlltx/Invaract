@@ -1,3 +1,5 @@
+import com.typesafe.tools.mima.core._
+
 name := "invaract-ir"
 version := "0.1.0"
 scalaVersion := "2.12.18"
@@ -36,3 +38,28 @@ strykerThresholdsBreak := 50
 // base branch - see contract/build.sbt's comment for why this coordinate
 // must match base-ref's own published name.
 mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
+
+// A deliberate, documented MAJOR-version API break (see CLAUDE.md's "API
+// Compatibility Requirement"): the "Spark Logical Plan -> Invariant IR"
+// expression-level rework split the single `FunctionCall` node into
+// `Cast`/`Arithmetic`/`Comparison`/`BooleanExpr`/`Conditional`/`Function`/
+// `UDF`/`Alias`, renamed `Unsupported`/`UnsupportedExpr` to `UnknownPlan`/
+// `UnknownExpression` (adding a `sourceType` field to each), and added an
+// optional `id` field to `ColumnRef` for translator-assigned column
+// identity - see docs/TRANSFORMATION_IR.md's "Expression algebra, v2" for
+// the full rationale. Every line below is exactly what
+// `sbt mimaReportBinaryIssues` reported once this change compiled, run
+// against a local `publishLocal` of the module as it stood on `main` before
+// this change - not guessed.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.example.ir.ColumnRef.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.example.ir.ColumnRef.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.example.ir.ColumnRef.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.example.ir.ColumnRef$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.FunctionCall"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.FunctionCall$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.Unsupported"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.Unsupported$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.UnsupportedExpr"),
+  ProblemFilters.exclude[MissingClassProblem]("com.example.ir.UnsupportedExpr$")
+)

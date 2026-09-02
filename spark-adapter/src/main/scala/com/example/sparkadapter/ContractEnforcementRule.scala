@@ -306,7 +306,7 @@ object ContractEnforcementRule {
               // plan tree, reusing the rest of its explanation format
               // unchanged.
               val describedPlan =
-                com.example.ir.Unsupported(s"CALL ${info.callName}(...) targeting '${info.location}'")
+                com.example.ir.UnknownPlan(s"CALL ${info.callName}(...) targeting '${info.location}'")
               throw new ContractViolationException(result, explain(contract, describedPlan, result))
             }
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
@@ -367,7 +367,7 @@ object ContractEnforcementRule {
       }
       val result = VerificationResult.of(contractRef, violations)
       publishValidation(contract, result, sink, applicationId)
-      val describedPlan = com.example.ir.Unsupported("(contract validation failed before any plan was checked)")
+      val describedPlan = com.example.ir.UnknownPlan("(contract validation failed before any plan was checked)")
       throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
   }

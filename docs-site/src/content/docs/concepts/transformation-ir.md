@@ -7,8 +7,11 @@ sidebar:
 
 Before a Spark write is checked against a contract, it's translated into Invaract's own
 **transformation IR** (intermediate representation) — an engine-independent algebra of
-plan and expression nodes: `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`,
-`Union`, `Sort`, `Window`, and their expression-level counterparts.
+plan and expression nodes. Plan nodes: `Read`, `Write`, `Project`, `Filter`, `Join`,
+`Aggregate`, `Union`, `Sort`, `Limit`, and `Window`. Expression nodes: `ColumnReference`,
+`Literal`, `Alias`, `Cast`, `Arithmetic`, `Comparison`, a boolean combinator (`AND`/`OR`/
+`NOT`), `Conditional` (`CASE WHEN`), `Function` (the catch-all for built-in functions),
+`UDF` (a user-defined function, kept explicitly distinct — see below), and `AggregateCall`.
 
 ## Why not check Spark's plan directly
 
@@ -58,14 +61,20 @@ correct."
 A real adapter will meet constructs it has no precise translation for. Invaract's answer
 is: **degrade, never crash.**
 
-- An unrecognized **plan** node becomes `ir.Unsupported(description, children)` — its own
-  children are still translated and remain inspectable.
-- An unrecognized **expression** falls back to a generic translation built from
+- An unrecognized **plan** node becomes `ir.UnknownPlan(description, sourceType, children)`
+  — its own children are still translated and remain inspectable.
+- An unrecognized **expression** falls back to `ir.Function`, built generically from
   Catalyst's own `prettyName`/`children`, covering most of Spark SQL's built-in functions
-  without hardcoding each one.
-- A user-defined function is opaque (its body can't be reasoned about), so it's
-  translated as a function call over its declared arguments, with a diagnostic flagging
-  that lineage tracing can't see inside it.
+  without hardcoding each one. (The IR also has an explicit `ir.UnknownExpression` node
+  for a front end that genuinely can't represent a construct at all — Spark's own
+  expression algebra is generic enough that this translator essentially never needs it,
+  but the node exists for the same reason `ir.UnknownPlan` does: an unrepresentable
+  construct must be visible, never silently dropped.)
+- A user-defined function's body is opaque (it can't be reasoned about), so it's
+  translated as an explicit `ir.UDF` node — never conflated with a real `ir.Function` —
+  carrying its declared name (when the engine exposes one meaningfully) and its
+  argument dependencies, with a diagnostic flagging that lineage tracing can't see
+  inside its actual logic.
 
 Every degradation is paired with a diagnostic, so a partially understood pipeline is
 still useful to check — rather than an exception that discards everything the adapter

@@ -12,14 +12,31 @@ package com.example.ir
 case class DatasetRef(location: String)
 
 /** A reference to a column, optionally qualified by the dataset or relation
-  * alias it comes from (e.g. `customer_id` from `raw.orders`).
+  * alias it comes from (e.g. `customer_id` from `raw.orders`), and
+  * optionally carrying an opaque per-translation identity.
   *
-  * The IR has no symbol-resolution pass — no Catalyst-style exprIds binding
-  * every attribute to a globally unique producer. A `ColumnRef`'s qualifier
-  * is how lineage tracing decides which upstream relation a bare name
-  * belongs to, particularly across a `Join`; an unqualified reference is
-  * resolved structurally by walking the plan (see `Lineage`).
+  * The IR has no symbol-resolution pass of its own — no Catalyst-style
+  * `exprId` binding every attribute to a globally unique producer as a
+  * first-class IR concept. A `ColumnRef`'s qualifier is how lineage
+  * tracing decides which upstream relation a bare name belongs to,
+  * particularly across a `Join`; an unqualified reference is resolved
+  * structurally by walking the plan (see `Lineage`).
+  *
+  * `id` is the one deliberate exception to "no engine identity in the
+  * model": a front-end translator that has access to a real per-attribute
+  * identity (Spark's `exprId`, or any other engine's analogous concept)
+  * may populate it as a plain opaque number — never an engine type, never
+  * exposed as anything but an integer this IR doesn't interpret. This
+  * exists for the one case name/qualifier genuinely can't disambiguate:
+  * two attributes that are structurally the *same* qualifier (e.g. two
+  * unaliased occurrences of the same source column reaching a join from
+  * different paths) but are not actually the same value stream. Most
+  * front-ends, and all hand-constructed IR (tests included), can safely
+  * leave this `None` — name/qualifier equality remains the primary,
+  * "stable and understandable" identity this IR exposes; `id` only
+  * *strengthens* equality when a translator has real per-attribute
+  * identity available, it never weakens it, since `None == None`.
   */
-case class ColumnRef(name: String, qualifier: Option[String] = None) {
+case class ColumnRef(name: String, qualifier: Option[String] = None, id: Option[Long] = None) {
   override def toString: String = qualifier.map(q => s"$q.$name").getOrElse(name)
 }

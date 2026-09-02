@@ -4,7 +4,7 @@
 package com.example.sparkadapter
 
 import com.example.contract.{ContractRule, InterpretedRule}
-import com.example.ir.{ColumnReference, ColumnRef, DeleteScope, FunctionCall, Literal, RowMutation}
+import com.example.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, DeleteScope, Literal, RowMutation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -16,12 +16,10 @@ import org.scalatest.funsuite.AnyFunSuite
 class RuleVerifierSpec extends AnyFunSuite {
 
   private def equalityOn(leftCol: String, rightCol: String) =
-    FunctionCall(
+    Comparison(
       "=",
-      List(
-        ColumnReference(ColumnRef(leftCol, Some("t"))),
-        ColumnReference(ColumnRef(rightCol, Some("s")))
-      )
+      ColumnReference(ColumnRef(leftCol, Some("t"))),
+      ColumnReference(ColumnRef(rightCol, Some("s")))
     )
 
   test("verify returns no violations when no rule is declared") {
@@ -42,7 +40,7 @@ class RuleVerifierSpec extends AnyFunSuite {
 
   test("merge_condition passes via null-safe equality (<=>), not just plain =") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
-    val nullSafeEq = FunctionCall("<=>", List(ColumnReference(ColumnRef("id", Some("t"))), ColumnReference(ColumnRef("id", Some("s")))))
+    val nullSafeEq = Comparison("<=>", ColumnReference(ColumnRef("id", Some("t"))), ColumnReference(ColumnRef("id", Some("s"))))
     val mutation = RowMutation(matchCondition = Some(nullSafeEq))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
@@ -59,8 +57,8 @@ class RuleVerifierSpec extends AnyFunSuite {
 
   test("merge_condition tolerates an extra, non-equality conjunct beyond the declared columns") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
-    val extraConjunct = FunctionCall(">", List(ColumnReference(ColumnRef("created_date", Some("t"))), Literal("2024-01-01", "string")))
-    val condition = FunctionCall("&&", List(equalityOn("id", "id"), extraConjunct))
+    val extraConjunct = Comparison(">", ColumnReference(ColumnRef("created_date", Some("t"))), Literal("2024-01-01", "string"))
+    val condition = BooleanExpr("AND", List(equalityOn("id", "id"), extraConjunct))
     val mutation = RowMutation(matchCondition = Some(condition))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
@@ -85,8 +83,8 @@ class RuleVerifierSpec extends AnyFunSuite {
     // appears in the condition, but nothing actually matches target
     // against source on it.
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id", "id"))))
-    val rangeCheck = FunctionCall(">", List(ColumnReference(ColumnRef("customer_id", Some("t"))), Literal(0, "integer")))
-    val condition = FunctionCall("&&", List(rangeCheck, equalityOn("id", "id")))
+    val rangeCheck = Comparison(">", ColumnReference(ColumnRef("customer_id", Some("t"))), Literal(0, "integer"))
+    val condition = BooleanExpr("AND", List(rangeCheck, equalityOn("id", "id")))
     val mutation = RowMutation(matchCondition = Some(condition))
     val violations = RuleVerifier.verify(rules, mutation)
     assert(violations.size == 1)
@@ -95,7 +93,7 @@ class RuleVerifierSpec extends AnyFunSuite {
 
   test("merge_condition fails when a declared column is only compared to a literal, not another column") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id"))))
-    val literalEquality = FunctionCall("=", List(ColumnReference(ColumnRef("customer_id", Some("t"))), Literal("ACME", "string")))
+    val literalEquality = Comparison("=", ColumnReference(ColumnRef("customer_id", Some("t"))), Literal("ACME", "string"))
     val mutation = RowMutation(matchCondition = Some(literalEquality))
     val violations = RuleVerifier.verify(rules, mutation)
     assert(violations.size == 1)
@@ -106,7 +104,7 @@ class RuleVerifierSpec extends AnyFunSuite {
     // Only one of the two needs to hold - a strictly weaker guarantee
     // than declaring both columns intends.
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
-    val condition = FunctionCall("||", List(equalityOn("id", "id"), equalityOn("region", "region")))
+    val condition = BooleanExpr("OR", List(equalityOn("id", "id"), equalityOn("region", "region")))
     val mutation = RowMutation(matchCondition = Some(condition))
     val violations = RuleVerifier.verify(rules, mutation)
     assert(violations.size == 1)
@@ -116,7 +114,7 @@ class RuleVerifierSpec extends AnyFunSuite {
 
   test("merge_condition handles a nested (three-way) AND conjunction") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("a", "b", "c"))))
-    val nested = FunctionCall("&&", List(FunctionCall("&&", List(equalityOn("a", "a"), equalityOn("b", "b"))), equalityOn("c", "c")))
+    val nested = BooleanExpr("AND", List(BooleanExpr("AND", List(equalityOn("a", "a"), equalityOn("b", "b"))), equalityOn("c", "c")))
     val mutation = RowMutation(matchCondition = Some(nested))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }

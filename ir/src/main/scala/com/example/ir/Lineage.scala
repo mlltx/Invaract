@@ -50,6 +50,7 @@ object Lineage {
 
     case Filter(input, _) => outputsOf(input)
     case Sort(input, _)   => outputsOf(input)
+    case Limit(input, _, _) => outputsOf(input)
     case Union(inputs)    => inputs.headOption.map(outputsOf).getOrElse(Nil)
     case Join(left, right, _, _) => outputsOf(left) ++ outputsOf(right)
     case Write(_, input, _, _)  => outputsOf(input)
@@ -60,7 +61,7 @@ object Lineage {
 
     // An untranslated construct declares no known output list either —
     // there is nothing to trace past it.
-    case Unsupported(_, _) => Nil
+    case UnknownPlan(_, _, _) => Nil
   }
 
   private def named(name: String, p: Provenance): ColumnLineage = ColumnLineage(ColumnRef(name), p.sources, p.aggregated)
@@ -70,14 +71,31 @@ object Lineage {
       resolveInScope(ref, input).getOrElse(Provenance(Set.empty, aggregated = false))
     case Literal(_, _) =>
       Provenance(Set.empty, aggregated = false)
-    case FunctionCall(_, args) =>
-      val resolved = args.map(resolveExpr(_, input))
-      Provenance(resolved.flatMap(_.sources).toSet, resolved.exists(_.aggregated))
+    case Alias(_, inner) =>
+      resolveExpr(inner, input)
+    case Cast(inner, _) =>
+      resolveExpr(inner, input)
+    case Arithmetic(_, operands) =>
+      combine(operands.map(resolveExpr(_, input)))
+    case Comparison(_, left, right) =>
+      combine(List(resolveExpr(left, input), resolveExpr(right, input)))
+    case BooleanExpr(_, operands) =>
+      combine(operands.map(resolveExpr(_, input)))
+    case Conditional(branches, elseValue) =>
+      val branchProvenance = branches.flatMap { case (cond, value) => List(resolveExpr(cond, input), resolveExpr(value, input)) }
+      combine(branchProvenance ++ elseValue.map(resolveExpr(_, input)).toList)
+    case Function(_, args) =>
+      combine(args.map(resolveExpr(_, input)))
+    case UDF(_, args, _) =>
+      combine(args.map(resolveExpr(_, input)))
     case AggregateCall(_, arg, _) =>
       Provenance(resolveExpr(arg, input).sources, aggregated = true)
-    case UnsupportedExpr(_) =>
-      Provenance(Set.empty, aggregated = false)
+    case UnknownExpression(_, _, children) =>
+      combine(children.map(resolveExpr(_, input)))
   }
+
+  private def combine(provenances: List[Provenance]): Provenance =
+    Provenance(provenances.flatMap(_.sources).toSet, provenances.exists(_.aggregated))
 
   /** Resolves a bare column reference against a plan: does `ref` name a
     * column this plan (re)declares, or does it pass through to whatever
@@ -107,6 +125,7 @@ object Lineage {
 
     case Filter(input, _) => resolveInScope(ref, input)
     case Sort(input, _)   => resolveInScope(ref, input)
+    case Limit(input, _, _) => resolveInScope(ref, input)
 
     case Union(inputs) =>
       val found = inputs.flatMap(resolveInScope(ref, _))
@@ -123,6 +142,6 @@ object Lineage {
 
     case Write(_, input, _, _) => resolveInScope(ref, input)
 
-    case Unsupported(_, _) => None
+    case UnknownPlan(_, _, _) => None
   }
 }

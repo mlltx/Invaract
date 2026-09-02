@@ -800,7 +800,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // check (already in the codebase, previously untested against a real
   // Hive UDF for lack of a metastore) correctly recognizes it. ---
 
-  test("feature surface: a real Hive UDF is translated as an opaque FunctionCall with a diagnostic") {
+  test("feature surface: a real Hive UDF is translated as an explicit UDF node with a diagnostic") {
     spark.sql("CREATE TEMPORARY FUNCTION hive_udf_feature_upper AS 'org.apache.hadoop.hive.ql.udf.generic.GenericUDFUpper'")
     df().createOrReplaceTempView("hive_udf_feature_src")
     val analyzed = spark.sql("SELECT id, hive_udf_feature_upper(CAST(value AS STRING)) AS v FROM hive_udf_feature_src").queryExecution.analyzed
@@ -810,9 +810,9 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     result.plan match {
       case p: com.example.ir.Project =>
         assert(p.columns.exists {
-          case com.example.ir.NamedExpr("v", _: com.example.ir.FunctionCall) => true
+          case com.example.ir.NamedExpr("v", _: com.example.ir.UDF) => true
           case _ => false
-        }, s"expected 'v' translated as an opaque FunctionCall, got ${com.example.ir.PlanPrinter.render(p)}")
+        }, s"expected 'v' translated as an explicit UDF node, got ${com.example.ir.PlanPrinter.render(p)}")
       case other => fail(s"expected a Project, got ${com.example.ir.PlanPrinter.render(other)}")
     }
   }

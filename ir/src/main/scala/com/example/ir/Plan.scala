@@ -101,6 +101,19 @@ case class Sort(input: Plan, order: List[SortOrder]) extends Plan {
   def children: List[Plan] = List(input)
 }
 
+/** Restricts the number of rows without changing the column set or their
+  * meaning — the row-count counterpart to `Filter`. `offset` is the number
+  * of leading rows skipped before `limit` is applied (`0` when the source
+  * plan has no offset clause, the common case); both are captured
+  * explicitly rather than the node being translated away transparently,
+  * since a row cap is itself part of a transformation's observable
+  * semantics (e.g. "top 10 by revenue" is a meaningfully different claim
+  * than "all rows by revenue").
+  */
+case class Limit(input: Plan, limit: Int, offset: Int = 0) extends Plan {
+  def children: List[Plan] = List(input)
+}
+
 /** Adds columns computed over a window of rows related to each row (by
   * partition and/or order) without collapsing row count the way
   * `Aggregate` does. `windowExprs` entries may wrap an `AggregateCall` (a
@@ -124,10 +137,22 @@ case class Window(
   * front-end (this one included: see the `spark-adapter` module) will
   * eventually meet a construct with no clean equivalent here (an exotic
   * operator, a vendor extension). Rather than every translator inventing
-  * its own ad hoc "give up" representation, `Unsupported` is a first-class,
-  * engine-agnostic IR concept: the rest of the tree stays inspectable,
-  * `Lineage` degrades to "no known source" for anything that would need to
-  * resolve through it, and a translator is expected to pair this node with
-  * a diagnostic explaining what it couldn't represent and why.
+  * its own ad hoc "give up" representation, `UnknownPlan` is a
+  * first-class, engine-agnostic IR concept: the rest of the tree stays
+  * inspectable, `Lineage` degrades to "no known source" for anything that
+  * would need to resolve through it, and a translator is expected to pair
+  * this node with a diagnostic explaining what it couldn't represent and
+  * why — an unsupported construct must always be visible in the model,
+  * never silently dropped.
+  *
+  * @param description a human-readable summary of the unrepresented plan
+  *   node.
+  * @param sourceType the front-end's own class/type name for the
+  *   construct (e.g. Catalyst's `getClass.getSimpleName`), kept as a
+  *   plain string so this IR never depends on an engine's types even in
+  *   its "I don't understand this" case.
+  * @param children any sub-plans the front-end could still translate even
+  *   though it couldn't interpret this node itself — so unsupported
+  *   structure never hides understood structure nested beneath it.
   */
-case class Unsupported(description: String, children: List[Plan] = Nil) extends Plan
+case class UnknownPlan(description: String, sourceType: String = "", children: List[Plan] = Nil) extends Plan

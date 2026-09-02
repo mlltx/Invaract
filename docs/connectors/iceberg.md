@@ -44,7 +44,7 @@ to avoid them:
   `SparkPlanAdapter.Translator.translatePlan` had cases for
   `LogicalRelation` (V1 batch), `StreamingRelation` (V1 streaming), and
   `StreamingRelationV2` (V2 streaming) — nothing for a *batch* V2 catalog
-  read, so it fell through to the generic `Unsupported` fallback.
+  read, so it fell through to the generic `UnknownPlan` fallback.
   Confirmed by direct code inspection (not assumed): `StructuralVerifier.collectReads`
   only recognizes `ir.Read` nodes, so any pure-V2 connector's catalog
   reads could never satisfy a contract's declared input — the same class

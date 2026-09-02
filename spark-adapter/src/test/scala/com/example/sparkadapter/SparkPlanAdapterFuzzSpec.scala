@@ -17,7 +17,7 @@ import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
   * `SparkPlanAdapterSpec`'s hand-picked, single-construct examples.
   *
   * `SparkPlanAdapter`'s own class doc promises it "never throws" — an
-  * unrecognized plan node degrades to `ir.Unsupported` plus a `Diagnostic`
+  * unrecognized plan node degrades to `ir.UnknownPlan` plus a `Diagnostic`
   * instead of raising an exception. That promise is only as trustworthy as
   * what's been thrown at it, and the hand-written spec only exercises each
   * translated construct in isolation, never in the combinations and
@@ -191,10 +191,10 @@ class SparkPlanAdapterFuzzSpec extends AnyFunSuite with BeforeAndAfterAll with S
   private def assertUnsupportedIsDiagnosed(plan: Plan, diagnostics: List[Diagnostic]): Unit = {
     def walk(p: Plan): Unit = {
       p match {
-        case Unsupported(description, _) =>
+        case UnknownPlan(description, _, _) =>
           assert(
             diagnostics.nonEmpty,
-            s"plan contains Unsupported($description) but no Diagnostic was recorded"
+            s"plan contains UnknownPlan($description) but no Diagnostic was recorded"
           )
         case _ => ()
       }
