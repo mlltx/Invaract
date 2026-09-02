@@ -426,6 +426,8 @@ object DemoJobHarness {
         "{" + pairs + "}"
       case l: List[_] =>
         "[" + l.map(anyToJson).mkString(", ") + "]"
+      case a: Array[_] =>
+        "[" + a.map(anyToJson).mkString(", ") + "]"
       case s: String => quote(s)
       case n: Number => n.toString
       case b: Boolean => b.toString

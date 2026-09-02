@@ -1950,6 +1950,44 @@ sessions, which is genuine, unavoidable work, not overhead. These two
 levers reduce wasted time around that core cost (serialization,
 under-utilized cores), not the cost itself.
 
+#### Mutation testing: the expression-algebra rework
+
+CLAUDE.md's per-PR 70% bar, scoped to the two touched files (not a
+whole-module run):
+
+```bash
+cd spark-adapter
+sbt 'set strykerMutate := Seq("src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala", "src/main/scala/com/example/sparkadapter/RuleVerifier.scala")' stryker
+```
+
+(`strykerExcludedMutations := Seq("StringLiteral")` from the whole-module
+setting above still applies — 138 mutants generated, 90 excluded as
+`StringLiteral`, 48 real behavioral mutants tested.)
+
+First pass: 83.33% (of total)/85.11% (of covered code), 40/48 detected.
+One real, addressable gap in genuinely new code, not the pre-existing
+gaps below: `udfNameOf`'s `n.nonEmpty && n != "UDF" && n != "<lambda>"`
+filter had two surviving `&&`→`||` mutants, because every existing UDF
+test used a real, meaningful name (`"triple"`, `"calculateRisk"`) — for
+an all-true predicate, `&&` and `||` compute the same result, so neither
+operator distinguishes them. Real Spark UDF registration essentially
+never surfaces the literal placeholder itself via reflection (an unnamed
+UDF's `udfName` is `None`, not `Some("UDF")`), so proving the exclusion
+logic actually works needed a `ScalaUDF` constructed directly with
+`udfName = Some("UDF")` (and separately `Some("<lambda>")`) — ordinary
+DataFrame-API test fixtures can't reach that state. Added as a dedicated
+`SparkPlanAdapterSpec` test.
+
+Second pass: **87.5%** (of total) / **89.36%** (of covered code), 42/48
+detected. The 6 remaining survivors are all in `translateNonWritePlan`'s
+pre-existing `Read`-relation location-fallback logic (`LogicalRelation`/
+`HiveTableRelation`/`StreamingRelation`/`StreamingRelationV2`/`JDBCRelation`,
+lines 247-400) — untouched by this rework, the same category of
+already-investigated gap this section documents elsewhere for other
+sub-phases; none are in the `Cast`/`Arithmetic`/`Comparison`/
+`BooleanExpr`/`Conditional`/`UDF`/`Alias`/`Limit` code this rework
+actually added.
+
 ### API compatibility
 
 This module's real, intended public surface is deliberately narrow:
