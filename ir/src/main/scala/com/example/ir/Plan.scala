@@ -117,7 +117,7 @@ case class Limit(input: Plan, limit: Int, offset: Int = 0) extends Plan {
 /** Adds columns computed over a window of rows related to each row (by
   * partition and/or order) without collapsing row count the way
   * `Aggregate` does. `windowExprs` entries may wrap an `AggregateCall` (a
-  * running/partitioned aggregate) or a plain `FunctionCall` (RANK,
+  * running/partitioned aggregate) or a plain `Function` (RANK,
   * ROW_NUMBER, LAG, ...) — the same expression vocabulary as everywhere
   * else in the IR; windowing is a property of this plan node, not a new
   * expression type. Existing input columns pass through unchanged
