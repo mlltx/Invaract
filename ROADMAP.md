@@ -400,10 +400,10 @@ The model supports:
 
 #### Deliverables
 
-- [x] **Contract parser** — `ContractParser` (YAML → object model), fail-fast on structural errors (`contract/src/main/scala/com/example/contract/ContractParser.scala`)
-- [x] **Contract object model** — `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule` (`contract/src/main/scala/com/example/contract/ContractModel.scala`)
-- [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/example/contract/ContractValidator.scala`)
-- [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/example/contract/ContractCompatibility.scala`)
+- [x] **Contract parser** — `ContractParser` (YAML → object model), fail-fast on structural errors (`contract/src/main/scala/com/invaract/contract/ContractParser.scala`)
+- [x] **Contract object model** — `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule` (`contract/src/main/scala/com/invaract/contract/ContractModel.scala`)
+- [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/invaract/contract/ContractValidator.scala`)
+- [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/invaract/contract/ContractCompatibility.scala`)
 - [x] **Contract fixtures** — valid, additive, breaking, and invalid example contracts (`contract/src/test/resources/fixtures/`)
 - [x] **JSON Schema** — `contract/schema/invaract-contract.schema.json` (Draft 2020-12), the public, language-agnostic contract format spec for authoring/generating contracts outside Scala; validated against the same fixtures via `ContractSchemaSpec` so it can't silently drift from the parser/validator it documents. `demo/contracts/*.yaml` carry a `yaml-language-server` `$schema` hint for live editor validation. See docs/CONTRACT_MODEL.md's "JSON Schema" section for what it does and deliberately does not enforce.
 - [x] **Documentation** — [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
@@ -463,11 +463,11 @@ The IR represents:
 
 #### Deliverables
 
-- [x] **Identifiers** — `DatasetRef`, `ColumnRef` (`ir/src/main/scala/com/example/ir/Identifiers.scala`)
-- [x] **Expression algebra** — `Expr`, `ColumnReference`, `Literal`, `FunctionCall`, `AggregateCall`, `NamedExpr`, `SortOrder` (`ir/src/main/scala/com/example/ir/Expr.scala`)
-- [x] **Plan algebra** — `Plan`, `JoinType`, `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`, `Union`, `Sort`, `Window` (`ir/src/main/scala/com/example/ir/Plan.scala`)
-- [x] **Lineage tracing** — `Lineage.trace`, structural column-level provenance resolution through renames, aggregation, filters, joins, unions, and windows (`ir/src/main/scala/com/example/ir/Lineage.scala`)
-- [x] **Plan rendering** — `PlanPrinter`, ASCII tree rendering for debugging and demonstration (`ir/src/main/scala/com/example/ir/PlanPrinter.scala`)
+- [x] **Identifiers** — `DatasetRef`, `ColumnRef` (`ir/src/main/scala/com/invaract/ir/Identifiers.scala`)
+- [x] **Expression algebra** — `Expr`, `ColumnReference`, `Literal`, `FunctionCall`, `AggregateCall`, `NamedExpr`, `SortOrder` (`ir/src/main/scala/com/invaract/ir/Expr.scala`)
+- [x] **Plan algebra** — `Plan`, `JoinType`, `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`, `Union`, `Sort`, `Window` (`ir/src/main/scala/com/invaract/ir/Plan.scala`)
+- [x] **Lineage tracing** — `Lineage.trace`, structural column-level provenance resolution through renames, aggregation, filters, joins, unions, and windows (`ir/src/main/scala/com/invaract/ir/Lineage.scala`)
+- [x] **Plan rendering** — `PlanPrinter`, ASCII tree rendering for debugging and demonstration (`ir/src/main/scala/com/invaract/ir/PlanPrinter.scala`)
 - [x] **Documentation** — [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
 
 21 unit tests covering construction, lineage resolution (including the
@@ -508,14 +508,14 @@ assumption) that shaped the design.
       `Read.alias`, for self-join disambiguation), casts, unions, windows,
       and arbitrarily nested expressions — never throws; an unrecognized
       construct becomes `ir.Unsupported`/`ir.UnsupportedExpr` paired with a
-      `Diagnostic` (`spark-adapter/src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala`)
+      `Diagnostic` (`spark-adapter/src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala`)
 - [x] **Spark integration tests** — 9 tests against real Spark 3.5.1
       DataFrames (no mocks): the worked example, filter+cast, self-join
       alias disambiguation, union, window, a UDF (diagnostic, not a
       failure), an unsupported construct (`explode`, diagnostic +
       `Unsupported` node, not a crash), and a full write captured via
       `SparkAdapterListener`
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/SparkPlanAdapterSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/SparkPlanAdapterSpec.scala`)
 - [x] **Plan extraction examples** — see docs/SPARK_ADAPTER.md
 - [x] **Unsupported-operation diagnostics** — `Diagnostic`/`TranslationResult`;
       translation always produces a best-effort IR, never an exception
@@ -526,7 +526,7 @@ assumption) that shaped the design.
       `demo/output/report.json`. Run via `./dev/test` — real Spark
       execution, not simulated.
 - [x] Extended the IR itself: `ir.Unsupported` / `ir.UnsupportedExpr`
-      (`ir/src/main/scala/com/example/ir/{Plan,Expr}.scala`), a principled,
+      (`ir/src/main/scala/com/invaract/ir/{Plan,Expr}.scala`), a principled,
       engine-agnostic "could not translate this" node any future front-end
       can use, not a Spark-adapter-specific workaround
 
@@ -541,7 +541,7 @@ schema (required fields, unexpected fields rejectable, type compatibility,
 nullability compatibility).
 
 - [x] `StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
-      (`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`) —
+      (`spark-adapter/src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala`) —
       existence/location read directly off the `Plan`'s `Read`/`Write`
       nodes (no Spark data needed); schema checks (presence, type,
       nullability) against caller-supplied real `StructType`s, since the
@@ -578,7 +578,7 @@ nullability compatibility).
       real demo pipeline passing its own contract, and a golden test
       reproducing the spec's own worked example
       (`UNDECLARED_OUTPUT_COLUMN`/`"country"`) exactly
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/StructuralVerifierSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/StructuralVerifierSpec.scala`)
 
 Supersedes the earlier, narrower `ContractVerifier` (output schema only,
 no inputs, no nullability, no undeclared-column rejection) — removed
@@ -604,7 +604,7 @@ Spark application → Logical plan → Invaract → PASS → execute
 ```
 
 - [x] `ContractEnforcementRule`
-      (`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`) —
+      (`spark-adapter/src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala`) —
       builds a Spark check rule
       (`SparkSessionExtensions.injectCheckRule`) that verifies a write
       against a contract *before* Spark runs it, throwing
@@ -649,7 +649,7 @@ Spark application → Logical plan → Invaract → PASS → execute
       contract that would always fail; `VerificationOptions` thread
       through the enforcement path; `forContract`'s public entry point
       works directly
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractEnforcementRuleSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/ContractEnforcementRuleSpec.scala`)
 
 #### Sub-phase: Contract regression pack (done)
 
@@ -890,7 +890,7 @@ catch it.
       `plugin`/`runner` excluded, consistent with every other guardrail
       here being scoped to the engine, not the example harness.
     - `mimaPreviousArtifacts` in each module's `build.sbt` points at its
-      own `com.example %% <module> % 0.1.0` coordinate — there's no Maven
+      own `com.invaract %% <module> % 0.1.0` coordinate — there's no Maven
       Central release yet to compare against, so CI's new
       `api-compatibility` job (`.github/workflows/test.yml`) publishes
       the PR's base branch to the runner's local Ivy cache under that

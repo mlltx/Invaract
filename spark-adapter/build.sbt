@@ -1,7 +1,7 @@
 name := "invaract-spark-adapter"
-version := "0.1.0"
+version := "0.2.0"
 scalaVersion := "2.12.18"
-organization := "com.example"
+organization := "com.invaract"
 
 // 3.5.1 -> 3.5.7: CVE-2025-54920 (GHSA-jwp6-cvj8-fw65, Spark History
 // Server Code Execution) - the Spark History Web UI's overly permissive
@@ -683,10 +683,10 @@ excludeDependencies ++= Seq(
 // so even setting reachability aside, there's no first-party call site
 // here that could be affected either way.
 
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")
+unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.2.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.2.0.jar")
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.1.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -811,3 +811,18 @@ strykerThresholdsBreak := 70
 // PR, which is now on the base branch - see contract/build.sbt's comment
 // for why this coordinate must match base-ref's own published name.
 mimaPreviousArtifacts := Set("com.example" %% "invaract-spark-adapter" % "0.1.0")
+
+// com.example -> com.invaract namespace rebrand (this PR) - see
+// contract/build.sbt's matching comment for the full rationale (deliberate
+// break per CLAUDE.md's "API Compatibility Requirement" option 2, version
+// bumped to 0.2.0 as the MAJOR-equivalent bump docs/VERSIONING.md's pre-1.0
+// policy calls for).
+//
+// FOLLOW-UP (once this PR lands on the base branch): flip
+// `mimaPreviousArtifacts` above to `Set("com.invaract" %%
+// "invaract-spark-adapter" % "0.2.0")` and remove this filter - do not make
+// that flip in this PR.
+import com.typesafe.tools.mima.core._
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[Problem]("com.example.sparkadapter.*")
+)

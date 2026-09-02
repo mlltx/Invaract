@@ -57,7 +57,7 @@ echo -e "${YELLOW}Step 2/7: Verifying plugin JAR...${NC}"
 JAR_SIZE=$(du -h "$PLUGIN_JAR" | cut -f1)
 echo "  JAR size: $JAR_SIZE"
 echo "  Main classes:"
-jar tf "$PLUGIN_JAR" | grep "com/example/plugin" | head -5
+jar tf "$PLUGIN_JAR" | grep "com/invaract/plugin" | head -5
 
 # Step 3: Verify runner JAR
 echo ""

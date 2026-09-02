@@ -184,9 +184,9 @@ Plugin and runner are built for Maven publication:
 
 ```xml
 <dependency>
-  <groupId>com.mlltx</groupId>
+  <groupId>com.invaract</groupId>
   <artifactId>invaract-spark-plugin</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
 </dependency>
 ```
 

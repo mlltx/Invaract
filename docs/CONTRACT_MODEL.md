@@ -5,7 +5,7 @@ object model, parser, structural validator, and version-compatibility engine
 that together represent "the minimum contract required to verify a
 transformation" (see [ROADMAP.md](../ROADMAP.md), Phase 1 — Contract Model).
 
-Code lives in the `contract/` sbt module (`com.example.contract` package),
+Code lives in the `contract/` sbt module (`com.invaract.contract` package),
 independent of `plugin/` and `runner/`. It has no Spark dependency — a
 contract is a plain data structure that any future engine adapter (Spark,
 SQL, dbt) can be verified against.
@@ -152,7 +152,7 @@ provide lookup by name.
 
 ## Parser
 
-`com.example.contract.ContractParser` turns YAML into a `Contract`:
+`com.invaract.contract.ContractParser` turns YAML into a `Contract`:
 
 ```scala
 val contract = ContractParser.parseFile("contracts/customer_orders.yaml")
@@ -293,7 +293,7 @@ implementation enforces — it sits between two layers:
   this version of Invaract doesn't yet know about still validates
   against the schema, matching what the real parser actually accepts.
 
-`ContractSchemaSpec` (`contract/src/test/scala/com/example/contract/`)
+`ContractSchemaSpec` (`contract/src/test/scala/com/invaract/contract/`)
 validates the schema against the same fixtures above, both ways: every
 valid fixture (including `warnings_field_issues.yaml`, which has real
 `ContractValidator` warnings but is still schema-conformant) must

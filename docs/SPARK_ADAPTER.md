@@ -6,7 +6,7 @@ It's the first concrete front-end for the IR, and the first piece of
 ROADMAP.md Phase 1c (Verification Engine) — the IR now has one real source
 of transformation plans, not just hand-constructed test fixtures.
 
-Code lives in the `spark-adapter/` sbt module (`com.example.sparkadapter`
+Code lives in the `spark-adapter/` sbt module (`com.invaract.sparkadapter`
 package), which depends on `ir` and on Spark (`provided`, same convention as
 `plugin`/`runner`).
 
@@ -207,7 +207,7 @@ translation.
 
 ## Integrated with the test Spark app
 
-`runner/src/main/scala/com/example/runner/DemoJobHarness.scala` registers
+`runner/src/main/scala/com/invaract/runner/DemoJobHarness.scala` registers
 `SparkAdapterListener` before running `InvaractPlugin`, and after the
 real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 
@@ -219,7 +219,7 @@ real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 3. Prints the rendered plan to the console.
 
 Actual output from `./dev/test` against the real `InvaractPlugin`
-(`value_squared = value * value`, per `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala`):
+(`value_squared = value * value`, per `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
 
 ```
 Transformation IR (translated from the real Spark logical plan):
@@ -495,7 +495,7 @@ undetected — see "Mutation testing" below for the resulting score.
 ## Structural verification
 
 `StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala`)
 is ROADMAP.md Phase 1c's structural verifier (its own spec called this
 "Phase 4"): the first genuinely useful check, covering every item in
 MISSION.md §8's "Structural" class — for both inputs and outputs, not just
@@ -585,7 +585,7 @@ alongside, to avoid two overlapping verifiers in the codebase.
 Everything above (`SparkAdapterListener`, `StructuralVerifier`) verifies
 *after* a write has already executed — useful for reporting, useless for
 prevention. `ContractEnforcementRule`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala`)
 moves verification *into* the execution lifecycle:
 
 ```
@@ -730,7 +730,7 @@ as an input) verifies the *shape* of what's written. It has never checked
 a contract's `rules` — recorded by `contract` since Phase 1a, never
 interpreted (see docs/CONTRACT_MODEL.md's "What Phase 1 Does *Not* Do
 Yet"). `RuleVerifier`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/RuleVerifier.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala`)
 closes the first slice of that gap: the three DML rule types
 `ContractRule.interpret` decodes (see docs/CONTRACT_MODEL.md's
 "Interpreted rules") — `merge_condition`, `forbid_unconditional_delete`,
@@ -739,7 +739,7 @@ DELETE.
 
 **Extraction is a separate, parallel path from `WriteCommandSupport`, not
 a change to it.** `RowMutationSupport`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/RowMutationSupport.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala`)
 matches the exact same Delta `UpdateCommand`/`DeleteCommand`/
 `MergeIntoCommand` classes (plus DSv2's plain `DeleteFromTable`)
 `WriteCommandSupport.deltaRowLevelDml`/`deleteFromTable` already
@@ -1256,7 +1256,7 @@ existing private matchers and one new `private[sparkadapter]` helper).
 #### Mutation testing: Avro connector support
 
 Scoped to the one file this pass changed:
-`sbt stryker --mutate "src/main/scala/com/example/sparkadapter/WriteCommandSupport.scala"`
+`sbt stryker --mutate "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"`
 — **76.74%** (33/43 non-excluded mutants killed; 145 generated, 102
 excluded as `StringLiteral`). Clears the 70% break threshold. All 10
 survivors fall **outside** the code this pass added or changed
@@ -1299,7 +1299,7 @@ unchanged).
 
 #### Delta feature-by-feature confidence pass
 
-Scoped `sbt stryker --mutate "src/main/scala/com/example/sparkadapter/WriteCommandSupport.scala"`
+Scoped `sbt stryker --mutate "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"`
 (this sub-phase's only changed file) scored **73.08%** (19/26 non-excluded
 mutants killed) after the schema-evolution fix, generated-columns fix,
 and the `/simplify` pass that followed (extracting `unionNewFields` and

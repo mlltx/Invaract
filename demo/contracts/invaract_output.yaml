@@ -6,7 +6,7 @@ status: active
 description:
   purpose: >
     Contract for the output of the demo InvaractPlugin pipeline
-    (plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala),
+    (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala),
     written by runner/DemoJobHarness.scala to demo/output/result.parquet.
 
 inputs:

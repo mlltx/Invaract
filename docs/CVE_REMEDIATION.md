@@ -33,7 +33,7 @@ prioritized list — most of it needs bucketing before it needs fixing (§2).
 
 The single most important question for any alert against `contract`, `ir`,
 or `spark-adapter` — the three modules actually published as Maven
-artifacts (`com.example %% invaract-contract/invaract-ir/invaract-spark-adapter`,
+artifacts (`com.invaract %% invaract-contract/invaract-ir/invaract-spark-adapter`,
 per each module's `mimaPreviousArtifacts`; see CLAUDE.md's "What's the
 product" section) — is **not** severity, and not even "is it shipped
 somewhere." It's: *if a real user adds one of these three coordinates as a
@@ -87,7 +87,7 @@ conflate: `plugin` and `runner` are never consumed as a Maven dependency
 by anyone (see CLAUDE.md's "What's the product" section — they're the
 demo transformation and the demo job harness, not libraries). It doesn't
 matter what scope *they* declare something at — nobody's `build.sbt`
-ever writes `"com.example" %% "invaract-spark-runner" % "..."`. A CVE in
+ever writes `"com.invaract" %% "invaract-spark-runner" % "..."`. A CVE in
 `runner`'s compile-scope Spark tree (it's the one module that pulls Spark
 in unscoped, since it actually runs `spark-submit`) matters only for
 whoever runs *that specific assembled jar* — this repo's own `./dev/test`
@@ -304,7 +304,7 @@ was `provided` or `test`, confirmed empirically, not assumed: `unzip -l` on
 `zookeeper`/`spark` classes bundled (`provided` genuinely isn't in the
 jar, let alone propagated to a consumer), while `runner`'s assembled jar
 has 13,230 such classes — but `runner` is never a Maven dependency of
-anyone's. So a real user who depends on `com.example %% invaract-spark-adapter`
+anyone's. So a real user who depends on `com.invaract %% invaract-spark-adapter`
 today would not have inherited a single one of these 8 criticals through
 us, regardless of severity. That doesn't make the work worthless — Delta/
 Iceberg/Hive/ClickHouse-dependent tests, `./dev/test`'s demo run, and this

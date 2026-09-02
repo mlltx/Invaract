@@ -23,7 +23,7 @@ changed afterward. Load your contract *before* building the session.
 1. ### Parse your contract
 
    ```scala
-   import com.example.contract.ContractParser
+   import com.invaract.contract.ContractParser
 
    val contract = ContractParser.parseFile("contracts/my_contract.yaml")
    ```
@@ -31,7 +31,7 @@ changed afterward. Load your contract *before* building the session.
 2. ### Install the check rule when you build the session
 
    ```scala
-   import com.example.sparkadapter.ContractEnforcementRule
+   import com.invaract.sparkadapter.ContractEnforcementRule
    import org.apache.spark.sql.SparkSession
 
    val spark = SparkSession
@@ -64,7 +64,7 @@ Spark's query analysis, so it surfaces as an ordinary Scala exception around wha
 triggered the write (`.write.save(...)`, `.write.parquet(...)`, and so on):
 
 ```scala
-import com.example.sparkadapter.ContractViolationException
+import com.invaract.sparkadapter.ContractViolationException
 import scala.util.{Failure, Success, Try}
 
 Try {
@@ -89,7 +89,7 @@ column-level lineage (for a report, a dashboard, or logging), register
 `SparkAdapterListener` alongside it — it observes the same writes *after* they succeed:
 
 ```scala
-import com.example.sparkadapter.SparkAdapterListener
+import com.invaract.sparkadapter.SparkAdapterListener
 
 val irListener = new SparkAdapterListener
 spark.listenerManager.register(irListener)

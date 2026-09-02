@@ -65,9 +65,9 @@ that feed it.
 
 | Module | Package | Purpose |
 |---|---|---|
-| `contract/` | `com.example.contract` | Parses and validates ODCS-shaped YAML contracts; classifies compatibility between two contract versions. No Spark dependency — a contract is a plain data structure. |
-| `ir/` | `com.example.ir` | An engine-independent `Plan`/`Expr` algebra (`Read`, `Write`, `Project`, `Join`, `Aggregate`, ...), plus `Lineage.trace` (structural column-level provenance) and `PlanPrinter` (human-readable rendering). No Spark dependency, no dependency on `contract` — this is meant to be the thing any engine's plan gets translated *into*. |
-| `spark-adapter/` | `com.example.sparkadapter` | Translates a real Spark Catalyst `LogicalPlan` into the IR (`SparkPlanAdapter`), verifies it against a contract (`StructuralVerifier`), and enforces that verification inside Spark's own execution lifecycle (`ContractEnforcementRule`, a `SparkSessionExtensions` check rule) or observes it after the fact (`SparkAdapterListener`, a `QueryExecutionListener`). Depends on `ir` and `contract`, and on Spark (`provided`). |
+| `contract/` | `com.invaract.contract` | Parses and validates ODCS-shaped YAML contracts; classifies compatibility between two contract versions. No Spark dependency — a contract is a plain data structure. |
+| `ir/` | `com.invaract.ir` | An engine-independent `Plan`/`Expr` algebra (`Read`, `Write`, `Project`, `Join`, `Aggregate`, ...), plus `Lineage.trace` (structural column-level provenance) and `PlanPrinter` (human-readable rendering). No Spark dependency, no dependency on `contract` — this is meant to be the thing any engine's plan gets translated *into*. |
+| `spark-adapter/` | `com.invaract.sparkadapter` | Translates a real Spark Catalyst `LogicalPlan` into the IR (`SparkPlanAdapter`), verifies it against a contract (`StructuralVerifier`), and enforces that verification inside Spark's own execution lifecycle (`ContractEnforcementRule`, a `SparkSessionExtensions` check rule) or observes it after the fact (`SparkAdapterListener`, a `QueryExecutionListener`). Depends on `ir` and `contract`, and on Spark (`provided`). |
 
 This is where a feature request almost always belongs, and where the
 regression-testing guardrails (property-based fuzzing, mutation testing —
@@ -80,8 +80,8 @@ against `plugin`/`runner`.
 
 | Module | Package | Purpose |
 |---|---|---|
-| `plugin/` | `com.example.plugin` | `InvaractPlugin`: a small, illustrative Spark transformation (validate a schema, add a computed column) standing in for "some real job's transformation logic." Not part of the engine — it's what the engine is demonstrated against. |
-| `runner/` | `com.example.runner` | `DemoJobHarness`: an example Spark job, run as a test harness. It builds a real `SparkSession` with the verification engine installed exactly the way a real user's job would, drives `InvaractPlugin`'s transformation through it, and captures the outcome as `demo/output/report.json`. Despite the historical directory name `runner/`, this is not "the thing that runs the engine" — it's one example caller of it. |
+| `plugin/` | `com.invaract.plugin` | `InvaractPlugin`: a small, illustrative Spark transformation (validate a schema, add a computed column) standing in for "some real job's transformation logic." Not part of the engine — it's what the engine is demonstrated against. |
+| `runner/` | `com.invaract.runner` | `DemoJobHarness`: an example Spark job, run as a test harness. It builds a real `SparkSession` with the verification engine installed exactly the way a real user's job would, drives `InvaractPlugin`'s transformation through it, and captures the outcome as `demo/output/report.json`. Despite the historical directory name `runner/`, this is not "the thing that runs the engine" — it's one example caller of it. |
 | `demo/` | — | Deterministic fixtures (`demo/input/sample.csv`), example contracts (`demo/contracts/*.yaml`, including a deliberately-broken one used to prove rejection works), and generated, gitignored output (`demo/output/`). |
 | `web/` | — | A Next.js viewer for `demo/output/report.json` — lets a human (on a phone, via forwarded Codespaces ports) see a harness run's PASS/FAIL status, schemas, and diagnostics without reading raw JSON. |
 
@@ -292,7 +292,7 @@ module's assembled jar (no aggregating root `build.sbt`), so
 
 ```bash
 spark-submit \
-  --class com.example.runner.DemoJobHarness \
+  --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
   --jars plugin.jar \
   runner.jar \

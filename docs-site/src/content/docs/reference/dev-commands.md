@@ -35,7 +35,7 @@ contract against the demo job without the full harness (as in
 
 ```bash
 spark-submit \
-  --class com.example.runner.DemoJobHarness \
+  --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
   --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
