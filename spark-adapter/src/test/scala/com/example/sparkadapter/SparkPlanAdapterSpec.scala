@@ -229,6 +229,38 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.exists(d => d.nodeType.contains("UDF") && d.message.contains("opaque")))
   }
 
+  // `udfNameOf`'s filter excludes Spark's own generic non-identifiers
+  // ("UDF", the ScalaUDF default when no name was ever assigned; and
+  // "<lambda>") from being treated as a real name — real Spark UDF
+  // registration essentially never actually surfaces the literal string
+  // "UDF" via reflection (an unnamed UDF's `udfName` is `None`, not
+  // `Some("UDF")`, so the exclusion is defense-in-depth against a value
+  // this module has never observed in practice) — so this constructs a
+  // `ScalaUDF` directly with that value forced, to prove the exclusion
+  // logic itself is correct rather than merely untriggered.
+  test("a UDF whose reflected name is Spark's own generic placeholder ('UDF' or '<lambda>') is treated as unnamed, not a real identifier") {
+    import org.apache.spark.sql.catalyst.expressions.{Literal => CatalystLiteral, ScalaUDF}
+    import org.apache.spark.sql.types.IntegerType
+
+    val arg = CatalystLiteral(1)
+
+    def udfNamed(name: Option[String]) =
+      ScalaUDF((x: Int) => x, IntegerType, Seq(arg), Nil, None, name, nullable = true, udfDeterministic = true)
+
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("UDF"))) match {
+      case UDF(None, _, _) => // expected: the generic placeholder is not a real name
+      case other             => fail(s"expected 'UDF' to be treated as no real name, got $other")
+    }
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("<lambda>"))) match {
+      case UDF(None, _, _) => // expected
+      case other             => fail(s"expected '<lambda>' to be treated as no real name, got $other")
+    }
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("realName"))) match {
+      case UDF(Some("realName"), _, _) => // expected: a genuine name still passes through
+      case other                         => fail(s"expected a real name to pass through, got $other")
+    }
+  }
+
   test("falls back to UnknownPlan with a diagnostic for a plan node with no translation, instead of throwing") {
     val df = readSample()
     val exploded = df.select(col("id"), explode(array(col("value"), col("value"))).as("v"))
