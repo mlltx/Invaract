@@ -55,3 +55,9 @@ at all, and the listener — fed from a write that only proceeded because it alr
 passed verification — supplies the human-facing summary. See
 [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) for
 how to wire both into your own job.
+
+Each mechanism can also publish an event to an external system at the moment it acts —
+`ContractEnforcementRule` a `ContractValidationEvent` for every check (PASS or FAIL),
+`SparkAdapterListener` a `WriteEvent` once a write actually completes. See
+[Configure a Notification Sink](/guides/notification-sinks/) — this is opt-in and
+changes nothing about either mechanism's own behavior when no sink is configured.

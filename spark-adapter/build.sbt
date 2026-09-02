@@ -720,18 +720,26 @@ Test / parallelExecution := false
 // With the dependency gone, IcebergConnectorSpec.scala's own
 // org.apache.iceberg/org.apache.spark.sql.connector.iceberg imports
 // would fail to *compile* under JDK <17 - so its source file is excluded
-// from that build too. Every other spark-adapter source file is
-// dependency-free of Iceberg (confirmed by grepping src/ - only this
-// file and FailClosedCommands.scala reference it at all, and that one
-// only via string literals, never a real import - see its own header
-// comment), so nothing else needs excluding. The module's own compiled
-// bytecode target (-target:jvm-1.8 below) is unaffected; this is purely
-// a test-only dependency's own runtime floor, not a product
-// compatibility change.
+// from that build too. SparkAdapterListenerIcebergSpec.scala is excluded
+// for a related but distinct reason: it has no direct Iceberg import (so
+// it compiles fine under JDK <17) but configures
+// spark.sql.catalog.local = "org.apache.iceberg.spark.SparkCatalog" as a
+// plain string, which Spark's catalog-plugin lookup tries to
+// Class.forName at *runtime* - a real, confirmed CI failure
+// (ClassNotFoundException/"Cannot find catalog plugin class") once the
+// dependency is gone, not a compile-time one. Every other spark-adapter
+// source file is dependency-free of Iceberg (confirmed by grepping src/ -
+// only these two files and FailClosedCommands.scala reference it at all,
+// and that one only via string literals, never a real import or a
+// catalog-plugin config - see its own header comment), so nothing else
+// needs excluding. The module's own compiled bytecode target
+// (-target:jvm-1.8 below) is unaffected; this is purely a test-only
+// dependency's own runtime floor, not a product compatibility change.
 Test / unmanagedSources / excludeFilter := {
   val icebergExcluded =
     if (scala.util.Properties.isJavaAtLeast("17")) (Test / unmanagedSources / excludeFilter).value
-    else (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala"
+    else
+      (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala" || "SparkAdapterListenerIcebergSpec.scala"
   // ClickHouse has no supported native Windows server build (a hard
   // platform constraint, unlike Iceberg's JDK-version one above) -
   // ClickHouseTestServer/ClickHouseConnectorSpec.scala are excluded on

@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.notification.{NotificationSink, TestNotificationSink}
 
 import io.delta.tables.DeltaTable
 import org.apache.spark.sql.SparkSession
@@ -27,6 +28,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // stopping and rebuilding a SparkSession (and its SparkContext) per case.
   @volatile private var activeContract: Option[com.invaract.contract.Contract] = None
   @volatile private var activeOptions: VerificationOptions = VerificationOptions()
+  @volatile private var activeSink: Option[NotificationSink] = None
 
   // Not read by any enforcement test above — a raw capture of every
   // analyzed plan the session produces, so a test can inspect
@@ -59,7 +61,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
+          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink))
         }
       }
       .getOrCreate()
@@ -70,11 +72,17 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   private def parseContract(yaml: String) = ContractParser.parse(yaml)
 
-  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions())(body: => T): T = {
+  private def withContract[T](yaml: String, options: VerificationOptions = VerificationOptions(), sink: Option[NotificationSink] = None)(
+      body: => T
+  ): T = {
     activeContract = Some(parseContract(yaml))
     activeOptions = options
+    activeSink = sink
     try body
-    finally activeContract = None
+    finally {
+      activeContract = None
+      activeSink = None
+    }
   }
 
   private val passingContractYaml =
@@ -132,6 +140,84 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
     assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  // The notification sink's PASS/FAIL pair for verifyOrThrow's write
+  // branch: a ContractValidationEvent must be published for *every* check
+  // (mirroring the PASS/FAIL tests above), not just failures - a caller
+  // wiring up a sink cares about "the contract was evaluated," including
+  // every time it was satisfied, not only when it's about to reject a
+  // write.
+  test("PASS: a satisfied contract still publishes a ContractValidationEvent, with status PASSED and no violations") {
+    val outputPath = scratchDir.resolve("pass_notify.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+
+    withContract(yaml, sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath)
+    }
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty, "expected at least one ContractValidationEvent")
+    val event = events.last
+    assert(event.status == "PASSED")
+    assert(event.violations.isEmpty)
+    assert(event.contract == "enforcement_demo@1.0.0")
+    // This suite's shared check rule calls verifyOrThrow directly (not
+    // through forContract), so no applicationId is ever supplied - None
+    // is the correct default, not an oversight, confirmed alongside the
+    // forContract(contract, options, sink) test below which does thread a
+    // real one through.
+    assert(event.applicationId.isEmpty)
+  }
+
+  test("FAIL: a violated contract publishes a ContractValidationEvent (status FAILED, carrying the violation) before throwing") {
+    val outputPath = scratchDir.resolve("fail_notify.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    withContract(yaml, sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty, "expected at least one ContractValidationEvent, even though the write was rejected")
+    val event = events.last
+    assert(event.status == "FAILED")
+    assert(event.violations.exists(_.violationType == ViolationType.MissingOutputField))
+  }
+
+  test("no sink configured: verifyOrThrow behaves exactly as before, publishing nothing and still enforcing") {
+    val outputPath = scratchDir.resolve("no_sink.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    // activeSink defaults to None via withContract - this is the existing
+    // PASS path, just re-asserted under the new 4-arg verifyOrThrow to
+    // prove the added sink parameter changes nothing when absent.
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
   // Found via the ClickHouse connector pass's Phase 8, but not
@@ -1895,6 +1981,41 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     // independent of SparkSession wiring: same shape injectCheckRule wants.
     val df = spark.range(5).withColumn("doubled", col("id") * 2)
     rule(spark)(df.queryExecution.analyzed) // no write command in this plan -> no-op, must not throw
+  }
+
+  // Exercises the public forContract(contract, options, sink) overload
+  // directly — the same "call the returned function without going through
+  // SparkSession/injectCheckRule wiring" approach the plain forContract
+  // test above uses, rather than standing up a second SparkSession with
+  // different extensions mid-suite (Spark's getOrCreate() reuses the
+  // already-active session/SparkContext, so a second withExtensions call
+  // wouldn't actually take effect here). capturedPlans (populated by this
+  // suite's own shared check rule) already holds a real analyzed write
+  // plan from any prior test in this file — reused here purely as an
+  // off-the-shelf LogicalPlan value, not to re-verify it.
+  test("forContract(contract, options, sink) — the public 3-arg overload — publishes to the given sink") {
+    val outputPath = scratchDir.resolve("for_contract_with_sink.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val contract = parseContract(yaml)
+    val sink = new TestNotificationSink
+    val rule = ContractEnforcementRule.forContract(contract, VerificationOptions(), sink)
+
+    withContract(yaml) {
+      // Populates capturedPlans with a real analyzed write plan, verified
+      // by this suite's own shared check rule as normal.
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath)
+    }
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    rule(spark)(writePlan) // must not throw - it's the same passing contract
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty)
+    assert(events.last.status == "PASSED")
+    assert(events.last.applicationId.contains(spark.sparkContext.applicationId))
   }
 
   // Added while raising the module's mutation-testing score (see

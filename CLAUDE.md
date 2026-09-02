@@ -56,12 +56,17 @@ don't present it as something external consumers would bind to.
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
+- **Optional extension**: `notification-kafka` (a `NotificationSink`
+  publishing to Kafka — see "Notification sinks" in
+  docs/SPARK_ADAPTER.md; not part of the engine's own dependency
+  footprint, not built by `./dev/build`, opt-in like `plugin`/`runner`)
 - **Spark Version**: 3.5.1
 - **Scala Version**: 2.12.18
-- **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`; sbt
-  1.11.7 for `ir`/`spark-adapter`, required by Stryker4s — see "Mutation
-  Testing Requirement")
-- **Build System**: sbt (5 independent modules, no aggregating root
+- **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
+  `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`, required by
+  Stryker4s — see "Mutation Testing Requirement")
+- **Build System**: sbt (5 independent modules `./dev/build` builds, plus
+  the standalone opt-in `notification-kafka` — no aggregating root
   `build.sbt` — see `dev/build`'s comments for the cross-module dependency
   graph)
 - **Test Execution**: Local Spark master (`local[*]`)
@@ -330,7 +335,12 @@ would be.
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
-│   │   └── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
+│   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
+│   │   └── notification/              # Notification sinks (opt-in event publishing)
+│   │       ├── NotificationEvent.scala      # ContractValidationEvent / WriteEvent
+│   │       ├── NotificationSink.scala       # trait + Logging/File/Http/HadoopFs built-ins
+│   │       ├── NotificationConfig.scala     # .properties-based sink configuration
+│   │       └── NotificationSinkFactory.scala # reflective sink loading
 │   └── src/test/scala/com/invaract/sparkadapter/
 │
 ├── plugin/                       # Example harness: demo transformation
@@ -354,6 +364,13 @@ would be.
 │   │   └── DemoJobHarness.scala # Runs InvaractPlugin through the engine, generates report
 │   ├── build.sbt
 │   └── project/assembly.sbt
+│
+├── notification-kafka/           # Optional extension: Kafka NotificationSink
+│   ├── src/main/scala/com/invaract/sparkadapter/notification/kafka/
+│   │   └── KafkaNotificationSink.scala # real, unscoped kafka-clients dependency —
+│   │                                    # of this module only, not spark-adapter's
+│   ├── src/test/scala/com/invaract/sparkadapter/notification/kafka/
+│   └── build.sbt                # unmanagedJars against spark-adapter's assembly jar
 │
 ├── web/                          # Example harness: mobile-friendly results UI
 │   ├── app/
@@ -537,6 +554,12 @@ If `./dev/test` fails:
 
 All created by `sbt assembly` (via `./dev/build`); used by Spark through
 `spark-submit --jars <plugin jar> <runner jar>`.
+
+- `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.2.0.jar`
+  — not built by `./dev/build` (opt-in, like `plugin`/`runner`): a user who
+  wants `KafkaNotificationSink` runs `cd notification-kafka && sbt assembly`
+  themselves and adds the resulting jar to their own `--jars` list. See
+  docs/SPARK_ADAPTER.md's "Notification sinks" section.
 
 ### Execution Report (harness artifact, not an engine API)
 

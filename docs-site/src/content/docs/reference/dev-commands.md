@@ -39,13 +39,17 @@ spark-submit \
   --master local[*] \
   --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
-  <input-path> <output-path> <report-path> <contract-path>
+  <input-path> <output-path> <report-path> <contract-path> <notify-config-path>
 ```
 
-All four positional arguments are optional and default to the demo's own paths — you can
-override only the ones you need, e.g. just the contract path to try a different contract
-against the same demo data. Add `--dry-run` anywhere in the argument list (before or
-after the positional ones) to run with no contract at all — see
+All five positional arguments are optional and default to the demo's own paths (the
+notification config defaults to none — see
+[Configure a Notification Sink](/guides/notification-sinks/)) — you can override only the
+ones you need, e.g. just the contract path to try a different contract against the same
+demo data, or just the fifth to turn on notification without changing anything else
+(pass the demo's own defaults for the earlier positional arguments to reach it). Add
+`--dry-run` anywhere in the argument list (before or after the positional ones) to run
+with no contract at all — see
 [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/).
 
 ## Exit codes

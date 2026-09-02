@@ -722,6 +722,461 @@ passes real enforcement of the write it came from") failing this way
 before the fix. `ContractInference.normalizeLocation` strips the prefix
 inferred locations the same way `locationsMatch` expects.
 
+## Notification sinks
+
+Everything above answers "does this write satisfy its contract" and, if
+not, aborts it. `com.invaract.sparkadapter.notification`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/notification/`)
+answers a different, additive question: how does an external system find
+out that a check happened at all — PASS or FAIL — or that a write actually
+completed? This is opt-in observability, not a new enforcement mechanism:
+with no sink configured, nothing here runs, and every code path above is
+unaffected.
+
+**Two events, two moments, matching the two mechanisms already documented
+above.**
+
+- `ContractValidationEvent` — published by `ContractEnforcementRule` for
+  every check it performs (the `ir.Write` branch, the state-changing-CALL
+  branch, and both fail-closed branches — `UnverifiableWrite` and
+  `InvalidContract`), always *before* a FAILED result's
+  `ContractViolationException` is thrown. This is "the contract was
+  evaluated, with this result," at analysis time — a FAILED event here
+  means the write never executed.
+- `WriteEvent` — published by `SparkAdapterListener`'s `onSuccess`, the
+  same post-execution observation point `demo/output/report.json`'s
+  `transformationIR` section already uses. This is "the write actually
+  completed," strictly later than (and independent of) the check above —
+  a write `ContractEnforcementRule` rejects never reaches this event,
+  since Spark never executes it.
+
+Both carry `metadata: Map[String, Any]`, copied verbatim from the active
+contract's own `Contract.extensions` bag (see docs/CONTRACT_MODEL.md) —
+whatever a contract author already recorded there (owner, team, upstream
+system, anything ODCS or this project doesn't itself interpret) rides
+along on every event, without a second, parallel metadata vocabulary.
+
+**Both events also carry `applicationId: Option[String]`** — the owning
+`SparkSession`'s `sparkContext.applicationId`, so a consumer aggregating
+events from many concurrent jobs (or many runs of the same job over time)
+can group by run without inventing its own correlation ID.
+`ContractValidationEvent` gets it from the `SparkSession` captured by
+`ContractEnforcementRule.forContract`'s closure at rule-installation time;
+`WriteEvent` gets it from `qe.sparkSession` on the `QueryExecution`
+`SparkAdapterListener.onSuccess` is handed. Always `Some` in practice for
+both — there is no code path that constructs either event without a live
+`SparkSession` — but kept `Option` rather than a bare `String` since a
+`NotificationSink` implementation should not have to trust that no future
+call site will ever construct one without a session in hand.
+
+**`WriteEvent` additionally carries `durationMs: Long` and three
+connector-dependent `Option[Long]` fields — `rowCount`, `bytesWritten`,
+`fileCount`.** `durationMs` comes straight from the `durationNs` argument
+Spark's own `QueryExecutionListener.onSuccess` callback already provides,
+converted to milliseconds — always populated, no connector dependency.
+
+The other three come from `qe.executedPlan.metrics` — Spark's own
+`SQLMetric` map on the executed physical plan, read for the well-known
+keys `numOutputRows`/`numOutputBytes`/`numFiles`. This was **confirmed
+empirically, not assumed**, to behave differently across connectors:
+
+- **Populated** for ordinary V1 writes (`InsertIntoHadoopFsRelationCommand`
+  → `DataWritingCommandExec`) — plain Parquet/CSV/JSON/ORC writes via
+  `DataFrameWriter.save`/`.parquet`/etc. all take this path, so
+  `rowCount`/`bytesWritten`/`fileCount` are `Some` for the demo harness's
+  own writes and are asserted as such in
+  `SparkAdapterListenerSpec`.
+- **Absent (`None`)** for Delta writes (`SaveIntoDataSourceCommand`/
+  `AppendDataExecV1`) and Iceberg writes (`AppendDataExec`) — neither
+  connector's write command populates these particular `SQLMetric` keys on
+  the node this listener inspects, confirmed by a real local Delta write in
+  `SparkAdapterListenerSpec` asserting all three are `None`. This is *not*
+  a bug or an oversight to fix later by digging harder into the same
+  mechanism — it is why these fields are honestly typed `Option[Long]`
+  rather than `Long`, and why the docs-site guide below tells a reader not
+  to expect them for Delta/Iceberg outputs. Getting equivalent numbers for
+  those two connectors needs connector-specific investigation — see
+  ROADMAP.md for status — not a different `SQLMetric` key.
+
+**`WriteEvent` also carries `deltaVersion`/`icebergSnapshotId: Option[Long]`
+— the connector's own identifier for the commit this write just
+produced.** Unlike row/byte/file counts above, this connector-specific
+investigation *was* done: `Some` for a write of that connector's format,
+`None` otherwise (including for each other — a Delta write never
+populates `icebergSnapshotId`, and vice versa, and a plain V1 write
+populates neither). `SparkAdapterListener.onSuccess` reaches these via
+reflection — this module has no compile-time dependency on Delta or
+Iceberg (`delta-spark`/`iceberg-spark-runtime` are `test`-scope only in
+`spark-adapter/build.sbt`) — following the exact convention
+`WriteCommandSupport`'s `deltaRowLevelDml`/Hive cases already use for
+connector-internal classes.
+
+Both are deliberately **fresh lookups**, never a reflective read on some
+object already resolved earlier in the write's analyzed plan:
+`DeltaLog.forTable(session, path).snapshot.version` (fresh by physical
+path) for Delta, and — for Iceberg — a fresh
+`TableCatalog.loadTable(identifier)` call (fresh by catalog identifier)
+followed by `SparkTable.table().refresh().currentSnapshot().snapshotId()`.
+This mattered in practice, not just in theory: an earlier version of this
+feature captured Iceberg's resolved `Table` handle once, at analysis time,
+and read from that same object later — this worked in an isolated test
+run, but failed intermittently once a different Iceberg-heavy test suite
+ran earlier in the same JVM, apparently due to Iceberg's own catalog/table
+caching. A plain SQL query against the same table always saw the
+just-committed snapshot correctly; the captured object sometimes didn't,
+even after an explicit `.refresh()` call on it. Re-resolving fresh through
+the catalog each time — the same thing a SQL query already does under the
+hood — fixed it. Delta's `.snapshot.version` read was never affected by
+this class of problem for exactly the same reason: `DeltaLog.forTable` was
+already a fresh-by-path lookup, never a captured object.
+
+A second, unrelated reflection pitfall surfaced along the way: Iceberg's
+concrete `Snapshot` implementation (`BaseSnapshot`) is package-private,
+even though it implements the public `org.apache.iceberg.Snapshot`
+interface and `snapshotId()` is a public interface method.
+`java.lang.reflect.Method.invoke` enforces accessibility against a
+`Method` object's own *declaring class* — if that `Method` is looked up
+via `snapshot.getClass.getMethod("snapshotId")`, the declaring class is
+the inaccessible `BaseSnapshot`, and `invoke` throws
+`IllegalAccessException` regardless of the method itself being public.
+Looking the method up via `Class.forName("org.apache.iceberg.Snapshot")`
+instead — the public interface — fixes it: `invoke` still dispatches
+virtually to the real `BaseSnapshot` instance, but the accessibility check
+now passes against a public declaring class.
+
+**`WriteEvent` also carries `operation: Option[String]`, distinguishing
+MERGE/UPDATE/DELETE for the row-level-DML write shapes where `saveMode` is
+already `None` and thus can't tell them apart.** `Some("merge")`,
+`Some("update")`, or `Some("delete")` for a row-level mutation; `None` for
+every append/overwrite-shaped write, the same way `saveMode` is `None` for
+one and `Some(...)` for the other — the two fields are complementary, never
+both populated. Two independent mechanisms populate it, matching
+`WriteCommandSupport`'s existing per-connector split for row-level DML
+(see "Write command recognition" above):
+
+- **Delta**: a small `Map[String, String]` from the row-level command's
+  fully-qualified class name (`MergeIntoCommand`/`UpdateCommand`/
+  `DeleteCommand`) to `"merge"`/`"update"`/`"delete"` — the same
+  class-name-keyed convention `deltaRowLevelDml` already uses for
+  everything else about these commands, since Delta's DML classes are
+  connector-internal (reflection, no compile-time dependency).
+- **Iceberg / any DSv2 `SupportsRowLevelOperations` connector**: read
+  directly off `cmd.operation.command()` — `RowLevelOperation.Command` is
+  a real, public, stable enum on Spark's own `connector.write` API, so
+  this needs no reflection at all, unlike the Delta case. Any future
+  connector using Spark's standard row-level-operation mechanism gets this
+  for free, not just Iceberg.
+
+`DELETE FROM <v2-table> WHERE <predicate>` against a connector using plain
+`SupportsDelete` rather than `SupportsRowLevelOperations` (a
+`DeleteFromTable` node that never gets rewritten into a `RowLevelWrite`,
+confirmed empirically for ClickHouse — see "Write command recognition")
+still gets `operation = Some("delete")`, hard-coded at that case site,
+since there is no `RowLevelOperation.Command` to read in that shape at
+all.
+
+**A real, empirically-confirmed test-isolation pitfall surfaced while
+testing this against Iceberg specifically, worth documenting since it
+looks exactly like a production bug at first glance and isn't one.** Each
+DML test in `SparkAdapterListenerIcebergSpec` does a `writeTo(...).append()`
+setup write, then registers a fresh `SparkAdapterListener`/sink, then runs
+the MERGE/UPDATE/DELETE statement under test. Occasionally (roughly half
+the runs, under a specific test-ordering combination) the *setup* write's
+own `WriteEvent` — `operation = None`, `saveMode = Some("append")` — showed
+up in the freshly-registered sink ahead of the DML's own event, making a
+correct `operation = Some("merge")` assertion fail with `None`. Confirmed,
+the hard way, via a debug `QueryExecutionListener` dumping every analyzed
+plan's class name and `WriteCommandSupport.combined.lift` result: the
+underlying translation was correct on *every single firing*, for both the
+row-level command and the setup append, in every run — the race was purely
+about which of the two already-correct events a freshly-registered
+listener happened to observe first, not about either one being wrong.
+Iceberg's own write-completion notification isn't guaranteed to have
+reached every registered `QueryExecutionListener` by the time
+`.append()` returns to the calling thread, so a listener registered
+immediately afterward can still catch that preceding write's event. The
+fix lives entirely in the test: assert on the WriteEvent matching
+`operation.isDefined` rather than "the first WriteEvent in the sink" —
+this sidesteps the ordering race instead of trying to eliminate it, since
+there's no synchronous way to know a preceding write's listener
+notifications have all been delivered. `SparkAdapterListenerSpec`'s
+equivalent Delta DML tests got the same treatment defensively, since the
+underlying race is about `QueryExecutionListener` delivery timing, not
+anything Iceberg-specific.
+
+**Configuration is a plain `.properties` file, deliberately not YAML and
+deliberately not part of the contract document.** Sink configuration (an
+endpoint, a file path, possibly credentials) is a deployment-environment
+concern that varies independently of the contract, and `java.util.Properties`
+needs no new dependency — this module has no direct dependency on
+SnakeYAML (`contract`'s own YAML parser does, but nothing here reaches it
+for this). `NotificationConfig.load` recognizes `sink.enabled`,
+`sink.class` (a `NotificationSink` implementation's fully-qualified class
+name, needing a public no-arg constructor), and `sink.property.<name>`
+(passed to that sink's `configure` with the prefix stripped). See
+docs-site's "Notification sinks" guide for the full worked example and key
+reference.
+
+**Reflective sink loading fails loudly at setup, quietly at publish time —
+deliberately asymmetric, the same pattern `ContractEnforcementRule`'s own
+fail-closed design uses elsewhere in this module.**
+`NotificationSinkFactory.create` throws immediately for a misconfigured
+sink (missing/misspelled class, no no-arg constructor, `configure`
+rejecting its properties) — the same "fail loudly, at setup time"
+treatment `ContractParser.parseFile` gives a malformed contract, since a
+typo'd sink class silently producing zero events forever is worse than a
+job that won't start. Once built, though, every sink is wrapped in
+`SafeNotificationSink`, which catches and logs (never rethrows) any
+exception a `publish` call raises — a broken or slow sink (a network call
+timing out, an implementation bug) must never turn an otherwise-successful
+contract check or write into a job failure, since notification is a
+best-effort side channel, not part of enforcement.
+
+**Four built-in sinks ship in `spark-adapter` itself, all dependency-free:**
+`LoggingNotificationSink` (one JSON line per event via SLF4J, at INFO),
+`FileNotificationSink` (appends one JSON line per event to a configured
+`path` — what `./dev/test`/`./dev/regression` use to prove this against a
+real Spark job; see below), `HttpNotificationSink` (POSTs each
+event's JSON to a configured `url`, via `java.net.http.HttpClient` — part
+of the JDK since Java 11, so this needs no new dependency either), and
+`HadoopFsNotificationSink` (below).
+
+Requests from `HttpNotificationSink`
+are sent with `HttpClient.sendAsync`, not blocking whatever thread
+`publish` was called on; a connection failure or non-2xx response is
+logged at WARN once the async response lands, since by then there's no
+call stack left for `SafeNotificationSink` to catch an exception on.
+Tested against a real, local `com.sun.net.httpserver.HttpServer` (also
+JDK-bundled) rather than a mocked `HttpClient` — the same "real thing over
+a mock" discipline this module's Spark-facing specs already use.
+
+**`HadoopFsNotificationSink`: one sink for S3, GCS, and HDFS, not three.**
+Built on `org.apache.hadoop.fs.{FileSystem, Path}` — the exact same
+abstraction Spark's own `DataFrameWriter` already dispatches every write
+through, where the URI scheme (`s3a://`, `gs://`, `hdfs://`, `abfs://`,
+plain `file://`) picks the concrete implementation at runtime via Hadoop's
+own configuration-driven lookup, never a compile-time link to a vendor
+SDK. This needs no new dependency in `spark-adapter` itself:
+`hadoop-client-api`/`hadoop-client-runtime` (confirmed via
+`sbt Test/dependencyTree` to be the shaded 3.3.4 artifacts Spark 3.5.7
+actually resolves — not the classic unshaded `hadoop-common`) already
+carry `FileSystem`/`Path` transitively through the existing `provided`
+`spark-core`/`spark-sql` dependencies. It costs a real user nothing extra
+either, for a structural reason, not a coincidence: if a contract's own
+`location:` already points at `s3a://`/`gs://`, the job's runtime
+classpath already carries `hadoop-aws`/the GCS connector for that write to
+succeed at all — this sink piggybacks on exactly that, the same way
+`FileNotificationSink` piggybacks on `java.io.FileWriter` already being
+part of the JDK.
+
+Configuration: `sink.property.path` (required, treated as a directory
+prefix, not a single file) and `sink.property.hadoop.<key>` passthrough
+into the `Configuration` this sink builds — Hadoop's own configuration
+keys, not a second vocabulary. **One JSON object per event, not an
+appended log** — deliberately, not an oversight:
+`FileSystem.append` is not reliably supported across implementations, and
+S3A in particular has never supported real append (S3 objects are
+immutable) — an append-based design that works for `FileNotificationSink`'s
+local files would silently misbehave the moment `sink.property.path`
+pointed at `s3a://`. Writing each event as its own object under the
+configured prefix, named `<timestamp>-<eventType>-<uuid>.json` to avoid
+collisions, needs nothing more than `create`, universally supported.
+
+Tested against a real `file://` `LocalFileSystem` — Hadoop's own built-in
+`FileSystem` implementation, exercising the identical API surface
+`hdfs://`/`s3a://`/`gs://` all implement, which is precisely the point of
+the abstraction (Hadoop itself tests every `FileSystem` implementation
+for consistent semantics against the same contract). Deliberately
+*not* tested against a real HDFS cluster in this repository: Hadoop's own
+`MiniDFSCluster` would need to be added as a dependency, and it pulls in
+the classic, unshaded `hadoop-common`/`hadoop-hdfs` artifacts alongside
+the shaded `hadoop-client-api`/`hadoop-client-runtime` Spark 3.5.7 already
+resolves — real risk of reopening exactly the kind of transitive
+classpath conflict this module's own `build.sbt` has extensively
+documented fighting for Netty/Jackson/Arrow, for a test whose real
+assertions are about this sink's own logic (path resolution, one-file-
+per-event, the `hadoop.*` passthrough), not about Hadoop's `FileSystem`
+contract itself. Real S3/GCS backends are further out of reach for this
+repository's test environment entirely (no cluster, no cloud credentials)
+— confirmed structurally correct via the shared `FileSystem` contract, not
+separately verified end-to-end, and documented as such rather than forced
+into a false claim of full verification.
+
+**A fourth sink, Kafka, deliberately ships as a separate module/artifact
+instead — `notification-kafka/`, not part of `spark-adapter`.** Unlike an
+HTTP client, there's no JDK-bundled Kafka client, and unlike Delta/
+Iceberg's narrow set of internal case classes (which `WriteCommandSupport`
+reaches via reflection precisely so `spark-adapter` never needs those
+libraries as a real dependency), `KafkaProducer`'s API is broad enough
+that reflecting the whole thing would be unidiomatic — this needed a real,
+unscoped `kafka-clients` dependency somewhere. Putting that somewhere in
+its own module (mirroring how Spark itself ships `spark-sql-kafka-0-10`
+as a wholly separate artifact from `spark-sql`, not bundled into it) means
+a user who wants Kafka builds `notification-kafka`'s own assembled jar
+(`cd notification-kafka && sbt assembly`) and adds it to their classpath;
+a user who doesn't never resolves `kafka-clients` at all — `spark-adapter`'s
+own `build.sbt` declares no dependency on it whatsoever, a stronger
+guarantee than even the `test`-scoped connector dependencies (Delta,
+Iceberg, Hive, Avro, ClickHouse) get, since those are still resolved to
+build/test `spark-adapter` itself.
+
+`KafkaNotificationSink.configure` treats `sink.property.topic` specially
+(the destination topic) and passes every *other* `sink.property.*` key
+straight through as a Kafka producer config
+(`sink.property.bootstrap.servers`, `sink.property.security.protocol`,
+...) — Kafka's own producer configuration keys, not a second vocabulary
+this sink would otherwise have to invent and keep in sync with Kafka's.
+Tested against `MockProducer` — `kafka-clients`' own officially-supported
+test double for exactly this purpose, substituted via a `private[kafka]`
+constructor the reflective `NotificationSinkFactory` path never uses —
+rather than a hand-rolled mock or standing up a real broker.
+
+A real destination beyond these four (a different message queue, a metrics
+system, cloud pub/sub) is ordinary user code implementing
+`NotificationSink` — nothing here requires it to live in this module, this
+repository, or even the JVM ecosystem's dependency-free constraints these
+four happen to satisfy. `NotificationJson.toJson` is public specifically
+so such a sink can reuse this module's event serialization instead of
+reinventing it, whether or not it lives in the same jar.
+
+**API shape: additive overloads, not new parameters on existing
+signatures**, per CLAUDE.md's "API Compatibility Requirement" — adding a
+parameter to `ContractEnforcementRule.forContract`'s existing signature
+(even with a default) changes its compiled descriptor, a binary break for
+any already-compiled caller. Instead: `forContract(contract, options,
+sink: NotificationSink)` is a new overload; the original
+`forContract(contract, options = ...)` is untouched, delegating to the new
+one with no sink. `SparkAdapterListener` similarly gained two new
+auxiliary constructors (`(sink, contractRef, metadata)` and the
+`(sink, contract: Option[Contract])` convenience) alongside its original,
+still-present zero-arg constructor — every existing `new
+SparkAdapterListener()` call site in this repo (and any real user's code)
+keeps compiling and keeps its exact prior behavior unchanged. Confirmed by
+`sbt mimaReportBinaryIssues` staying clean.
+
+**A third event, `JobSummaryEvent`, and two sink decorators built on top of
+the two above — not published by the enforcement/listener machinery
+directly, but assembled on demand from what already flows through
+`ContractValidationEvent`/`WriteEvent`.** Where those two events are
+per-check and per-write respectively, `JobSummaryEvent` answers a
+coarser question a consumer watching many jobs actually asks first: "did
+this run go fine overall, and how much happened?" — `totalWrites`,
+`checksPassed`, `checksFailed`, `totalViolations` (summed across every
+FAILED check's own violation count, not just a count of FAILED checks),
+`durationMs` (wall-clock since construction or the last summary), and the
+same `metadata`/`applicationId` fields the other two events carry, for the
+same reason.
+
+- **`SummarizingNotificationSink(delegate: NotificationSink)`** wraps
+  another sink: every event still reaches `delegate` unchanged (this is
+  additive observability, not a filter), while `SummarizingNotificationSink`
+  itself tallies `ContractValidationEvent`/`WriteEvent` traffic into
+  in-memory counters. Calling its `publishSummary()` builds a
+  `JobSummaryEvent` from the current tallies, publishes it to `delegate`,
+  and atomically resets the counters (`AtomicLong.getAndSet(0L)`) — so the
+  same sink instance supports both "call `publishSummary()` once at job
+  end" (this harness's own use, below) and "call it periodically for a
+  rolling window" without double-counting either way. A rolling window
+  simply calls it more than once; there is no separate API for that case.
+- **`FailureOnlyNotificationSink(delegate: NotificationSink)`** wraps
+  another sink and forwards only the events an on-call consumer actually
+  wants paged for: a FAILED `ContractValidationEvent`, and every
+  `JobSummaryEvent` (since a summary is itself already a rate-limited,
+  aggregate signal, not raw per-check noise) — PASSED checks and every
+  `WriteEvent` are dropped. Composes with `SummarizingNotificationSink`
+  freely (wrap the summarizing sink in a failure-only one, or vice versa,
+  depending on whether the underlying `delegate` should also see the raw
+  passing traffic).
+
+- **`RetryingNotificationSink(delegate: NotificationSink, deadLetterSink: NotificationSink, maxAttempts: Int = 3, initialBackoffMs: Long = 100L, backoffMultiplier: Double = 2.0)`**
+  wraps a sink to retry a failed `publish` with capped exponential backoff
+  (`initialBackoffMs`, then `× backoffMultiplier` after each further
+  failure) before giving up — and, if every attempt fails, publishes the
+  event to `deadLetterSink` instead of letting it vanish the way it would
+  with no retry at all. This sits *underneath* `SafeNotificationSink`
+  (every `NotificationSinkFactory.create` result is already wrapped in
+  one), not instead of it: `SafeNotificationSink` still catches and logs
+  anything that escapes even after retries and dead-lettering are done,
+  so a bug in a custom `deadLetterSink` itself still can't fail the write
+  or check that triggered the original event.
+
+  Deliberately synchronous, not a background retry queue: a bounded
+  number of short, capped-backoff retries keeps the added latency on
+  `publish`'s caller (Spark's own analysis or listener thread) small and
+  predictable, whereas a queue would need its own lifecycle tied to the
+  `SparkSession` for a benefit this module doesn't need — a sink down for
+  longer than a few short retries is expected to stay down for a while,
+  and `deadLetterSink` already gives an operator everything needed to
+  replay those events later by hand. There is no scheduled
+  retry-from-dead-letter; that dead-lettered record is the whole feature,
+  not a promise it will be automatically retried again.
+
+  `deadLetterSink` is any ordinary `NotificationSink`, not a new concrete
+  type of its own — pointing a plain `FileNotificationSink` (or
+  `HadoopFsNotificationSink`, for S3/GCS/HDFS) at a separate path is
+  enough to get a durable, replayable record, reusing this module's
+  existing serialization (`NotificationJson.toJson`) rather than
+  inventing a dedicated dead-letter format. `configure` forwards only to
+  `delegate`, never to `deadLetterSink` — the two are independent sinks,
+  each configured on its own by whatever code constructs them.
+
+  Tested with a delegate fake that fails a configurable number of times
+  before succeeding (or never succeeds at all), and a `sleep` hook
+  (`protected def sleep(ms: Long): Unit`, the same override-for-testing
+  convention `HadoopFsNotificationSink.newFileName` already uses)
+  overridden in tests to record the requested backoff durations instead
+  of actually blocking — this both keeps the suite fast and makes the
+  exact backoff sequence (e.g. `10 → 30 → 90` for `initialBackoffMs = 10`,
+  `backoffMultiplier = 3.0`) a directly assertable, mutation-resistant
+  check, not just "eventually gives up."
+
+Both `SummarizingNotificationSink`/`FailureOnlyNotificationSink`, and
+`RetryingNotificationSink`, are plain constructors, not
+`NotificationConfig`-loadable classes — `NotificationSinkFactory`'s
+reflective loading only supports a public no-arg constructor (see below),
+and all three require at least one `delegate` argument by design, so
+they're meant to be composed directly in code around whatever sink
+`NotificationSinkFactory.create` returns, the way `DemoJobHarness` does
+(below) for `SummarizingNotificationSink`.
+
+**Live-demonstrated against a real Spark job, not just unit-tested.**
+`demo/notify.properties` configures a `FileNotificationSink` writing to
+`demo/output/events.jsonl`; `DemoJobHarness` wraps whatever
+`NotificationSinkFactory.create` returns in a `SummarizingNotificationSink`
+before installing it (this harness runs exactly one job, so it's the
+natural place to demonstrate the "per-job summary" use case — see its own
+comments), and `./dev/test` asserts a `CONTRACT_VALIDATION`, a `WRITE`,
+*and* a `JOB_SUMMARY` event all actually landed in that file from a real
+`spark-submit` run. `./dev/regression` goes further, using two more
+instances of the same config (`demo/regression-notify-{pass,fail}.properties`)
+to prove the asymmetry that matters most: the PASS case's events file
+contains a PASSED `ContractValidationEvent`, a `WriteEvent` (the write
+really happened), and a `JobSummaryEvent` with `checksPassed=1`/
+`checksFailed=0`, while the FAIL case's contains a FAILED
+`ContractValidationEvent`, *no* `WriteEvent` at all (the write never
+executed) — the same "no output file on disk" proof the FAIL case's
+enforcement assertion already relies on — and *still* a `JobSummaryEvent`,
+now with `checksPassed=0`/`checksFailed=1`: `DemoJobHarness` publishes the
+summary once the job's outcome is known, success or failure alike, since
+"this job failed" is exactly the kind of thing a per-job summary should be
+able to report, not something a thrown exception should be allowed to
+silently skip.
+
+`RetryingNotificationSink` is deliberately **not** wired into
+`DemoJobHarness` the way `SummarizingNotificationSink` is, and that's a
+choice, not an oversight: proving retry-then-dead-letter behavior against
+a *real* Spark job would need a delegate deliberately made to fail a
+fixed number of times, which is a synthetic condition, not something a
+real write or check ever does on its own — the exact opposite of this
+module's "real thing over a mock" testing discipline elsewhere. What's
+worth demonstrating here is the retry/backoff/dead-letter *logic itself*
+(does it retry the right number of times, back off correctly, dead-letter
+the right event) — that's a `NotificationSink` decorator with no Spark
+dependency at all, so it's fully and directly testable with a real
+`NotificationSink` test double (`NotificationSinkSpec`'s `FlakySink`)
+without needing a Spark job to prove anything a Spark job wouldn't
+actually exercise differently.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s
