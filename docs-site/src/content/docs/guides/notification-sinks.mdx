@@ -240,6 +240,55 @@ Compose the two in either order — wrap a `SummarizingNotificationSink` in a
 `FailureOnlyNotificationSink` in a `SummarizingNotificationSink` if the *tallies*
 themselves should reflect only failures.
 
+## Retrying a flaky sink, with a dead letter for events that never make it
+
+A network sink — `HttpNotificationSink`, `KafkaNotificationSink`, anything reaching
+outside the JVM — can fail for reasons that have nothing to do with your job: a
+timeout, a momentary outage on the receiving end. `RetryingNotificationSink` wraps
+another sink to retry a failed `publish` a few times, with capped exponential backoff,
+before giving up — and if every attempt fails, it publishes the event to a
+**dead-letter sink** instead of letting it disappear:
+
+```scala
+import com.example.sparkadapter.notification.{
+  FileNotificationSink, HttpNotificationSink, NotificationSinkFactory, RetryingNotificationSink
+}
+
+val configuredSink = NotificationSinkFactory.create(notifyConfig) // e.g. HttpNotificationSink
+
+val deadLetter = new FileNotificationSink
+deadLetter.configure(Map("path" -> "/var/log/invaract/dead-letter.jsonl"))
+
+val retryingSink = configuredSink.map(new RetryingNotificationSink(_, deadLetter))
+
+// ... pass retryingSink to the enforcement rule and the listener, same as any other
+// Option[NotificationSink] ...
+```
+
+The dead-letter sink is any ordinary `NotificationSink` — there's no dedicated
+dead-letter type. Pointing a plain `FileNotificationSink` (or `HadoopFsNotificationSink`,
+for S3/GCS/HDFS) at a separate path is enough to get a durable, replayable record of
+whatever never made it through.
+
+<Aside type="note" title="Defaults and tuning">
+`maxAttempts` defaults to `3`, `initialBackoffMs` to `100`, `backoffMultiplier` to `2.0`
+— so a persistently-failing sink is tried at roughly `t=0`, `t=100ms`, `t=300ms` before
+the event is dead-lettered. All three are constructor arguments:
+`new RetryingNotificationSink(delegate, deadLetter, maxAttempts = 5, initialBackoffMs = 200L, backoffMultiplier = 3.0)`.
+</Aside>
+
+<Aside type="caution" title="Retries are synchronous, not a background queue">
+Each retry blocks whatever thread called `publish` (Spark's own analysis or listener
+thread) for the backoff duration. A bounded number of short retries keeps this
+predictable; there's no scheduled retry-from-dead-letter after that — a sink down for
+longer than a few short retries is treated as down for a while, and the dead-lettered
+events are there for you to replay by hand once it's back.
+</Aside>
+
+Composes with the two sinks above like any other wrapper — retry around a summarizing
+sink, or summarize around a retrying one, depending on whether the retry/dead-letter
+behavior should apply to the raw per-event traffic or only to published summaries.
+
 ## The Kafka sink is a separate module
 
 Unlike the three sinks above, `KafkaNotificationSink` isn't part of `spark-adapter` — it

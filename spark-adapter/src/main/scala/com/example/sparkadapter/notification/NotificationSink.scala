@@ -393,3 +393,82 @@ class FailureOnlyNotificationSink(delegate: NotificationSink) extends Notificati
     case _: WriteEvent => ()
   }
 }
+
+/** Wraps a sink to retry a failed `publish` (with capped exponential
+  * backoff) before giving up, and — if every attempt fails — publishes the
+  * event to `deadLetterSink` instead of letting it vanish, the way it
+  * would with no retry at all: `SafeNotificationSink` (what
+  * `NotificationSinkFactory.create` always wraps its result in) catches
+  * and logs a `publish` failure but does not retry or persist the event
+  * anywhere, since a broken sink must never be allowed to fail the write
+  * or check that triggered it — this decorator sits *underneath* that
+  * safety net, giving a flaky-but-usually-fine destination (a network
+  * call that occasionally times out) a chance to succeed on a later
+  * attempt, and giving an operator a durable record of what didn't make
+  * it through even when it never does.
+  *
+  * Deliberately synchronous, not queued onto a background thread: a
+  * bounded number of short, capped-backoff retries keeps the added
+  * latency small and predictable for `publish`'s caller (Spark's own
+  * analysis or listener thread — see `NotificationSink.publish`'s own
+  * doc), whereas a background retry queue would need its own lifecycle
+  * tied to the `SparkSession` for a benefit this module doesn't need: a
+  * sink down for longer than a few short retries is expected to stay down
+  * for a while, and the dead-letter sink already gives an operator
+  * everything needed to replay those events later by hand — no
+  * scheduled retry-from-dead-letter is attempted here.
+  *
+  * `deadLetterSink` is any ordinary `NotificationSink`, not a new
+  * concrete type — pointing a plain `FileNotificationSink` (or
+  * `HadoopFsNotificationSink`, for S3/GCS/HDFS) at a separate path is
+  * enough to get a durable, replayable record, reusing the exact
+  * serialization/writing this module already has rather than inventing a
+  * dedicated dead-letter format.
+  */
+class RetryingNotificationSink(
+  delegate: NotificationSink,
+  deadLetterSink: NotificationSink,
+  maxAttempts: Int = 3,
+  initialBackoffMs: Long = 100L,
+  backoffMultiplier: Double = 2.0
+) extends NotificationSink {
+  private val logger = LoggerFactory.getLogger(classOf[RetryingNotificationSink])
+
+  override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
+
+  /** Pulled out so a test can override it (to a no-op, or to one that
+    * records the requested duration) instead of a real test run actually
+    * blocking for the full backoff — the real behavior is exactly
+    * `Thread.sleep`.
+    */
+  protected def sleep(ms: Long): Unit = Thread.sleep(ms)
+
+  override def publish(event: NotificationEvent): Unit = {
+    var attempt = 1
+    var backoffMs = initialBackoffMs
+    var lastFailure: Option[Exception] = None
+    var delivered = false
+    while (!delivered && attempt <= maxAttempts) {
+      try {
+        delegate.publish(event)
+        delivered = true
+      } catch {
+        case e: Exception =>
+          lastFailure = Some(e)
+          if (attempt < maxAttempts) {
+            sleep(backoffMs)
+            backoffMs = (backoffMs * backoffMultiplier).toLong
+          }
+          attempt += 1
+      }
+    }
+    if (!delivered) {
+      logger.warn(
+        s"RetryingNotificationSink exhausted $maxAttempts attempt(s) publishing a ${event.eventType} event " +
+          s"to ${delegate.getClass.getName}; sending it to the dead-letter sink instead.",
+        lastFailure.orNull
+      )
+      deadLetterSink.publish(event)
+    }
+  }
+}

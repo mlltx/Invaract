@@ -169,4 +169,119 @@ class NotificationSinkSpec extends AnyFunSuite {
     remediation = "add 'x'",
     column = Some("x")
   )
+
+  /** A delegate that fails the first `failuresBeforeSuccess` calls, then
+    * succeeds on every call after that - the shape `RetryingNotificationSink`
+    * is meant to recover from. `failuresBeforeSuccess = Int.MaxValue`
+    * (effectively) models a sink that's simply down for the whole test.
+    */
+  private class FlakySink(failuresBeforeSuccess: Int) extends NotificationSink {
+    var attempts: Int = 0
+    var delivered: List[NotificationEvent] = Nil
+
+    override def publish(event: NotificationEvent): Unit = {
+      attempts += 1
+      if (attempts <= failuresBeforeSuccess) throw new RuntimeException(s"simulated failure #$attempts")
+      delivered = delivered :+ event
+    }
+  }
+
+  /** `RetryingNotificationSink` with `sleep` overridden to record the
+    * requested duration instead of actually blocking the test thread -
+    * this both keeps the suite fast and makes the exact backoff sequence
+    * directly assertable, which a real `Thread.sleep` call never would be.
+    */
+  private class RecordingRetryingSink(
+    delegate: NotificationSink,
+    deadLetterSink: NotificationSink,
+    maxAttempts: Int = 3,
+    initialBackoffMs: Long = 10L,
+    backoffMultiplier: Double = 2.0
+  ) extends RetryingNotificationSink(delegate, deadLetterSink, maxAttempts, initialBackoffMs, backoffMultiplier) {
+    var sleeps: List[Long] = Nil
+    override protected def sleep(ms: Long): Unit = sleeps = sleeps :+ ms
+  }
+
+  test("RetryingNotificationSink succeeding on the first attempt never retries, sleeps, or dead-letters") {
+    val delegate = new FlakySink(failuresBeforeSuccess = 0)
+    val deadLetter = new TestNotificationSink
+    val sink = new RecordingRetryingSink(delegate, deadLetter)
+
+    sink.publish(sampleWrite)
+
+    assert(delegate.attempts == 1, s"expected exactly one delegate call, got ${delegate.attempts}")
+    assert(delegate.delivered == List(sampleWrite))
+    assert(sink.sleeps.isEmpty, "a first-try success must never sleep between attempts")
+    assert(deadLetter.events.isEmpty, "a delivered event must never reach the dead-letter sink")
+  }
+
+  test("RetryingNotificationSink succeeding on a later attempt (within maxAttempts) does not dead-letter") {
+    val delegate = new FlakySink(failuresBeforeSuccess = 2)
+    val deadLetter = new TestNotificationSink
+    val sink = new RecordingRetryingSink(delegate, deadLetter, maxAttempts = 3)
+
+    sink.publish(sampleWrite)
+
+    assert(delegate.attempts == 3, s"expected 2 failures then a successful 3rd attempt, got ${delegate.attempts} attempts")
+    assert(delegate.delivered == List(sampleWrite))
+    assert(sink.sleeps.size == 2, s"expected a sleep between each of the 2 failed attempts and the next, got ${sink.sleeps}")
+    assert(deadLetter.events.isEmpty, "an eventually-delivered event must never reach the dead-letter sink")
+  }
+
+  test("RetryingNotificationSink exhausting every attempt publishes the original event to the dead-letter sink") {
+    val delegate = new FlakySink(failuresBeforeSuccess = Int.MaxValue)
+    val deadLetter = new TestNotificationSink
+    val sink = new RecordingRetryingSink(delegate, deadLetter, maxAttempts = 3)
+
+    sink.publish(sampleWrite)
+
+    assert(delegate.attempts == 3, s"expected exactly maxAttempts (3) delegate calls, got ${delegate.attempts}")
+    assert(delegate.delivered.isEmpty, "a delegate that always fails must never be recorded as having delivered anything")
+    assert(deadLetter.events == List(sampleWrite), "the dead-letter sink must receive the exact original event")
+  }
+
+  test("RetryingNotificationSink with maxAttempts = 1 tries exactly once, never sleeps, and dead-letters on that single failure") {
+    val delegate = new FlakySink(failuresBeforeSuccess = Int.MaxValue)
+    val deadLetter = new TestNotificationSink
+    val sink = new RecordingRetryingSink(delegate, deadLetter, maxAttempts = 1)
+
+    sink.publish(sampleWrite)
+
+    assert(delegate.attempts == 1, s"expected exactly one attempt, got ${delegate.attempts}")
+    assert(sink.sleeps.isEmpty, "there is no next attempt to back off before with maxAttempts = 1")
+    assert(deadLetter.events == List(sampleWrite))
+  }
+
+  test("RetryingNotificationSink backs off with the configured initial delay and multiplier, not a fixed or additive one") {
+    val delegate = new FlakySink(failuresBeforeSuccess = Int.MaxValue)
+    val deadLetter = new TestNotificationSink
+    val sink = new RecordingRetryingSink(delegate, deadLetter, maxAttempts = 4, initialBackoffMs = 10L, backoffMultiplier = 3.0)
+
+    sink.publish(sampleWrite)
+
+    assert(sink.sleeps == List(10L, 30L, 90L), s"expected a 10 -> 30 -> 90 backoff sequence (x3 each time), got ${sink.sleeps}")
+  }
+
+  /** Records whether/with-what `configure` was called - `TestNotificationSink`
+    * can't observe that (its `configure` is the inherited no-op), so this
+    * exists purely to make "delegates to the wrapped sink, not the
+    * dead-letter sink" a real, mutation-resistant assertion rather than
+    * just "doesn't throw."
+    */
+  private class ConfigureRecordingSink extends NotificationSink {
+    var received: Option[Map[String, String]] = None
+    override def configure(properties: Map[String, String]): Unit = received = Some(properties)
+    override def publish(event: NotificationEvent): Unit = ()
+  }
+
+  test("RetryingNotificationSink.configure delegates to the wrapped sink, not the dead-letter sink") {
+    val delegate = new ConfigureRecordingSink
+    val deadLetter = new ConfigureRecordingSink
+    val sink = new RetryingNotificationSink(delegate, deadLetter)
+
+    sink.configure(Map("anything" -> "goes"))
+
+    assert(delegate.received.contains(Map("anything" -> "goes")), "configure must reach the wrapped (delegate) sink")
+    assert(deadLetter.received.isEmpty, "configure must not also reach the dead-letter sink - it is configured separately, on its own")
+  }
 }

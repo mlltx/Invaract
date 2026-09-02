@@ -1088,12 +1088,56 @@ same reason.
   depending on whether the underlying `delegate` should also see the raw
   passing traffic).
 
-Both are plain constructors, not `NotificationConfig`-loadable classes —
-`NotificationSinkFactory`'s reflective loading only supports a public
-no-arg constructor (see below), and both of these require a `delegate`
-argument by design, so they're meant to be composed directly in code
-around whatever sink `NotificationSinkFactory.create` returns, the way
-`DemoJobHarness` does (below).
+- **`RetryingNotificationSink(delegate: NotificationSink, deadLetterSink: NotificationSink, maxAttempts: Int = 3, initialBackoffMs: Long = 100L, backoffMultiplier: Double = 2.0)`**
+  wraps a sink to retry a failed `publish` with capped exponential backoff
+  (`initialBackoffMs`, then `× backoffMultiplier` after each further
+  failure) before giving up — and, if every attempt fails, publishes the
+  event to `deadLetterSink` instead of letting it vanish the way it would
+  with no retry at all. This sits *underneath* `SafeNotificationSink`
+  (every `NotificationSinkFactory.create` result is already wrapped in
+  one), not instead of it: `SafeNotificationSink` still catches and logs
+  anything that escapes even after retries and dead-lettering are done,
+  so a bug in a custom `deadLetterSink` itself still can't fail the write
+  or check that triggered the original event.
+
+  Deliberately synchronous, not a background retry queue: a bounded
+  number of short, capped-backoff retries keeps the added latency on
+  `publish`'s caller (Spark's own analysis or listener thread) small and
+  predictable, whereas a queue would need its own lifecycle tied to the
+  `SparkSession` for a benefit this module doesn't need — a sink down for
+  longer than a few short retries is expected to stay down for a while,
+  and `deadLetterSink` already gives an operator everything needed to
+  replay those events later by hand. There is no scheduled
+  retry-from-dead-letter; that dead-lettered record is the whole feature,
+  not a promise it will be automatically retried again.
+
+  `deadLetterSink` is any ordinary `NotificationSink`, not a new concrete
+  type of its own — pointing a plain `FileNotificationSink` (or
+  `HadoopFsNotificationSink`, for S3/GCS/HDFS) at a separate path is
+  enough to get a durable, replayable record, reusing this module's
+  existing serialization (`NotificationJson.toJson`) rather than
+  inventing a dedicated dead-letter format. `configure` forwards only to
+  `delegate`, never to `deadLetterSink` — the two are independent sinks,
+  each configured on its own by whatever code constructs them.
+
+  Tested with a delegate fake that fails a configurable number of times
+  before succeeding (or never succeeds at all), and a `sleep` hook
+  (`protected def sleep(ms: Long): Unit`, the same override-for-testing
+  convention `HadoopFsNotificationSink.newFileName` already uses)
+  overridden in tests to record the requested backoff durations instead
+  of actually blocking — this both keeps the suite fast and makes the
+  exact backoff sequence (e.g. `10 → 30 → 90` for `initialBackoffMs = 10`,
+  `backoffMultiplier = 3.0`) a directly assertable, mutation-resistant
+  check, not just "eventually gives up."
+
+Both `SummarizingNotificationSink`/`FailureOnlyNotificationSink`, and
+`RetryingNotificationSink`, are plain constructors, not
+`NotificationConfig`-loadable classes — `NotificationSinkFactory`'s
+reflective loading only supports a public no-arg constructor (see below),
+and all three require at least one `delegate` argument by design, so
+they're meant to be composed directly in code around whatever sink
+`NotificationSinkFactory.create` returns, the way `DemoJobHarness` does
+(below) for `SummarizingNotificationSink`.
 
 **Live-demonstrated against a real Spark job, not just unit-tested.**
 `demo/notify.properties` configures a `FileNotificationSink` writing to
@@ -1117,6 +1161,21 @@ summary once the job's outcome is known, success or failure alike, since
 "this job failed" is exactly the kind of thing a per-job summary should be
 able to report, not something a thrown exception should be allowed to
 silently skip.
+
+`RetryingNotificationSink` is deliberately **not** wired into
+`DemoJobHarness` the way `SummarizingNotificationSink` is, and that's a
+choice, not an oversight: proving retry-then-dead-letter behavior against
+a *real* Spark job would need a delegate deliberately made to fail a
+fixed number of times, which is a synthetic condition, not something a
+real write or check ever does on its own — the exact opposite of this
+module's "real thing over a mock" testing discipline elsewhere. What's
+worth demonstrating here is the retry/backoff/dead-letter *logic itself*
+(does it retry the right number of times, back off correctly, dead-letter
+the right event) — that's a `NotificationSink` decorator with no Spark
+dependency at all, so it's fully and directly testable with a real
+`NotificationSink` test double (`NotificationSinkSpec`'s `FlakySink`)
+without needing a Spark job to prove anything a Spark job wouldn't
+actually exercise differently.
 
 ## DML rule verification
 
