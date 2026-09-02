@@ -798,6 +798,52 @@ empirically, not assumed**, to behave differently across connectors:
   those two connectors needs connector-specific investigation — see
   ROADMAP.md for status — not a different `SQLMetric` key.
 
+**`WriteEvent` also carries `deltaVersion`/`icebergSnapshotId: Option[Long]`
+— the connector's own identifier for the commit this write just
+produced.** Unlike row/byte/file counts above, this connector-specific
+investigation *was* done: `Some` for a write of that connector's format,
+`None` otherwise (including for each other — a Delta write never
+populates `icebergSnapshotId`, and vice versa, and a plain V1 write
+populates neither). `SparkAdapterListener.onSuccess` reaches these via
+reflection — this module has no compile-time dependency on Delta or
+Iceberg (`delta-spark`/`iceberg-spark-runtime` are `test`-scope only in
+`spark-adapter/build.sbt`) — following the exact convention
+`WriteCommandSupport`'s `deltaRowLevelDml`/Hive cases already use for
+connector-internal classes.
+
+Both are deliberately **fresh lookups**, never a reflective read on some
+object already resolved earlier in the write's analyzed plan:
+`DeltaLog.forTable(session, path).snapshot.version` (fresh by physical
+path) for Delta, and — for Iceberg — a fresh
+`TableCatalog.loadTable(identifier)` call (fresh by catalog identifier)
+followed by `SparkTable.table().refresh().currentSnapshot().snapshotId()`.
+This mattered in practice, not just in theory: an earlier version of this
+feature captured Iceberg's resolved `Table` handle once, at analysis time,
+and read from that same object later — this worked in an isolated test
+run, but failed intermittently once a different Iceberg-heavy test suite
+ran earlier in the same JVM, apparently due to Iceberg's own catalog/table
+caching. A plain SQL query against the same table always saw the
+just-committed snapshot correctly; the captured object sometimes didn't,
+even after an explicit `.refresh()` call on it. Re-resolving fresh through
+the catalog each time — the same thing a SQL query already does under the
+hood — fixed it. Delta's `.snapshot.version` read was never affected by
+this class of problem for exactly the same reason: `DeltaLog.forTable` was
+already a fresh-by-path lookup, never a captured object.
+
+A second, unrelated reflection pitfall surfaced along the way: Iceberg's
+concrete `Snapshot` implementation (`BaseSnapshot`) is package-private,
+even though it implements the public `org.apache.iceberg.Snapshot`
+interface and `snapshotId()` is a public interface method.
+`java.lang.reflect.Method.invoke` enforces accessibility against a
+`Method` object's own *declaring class* — if that `Method` is looked up
+via `snapshot.getClass.getMethod("snapshotId")`, the declaring class is
+the inaccessible `BaseSnapshot`, and `invoke` throws
+`IllegalAccessException` regardless of the method itself being public.
+Looking the method up via `Class.forName("org.apache.iceberg.Snapshot")`
+instead — the public interface — fixes it: `invoke` still dispatches
+virtually to the real `BaseSnapshot` instance, but the accessibility check
+now passes against a public declaring class.
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment

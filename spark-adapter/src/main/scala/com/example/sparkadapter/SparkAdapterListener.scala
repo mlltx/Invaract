@@ -6,6 +6,8 @@ package com.example.sparkadapter
 import com.example.contract.Contract
 import com.example.sparkadapter.notification.{NotificationSink, WriteEvent, WriteFieldInfo}
 
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.util.QueryExecutionListener
 
@@ -101,11 +103,129 @@ class SparkAdapterListener(
             rowCount = metrics.get("numOutputRows").map(_.value),
             bytesWritten = metrics.get("numOutputBytes").map(_.value),
             fileCount = metrics.get("numFiles").map(_.value),
-            applicationId = Some(qe.sparkSession.sparkContext.applicationId)
+            applicationId = Some(qe.sparkSession.sparkContext.applicationId),
+            deltaVersion = if (info.format.contains("delta")) SparkAdapterListener.deltaVersionOf(qe.sparkSession, info.location) else None,
+            icebergSnapshotId = info.catalogTableRef.flatMap { case (catalog, identifier) =>
+              SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
+            }
           )
         )
       }
     } // else not a write; ignore (schema inference, count(), etc.)
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = ()
+}
+
+private[sparkadapter] object SparkAdapterListener {
+
+  /** `DeltaLog.forTable(session, path).snapshot.version` via reflection -
+    * this module has no compile-time dependency on Delta (`delta-spark` is
+    * `test`-scope only in build.sbt, used to build/run this module's own
+    * tests against a real Delta session, never a runtime dependency this
+    * jar forces on every consumer). A real user's job that doesn't touch
+    * Delta never resolves `delta-spark` because of this call: `Class.forName`
+    * fails with `ClassNotFoundException`, caught by the `Try` below and
+    * turned into `None`, the same "fail closed to no information, never
+    * throw" contract every other reflective lookup in this file's sibling
+    * `WriteCommandSupport` already follows (`deltaRowLevelDml`,
+    * `createHiveTableAsSelect`). A real Delta write, on the other hand,
+    * already has `delta-spark` on its classpath - it could not have
+    * written the table otherwise - so this reflection is only ever
+    * attempted when it's already known to succeed.
+    *
+    * No explicit refresh (Delta's own `DeltaLog.update()`, which - unlike
+    * `snapshot` - takes defaulted parameters, meaning a bare `update()`
+    * call site is really the Scala compiler inserting three separate
+    * default-value method calls, not one that reflection can replicate as
+    * simply) is needed here: confirmed empirically (a real throwaway probe
+    * against a live Delta session, since deleted) that the plain,
+    * argument-free `.snapshot.version` read already reflects the
+    * just-committed version at the exact moment `onSuccess` fires for the
+    * write command itself - the same per-path-cached `DeltaLog` instance
+    * Delta's own commit protocol already mutated in place during that
+    * commit.
+    */
+  private[sparkadapter] def deltaVersionOf(session: SparkSession, location: String): Option[Long] =
+    scala.util.Try {
+      val deltaLogClass = Class.forName("org.apache.spark.sql.delta.DeltaLog")
+      val path = new org.apache.hadoop.fs.Path(location)
+      val deltaLog = deltaLogClass
+        .getMethod("forTable", classOf[SparkSession], classOf[org.apache.hadoop.fs.Path])
+        .invoke(null, session, path)
+      val snapshot = deltaLog.getClass.getMethod("snapshot").invoke(deltaLog)
+      snapshot.getClass.getMethod("version").invoke(snapshot).asInstanceOf[java.lang.Long].longValue()
+    }.toOption
+
+  /** A fresh `TableCatalog.loadTable(identifier)` call, followed by
+    * `SparkTable.table().refresh().currentSnapshot().snapshotId()` via
+    * reflection for the Iceberg-specific part only (`iceberg-spark-runtime`
+    * is `test`-scope-only in build.sbt, the same zero-compile-time-
+    * dependency reason `deltaVersionOf` above documents) - `None`
+    * immediately, no reflection attempted at all, unless the freshly-loaded
+    * table's concrete runtime class is actually Iceberg's `SparkTable`
+    * (matched by simple class name, the same convention
+    * `WriteCommandSupport.streamSinkFormatOf` already uses for `DeltaSink`/
+    * `FileStreamSink`).
+    *
+    * Deliberately a *fresh* `loadTable` call, not a reflective read on
+    * `WriteCommandInfo`'s previously-resolved `Table` handle (an earlier
+    * version of this method took that handle directly) - confirmed
+    * empirically, the hard way, via a real cross-suite test failure: when a
+    * prior suite in the same JVM had already exercised Iceberg's own
+    * catalog/table caching, the *already-resolved* `Table` object captured
+    * from the analyzed plan (at analysis time, before the write executed)
+    * failed to see the just-committed snapshot even after an explicit
+    * `.refresh()` call on it - while a plain SQL query against the same
+    * table, and this fresh `loadTable` call, both saw it correctly. This
+    * mirrors `deltaVersionOf` above, which was never affected by the same
+    * class of problem specifically because `DeltaLog.forTable` is already a
+    * fresh lookup by path, not a previously-captured object - the fix here
+    * is to make the Iceberg path do the same. `TableCatalog`/`CatalogPlugin`/
+    * `Identifier` are Spark's own stable, compile-time-available
+    * `connector.catalog` types, so this reload itself needs no reflection;
+    * only what's done with the `Table` `loadTable` returns does.
+    *
+    * `currentSnapshot()` can genuinely return `null` (a table with no
+    * snapshot yet is not a case this call site should ever see, since it
+    * only runs after a write just succeeded, but `Option(...)` guards it
+    * regardless rather than risk a `NullPointerException`).
+    */
+  private[sparkadapter] def icebergSnapshotIdOf(
+    catalog: org.apache.spark.sql.connector.catalog.CatalogPlugin,
+    identifier: org.apache.spark.sql.connector.catalog.Identifier
+  ): Option[Long] =
+    catalog match {
+      case tableCatalog: org.apache.spark.sql.connector.catalog.TableCatalog =>
+        scala.util.Try(tableCatalog.loadTable(identifier)).toOption.flatMap(icebergSnapshotIdOfTable)
+      case _ => None
+    }
+
+  private[sparkadapter] def icebergSnapshotIdOfTable(table: V2Table): Option[Long] =
+    if (table.getClass.getSimpleName != "SparkTable") None
+    else
+      scala.util.Try {
+        val icebergTable = table.getClass.getMethod("table").invoke(table)
+        val tableClass = icebergTable.getClass
+        tableClass.getMethod("refresh").invoke(icebergTable)
+        val snapshot = tableClass.getMethod("currentSnapshot").invoke(icebergTable)
+        // `snapshot`'s *runtime* class (org.apache.iceberg.BaseSnapshot) is
+        // package-private, confirmed via a real IllegalAccessException, not
+        // assumed - even though the interface it implements
+        // (org.apache.iceberg.Snapshot) and snapshotId() itself are both
+        // public. java.lang.reflect.Method.invoke enforces accessibility
+        // against a Method object's own *declaring class* - obtained here
+        // via getMethod - not the method's visibility modifier alone, so
+        // looking the method up on `snapshot.getClass` (the inaccessible
+        // impl class) throws regardless of `snapshotId()` being public.
+        // Looking it up via the public `Snapshot` interface class instead
+        // avoids this: `invoke` still dispatches virtually to whatever
+        // `snapshot` really is, but the accessibility check now passes
+        // against a public declaring class. `Class.forName`, not
+        // `classOf[...]`, for the same zero-compile-time-Iceberg-dependency
+        // reason every other reflective lookup in this file uses it.
+        Option(snapshot).map { s =>
+          val snapshotInterface = Class.forName("org.apache.iceberg.Snapshot")
+          snapshotInterface.getMethod("snapshotId").invoke(s).asInstanceOf[java.lang.Long].longValue()
+        }
+      }.toOption.flatten
 }

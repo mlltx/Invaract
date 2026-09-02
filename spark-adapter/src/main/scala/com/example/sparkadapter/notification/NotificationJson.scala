@@ -50,7 +50,9 @@ object NotificationJson {
         "rowCount" -> e.rowCount,
         "bytesWritten" -> e.bytesWritten,
         "fileCount" -> e.fileCount,
-        "applicationId" -> e.applicationId
+        "applicationId" -> e.applicationId,
+        "deltaVersion" -> e.deltaVersion,
+        "icebergSnapshotId" -> e.icebergSnapshotId
       )
   }
 

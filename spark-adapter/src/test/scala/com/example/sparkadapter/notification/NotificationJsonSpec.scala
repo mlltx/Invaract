@@ -143,5 +143,20 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"bytesWritten\": null"))
     assert(json.contains("\"fileCount\": null"))
     assert(json.contains("\"applicationId\": null"))
+    assert(json.contains("\"deltaVersion\": null"))
+    assert(json.contains("\"icebergSnapshotId\": null"))
+  }
+
+  test("toJson for WriteEvent renders deltaVersion/icebergSnapshotId, None as null and Some as a plain value") {
+    val deltaWrite = WriteEvent(None, "file:/tmp/out.parquet", Some("delta"), None, Nil, 0L, Map.empty, deltaVersion = Some(7L))
+    val deltaJson = NotificationJson.toJson(deltaWrite)
+    assert(deltaJson.contains("\"deltaVersion\": 7"))
+    assert(deltaJson.contains("\"icebergSnapshotId\": null"))
+
+    val icebergWrite =
+      WriteEvent(None, "file:/tmp/out.parquet", Some("iceberg"), None, Nil, 0L, Map.empty, icebergSnapshotId = Some(123456789L))
+    val icebergJson = NotificationJson.toJson(icebergWrite)
+    assert(icebergJson.contains("\"icebergSnapshotId\": 123456789"))
+    assert(icebergJson.contains("\"deltaVersion\": null"))
   }
 }

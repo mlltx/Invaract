@@ -63,7 +63,14 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     df.write.mode("overwrite").parquet(outputPath)
 
     val event = awaitEvent(sink)
-    assert(event.location.contains(outputPath))
+    // event.location is Spark's own resolved file: URI, which always uses
+    // forward slashes (e.g. "file:/C:/Users/.../listener_write.parquet" on
+    // Windows) - outputPath, built from java.nio.file.Path.toString, uses
+    // the platform's native separator (backslashes on Windows). Normalizing
+    // before comparing avoids a real, confirmed Windows CI failure (a
+    // false negative, not a translation bug) rather than asserting on
+    // OS-specific string formatting.
+    assert(event.location.contains(outputPath.replace('\\', '/')))
     assert(event.format.contains("parquet"))
     assert(event.saveMode.contains("overwrite"))
     assert(event.schema.exists(f => f.name == "id" && f.dataType == "long"))
@@ -76,6 +83,9 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.fileCount.exists(_ > 0L), s"expected a positive file count, got ${event.fileCount}")
     assert(event.durationMs >= 0L)
     assert(event.applicationId.contains(spark.sparkContext.applicationId))
+    // Neither connector-specific field applies to a plain Parquet write.
+    assert(event.deltaVersion.isEmpty, s"expected no deltaVersion for a Parquet write, got ${event.deltaVersion}")
+    assert(event.icebergSnapshotId.isEmpty, s"expected no icebergSnapshotId for a Parquet write, got ${event.icebergSnapshotId}")
   }
 
   // Confirmed empirically (see docs/SPARK_ADAPTER.md's "Notification
@@ -96,6 +106,29 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.bytesWritten.isEmpty, s"expected None for a Delta write, got ${event.bytesWritten}")
     assert(event.fileCount.isEmpty, s"expected None for a Delta write, got ${event.fileCount}")
     assert(event.applicationId.contains(spark.sparkContext.applicationId))
+    // The first-ever write to a brand new Delta table always commits as
+    // version 0 - confirmed empirically (see SparkAdapterListener's own
+    // doc) that this plain, unforced read already reflects the
+    // just-committed version at this exact callback.
+    assert(event.deltaVersion.contains(0L), s"expected deltaVersion 0 for the first write to a new Delta table, got ${event.deltaVersion}")
+    assert(event.icebergSnapshotId.isEmpty, s"expected no icebergSnapshotId for a Delta write, got ${event.icebergSnapshotId}")
+  }
+
+  test("a second Delta write to the same table reports an incremented deltaVersion, not a stale/constant one") {
+    val outputPath = scratchDir.resolve("listener_delta_second_write").toString
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None, Map.empty)
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.format("delta").mode("overwrite").save(outputPath)
+    val firstEvent = awaitEvent(sink)
+    assert(firstEvent.deltaVersion.contains(0L))
+
+    spark.range(5, 10).write.format("delta").mode("append").save(outputPath)
+    val secondEvent = eventually(timeout(Span(5, Seconds))) {
+      sink.events.collect { case e: WriteEvent => e }.lastOption.filter(_ ne firstEvent).getOrElse(fail("second WriteEvent not published yet"))
+    }
+    assert(secondEvent.deltaVersion.contains(1L), s"expected deltaVersion 1 after a second write, got ${secondEvent.deltaVersion}")
   }
 
   test("no sink configured: onSuccess still captures lastWrite, publishing nothing (no crash either)") {
@@ -152,5 +185,46 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     val event = awaitEvent(sink)
     assert(event.contract.contains("listener_demo@1.0.0"))
     assert(event.metadata.get("team").contains("data-platform"))
+  }
+
+  test("SparkAdapterListener.deltaVersionOf returns None (not a thrown exception) for an unparseable location") {
+    // new org.apache.hadoop.fs.Path("") throws IllegalArgumentException
+    // ("Can not create a Path from an empty string") - a real, reachable
+    // failure this reflective lookup's Try must swallow, not just a
+    // ClassNotFoundException from Delta being absent (which the write
+    // tests above can't exercise, since Delta genuinely is on this
+    // module's test classpath).
+    assert(SparkAdapterListener.deltaVersionOf(spark, "").isEmpty)
+  }
+
+  test("SparkAdapterListener.icebergSnapshotIdOfTable's SparkTable guard actually prevents reflection from being attempted at all") {
+    // A plain "returns None" assertion alone can't tell "the guard rejected
+    // this" apart from "reflection was attempted and merely failed/threw" -
+    // both produce None. This Table has a table() method shaped just like
+    // SparkTable's, so if the guard were mutated away (e.g. always false),
+    // reflection would actually call it - proven here via a side effect
+    // (the flag), not the return value, which the mutant can't fake.
+    val reflectivePathEntered = new java.util.concurrent.atomic.AtomicBoolean(false)
+    val lookalike = new org.apache.spark.sql.connector.catalog.Table {
+      override def name(): String = "not-iceberg"
+      override def schema(): org.apache.spark.sql.types.StructType = org.apache.spark.sql.types.StructType(Nil)
+      override def capabilities(): java.util.Set[org.apache.spark.sql.connector.catalog.TableCapability] =
+        java.util.Collections.emptySet()
+      def table(): AnyRef = {
+        reflectivePathEntered.set(true)
+        throw new RuntimeException("must never be called: the SparkTable guard should reject this Table by class name first")
+      }
+    }
+    assert(SparkAdapterListener.icebergSnapshotIdOfTable(lookalike).isEmpty)
+    assert(!reflectivePathEntered.get(), "the guard must short-circuit before ever calling table()")
+  }
+
+  test("SparkAdapterListener.icebergSnapshotIdOf returns None immediately when the catalog isn't a TableCatalog") {
+    val notATableCatalog = new org.apache.spark.sql.connector.catalog.CatalogPlugin {
+      override def initialize(name: String, options: org.apache.spark.sql.util.CaseInsensitiveStringMap): Unit = ()
+      override def name(): String = "not-a-table-catalog"
+    }
+    val identifier = org.apache.spark.sql.connector.catalog.Identifier.of(Array("db"), "irrelevant")
+    assert(SparkAdapterListener.icebergSnapshotIdOf(notATableCatalog, identifier).isEmpty)
   }
 }

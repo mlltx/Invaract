@@ -94,7 +94,7 @@ Both event types are plain JSON. A `ContractValidationEvent`, from a passing che
 ...and a `WriteEvent`, once the write completes:
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000"}
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null}
 ```
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
@@ -114,6 +114,19 @@ Iceberg writes** — neither connector populates these particular metrics on the
 node Invaract observes, confirmed against a real local write of each. A sink
 implementation should treat these three fields as always-optional, not assume they're
 present just because the write succeeded.
+
+`deltaVersion` and `icebergSnapshotId` are the connector's own identifier for the
+commit a write just produced — `deltaVersion` is `Some` only for a Delta write (`null`
+for everything else, Iceberg included), and `icebergSnapshotId` is `Some` only for an
+Iceberg write (`null` for everything else, Delta included):
+
+```json
+{"...": "...", "format": "delta", "deltaVersion": 3, "icebergSnapshotId": null}
+```
+
+```json
+{"...": "...", "format": "iceberg", "deltaVersion": null, "icebergSnapshotId": 5964503180593669213}
+```
 
 ## Built-in sinks
 

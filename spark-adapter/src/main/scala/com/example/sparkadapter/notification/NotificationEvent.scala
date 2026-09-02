@@ -88,11 +88,38 @@ case class WriteFieldInfo(name: String, dataType: String, nullable: Boolean)
   * this mechanism," not a bug — Delta and Iceberg both track equivalent
   * counts through their own connector-specific commit metadata instead
   * (Delta's `CommitInfo.operationMetrics`, Iceberg's
-  * `Table.currentSnapshot().summary()`/`MetricsReporter`), which would
-  * need the same connector-specific investigation as their version/
-  * snapshot identifiers — not attempted here. `applicationId` is
+  * `Table.currentSnapshot().summary()`/`MetricsReporter`) — row/byte/file
+  * counts through that route remain unattempted, but the commit identity
+  * itself (which `deltaVersion`/`icebergSnapshotId` below capture) does
+  * not need it. `applicationId` is
   * `qe.sparkSession.sparkContext.applicationId` — always present for a
   * real write.
+  *
+  * `deltaVersion`/`icebergSnapshotId` are the connector's own identifier
+  * for the commit this write just produced — `Some` only for a write of
+  * that connector's format, `None` otherwise (including for each other:
+  * a Delta write never populates `icebergSnapshotId`, and vice versa).
+  * `SparkAdapterListener.onSuccess` reaches these via reflection (this
+  * module has no compile-time dependency on Delta or Iceberg — see
+  * `WriteCommandSupport`'s existing `deltaRowLevelDml`/Hive cases for the
+  * same convention): `DeltaLog.forTable(session, path).snapshot.version`
+  * for Delta, and — for Iceberg — a *fresh*
+  * `TableCatalog.loadTable(identifier)` call followed by
+  * `SparkTable.table().refresh().currentSnapshot().snapshotId()`.
+  *
+  * Both are deliberately fresh lookups (by path for Delta, by catalog
+  * identifier for Iceberg), never a reflective read on some previously-
+  * captured `Table`/`DeltaLog` object from earlier in the write's analyzed
+  * plan. Confirmed empirically, the hard way, via a real cross-suite test
+  * failure: a `Table` object captured at analysis time can fail to see a
+  * just-committed Iceberg snapshot even after an explicit `.refresh()`
+  * call on it, specifically once a prior suite in the same JVM has already
+  * exercised Iceberg's own catalog/table caching — while a plain SQL query
+  * against the same table, and a fresh `loadTable` call, both see it
+  * correctly. Delta's `.snapshot.version` read was never affected by the
+  * same class of problem for exactly this reason: `DeltaLog.forTable` was
+  * already a fresh-by-path lookup, not a captured object, before this was
+  * even a known risk for Iceberg.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -106,7 +133,9 @@ case class WriteEvent(
   rowCount: Option[Long] = None,
   bytesWritten: Option[Long] = None,
   fileCount: Option[Long] = None,
-  applicationId: Option[String] = None
+  applicationId: Option[String] = None,
+  deltaVersion: Option[Long] = None,
+  icebergSnapshotId: Option[Long] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }

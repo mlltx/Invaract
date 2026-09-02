@@ -46,12 +46,12 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
     val dir = Files.createTempDirectory("invaract-hadoopfs-sink-test")
     try {
       val sink = new HadoopFsNotificationSink
-      sink.configure(Map("path" -> s"file://${dir.toString}"))
+      sink.configure(Map("path" -> dir.toUri.toString))
 
       sink.publish(sampleEvent.copy(contract = "first@1.0.0"))
       sink.publish(sampleEvent.copy(contract = "second@1.0.0", status = "FAILED"))
 
-      val fs = FileSystem.get(new java.net.URI(s"file://${dir.toString}"), new org.apache.hadoop.conf.Configuration())
+      val fs = FileSystem.get(new java.net.URI(dir.toUri.toString), new org.apache.hadoop.conf.Configuration())
       val children = fs.listStatus(new Path(dir.toString)).map(_.getPath.getName)
       assert(children.length == 2, s"expected two separate objects, one per publish, got: ${children.toList}")
 
@@ -72,7 +72,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
     val dir = Files.createTempDirectory("invaract-hadoopfs-sink-test")
     try {
       val sink = new HadoopFsNotificationSink
-      sink.configure(Map("path" -> s"file://${dir.toString}"))
+      sink.configure(Map("path" -> dir.toUri.toString))
 
       // Same timestamp and eventType - only the random UUID component of
       // the filename can disambiguate these; asserts create()'s
@@ -80,7 +80,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
       sink.publish(sampleEvent.copy(contract = "a@1.0.0"))
       sink.publish(sampleEvent.copy(contract = "b@1.0.0"))
 
-      val fs = FileSystem.get(new java.net.URI(s"file://${dir.toString}"), new org.apache.hadoop.conf.Configuration())
+      val fs = FileSystem.get(new java.net.URI(dir.toUri.toString), new org.apache.hadoop.conf.Configuration())
       val children = fs.listStatus(new Path(dir.toString))
       assert(children.length == 2, "two publishes with identical timestamp/eventType must still produce two distinct files")
     } finally {
@@ -92,7 +92,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
     val dir = Files.createTempDirectory("invaract-hadoopfs-sink-test")
     try {
       val sink = new HadoopFsNotificationSink
-      sink.configure(Map("path" -> s"file://${dir.toString}", "hadoop.invaract.test.marker" -> "reached"))
+      sink.configure(Map("path" -> dir.toUri.toString, "hadoop.invaract.test.marker" -> "reached"))
 
       assert(sink.configurationForTesting.get("invaract.test.marker") == "reached")
       assert(sink.configurationForTesting.get("hadoop.invaract.test.marker") == null, "the 'hadoop.' prefix must be stripped, not kept")
@@ -105,7 +105,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
     val dir = Files.createTempDirectory("invaract-hadoopfs-sink-test")
     try {
       val sink = new HadoopFsNotificationSink
-      sink.configure(Map("path" -> s"file://${dir.toString}", "unrelated.key" -> "ignored"))
+      sink.configure(Map("path" -> dir.toUri.toString, "unrelated.key" -> "ignored"))
 
       assert(sink.configurationForTesting.get("unrelated.key") == null)
       assert(sink.configurationForTesting.get("key") == null)
@@ -125,7 +125,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
       val sink = new HadoopFsNotificationSink {
         override def newFileName(event: NotificationEvent): String = "fixed-name.json"
       }
-      sink.configure(Map("path" -> s"file://${dir.toString}"))
+      sink.configure(Map("path" -> dir.toUri.toString))
 
       sink.publish(sampleEvent.copy(contract = "first@1.0.0")) // must not throw
 
@@ -133,7 +133,7 @@ class HadoopFsNotificationSinkSpec extends AnyFunSuite {
         sink.publish(sampleEvent.copy(contract = "second@1.0.0"))
       }
 
-      val fs = FileSystem.get(new java.net.URI(s"file://${dir.toString}"), new org.apache.hadoop.conf.Configuration())
+      val fs = FileSystem.get(new java.net.URI(dir.toUri.toString), new org.apache.hadoop.conf.Configuration())
       val content = {
         val in = fs.open(new Path(dir.toString, "fixed-name.json"))
         try new String(in.readAllBytes(), "UTF-8")

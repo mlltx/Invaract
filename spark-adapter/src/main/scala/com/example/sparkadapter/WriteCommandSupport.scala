@@ -39,7 +39,35 @@ private[sparkadapter] case class WriteCommandInfo(
   format: Option[String],
   saveMode: Option[String],
   outputSchema: StructType,
-  diagnostic: Option[Diagnostic] = None
+  diagnostic: Option[Diagnostic] = None,
+  // The catalog+identifier a V2 write's target resolved to, when the write
+  // shape has one (AppendData/OverwriteByExpression/
+  // OverwritePartitionsDynamic/RowLevelWrite - the same four cases
+  // namedRelationLocationAndFormat already resolves a DataSourceV2Relation
+  // for). `None` for every V1/Hive/streaming shape, and for a V2 write
+  // that couldn't resolve both a catalog and an identifier.
+  //
+  // Deliberately NOT the resolved `Table` handle itself (an earlier version
+  // of this field carried that instead) - confirmed empirically (a real
+  // suite-ordering failure, not assumed) that the `Table` object captured
+  // from the *analyzed* plan can fail to see a just-committed Iceberg
+  // snapshot even after an explicit `.refresh()`, specifically when a prior
+  // suite in the same JVM has already exercised Iceberg's own catalog/table
+  // caching - while a plain SQL query against the same table, and a fresh
+  // `TableCatalog.loadTable(identifier)` call, both see it correctly. This
+  // mirrors why `SparkAdapterListener.deltaVersionOf`'s `DeltaLog.forTable`
+  // call (a fresh lookup by path, never a captured object) was never
+  // affected by the same class of problem. `CatalogPlugin`/`Identifier` are
+  // Spark's own stable, compile-time-available connector.catalog types -
+  // not Iceberg- or Delta-specific - so this file stays free of a
+  // compile-time dependency on either; a consumer (`SparkAdapterListener`,
+  // for `icebergSnapshotId`) does its own fresh `loadTable` call plus
+  // reflective, class-name-based dispatch on the concrete runtime type
+  // `loadTable` returns, the same convention `streamSinkFormatOf`/
+  // `reflectiveSinkPath` already use below.
+  catalogTableRef: Option[
+    (org.apache.spark.sql.connector.catalog.CatalogPlugin, org.apache.spark.sql.connector.catalog.Identifier)
+  ] = None
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -336,7 +364,8 @@ private[sparkadapter] object WriteCommandSupport {
         format = format,
         saveMode = Some("append"),
         outputSchema = outputSchema,
-        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic)
+        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
+        catalogTableRef = catalogTableRefOf(cmd.table)
       )
   }
 
@@ -360,7 +389,8 @@ private[sparkadapter] object WriteCommandSupport {
         format = format,
         saveMode = Some("overwrite"),
         outputSchema = outputSchema,
-        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic)
+        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
+        catalogTableRef = catalogTableRefOf(cmd.table)
       )
   }
 
@@ -391,7 +421,8 @@ private[sparkadapter] object WriteCommandSupport {
         format = format,
         saveMode = Some("overwrite"),
         outputSchema = outputSchema,
-        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic)
+        diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
+        catalogTableRef = catalogTableRefOf(cmd.table)
       )
   }
 
@@ -556,6 +587,33 @@ private[sparkadapter] object WriteCommandSupport {
         val msg = s"Write target ${table.getClass.getSimpleName} is not a DataSourceV2Relation; " +
           "using its name() as a best-effort location"
         (table.name, None, Some(Diagnostic("V2Write", msg)))
+    }
+
+  /** The catalog+identifier behind a write's target, when there is one -
+    * `None` for anything that isn't a `DataSourceV2Relation` (a V1 write),
+    * or a resolved `DataSourceV2Relation` missing either half (a
+    * `StagedTable` pending an atomic CREATE/REPLACE commit, same as
+    * `namedRelationLocationAndFormat`'s own location fallback - a target
+    * that doesn't exist as a real catalog entry yet has nothing this can
+    * usefully re-load later).
+    *
+    * Returns the identifier pair, not the `DataSourceV2Relation`'s own
+    * `.table` handle - confirmed empirically (a real suite-ordering
+    * failure, not assumed; see `WriteCommandInfo.catalogTableRef`'s own
+    * doc) that the resolved `Table` object itself can be stale by the time
+    * a post-commit reader inspects it, while a fresh `loadTable` call
+    * through the catalog is not.
+    */
+  private[sparkadapter] def catalogTableRefOf(
+    table: NamedRelation
+  ): Option[(org.apache.spark.sql.connector.catalog.CatalogPlugin, org.apache.spark.sql.connector.catalog.Identifier)] =
+    table match {
+      case v2: DataSourceV2Relation =>
+        (v2.catalog, v2.identifier) match {
+          case (Some(catalog), Some(identifier)) => Some((catalog, identifier))
+          case _                                 => None
+        }
+      case _ => None
     }
 
   /** A resolved write target can legitimately have fields the write's own
@@ -783,7 +841,8 @@ private[sparkadapter] object WriteCommandSupport {
         format = format,
         saveMode = None,
         outputSchema = cmd.table.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        catalogTableRef = catalogTableRefOf(cmd.table)
       )
   }
 
