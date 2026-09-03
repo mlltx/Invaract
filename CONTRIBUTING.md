@@ -262,7 +262,7 @@ required columns. Helps users debug configuration issues faster.
 git checkout -b feature/add-new-transformation
 
 # 2. Make changes
-# Edit plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala
+# Edit plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala
 # Add test to plugin/src/test/scala/.../InvaractPluginTest.scala
 
 # 3. Test locally

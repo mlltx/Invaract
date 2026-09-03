@@ -32,7 +32,7 @@ two separate mechanisms.
    ```properties
    # notify.properties
    sink.enabled=true
-   sink.class=com.example.sparkadapter.notification.FileNotificationSink
+   sink.class=com.invaract.sparkadapter.notification.FileNotificationSink
    sink.property.path=/var/log/invaract/events.jsonl
    ```
 
@@ -45,7 +45,7 @@ two separate mechanisms.
 2. ### Load it and build the sink before constructing your session
 
    ```scala
-   import com.example.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+   import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
 
    val notifyConfig = NotificationConfig.load("notify.properties")
    val sink = NotificationSinkFactory.create(notifyConfig) // None if sink.enabled=false
@@ -59,7 +59,7 @@ two separate mechanisms.
 3. ### Pass it to the enforcement rule and the listener
 
    ```scala
-   import com.example.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
+   import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
    import org.apache.spark.sql.SparkSession
 
    val irListener = new SparkAdapterListener(sink, Some(contract))
@@ -157,7 +157,7 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
 
   ```properties
   sink.enabled=true
-  sink.class=com.example.sparkadapter.notification.HttpNotificationSink
+  sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
   sink.property.url=https://example.com/invaract-events
   ```
 
@@ -172,7 +172,7 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
 
   ```properties
   sink.enabled=true
-  sink.class=com.example.sparkadapter.notification.HadoopFsNotificationSink
+  sink.class=com.invaract.sparkadapter.notification.HadoopFsNotificationSink
   sink.property.path=s3a://my-bucket/invaract-events/
   sink.property.hadoop.fs.s3a.access.key=...
   sink.property.hadoop.fs.s3a.secret.key=...
@@ -223,7 +223,7 @@ around whatever `NotificationSinkFactory.create` returns — they're not somethi
 no-arg constructor:
 
 ```scala
-import com.example.sparkadapter.notification.{NotificationSinkFactory, SummarizingNotificationSink}
+import com.invaract.sparkadapter.notification.{NotificationSinkFactory, SummarizingNotificationSink}
 
 val configuredSink = NotificationSinkFactory.create(notifyConfig)
 val summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
@@ -250,7 +250,7 @@ before giving up — and if every attempt fails, it publishes the event to a
 **dead-letter sink** instead of letting it disappear:
 
 ```scala
-import com.example.sparkadapter.notification.{
+import com.invaract.sparkadapter.notification.{
   FileNotificationSink, HttpNotificationSink, NotificationSinkFactory, RetryingNotificationSink
 }
 
@@ -314,7 +314,7 @@ documents them:
 
 ```properties
 sink.enabled=true
-sink.class=com.example.sparkadapter.notification.kafka.KafkaNotificationSink
+sink.class=com.invaract.sparkadapter.notification.kafka.KafkaNotificationSink
 sink.property.topic=invaract-events
 sink.property.bootstrap.servers=localhost:9092
 ```
@@ -330,7 +330,7 @@ A real destination — a message queue, an HTTP endpoint, a metrics system — i
 code implementing `NotificationSink`:
 
 ```scala
-import com.example.sparkadapter.notification.{NotificationEvent, NotificationSink}
+import com.invaract.sparkadapter.notification.{NotificationEvent, NotificationSink}
 
 class MySink extends NotificationSink {
   private var endpoint: String = _

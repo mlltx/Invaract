@@ -1,0 +1,64 @@
+---
+title: Spark Version Support
+description: Which Apache Spark versions Invaract's verification engine is tested against.
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`spark-adapter` translates Spark's Catalyst logical plan into Invaract's engine-independent
+IR (see [The Transformation IR](/concepts/transformation-ir/)) — an internal Spark API that
+isn't guaranteed stable node-by-node release to release. This page states what's actually
+been verified, not just what the code happens to compile against.
+
+## Supported versions
+
+{/* generate-version-docs:BEGIN spark-table */}
+{/* Generated from spark-adapter/src/main/resources/supported-versions.properties by
+    dev/generate-version-docs — do not hand-edit the table below; edit that file and
+    re-run the script instead. */}
+| Spark version | Status | Notes |
+|---|---|---|
+| 3.5.6 | ✅ Verified | Floor of the supported range. |
+| 3.5.7 | ✅ Verified | Current primary version — what a real `./dev/test` run installs and what `spark-adapter` is built against by default. |
+| 3.5.9 | ✅ Verified | Newest verified patch. |
+{/* generate-version-docs:END */}
+
+Every other 3.5.x patch at or above 3.5.6 is expected to work (Spark's own patch releases
+don't change Catalyst's plan shapes), but is only a claim, not something CI checks for you —
+treat the three rows above as what's actually proven.
+
+<Aside type="danger" title="Below 3.5.6 does not work">
+Spark 3.5.1 through 3.5.5 are not supported, confirmed by a real CI failure rather than
+assumed: Invaract's Delta Lake support depends on `delta-spark` 3.3.3, which requires a
+class Spark only introduced in 3.5.6. Below that, installing the enforcement rule in a
+Delta-extended session throws `ClassNotFoundException`.
+</Aside>
+
+<Aside type="caution" title="Spark 4.x is not supported">
+Invaract is built for Scala 2.12, and Spark 4.0 requires Scala 2.13. Running Invaract
+against a Spark 4.x cluster isn't a configuration a real user has today.
+</Aside>
+
+## How this is verified
+
+Every one of the versions above is exercised by `spark-adapter`'s own full test suite,
+automatically, on every change — not a claim taken on faith. See
+[docs/SPARK_ADAPTER.md's "Spark version compatibility" section](https://github.com/mlltx/invaract/blob/main/docs/SPARK_ADAPTER.md)
+for how that CI job works if you're contributing to `spark-adapter` itself.
+
+`ContractEnforcementRule` also checks this same verified list at runtime, in your own job —
+see [Install the Enforcement Rule → Version compatibility warnings](/guides/installing-the-enforcement-rule/#version-compatibility-warnings).
+Running an unverified version doesn't block your job, but logs a warning naming the
+version it detected, so you have a concrete signal if something related goes wrong.
+
+## Java and Scala
+
+| Component | Version |
+|---|---|
+| Java | 21 (runtime); compiled to JVM 1.8 bytecode, so a JDK 11+ runtime also works |
+| Scala | 2.12.18 |
+
+Scala 2.13 cross-compilation isn't done — see the Spark 4.x note above for why it would be
+needed before a newer Spark line could be supported.

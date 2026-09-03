@@ -54,7 +54,7 @@ invokes the resulting jars directly:
 
 ```bash
 spark-submit \
-  --class com.example.runner.DemoJobHarness \
+  --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
   --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
@@ -69,7 +69,7 @@ message (trimmed here to the useful part — the full message also shows
 what the contract expects and the full translated plan) reads:
 
 ```
-Exception in thread "main" com.example.sparkadapter.ContractViolationException:
+Exception in thread "main" com.invaract.sparkadapter.ContractViolationException:
 Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. Write aborted.
 
 What the plan contains:

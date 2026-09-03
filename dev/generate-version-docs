@@ -1,0 +1,234 @@
+#!/bin/bash
+# Regenerates the "Supported versions" tables/cells in docs-site/ and
+# docs/COMPATIBILITY.md from spark-adapter's single canonical
+# supported-versions.properties file (see that file's own header comment
+# for its other consumers: build.sbt's test defaults, the runtime
+# compatibility guard, and CI's matrix-drift-check job).
+#
+# This script owns exactly the version enumeration and status badges the
+# three target files' `<!-- generate-version-docs:BEGIN ... -->` markers
+# wrap — never the surrounding investigative prose (why an excluded version
+# fails, which real CI run or Maven Central metadata backs a claim, etc.).
+# That stays hand-written outside the markers, deliberately not something
+# this script tries to regenerate: this repo already found and fixed the
+# same stale hand-copied version claim twice in one session before this
+# script existed, but the fix each time was a real investigation (a
+# ClassNotFoundException root-caused to a Spark floor, delta-io's own
+# LATEST_RELEASED_SPARK_VERSION checked tag-by-tag) — exactly the kind of
+# evidence trail that would be lost if a script blindly regenerated whole
+# tables including their notes.
+#
+# Two marker shapes, wrapped in a `generate-version-docs:BEGIN <spec> ...
+# generate-version-docs:END` comment pair — as an HTML comment
+# (`<!-- ... -->`) in docs/COMPATIBILITY.md (a plain .md file, rendered by
+# GitHub, which renders an HTML comment as nothing), and as a JSX comment
+# (`{/* ... */}`) in the two .mdx files under docs-site/ (confirmed the
+# hard way: `<!-- -->` is *not* valid inside MDX's JSX-flavored parser -
+# `npm run build` fails with "Unexpected character `!`" - unlike plain
+# Markdown, where it's ordinary raw HTML). Both forms work inline inside a
+# table cell as well as around a whole block, and both render as nothing
+# in their respective output:
+#
+#   - `<spec>` = "spark-table"        -> the *entire* "## Supported
+#     versions" table in spark-version-support.mdx, since every row there
+#     is already fully mechanical (status + notes both follow directly
+#     from which version is the floor/primary/newest — no per-version
+#     investigative detail lives in that table).
+#   - `<spec>` = "<lib>.verified"     -> connector-support.mdx's "Tested
+#     library versions" cell for that connector (e.g. "3.3.3 only", or
+#     "1.10.2 – 1.11.0" for a range) - just the version-range string, the
+#     rest of that row's Notes column stays hand-written.
+#   - `<spec>` = "<lib> <version>"    -> docs/COMPATIBILITY.md's per-row
+#     Status cell only (e.g. "✓ Verified, Primary") for an existing,
+#     hand-written row - that row's own Notes cell (the specific
+#     investigation/evidence for that version) is left completely
+#     untouched.
+#
+# Usage:
+#   dev/generate-version-docs          # rewrites the target files in place
+#   dev/generate-version-docs --check  # exits 1 if regenerating would change
+#                                       # any target file (no files written) -
+#                                       # this is what CI's docs-drift-check
+#                                       # step runs.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+CHECK_FLAG=""
+if [ "${1:-}" = "--check" ]; then
+  CHECK_FLAG="--check"
+fi
+
+python3 - "$CHECK_FLAG" <<'PYEOF'
+import re
+import sys
+
+check_mode = len(sys.argv) > 1 and sys.argv[1] == "--check"
+
+PROPERTIES_PATH = "spark-adapter/src/main/resources/supported-versions.properties"
+
+
+def parse_properties(path):
+    values = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+PROPS = parse_properties(PROPERTIES_PATH)
+
+
+def version_key(v):
+    return tuple(int(p) if p.isdigit() else p for p in v.split("."))
+
+
+def verified(lib):
+    raw = PROPS.get(f"{lib}.verified", "")
+    return sorted([v for v in raw.split(",") if v], key=version_key)
+
+
+def primary(lib):
+    return PROPS.get(f"{lib}.primary")
+
+
+def compat_status(lib, version):
+    """docs/COMPATIBILITY.md's Status-cell badge for one already-documented
+    verified row — see MARKER shape 3 above."""
+    vs = verified(lib)
+    if version not in vs:
+        sys.exit(
+            f"generate-version-docs: {lib} {version} has a status marker in "
+            f"docs/COMPATIBILITY.md but is not in {lib}.verified "
+            f"({PROPERTIES_PATH}) - either the properties file or that row is stale."
+        )
+    if len(vs) == 1:
+        return "✓ Verified, Primary and only supported release"
+    if version == primary(lib):
+        return "✓ Verified, Primary"
+    return "✓ Verified"
+
+
+def connector_cell(lib):
+    """connector-support.mdx's "Tested library versions" cell - see MARKER
+    shape 2 above."""
+    vs = verified(lib)
+    if len(vs) == 1:
+        return f"{vs[0]} only"
+    return f"{vs[0]} – {vs[-1]}"
+
+
+def spark_table():
+    """spark-version-support.mdx's entire "## Supported versions" table -
+    see MARKER shape 1 above."""
+    vs = verified("spark")
+    p = primary("spark")
+    lines = [
+        "",
+        "{/* Generated from spark-adapter/src/main/resources/supported-versions.properties by",
+        "    dev/generate-version-docs — do not hand-edit the table below; edit that file and",
+        "    re-run the script instead. */}",
+        "| Spark version | Status | Notes |",
+        "|---|---|---|",
+    ]
+    for i, v in enumerate(vs):
+        is_floor = i == 0
+        is_newest = i == len(vs) - 1
+        is_primary = v == p
+        if len(vs) == 1:
+            note = "Only verified version — floor, primary, and newest at once."
+        elif is_floor and is_primary:
+            note = (
+                "Floor of the supported range, and the current primary version — what a real "
+                "`./dev/test` run installs and what `spark-adapter` is built against by default."
+            )
+        elif is_floor:
+            note = "Floor of the supported range."
+        elif is_newest and is_primary:
+            note = (
+                "Newest verified patch, and the current primary version — what a real "
+                "`./dev/test` run installs and what `spark-adapter` is built against by default."
+            )
+        elif is_newest:
+            note = "Newest verified patch."
+        elif is_primary:
+            note = (
+                "Current primary version — what a real `./dev/test` run installs and what "
+                "`spark-adapter` is built against by default."
+            )
+        else:
+            note = "Verified patch."
+        lines.append(f"| {v} | ✅ Verified | {note} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render(spec):
+    parts = spec.split()
+    if spec == "spark-table":
+        return spark_table()
+    if len(parts) == 1 and parts[0].endswith(".verified"):
+        lib = parts[0].split(".", 1)[0]
+        return connector_cell(lib)
+    if len(parts) == 2:
+        lib, version = parts
+        return compat_status(lib, version)
+    sys.exit(f"generate-version-docs: unrecognized marker spec {spec!r}")
+
+
+MARKER = re.compile(
+    r"(?:<!-- generate-version-docs:BEGIN (?P<spec_html>.*?) -->|\{/\* generate-version-docs:BEGIN (?P<spec_jsx>.*?) \*/\})"
+    r"(?P<content>.*?)"
+    r"(?:<!-- generate-version-docs:END -->|\{/\* generate-version-docs:END \*/\})",
+    re.DOTALL,
+)
+
+TARGET_FILES = [
+    "docs-site/src/content/docs/reference/spark-version-support.mdx",
+    "docs-site/src/content/docs/reference/connector-support.mdx",
+    "docs/COMPATIBILITY.md",
+]
+
+changed_files = []
+for path in TARGET_FILES:
+    with open(path) as f:
+        original = f.read()
+
+    def replace(m):
+        if m.group("spec_html") is not None:
+            spec = m.group("spec_html")
+            return f"<!-- generate-version-docs:BEGIN {spec} -->{render(spec)}<!-- generate-version-docs:END -->"
+        spec = m.group("spec_jsx")
+        return f"{{/* generate-version-docs:BEGIN {spec} */}}{render(spec)}{{/* generate-version-docs:END */}}"
+
+    updated, count = MARKER.subn(replace, original)
+    if count == 0:
+        sys.exit(f"generate-version-docs: no generator markers found in {path} - expected at least one")
+
+    if updated != original:
+        changed_files.append(path)
+        if not check_mode:
+            with open(path, "w") as f:
+                f.write(updated)
+
+if check_mode:
+    if changed_files:
+        print("Docs drift: the following files are stale relative to supported-versions.properties:")
+        for path in changed_files:
+            print(f"  - {path}")
+        print("Run `dev/generate-version-docs` and commit the result.")
+        sys.exit(1)
+    print("No drift: all generated version-doc sections match supported-versions.properties.")
+else:
+    if changed_files:
+        print("Regenerated:")
+        for path in changed_files:
+            print(f"  - {path}")
+    else:
+        print("No changes: all generated version-doc sections already match supported-versions.properties.")
+PYEOF

@@ -12,7 +12,7 @@ versions of the *same* contract (matched by `id`) and classifies the difference.
 ## Diff two versions
 
 ```scala
-import com.example.contract.ContractCompatibility
+import com.invaract.contract.ContractCompatibility
 
 val report = ContractCompatibility.diff(previousContract, nextContract)
 

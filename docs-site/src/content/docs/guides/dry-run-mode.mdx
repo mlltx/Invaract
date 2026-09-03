@@ -94,8 +94,8 @@ Dry-run mode installs the same way as real enforcement — a `SparkSessionExtens
 rule, at session construction time — just with no contract to enforce:
 
 ```scala
-import com.example.contract.{Contract, ContractParser}
-import com.example.sparkadapter.ContractEnforcementRule
+import com.invaract.contract.{Contract, ContractParser}
+import com.invaract.sparkadapter.ContractEnforcementRule
 import org.apache.spark.sql.SparkSession
 
 var inferredContract: Option[Contract] = None

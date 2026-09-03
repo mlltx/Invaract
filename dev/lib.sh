@@ -2,7 +2,7 @@
 # Shared helpers for dev/test, dev/regression, and dev/dry-run. Not meant to
 # be run directly — source it after cd-ing to the repo root.
 
-PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar"
+PLUGIN_JAR="plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar"
 RUNNER_JAR="runner/target/scala-2.12/invaract-spark-runner.jar"
 
 # ANSI color codes every dev/ script's console output uses.
@@ -36,7 +36,7 @@ install_failure_trap() {
 # run_demo_job_harness INPUT OUTPUT REPORT [CONTRACT] [EXTRA_ARG...]
 #
 # Runs DemoJobHarness (the example Spark job / test harness — see its class
-# doc in runner/src/main/scala/com/example/runner/DemoJobHarness.scala; it
+# doc in runner/src/main/scala/com/invaract/runner/DemoJobHarness.scala; it
 # is not Invaract's verification engine, just the job that exercises it)
 # via spark-submit when it's on PATH, falling back to a manually-flagged
 # `java -cp` invocation otherwise. Any arguments beyond CONTRACT are passed
@@ -66,14 +66,14 @@ run_demo_job_harness() {
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
       spark-submit.cmd \
-        --class com.example.runner.DemoJobHarness \
+        --class com.invaract.runner.DemoJobHarness \
         --master local[*] \
         --jars "$PLUGIN_JAR" \
         "$RUNNER_JAR" \
         "$input" "$output" "$report" $contract $extra
   elif command -v spark-submit &> /dev/null; then
     spark-submit \
-      --class com.example.runner.DemoJobHarness \
+      --class com.invaract.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
       "$RUNNER_JAR" \
@@ -100,7 +100,7 @@ run_demo_job_harness() {
       --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
-      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.example.runner.DemoJobHarness \
+      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.invaract.runner.DemoJobHarness \
       "$input" "$output" "$report" $contract $extra
   fi
 }

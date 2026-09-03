@@ -14,20 +14,26 @@ doesn't recognize is rejected outright rather than silently passed — see
 
 ## Supported connectors
 
-| Connector | Reads | Writes | Row-level DML (`MERGE`/`UPDATE`/`DELETE`) | Notes |
-|---|---|---|---|---|
-| **Delta Lake** | ✅ | ✅ | ✅ | Row-level DML translated via a dedicated extractor; schema-evolution and generated-column edge cases investigated and fixed. |
-| **Iceberg** | ✅ | ✅ | ✅ (copy-on-write fully; merge-on-read `UPDATE` fails closed) | Catalog-based DSv2 connector. `CALL` procedures (e.g. `rollback_to_snapshot`) are classified individually — some verified against a contract, others safely allowed through, per procedure. |
-| **Parquet** | ✅ | ✅ | — | Not a separate library — Spark's own bundled file format. |
-| **CSV** | ✅ | ✅ | — | Same shape as Parquet. |
-| **Hive** | ✅ | ✅ | — | Table reads plus multiple write shapes (including `CREATE TABLE ... AS SELECT` and static-partition `INSERT`). |
-| **Avro** | ✅ | ✅ | — | Reuses the same generic write recognition as Parquet/CSV — no Avro-specific code needed. |
-| **ClickHouse** | ✅ | ✅ | `DELETE` only | `UPDATE`/`MERGE` are not yet translated for this connector. Verified against a real standalone ClickHouse server. |
-| **JDBC** (generic) | ✅ | — | — | Reads recognized precisely, including the resolved connection/table identity. |
+| Connector | Reads | Writes | Row-level DML (`MERGE`/`UPDATE`/`DELETE`) | Tested library versions | Notes |
+|---|---|---|---|---|---|
+| **Delta Lake** | ✅ | ✅ | ✅ | {/* generate-version-docs:BEGIN delta.verified */}3.3.3 only{/* generate-version-docs:END */} | Row-level DML translated via a dedicated extractor; schema-evolution and generated-column edge cases investigated and fixed. Earlier releases (including 3.3.0–3.3.2) target an older Spark version this repo has already moved past — 3.3.3 is the only compatible release, not just the newest. |
+| **Iceberg** | ✅ | ✅ | ✅ (copy-on-write fully; merge-on-read `UPDATE` fails closed) | {/* generate-version-docs:BEGIN iceberg.verified */}1.10.2 – 1.11.0{/* generate-version-docs:END */} | Catalog-based DSv2 connector. `CALL` procedures (e.g. `rollback_to_snapshot`) are classified individually — some verified against a contract, others safely allowed through, per procedure. |
+| **Parquet** | ✅ | ✅ | — | — | Not a separate library — Spark's own bundled file format. |
+| **CSV** | ✅ | ✅ | — | — | Same shape as Parquet. |
+| **Hive** | ✅ | ✅ | — | — | Table reads plus multiple write shapes (including `CREATE TABLE ... AS SELECT` and static-partition `INSERT`). Ships with Spark itself, not independently versioned here. |
+| **Avro** | ✅ | ✅ | — | — | Reuses the same generic write recognition as Parquet/CSV — no Avro-specific code needed. |
+| **ClickHouse** | ✅ | ✅ | `DELETE` only | — | `UPDATE`/`MERGE` are not yet translated for this connector. Verified against a real standalone ClickHouse server. |
+| **JDBC** (generic) | ✅ | — | — | — | Reads recognized precisely, including the resolved connection/table identity. |
 
 Parquet, CSV, and JDBC don't support `MERGE`/`UPDATE`/`DELETE` via Spark SQL at all —
 Spark itself rejects those statements before any plan reaches Invaract, so there's
 nothing to verify there.
+
+**Tested library versions** are CI-enforced, not aspirational — every push runs
+`spark-adapter`'s Delta/Iceberg-touching specs against each version listed. See
+`docs/connectors/delta.md` and `docs/connectors/iceberg.md`'s "Version compatibility"
+sections in the repository for the full mechanism, including which versions were
+deliberately excluded and why.
 
 ## Recognized Spark write commands
 
