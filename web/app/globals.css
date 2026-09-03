@@ -10,6 +10,7 @@
   --accent-color: #3498db;
   --neutral-color: #8e8e93;
   --warn-color: #d68910;
+  --sensitive-color: #8e44ad;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +25,7 @@
     --fail-color: #c0392b;
     --neutral-color: #98989d;
     --warn-color: #e0a030;
+    --sensitive-color: #a569bd;
   }
 }
 

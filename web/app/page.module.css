@@ -294,6 +294,33 @@
   border-radius: 3px;
 }
 
+.opaqueBadge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: white;
+  background-color: var(--fail-color);
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+}
+
+.sensitiveBadge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: white;
+  background-color: var(--sensitive-color);
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+}
+
+.derivationLabel {
+  color: var(--neutral-color);
+  font-size: 0.8rem;
+}
+
 .lineageSources {
   margin-top: 0.25rem;
   color: var(--text-primary);

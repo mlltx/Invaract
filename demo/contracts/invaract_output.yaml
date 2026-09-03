@@ -23,6 +23,7 @@ inputs:
           type: integer
           required: true
           nullable: true
+          sensitivityTags: [internal]
 
 outputs:
   - name: result

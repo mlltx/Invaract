@@ -44,17 +44,24 @@ columns were *referenced*, not a dataset's complete column set. Schema informati
 
 ## Column-level lineage
 
-`Lineage.trace` walks a translated plan and reports, for each output column, which source
-columns it derives from — and whether it passed through an aggregation:
+`Lineage.trace` walks a translated plan and reports, for each output column: which source
+columns it derives from, how directly (a plain passthrough vs. a real computation vs.
+something opaque this IR can't see inside), and which aggregate function(s), if any, it
+passed through:
 
 ```
-ColumnLineage(id, Set(.../sample.csv.id), aggregated = false)
-ColumnLineage(lifetime_value, Set(.../sample.csv.value), aggregated = true)
+ColumnLineage(id, Set(.../sample.csv.id), Direct, Set())
+ColumnLineage(lifetime_value, Set(.../sample.csv.value), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 This is structural provenance traced from the plan itself, not business-logic
 verification — it answers "where did this column's value come from," not "is the formula
-correct."
+correct." A contract can also declare a `sensitivityTags` label on an input field (e.g.
+`pii`, `financial`); `spark-adapter`'s `SensitivityLineage` propagates those tags forward
+through this same traced provenance to every output column that transitively derives from
+the tagged field — see [Reference → Contract Format](/reference/contract-format/)'s
+"Sensitivity tags" section. This is reporting, for audit/governance visibility, not
+enforcement: a tagged field never causes verification to fail on its own.
 
 ## Degrading, never crashing
 

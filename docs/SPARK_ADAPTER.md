@@ -221,8 +221,8 @@ Write(gold.customer_orders)
 `Lineage.trace(result.plan)`:
 
 ```
-ColumnLineage(id, Set(.../sample.csv.id), aggregated = false)
-ColumnLineage(lifetime_value, Set(.../sample.csv.value), aggregated = true)
+ColumnLineage(id, Set(.../sample.csv.id), Direct, Set())
+ColumnLineage(lifetime_value, Set(.../sample.csv.value), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 Zero diagnostics — every construct in this pipeline has a precise
@@ -268,14 +268,16 @@ produces its own `Project` in the analyzed plan, and only the Catalyst
 optimizer's `CollapseProject` rule would flatten them — a rewrite Invaract
 deliberately doesn't run, so it can still see the original aliases.
 
-`demo/output/report.json`'s `transformationIR.lineage`:
+`demo/output/report.json`'s `transformationIR.lineage` (`derivation`,
+`aggregations`, and `sensitivityTags` are covered in their own right below,
+in "Sensitivity propagation"):
 
 ```json
 [
-  { "output": "id", "sources": ["file:.../sample.csv.id"], "aggregated": false },
-  { "output": "value", "sources": ["file:.../sample.csv.value"], "aggregated": false },
-  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "aggregated": false },
-  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "aggregated": false }
+  { "output": "id", "sources": ["file:.../sample.csv.id"], "derivation": "Direct", "aggregations": [], "sensitivityTags": [] },
+  { "output": "value", "sources": ["file:.../sample.csv.value"], "derivation": "Direct", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] }
 ]
 ```
 
@@ -285,6 +287,64 @@ collapses — correctly reporting "derives from `value`," not "derives from
 `value` twice." `value_tier` traces back to the same single source column,
 despite being derived through a `Comparison` feeding a `Conditional`
 rather than an `Arithmetic` expression.
+
+## Sensitivity propagation
+
+`SensitivityLineage` (`SensitivityLineage.scala`) cross-references
+`ir.Lineage`'s traced column provenance against a `Contract`'s declared
+input `Field.sensitivityTags` (see docs/CONTRACT_MODEL.md), propagating
+each tagged input field's labels forward to every output column whose
+`sources` resolves to it — directly, or transitively through however many
+`Cast`/`Arithmetic`/`Conditional`/... steps sit between them, since
+`Lineage.trace` has already resolved that chain down to the real `Read`
+columns before this ever runs.
+
+```scala
+case class SensitiveColumnLineage(lineage: ColumnLineage, sensitivityTags: Set[String])
+
+object SensitivityLineage {
+  def propagate(lineage: List[ColumnLineage], contract: Contract): List[SensitiveColumnLineage]
+}
+```
+
+Matching a traced source to a contract input field is by column name *and*
+by location — reusing `StructuralVerifier.locationsMatch`'s own
+normalized-suffix rule (a contract's declared, portable location against
+Spark's actual, often `file:`-prefixed absolute one), so a same-named field
+on a *different*, untagged input dataset never gets cross-attributed a tag
+that belongs to another dataset's field of the same name.
+
+**This is reporting, not enforcement.** `StructuralVerifier` never reads
+`Field.sensitivityTags` at all, and a tagged field does not by itself cause
+verification to fail — `SensitivityLineage` exists to surface, for a human
+or downstream tooling auditing a transformation, which output columns
+carry data a contract author flagged as sensitive on the input side, even
+through several transformation steps that say nothing about sensitivity
+themselves. `runner/DemoJobHarness.scala` wires this into
+`demo/output/report.json`'s `transformationIR.lineage`, alongside each
+column's `derivation`/`aggregations` (see docs/TRANSFORMATION_IR.md's
+"Lineage tracing" section) — every entry carries a `sensitivityTags`
+array, empty for the common case of a column with no tagged source.
+
+Real output from `./dev/test`, after tagging the demo contract's `value`
+input field `sensitivityTags: [internal]`
+(`demo/contracts/invaract_output.yaml`):
+
+```json
+[
+  { "output": "id", "sources": ["file:.../sample.csv.id"], "derivation": "Direct", "aggregations": [], "sensitivityTags": [] },
+  { "output": "value", "sources": ["file:.../sample.csv.value"], "derivation": "Direct", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] }
+]
+```
+
+`value`'s `internal` tag propagates to both `value_squared` and
+`value_tier`, even though neither's own declaration mentions sensitivity
+at all — the whole point: a governance label declared once, on the input,
+reaches every downstream column that actually carries data derived from it,
+without a contract author needing to re-declare it on each one by hand.
+`id` carries no tag, since it never reads a tagged field.
 
 ## Diagnostics: plan extraction examples
 

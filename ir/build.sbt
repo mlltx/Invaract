@@ -39,8 +39,8 @@ strykerThresholdsBreak := 50
 // must match base-ref's own published name.
 mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
 
-// Two independent deliberate MAJOR-version breaks against the 0.1.0
-// baseline, both documented rather than silently filtered:
+// Three independent deliberate MAJOR-version breaks against the 0.1.0
+// baseline, all documented rather than silently filtered:
 //
 // 1. com.example -> com.invaract namespace rebrand - see
 //    contract/build.sbt's matching comment for the full rationale
@@ -48,9 +48,9 @@ mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
 //    option 2, version bumped to 0.2.0 as the MAJOR-equivalent bump
 //    docs/VERSIONING.md's pre-1.0 policy calls for). The wildcard below
 //    subsumes every symbol that ever lived under the old package,
-//    including the expression-algebra rework below (2) - once you rename
-//    the package, MiMa has nothing left under com.example.ir to compare
-//    non-wildcard filters against.
+//    including the expression-algebra rework below (2) and the lineage
+//    rework (3) - once you rename the package, MiMa has nothing left
+//    under com.example.ir to compare non-wildcard filters against.
 // 2. The "Spark Logical Plan -> Invariant IR" expression-level rework:
 //    split the single `FunctionCall` node into `Cast`/`Arithmetic`/
 //    `Comparison`/`BooleanExpr`/`Conditional`/`Function`/`UDF`/`Alias`,
@@ -59,6 +59,11 @@ mimaPreviousArtifacts := Set("com.example" %% "invaract-ir" % "0.1.0")
 //    an optional `id` field to `ColumnRef` for translator-assigned column
 //    identity - see docs/TRANSFORMATION_IR.md's "Critical principle"
 //    section for the full rationale.
+// 3. `ColumnLineage`'s single `aggregated: Boolean` field replaced with
+//    `derivation: DerivationKind` (a new sealed trait: Direct/Constant/
+//    Computed/Opaque) and `aggregations: Set[AggregationDetail]` (which
+//    aggregate function(s), not just whether one was involved) - see
+//    docs/TRANSFORMATION_IR.md's "Lineage tracing" section.
 //
 // FOLLOW-UP (once this PR lands on the base branch): flip
 // `mimaPreviousArtifacts` above to `Set("com.invaract" %% "invaract-ir" %

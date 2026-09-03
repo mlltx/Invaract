@@ -33,7 +33,13 @@ interface Report {
     captured?: boolean
     note?: string
     renderedPlan?: string
-    lineage?: Array<{ output: string; sources: string[]; aggregated: boolean }>
+    lineage?: Array<{
+      output: string
+      sources: string[]
+      derivation: string
+      aggregations: Array<{ function: string; distinct: boolean }>
+      sensitivityTags: string[]
+    }>
     diagnostics?: string[]
   }
   contractVerification?: {
@@ -273,10 +279,25 @@ const ReportViewer = () => {
                       <div key={i} className={styles.lineageRow}>
                         <div className={styles.lineageOutput}>
                           {col.output}
-                          {col.aggregated && <span className={styles.aggregatedBadge}>aggregated</span>}
+                          {col.derivation === 'Opaque' && (
+                            <span className={styles.opaqueBadge} title="Derived through a UDF or an unrecognized construct — not fully auditable from the plan alone">
+                              opaque
+                            </span>
+                          )}
+                          {col.aggregations.length > 0 && (
+                            <span className={styles.aggregatedBadge}>
+                              {col.aggregations.map(a => a.function + (a.distinct ? ' DISTINCT' : '')).join(', ')}
+                            </span>
+                          )}
+                          {col.sensitivityTags.map(tag => (
+                            <span key={tag} className={styles.sensitiveBadge}>{tag}</span>
+                          ))}
                         </div>
                         <div className={styles.lineageSources}>
                           {col.sources.length > 0 ? col.sources.join(', ') : '(no known source)'}
+                          {col.derivation !== 'Opaque' && (
+                            <span className={styles.derivationLabel}> · {col.derivation}</span>
+                          )}
                         </div>
                       </div>
                     ))}

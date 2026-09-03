@@ -3,10 +3,10 @@
 
 package com.invaract.runner
 
-import com.invaract.contract.ContractParser
+import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
-import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, SparkAdapterListener, TranslationResult, VerificationOptions}
+import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -172,7 +172,7 @@ object DemoJobHarness {
       // thread, asynchronously with respect to the write call above, so
       // the translation may not be available the instant write() returns.
       val translationResult = waitForTranslation(irListener)
-      val transformationIR = translationResult.map(reportOf).getOrElse(
+      val transformationIR = translationResult.map(r => reportOf(r, contract)).getOrElse(
         Map("captured" -> false, "note" -> "Transformation IR was not captured within the timeout")
       )
 
@@ -372,12 +372,25 @@ object DemoJobHarness {
     listener.lastWrite
   }
 
-  private def reportOf(result: TranslationResult): Map[String, Any] = {
-    val lineage = Lineage.trace(result.plan).map { cl =>
+  private def reportOf(result: TranslationResult, contract: Option[Contract]): Map[String, Any] = {
+    val traced = Lineage.trace(result.plan)
+    // Sensitivity propagation needs a Contract to read declared input
+    // sensitivityTags from (SensitivityLineage's own doc explains why that
+    // lives here, not in ir.Lineage itself); in dry-run mode there is none,
+    // so every column simply carries no tags rather than this section
+    // being omitted entirely - a report should have the same shape whether
+    // or not tags happen to be present.
+    val enriched = contract match {
+      case Some(c) => SensitivityLineage.propagate(traced, c)
+      case None    => traced.map(cl => SensitiveColumnLineage(cl, Set.empty))
+    }
+    val lineage = enriched.map { scl =>
       Map(
-        "output" -> cl.output.name,
-        "sources" -> cl.sources.map(_.toString).toList,
-        "aggregated" -> cl.aggregated
+        "output" -> scl.lineage.output.name,
+        "sources" -> scl.lineage.sources.map(_.toString).toList,
+        "derivation" -> scl.lineage.derivation.toString,
+        "aggregations" -> scl.lineage.aggregations.toList.map(a => Map("function" -> a.function, "distinct" -> a.distinct)),
+        "sensitivityTags" -> scl.sensitivityTags.toList.sorted
       )
     }
     Map(

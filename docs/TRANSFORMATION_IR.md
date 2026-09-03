@@ -234,18 +234,36 @@ inlined per branch.
 `Lineage.trace(plan)` — actual output:
 
 ```
-ColumnLineage(customer_id, Set(raw.orders.customer_id), aggregated = false)
-ColumnLineage(lifetime_value, Set(raw.orders.amount), aggregated = true)
+ColumnLineage(customer_id, Set(raw.orders.customer_id), Direct, Set())
+ColumnLineage(lifetime_value, Set(raw.orders.amount), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 This is the semantic content the spec's diagram is asking for: which source
-column each output column traces to, and whether that trace passes through
-an aggregation.
+column each output column traces to, whether that trace passes through an
+aggregation (and which one), and how directly the output relates to its
+source (a plain passthrough vs. a real computation).
 
 ## Lineage tracing (`Lineage.scala`)
 
 ```scala
-case class ColumnLineage(output: ColumnRef, sources: Set[ColumnRef], aggregated: Boolean)
+sealed trait DerivationKind
+object DerivationKind {
+  case object Direct extends DerivationKind    // exactly one source column, possibly renamed
+  case object Constant extends DerivationKind  // no source columns at all (a literal, or built entirely from literals)
+  case object Computed extends DerivationKind  // built from real columns using only operations this IR understands
+  case object Opaque extends DerivationKind    // contains a UDF or UnknownExpression anywhere in the tree
+}
+
+case class AggregationDetail(function: String, distinct: Boolean = false)
+
+case class ColumnLineage(
+  output: ColumnRef,
+  sources: Set[ColumnRef],
+  derivation: DerivationKind,
+  aggregations: Set[AggregationDetail] = Set.empty
+) {
+  def aggregated: Boolean = aggregations.nonEmpty
+}
 
 object Lineage {
   def trace(plan: Plan): List[ColumnLineage]
@@ -277,10 +295,53 @@ with no symbol table:
    resolved conservatively by unioning both sides' sources rather than
    guessing or throwing.
 
-Aggregation propagates: if any input to a `FunctionCall` traces through an
-`AggregateCall`, the result is marked `aggregated = true`. This is the
-signal a future verification engine needs to know that a uniqueness or
-row-level constraint doesn't directly apply to that output column.
+**Aggregation detail.** Every `AggregateCall` an output column's expression
+traces through contributes an `AggregationDetail(function, distinct)` to
+that column's `aggregations` set — not just a single `aggregated: Boolean`
+flag. An output combining more than one aggregate function
+(`sum(x) / count(y)`) reports both, since collapsing that to one boolean
+loses exactly the detail (which function, over what) a human auditing *how*
+a column's meaning changed across a schema-compatible contract revision
+would need. `aggregated` remains available as a convenience for "was this
+aggregated at all," without inspecting the set.
+
+**Derivation classification.** Alongside `sources`, each `ColumnLineage`
+carries a `DerivationKind` — a coarse, human-auditable summary of *how* the
+output relates to its sources:
+
+- **`Direct`** — the output is exactly one source column, possibly renamed
+  (`id = id`, or a mid-expression `Alias` over a bare reference). No
+  computation anywhere along the way.
+- **`Constant`** — no source columns whatsoever: a literal, or an
+  expression built entirely from literals.
+- **`Computed`** — derives from real source columns using only operations
+  this IR fully understands (`Cast`/`Arithmetic`/`Comparison`/
+  `BooleanExpr`/`Conditional`/`Function`/`AggregateCall`). A `CASE WHEN`
+  built from a `Comparison` is the canonical example: every operation
+  involved has known, named semantics — auditable, even if it happened
+  several plan stages before the column's final declaration.
+- **`Opaque`** — a `UDF` or `UnknownExpression` sits *anywhere* along the
+  resolved computation, even nested arbitrarily deep beneath
+  otherwise-understood operations or behind several layers of passthrough.
+  A `CASE WHEN` whose result calls a UDF is opaque overall, not "mostly
+  computed" — this IR knows what columns the UDF structurally depends on,
+  but not what it actually computes from them, and `Opaque` always wins
+  over every other classification once it applies anywhere.
+
+Critically, this is computed *through* the same resolution `sources` already
+uses, not by inspecting only a column's outermost declaring expression.
+Because Invaract translates Spark's *analyzed* plan rather than the
+optimized one (ADR-002), a chain of `.withColumn()` calls produces *nested*
+`Project`s — the outermost `Project`'s own declaration for an untouched
+column is frequently nothing more than a bare passthrough reference to an
+inner `Project`'s real computation (`value_squared = value_squared`, where
+the actual `value * value` lives one level down). Classifying only that
+outer syntax would misreport the column `Direct`; `Lineage`'s internal
+`resolveExpr`/`resolveInScope` walk resolves straight through any number of
+such passthrough hops to find the real computation, exactly as it already
+does to find `sources`. An unresolvable reference (e.g. one sitting on an
+`UnknownPlan`) falls back to `Direct` — the honest, syntax-level answer when
+there's nothing further to resolve into.
 
 ### Known limitations
 
@@ -313,9 +374,20 @@ consume the same `children`-based structure.
   bridge Phase 1b (the verification engine) needs, and is a substantial
   piece of work on its own — walking Catalyst's `LogicalPlan`/`Expression`
   trees and re-expressing them here.
-- **No connection to the `contract` module yet.** `ir` and `contract` are
-  independent modules by design; wiring "does this plan's `Lineage.trace`
-  output satisfy this `Contract`'s declared outputs and rules" is Phase 1b.
+- **No structural verification of lineage against a contract yet.** `ir`
+  and `contract` stay independent modules by design (`ir` has no
+  dependency on `contract` at all); wiring "does this plan's
+  `Lineage.trace` output satisfy this `Contract`'s declared outputs and
+  rules" is still Phase 1b. One narrower bridge does exist today, in
+  `spark-adapter` rather than here: `SensitivityLineage.propagate` cross-
+  references traced lineage against a contract's declared input
+  `Field.sensitivityTags`, so a governance-tagged input's labels surface
+  on every output column that transitively derives from it (see
+  docs/SPARK_ADAPTER.md's "Sensitivity propagation" section) — but this is
+  reporting, not enforcement: it never fails verification, and it says
+  nothing about outputs/rules generally, only about propagating a specific
+  kind of input-declared metadata forward through the same `sources` this
+  module already computes.
 - **No type inference.** Expressions carry no inferred/declared result
   type; `Literal.literalType` is the only type information in the IR today.
 
@@ -376,10 +448,15 @@ Adding tests for the real survivors — and widening to the whole module,
 which pulled `PlanPrinter.scala` in too — brought it to **86.36%**
 (76/100 mutants killed):
 
-- **`l.aggregated || r.aggregated` → `&&`** (`Lineage.scala:120`, `Join`'s
-  ambiguous-both-sides resolution) — fixed with a test joining a plain
-  passthrough side against an aggregated side on an ambiguous reference,
-  the minimum shape where `||` and `&&` actually disagree.
+- **`l.aggregated || r.aggregated` → `&&`** (`Join`'s ambiguous-both-sides
+  resolution) — fixed with a test joining a plain passthrough side against
+  an aggregated side on an ambiguous reference, the minimum shape where
+  `||` and `&&` actually disagree. The aggregation-detail rework (see
+  "Aggregation detail" above) later replaced this boolean `||` with a
+  `Set` union (`l.aggregations ++ r.aggregations`) — the exact operator
+  this bullet names no longer exists in the current code, but the lesson
+  (test a mixed aggregating/non-aggregating join side, not just an
+  all-or-nothing one) still applies, and the same test still exercises it.
 - **`columns.find(_.name == ref.name)` → `!=`** (`Lineage.scala:97`,
   `Project`'s name-matching in `resolveInScope`) — fixed by asserting the
   resolved *sources*, not just the aggregation flag, on the existing
@@ -471,6 +548,23 @@ added as a wholly new, standalone case class rather than a new field on
 the existing `Write` — adding a field to a case class already in the
 0.1.0 baseline changes its constructor's arity, which breaks every
 already-compiled caller; a new class has no such history to break.
+
+`ColumnLineage` replacing its single `aggregated: Boolean` field with
+`derivation: DerivationKind` and `aggregations: Set[AggregationDetail]`
+(the "Aggregation detail"/"Derivation classification" section above) is a
+real binary-incompatible change to that case class's constructor — but not
+one this PR needed a new `mimaBinaryIssueFilters` entry for: `ir/build.sbt`
+already carries a transitional, whole-package `ProblemFilters.exclude`
+(see that file's own comment) covering every symbol under the pre-rebrand
+`com.example.ir.*` namespace this module's `mimaPreviousArtifacts` still
+points at, and `ColumnLineage` — like everything else changed alongside
+the `com.invaract` rebrand — has no baseline symbol at that old namespace
+to compare against at all. This rides on that transitional filter rather
+than adding a second one; once the follow-up PR flips
+`mimaPreviousArtifacts` to a real `com.invaract` 0.2.0 baseline (per that
+file's own "FOLLOW-UP" comment), this shape becomes the new baseline going
+forward, and any *future* change to it would need its own filter entry
+the ordinary way.
 
 The expression-algebra rework this doc otherwise describes (splitting
 `FunctionCall` into `Cast`/`Arithmetic`/`Comparison`/`BooleanExpr`/
