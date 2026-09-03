@@ -552,19 +552,21 @@ already-compiled caller; a new class has no such history to break.
 `ColumnLineage` replacing its single `aggregated: Boolean` field with
 `derivation: DerivationKind` and `aggregations: Set[AggregationDetail]`
 (the "Aggregation detail"/"Derivation classification" section above) is a
-real binary-incompatible change to that case class's constructor — but not
-one this PR needed a new `mimaBinaryIssueFilters` entry for: `ir/build.sbt`
-already carries a transitional, whole-package `ProblemFilters.exclude`
-(see that file's own comment) covering every symbol under the pre-rebrand
-`com.example.ir.*` namespace this module's `mimaPreviousArtifacts` still
-points at, and `ColumnLineage` — like everything else changed alongside
-the `com.invaract` rebrand — has no baseline symbol at that old namespace
-to compare against at all. This rides on that transitional filter rather
-than adding a second one; once the follow-up PR flips
-`mimaPreviousArtifacts` to a real `com.invaract` 0.2.0 baseline (per that
-file's own "FOLLOW-UP" comment), this shape becomes the new baseline going
-forward, and any *future* change to it would need its own filter entry
-the ordinary way.
+real binary-incompatible change to that case class's constructor. By the
+time this landed, the `com.example` → `com.invaract` rebrand's own
+transitional `mimaPreviousArtifacts`/wildcard-filter state (which this
+paragraph originally described riding on for free) had already reached
+the base branch — so `ir/build.sbt`'s "FOLLOW-UP" flip to a real
+`com.invaract:0.2.0` baseline happened as part of *this* change instead of
+a later one, and a real `sbt mimaReportBinaryIssues` run against that
+baseline confirmed the break for real (not assumed): `ColumnLineage`'s and
+`Lineage`'s private `Provenance`'s `apply`/`copy`/`this`/`copy$default$*`
+all changed shape. `ir/build.sbt` now carries the exact filter lines that
+run suggested, and the module version moved to 0.3.0 — the MINOR-digit
+bump docs/VERSIONING.md's pre-1.0 policy calls for a deliberate break,
+alongside the unrelated expression-algebra rework's own real MiMa break
+(`FunctionCall`/`Unsupported`/`UnsupportedExpr` removed, `ColumnRef`
+gained a field) that surfaced in the same flip.
 
 The expression-algebra rework this doc otherwise describes (splitting
 `FunctionCall` into `Cast`/`Arithmetic`/`Comparison`/`BooleanExpr`/

@@ -759,8 +759,8 @@ excludeDependencies ++= Seq(
 // so even setting reachability aside, there's no first-party call site
 // here that could be affected either way.
 
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.2.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.2.0.jar")
+unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.3.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.3.0.jar")
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"
 assembly / assemblyMergeStrategy := {
@@ -891,22 +891,16 @@ strykerThresholdsBreak := 70
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
 //
-// Renamed invariant-spark-adapter -> invaract-spark-adapter by the rebrand
-// PR, which is now on the base branch - see contract/build.sbt's comment
-// for why this coordinate must match base-ref's own published name.
-mimaPreviousArtifacts := Set("com.example" %% "invaract-spark-adapter" % "0.1.0")
-
-// com.example -> com.invaract namespace rebrand (this PR) - see
-// contract/build.sbt's matching comment for the full rationale (deliberate
-// break per CLAUDE.md's "API Compatibility Requirement" option 2, version
-// bumped to 0.2.0 as the MAJOR-equivalent bump docs/VERSIONING.md's pre-1.0
-// policy calls for).
-//
-// FOLLOW-UP (once this PR lands on the base branch): flip
-// `mimaPreviousArtifacts` above to `Set("com.invaract" %%
-// "invaract-spark-adapter" % "0.2.0")` and remove this filter - do not make
-// that flip in this PR.
-import com.typesafe.tools.mima.core._
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[Problem]("com.example.sparkadapter.*")
-)
+// Points at the base branch's own current published coordinate
+// (com.invaract/0.2.0) - the com.example -> com.invaract rebrand that
+// produced that coordinate has already landed on the base branch, so this
+// is no longer the transitional "com.example/0.1.0" state a prior
+// revision of this file pointed at. Unlike contract/ir (both bumped to
+// 0.3.0 alongside this same flip, for real breaking changes), a real `sbt
+// mimaReportBinaryIssues` run against this 0.2.0 baseline found nothing
+// to filter - the new `SensitivityLineage`/`SensitiveColumnLineage` types
+// are purely additive, and widening `StructuralVerifier.locationsMatch`
+// from `private` to `private[sparkadapter]` doesn't remove or change any
+// existing public symbol - so this module needed no version bump and no
+// `mimaBinaryIssueFilters` entries this time.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.2.0")

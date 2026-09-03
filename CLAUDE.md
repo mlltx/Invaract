@@ -546,8 +546,8 @@ If `./dev/test` fails:
 ### Engine and plugin JARs
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.2.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.2.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.3.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.3.0.jar`
 - `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar`
 - `runner/target/scala-2.12/invaract-spark-runner.jar` — the demo job,
   bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
