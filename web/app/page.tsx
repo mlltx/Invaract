@@ -29,6 +29,29 @@ interface Report {
     events?: string[]
     diagnostics?: string[]
   }
+  transformationIR?: {
+    captured?: boolean
+    note?: string
+    renderedPlan?: string
+    lineage?: Array<{ output: string; sources: string[]; aggregated: boolean }>
+    diagnostics?: string[]
+  }
+  contractVerification?: {
+    status?: string
+    contract?: string
+    contractPath?: string
+    explanation?: string
+    inferredContractYaml?: string
+    violations?: Array<{
+      type: string
+      message: string
+      remediation: string
+      column?: string
+      location?: string
+      expected?: string
+      actual?: string
+    }>
+  }
   error?: string
 }
 
@@ -231,6 +254,110 @@ const ReportViewer = () => {
           )}
         </div>
       </section>
+
+      {report.transformationIR && (
+        <section className={styles.section}>
+          <h2>Transformation IR</h2>
+          {report.transformationIR.renderedPlan ? (
+            <div className={styles.irInfo}>
+              <div className={styles.planBox}>
+                <label>Translated Plan</label>
+                <pre className={styles.planPre}>{report.transformationIR.renderedPlan}</pre>
+              </div>
+
+              {report.transformationIR.lineage && report.transformationIR.lineage.length > 0 && (
+                <div className={styles.lineageBox}>
+                  <label>Column Lineage</label>
+                  <div className={styles.lineageList}>
+                    {report.transformationIR.lineage.map((col, i) => (
+                      <div key={i} className={styles.lineageRow}>
+                        <div className={styles.lineageOutput}>
+                          {col.output}
+                          {col.aggregated && <span className={styles.aggregatedBadge}>aggregated</span>}
+                        </div>
+                        <div className={styles.lineageSources}>
+                          {col.sources.length > 0 ? col.sources.join(', ') : '(no known source)'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {report.transformationIR.diagnostics && report.transformationIR.diagnostics.length > 0 && (
+                <div className={styles.diagnosticsBox}>
+                  <label>Diagnostics</label>
+                  <div className={styles.diagnosticsList}>
+                    {report.transformationIR.diagnostics.map((d, i) => (
+                      <div key={i} className={styles.diagnostic}>{d}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className={styles.hint}>
+              {report.transformationIR.note || 'Transformation IR was not captured for this run.'}
+            </p>
+          )}
+        </section>
+      )}
+
+      {report.contractVerification && Object.keys(report.contractVerification).length > 0 && (
+        <section className={styles.section}>
+          <h2>Contract Verification</h2>
+          {(() => {
+            const cv = report.contractVerification!
+            const cvStatus = cv.status || 'UNKNOWN'
+            const cvClass =
+              cvStatus === 'PASSED' ? styles.pass : cvStatus === 'FAILED' ? styles.fail : styles.neutral
+            return (
+              <div className={styles.contractInfo}>
+                <div className={styles.contractHeader}>
+                  <div className={`${styles.statusBadge} ${styles.statusBadgeSmall} ${cvClass}`}>
+                    <span className={styles.text}>{cvStatus}</span>
+                  </div>
+                  {cv.contract && <div className={styles.contractId}>{cv.contract}</div>}
+                </div>
+                {cv.contractPath && (
+                  <div className={styles.contractPath}>contract file: {cv.contractPath}</div>
+                )}
+
+                {cvStatus === 'DRY_RUN' ? (
+                  cv.inferredContractYaml ? (
+                    <div className={styles.planBox}>
+                      <label>Inferred Contract (from this run&apos;s actual inputs/outputs)</label>
+                      <pre className={styles.planPre}>{cv.inferredContractYaml}</pre>
+                    </div>
+                  ) : (
+                    <p className={styles.hint}>No write was recognized during this run, so no contract could be inferred.</p>
+                  )
+                ) : cv.violations && cv.violations.length > 0 ? (
+                  <div className={styles.violationsList}>
+                    {cv.violations.map((v, i) => (
+                      <div key={i} className={styles.violation}>
+                        <div className={styles.violationType}>{v.type}</div>
+                        <div className={styles.violationMessage}>{v.message}</div>
+                        {(v.column || v.location || v.expected || v.actual) && (
+                          <div className={styles.violationDetail}>
+                            {v.column && <span>column: {v.column}</span>}
+                            {v.location && <span>location: {v.location}</span>}
+                            {v.expected && <span>expected: {v.expected}</span>}
+                            {v.actual && <span>actual: {v.actual}</span>}
+                          </div>
+                        )}
+                        <div className={styles.violationRemediation}>→ {v.remediation}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.hint}>No violations.</p>
+                )}
+              </div>
+            )
+          })()}
+        </section>
+      )}
 
       {report.plugin?.events && report.plugin.events.length > 0 && (
         <section className={styles.section}>

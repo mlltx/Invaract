@@ -223,6 +223,173 @@
   flex: 1;
 }
 
+.irInfo,
+.contractInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.planBox,
+.lineageBox,
+.diagnosticsBox {
+  background-color: var(--bg-secondary);
+  padding: 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  overflow-x: auto;
+}
+
+.planBox label,
+.lineageBox label,
+.diagnosticsBox label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.planPre {
+  margin: 0;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.lineageList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.lineageRow {
+  background-color: var(--bg-tertiary);
+  padding: 0.6rem 0.75rem;
+  border-radius: 4px;
+  border-left: 3px solid var(--accent-color);
+  font-size: 0.85rem;
+}
+
+.lineageOutput {
+  font-weight: 600;
+  color: var(--accent-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.aggregatedBadge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: white;
+  background-color: var(--warn-color);
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+}
+
+.lineageSources {
+  margin-top: 0.25rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.diagnosticsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.diagnostic {
+  padding: 0.6rem 0.75rem;
+  background-color: var(--bg-tertiary);
+  border-left: 3px solid var(--warn-color);
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  word-break: break-word;
+  border-radius: 4px;
+}
+
+.contractHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.statusBadgeSmall {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.statusBadgeSmall.neutral {
+  background-color: var(--neutral-color);
+  color: white;
+}
+
+.contractId {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.contractPath {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.violationsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.violation {
+  background-color: var(--bg-secondary);
+  padding: 0.85rem;
+  border-radius: 6px;
+  border-left: 4px solid var(--fail-color);
+}
+
+.violationType {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--fail-color);
+  margin-bottom: 0.35rem;
+}
+
+.violationMessage {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.violationDetail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-family: 'Monaco', 'Courier New', monospace;
+  margin-bottom: 0.5rem;
+}
+
+.violationRemediation {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
 .eventsList {
   display: flex;
   flex-direction: column;
