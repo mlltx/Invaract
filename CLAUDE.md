@@ -646,7 +646,10 @@ id,value
 `InvaractPlugin.scala` illustrates:
 
 1. **Schema Validation**: Checks for required columns
-2. **Transformation**: Adds a computed column (`value_squared`)
+2. **Transformation**: Adds two computed columns — `value_squared`
+   (arithmetic) and `value_tier` (a comparison feeding a `CASE WHEN`),
+   so the demo's own translated IR exercises more than one expression
+   category — see docs/TRANSFORMATION_IR.md
 3. **Event Logging**: Records execution steps
 4. **Error Handling**: Validates input before processing
 

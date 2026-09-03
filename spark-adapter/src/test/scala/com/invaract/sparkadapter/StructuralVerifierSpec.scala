@@ -34,13 +34,23 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   private def realDemoInput() =
     spark.read.option("header", "true").option("inferSchema", "true").csv("../demo/input/sample.csv")
 
+  // Mirrors InvaractPlugin.process's real output shape exactly (see
+  // plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala) - both
+  // computed columns, not just value_squared - since the real demo
+  // contract (loaded by realDemoContract() above) declares both as
+  // required outputs.
+  private def realDemoOutput(inputDf: org.apache.spark.sql.DataFrame) =
+    inputDf
+      .withColumn("value_squared", col("value") * col("value"))
+      .withColumn("value_tier", when(col("value") > 50, lit("high")).otherwise(lit("low")))
+
   private def realDemoPlan(outputDf: org.apache.spark.sql.DataFrame, outputLocation: String = "demo/output/result.parquet") =
     SparkPlanAdapter.translateAsWrite(outputDf.queryExecution.analyzed, DatasetRef(outputLocation)).plan
 
   test("PASSES against the real demo pipeline: real inputs, real output, real lineage, real contract") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val plan = realDemoPlan(outputDf)
 
     val result = StructuralVerifier.verify(
@@ -59,16 +69,23 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("MISSING_INPUT: contract declares an input the plan never reads") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     // Build the plan from a Read at a location that does not match the
-    // contract's declared input at all.
+    // contract's declared input at all. realDemoOutput chains two
+    // .withColumn calls, and SparkPlanAdapter translates the *analyzed*
+    // plan (not the optimized one - see docs/SPARK_ADAPTER.md's
+    // "Integration point" for why), so this is a nested Project(Project(
+    // Read, ...), ...) rather than one flat Project - the rewrite has to
+    // recurse to the base Read wherever it actually sits, not assume it's
+    // the immediate child of the top-level node.
+    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case r: Read                        => r.copy(dataset = DatasetRef("demo/input/other_source.csv"))
+      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+      case other                          => other
+    }
     val plan = com.invaract.ir.Write(
       DatasetRef("demo/output/result.parquet"),
-      SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan match {
-        case p @ com.invaract.ir.Project(_: Read, _) =>
-          p.copy(input = Read(DatasetRef("demo/input/other_source.csv")))
-        case other => other
-      }
+      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
     )
 
     val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
@@ -122,7 +139,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("OUTPUT_LOCATION_MISMATCH: the plan writes somewhere other than the contract's declared location") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val plan = realDemoPlan(outputDf, outputLocation = "demo/output/somewhere_else.parquet")
 
     val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
@@ -206,8 +223,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("UNDECLARED_OUTPUT_COLUMN is not reported when rejectUndeclaredFields is left at the default") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf
-      .withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
       .withColumn("extra_column", lit("unexpected"))
     val plan = realDemoPlan(outputDf)
 
@@ -327,7 +343,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("location matching bridges a contract's relative path and Spark's absolute file: URI") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     // realDemoPlan translates via SparkPlanAdapter against the real, absolute
     // file: URI Spark reports for a locally-read CSV — the contract declares
     // the relative "demo/input/sample.csv" / "demo/output/result.parquet".
@@ -364,7 +380,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(contract.outputs.head.format.contains("parquet"), "sanity check: the real demo contract does declare a format")
 
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(format = Some("csv"))
 
@@ -385,7 +401,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("format matches (case-insensitively): no violation when contract and actual format agree") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
     // Contract declares "parquet"; Spark's own shortName() for the format
     // this real demo actually writes is lowercase too, but the check is
@@ -404,7 +420,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("format is not checked when the contract doesn't declare one, or the actual format is unknown") {
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
 
     // Contract declares no format at all.
@@ -443,7 +459,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(contract.outputs.head.saveMode.contains("overwrite"), "sanity check: the real demo contract does declare a saveMode")
 
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(saveMode = Some("append"))
 
@@ -464,7 +480,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("save mode matches (case-insensitively): no violation when contract and actual save mode agree") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(saveMode = Some("OVERWRITE"))
 
@@ -480,7 +496,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("save mode is not checked when the contract doesn't declare one, or the actual save mode is unknown") {
     val inputDf = realDemoInput()
-    val outputDf = inputDf.withColumn("value_squared", col("value") * col("value"))
+    val outputDf = realDemoOutput(inputDf)
     val bareWrite = realDemoPlan(outputDf)
 
     // Contract declares no saveMode at all.

@@ -242,17 +242,31 @@ real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 3. Prints the rendered plan to the console.
 
 Actual output from `./dev/test` against the real `InvaractPlugin`
-(`value_squared = value * value`, per `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
+(`value_squared = value * value`, `value_tier = CASE WHEN value > 50 THEN
+"high" ELSE "low" END`, per
+`plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
 
 ```
 Transformation IR (translated from the real Spark logical plan):
-Write(file:/home/user/Invaract/demo/output/result.parquet)
+Write(file:/home/user/Invaract/demo/output/result.parquet, format=parquet, saveMode=overwrite)
 └─ Project
-   ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+   ├─ Project
+   │  ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+   │  ├─ id = id
+   │  ├─ value = value
+   │  └─ value_squared = (value * value)
    ├─ id = id
    ├─ value = value
-   └─ value_squared = value * value
+   ├─ value_squared = value_squared
+   └─ value_tier = CASE WHEN value > 50 THEN high ELSE low END
 ```
+
+The two nested `Project` nodes are Invaract translating Spark's
+**analyzed** plan, not the optimized one (see ARCHITECTURE.md's ADR-002):
+each chained `.withColumn()` call in `InvaractPlugin`
+produces its own `Project` in the analyzed plan, and only the Catalyst
+optimizer's `CollapseProject` rule would flatten them — a rewrite Invaract
+deliberately doesn't run, so it can still see the original aliases.
 
 `demo/output/report.json`'s `transformationIR.lineage`:
 
@@ -260,14 +274,17 @@ Write(file:/home/user/Invaract/demo/output/result.parquet)
 [
   { "output": "id", "sources": ["file:.../sample.csv.id"], "aggregated": false },
   { "output": "value", "sources": ["file:.../sample.csv.value"], "aggregated": false },
-  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "aggregated": false }
+  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "aggregated": false },
+  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "aggregated": false }
 ]
 ```
 
 Note `value_squared`'s single source: `value` is referenced twice in
 `value * value`, and `ColumnLineage.sources` is a `Set`, so the duplicate
 collapses — correctly reporting "derives from `value`," not "derives from
-`value` twice."
+`value` twice." `value_tier` traces back to the same single source column,
+despite being derived through a `Comparison` feeding a `Conditional`
+rather than an `Arithmetic` expression.
 
 ## Diagnostics: plan extraction examples
 
@@ -679,15 +696,20 @@ Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. W
 
 What the contract expects:
   input  'orders' at demo/input/sample.csv: id: integer, value: integer
-  output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
+  output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, value_tier: string, customer_name: string
 
 What the plan contains:
-  Write(file:/home/user/Invaract/demo/output/result_broken_example.parquet)
+  Write(file:/home/user/Invaract/demo/output/result_broken_example.parquet, format=parquet, saveMode=overwrite)
   └─ Project
-     ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+     ├─ Project
+     │  ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+     │  ├─ id = id
+     │  ├─ value = value
+     │  └─ value_squared = (value * value)
      ├─ id = id
      ├─ value = value
-     └─ value_squared = value * value
+     ├─ value_squared = value_squared
+     └─ value_tier = CASE WHEN value > 50 THEN high ELSE low END
 
 Why it violates the contract (1 violation):
   1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema

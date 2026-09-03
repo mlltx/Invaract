@@ -220,7 +220,7 @@ object DemoJobHarness {
           "pluginVersion" -> "0.1.0"
         ),
         tests = Map(
-          "unit" -> Map("passed" -> 4, "failed" -> 0),
+          "unit" -> Map("passed" -> 5, "failed" -> 0),
           "integration" -> Map("passed" -> 1, "failed" -> 0)
         ),
         input = Map(

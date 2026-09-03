@@ -52,12 +52,25 @@ class InvaractPluginTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(rows(1).getInt(2) == 400) // 20 * 20
   }
 
+  test("addValueTier should classify values above 50 as 'high', and 50 or below as 'low'") {
+    val df = spark.createDataFrame(Seq((1, 50), (2, 51)))
+      .toDF("id", "value")
+
+    val result = InvaractPlugin.addValueTier(df)
+    assert(result.columns.contains("value_tier"))
+
+    val rows = result.collect()
+    assert(rows(0).getString(2) == "low")  // 50 is not > 50
+    assert(rows(1).getString(2) == "high") // 51 is > 50
+  }
+
   test("process should perform full transformation") {
     val df = spark.createDataFrame(Seq((1, 5), (2, 10)))
       .toDF("id", "value")
 
     val result = InvaractPlugin.process(df)
     assert(result.columns.contains("value_squared"))
+    assert(result.columns.contains("value_tier"))
     assert(result.count() == 2)
 
     val events = InvaractPlugin.getEvents

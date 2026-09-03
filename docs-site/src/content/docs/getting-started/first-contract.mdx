@@ -55,7 +55,7 @@ job.
    spark-submit \
      --class com.invaract.runner.DemoJobHarness \
      --master local[*] \
-     --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+     --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
      runner/target/scala-2.12/invaract-spark-runner.jar \
      demo/input/sample.csv \
      demo/output/result_broken_example.parquet \
@@ -72,15 +72,20 @@ job.
 
    What the contract expects:
      input  'orders' at demo/input/sample.csv: id: integer, value: integer
-     output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
+     output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, value_tier: string, customer_name: string
 
    What the plan contains:
-     Write(file:/.../demo/output/result_broken_example.parquet)
+     Write(file:/.../demo/output/result_broken_example.parquet, format=parquet, saveMode=overwrite)
      └─ Project
-        ├─ Read(file:/.../demo/input/sample.csv)
+        ├─ Project
+        │  ├─ Read(file:/.../demo/input/sample.csv)
+        │  ├─ id = id
+        │  ├─ value = value
+        │  └─ value_squared = (value * value)
         ├─ id = id
         ├─ value = value
-        └─ value_squared = value * value
+        ├─ value_squared = value_squared
+        └─ value_tier = CASE WHEN value > 50 THEN high ELSE low END
 
    Why it violates the contract (1 violation):
      1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema

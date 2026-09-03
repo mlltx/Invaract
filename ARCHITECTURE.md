@@ -100,7 +100,7 @@ even though the harness itself is not the thing being changed.
    └─> each module's target/scala-2.12/*.jar
 
 2. Build spark-adapter (needs contract + ir)
-   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar
+   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar
 
 3. Build runner (needs contract, ir, plugin, spark-adapter)
    └─> runner/target/scala-2.12/invaract-spark-runner.jar
