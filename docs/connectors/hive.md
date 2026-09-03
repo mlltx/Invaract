@@ -32,7 +32,7 @@ read shape turned out to be (see "Delta Lake reads" above) — it's its own
 top-level `LeafNode`, confirmed empirically via a real `injectCheckRule`
 probe's full `treeString` output, not assumed from the class name. Before
 this pass, `SparkPlanAdapter.Translator.translatePlan` had no case for
-it at all, so it fell all the way through to the generic `Unsupported`
+it at all, so it fell all the way through to the generic `UnknownPlan`
 fallback — worse than an imprecise location (the fate of every other
 unrecognized relation kind wrapped in `LogicalRelation`): a Hive-native
 table could never satisfy a contract's declared input, full stop. This
@@ -201,7 +201,7 @@ rather than a scope-widening fix.
   check (already in the codebase, previously untested against a real
   Hive UDF for lack of a metastore) correctly recognizes
   `org.apache.hadoop.hive.ql.udf.generic.GenericUDFUpper`, translating it
-  as an opaque `FunctionCall` with a diagnostic — no fix needed, just the
+  as an explicit `UDF` node with a diagnostic — no fix needed, just the
   first real confirmation. `HiveConnectorSpec`'s permanent test.
 - **Nullability on read-back** — confirmed, the same practical
   consequence as Parquet's/CSV's own version of this finding, for an

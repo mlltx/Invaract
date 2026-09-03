@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{ContractRule, InterpretedRule}
-import com.invaract.ir.{ColumnReference, DeleteScope, Expr, FunctionCall, RowMutation}
+import com.invaract.ir.{BooleanExpr, ColumnReference, Comparison, DeleteScope, Expr, RowMutation}
 
 /** Checks a contract's declared DML rules (`com.invaract.contract.RuleType`)
   * against the structural facts `RowMutationSupport` extracted from one
@@ -113,20 +113,19 @@ private[sparkadapter] object RuleVerifier {
 
   /** Column names genuinely established as an equality match by `expr` —
     * every name appearing as a bare operand of a top-level `=`/`<=>`
-    * conjunct, recursively flattening top-level `&&` (Spark's own
-    * `And.symbol`, confirmed via `SparkPlanAdapter.translateExpr`'s
-    * `BinaryOperator` case — not the SQL keyword `"AND"`). Deliberately
-    * does not descend into `||`, `NOT`, or any other function: only a
-    * conjunct that's an unconditional, required part of the match
-    * (everything `AND`-ed together must hold) counts, and only a
-    * genuine column-to-column comparison (both operands a bare
+    * `Comparison`, recursively flattening a top-level `BooleanExpr("AND",
+    * ...)` (confirmed via `SparkPlanAdapter.translateExpr`'s `And` case).
+    * Deliberately does not descend into `OR`, `NOT`, or any other
+    * expression kind: only a conjunct that's an unconditional, required
+    * part of the match (everything `AND`-ed together must hold) counts,
+    * and only a genuine column-to-column comparison (both operands a bare
     * `ColumnReference`) counts as establishing a match — `col = literal`
     * pins to a constant, not to the other side of the merge.
     */
   private def equalityPairedColumns(expr: Expr): Set[String] = expr match {
-    case FunctionCall("&&", List(left, right)) =>
+    case BooleanExpr("AND", List(left, right)) =>
       equalityPairedColumns(left) ++ equalityPairedColumns(right)
-    case FunctionCall(op, List(ColumnReference(a), ColumnReference(b))) if op == "=" || op == "<=>" =>
+    case Comparison(op, ColumnReference(a), ColumnReference(b)) if op == "=" || op == "<=>" =>
       Set(a.name, b.name)
     case _ => Set.empty
   }

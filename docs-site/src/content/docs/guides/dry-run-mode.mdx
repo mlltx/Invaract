@@ -46,41 +46,51 @@ intend before treating it as a finished document.
    and pass it as the contract argument to use the normal (enforced) mode:
 
    id: inferred_contract
-   version: "0.1.0"
+   version: 0.1.0
    status: draft
    inputs:
-     - name: input
-       location: demo/input/sample.csv
-       schema:
-         fields:
-           - name: id
-             type: integer
-             required: true
-             nullable: true
-           - name: value
-             type: integer
-             required: true
-             nullable: true
+   - name: input
+     location: /home/user/.../demo/input/sample.csv
+     schema:
+       fields:
+       - name: id
+         type: integer
+         required: true
+         nullable: true
+       - name: value
+         type: integer
+         required: true
+         nullable: true
    outputs:
-     - name: output
-       location: demo/output/dry_run_result.parquet
-       format: parquet
-       saveMode: overwrite
-       schema:
-         fields:
-           - name: id
-             type: integer
-             required: true
-             nullable: true
-           - name: value
-             type: integer
-             required: true
-             nullable: true
-           - name: value_squared
-             type: integer
-             required: true
-             nullable: true
+   - name: output
+     location: /home/user/.../demo/output/dry_run_result.parquet
+     format: parquet
+     schema:
+       fields:
+       - name: id
+         type: integer
+         required: true
+         nullable: true
+       - name: value
+         type: integer
+         required: true
+         nullable: true
+       - name: value_squared
+         type: integer
+         required: true
+         nullable: true
+       - name: value_tier
+         type: string
+         required: true
+         nullable: false
+     saveMode: overwrite
    ```
+
+   `location` is the absolute `file:`-scheme-stripped path Spark actually reported for this
+   run (see [Contract Format](/reference/contract-format/)'s "Location matching") — replace
+   it with a portable, relative path (`demo/input/sample.csv`) once you copy this into a real
+   contract file. `value_tier` is inferred `nullable: false` because both branches of its
+   `CASE WHEN` produce a non-null literal.
 
    Save that to a file (`id`, `version`, and `status` are placeholders — replace them once
    you know what this contract should really be called), and you have a real starting

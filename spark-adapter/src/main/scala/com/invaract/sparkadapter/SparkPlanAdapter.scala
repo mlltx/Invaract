@@ -7,14 +7,21 @@ import com.invaract.ir
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.expressions.{
+  And,
   Alias,
   Ascending,
   AttributeReference,
-  BinaryOperator,
+  BinaryArithmetic,
+  BinaryComparison,
+  CaseWhen,
   Cast,
   Expression,
+  If,
   NamedExpression,
+  Not,
   NullsFirst,
+  Or,
+  UnaryMinus,
   WindowExpression,
   Literal => CatalystLiteral,
   SortOrder => CatalystSortOrder
@@ -102,8 +109,8 @@ case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
   * ## Never throws
   *
   * `translate` always returns an `ir.Plan`. An unrecognized plan node
-  * becomes `ir.Unsupported`; an unrecognized expression falls through to a
-  * generic `FunctionCall` built from Catalyst's own `prettyName`/`children`
+  * becomes `ir.UnknownPlan`; an unrecognized expression falls through to a
+  * generic `ir.Function` built from Catalyst's own `prettyName`/`children`
   * (see below) rather than needing to be enumerated. Both paths are
   * recorded as `Diagnostic`s. A partially understood pipeline is more
   * useful to a verification engine than an exception that discards
@@ -455,17 +462,29 @@ private[sparkadapter] object SparkPlanAdapter {
           w.orderSpec.map(translateSortOrder).toList
         )
 
-      // Row-count-only operators: they don't change which columns exist or
-      // what they mean, so they're transparent for lineage purposes.
-      // Deduplicate (.distinct()) removes duplicate rows but touches no
-      // column's identity or type; Repartition/RepartitionByExpression
-      // (.repartition()/.coalesce()) only change physical partitioning.
-      // Previously these all fell through to the opaque Unsupported
-      // placeholder — none of them actually needed one.
+      // `.limit(n)` analyzes to a GlobalLimit wrapping a LocalLimit sharing
+      // the same literal (LocalLimit caps each partition before the global
+      // merge re-caps the combined result) — translated as one ir.Limit,
+      // not two, since both nodes represent the same user-visible cap.
+      // Matched before the standalone GlobalLimit/LocalLimit fallbacks
+      // below, which only fire when the pair doesn't show up together (a
+      // LocalLimit reached on its own, e.g. inside a subquery).
+      case GlobalLimit(limitExpr, LocalLimit(_, child)) =>
+        ir.Limit(translatePlan(child), limitValueOf("GlobalLimit", limitExpr))
+
       case g: GlobalLimit =>
-        translatePlan(g.child)
+        ir.Limit(translatePlan(g.child), limitValueOf("GlobalLimit", g.limitExpr))
+
       case l: LocalLimit =>
-        translatePlan(l.child)
+        ir.Limit(translatePlan(l.child), limitValueOf("LocalLimit", l.limitExpr))
+
+      // Row-count-only operators, otherwise: they don't change which
+      // columns exist or what they mean, so they're transparent for
+      // lineage purposes. Deduplicate (.distinct()) removes duplicate rows
+      // but touches no column's identity or type; Repartition/
+      // RepartitionByExpression (.repartition()/.coalesce()) only change
+      // physical partitioning. Previously these all fell through to the
+      // opaque UnknownPlan placeholder — none of them actually needed one.
       case d: Deduplicate =>
         translatePlan(d.child)
       case r: Repartition =>
@@ -476,7 +495,22 @@ private[sparkadapter] object SparkPlanAdapter {
       case other =>
         val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
         report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
-        ir.Unsupported(description, other.children.map(translatePlan).toList)
+        ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
+    }
+
+    /** A LIMIT clause's row cap is virtually always a plain integer literal
+      * (`.limit(n)`/`LIMIT n`) — Spark's own parser rejects a non-constant
+      * LIMIT expression before analysis ever reaches this translator. The
+      * `Option` path exists purely so a construct this translator hasn't
+      * seen (a future Spark version allowing something other than a bare
+      * integer literal) degrades to a diagnostic-backed best-effort value
+      * instead of throwing.
+      */
+    private def limitValueOf(nodeType: String, expr: Expression): Int = expr match {
+      case CatalystLiteral(value: Int, _) => value
+      case other =>
+        report(nodeType, s"LIMIT expression '$other' is not a plain integer literal; defaulting to 0")
+        0
     }
 
     private def safeSimpleString(plan: LogicalPlan): String =
@@ -491,20 +525,22 @@ private[sparkadapter] object SparkPlanAdapter {
 
     def translateExpr(expr: Expression): ir.Expr = expr match {
       case a: AttributeReference =>
-        ir.ColumnReference(ir.ColumnRef(a.name, a.qualifier.lastOption))
+        ir.ColumnReference(ir.ColumnRef(a.name, a.qualifier.lastOption, Some(a.exprId.id)))
 
       // A nested Alias (not at the top of a Project/Aggregate/Window output
-      // list, where translateNamed already unwraps it) has no home in this
-      // IR's expression algebra — see Expr.scala's NamedExpr doc. Discard
-      // the name, keep the computation.
+      // list, where translateNamed already unwraps it) — e.g. a struct
+      // field's own name (`struct(col("a").as("x"))`). Kept as a first-class
+      // `ir.Alias` node rather than discarded, so a rename occurring
+      // mid-expression is never silently dropped — see Expr.scala's `Alias`
+      // doc for why this differs from the plan-boundary `NamedExpr`.
       case a: Alias =>
-        translateExpr(a.child)
+        ir.Alias(a.name, translateExpr(a.child))
 
       case l: CatalystLiteral =>
         ir.Literal(convertLiteralValue(l.value), typeNameOf(l.dataType))
 
       case c: Cast =>
-        ir.FunctionCall("CAST", List(translateExpr(c.child), ir.Literal(typeNameOf(c.dataType), "type")))
+        ir.Cast(translateExpr(c.child), typeNameOf(c.dataType))
 
       // The window spec (partition/order/frame) is captured once at the
       // plan level by ir.Window; re-representing it per expression here
@@ -515,27 +551,89 @@ private[sparkadapter] object SparkPlanAdapter {
       case ae: AggregateExpression =>
         ir.AggregateCall(ae.aggregateFunction.prettyName.toUpperCase, aggregateArg(ae.aggregateFunction), ae.isDistinct)
 
-      case b: BinaryOperator =>
-        ir.FunctionCall(b.symbol, List(translateExpr(b.left), translateExpr(b.right)))
+      // Boolean combinators. Matched before BinaryComparison/BinaryArithmetic
+      // below since Not/And/Or aren't either of those, but are still
+      // Expression/UnaryExpression|BinaryOperator instances that would
+      // otherwise reach the generic fallback.
+      case And(left, right) =>
+        ir.BooleanExpr("AND", List(translateExpr(left), translateExpr(right)))
+      case Or(left, right) =>
+        ir.BooleanExpr("OR", List(translateExpr(left), translateExpr(right)))
+      case Not(child) =>
+        ir.BooleanExpr("NOT", List(translateExpr(child)))
 
+      // A binary comparison (=, <=>, <, <=, >, >=) — matched before the
+      // generic Expression fallback via BinaryComparison, the real Catalyst
+      // supertype every one of these shares, rather than enumerating each
+      // concrete class.
+      case c: BinaryComparison =>
+        ir.Comparison(c.symbol, translateExpr(c.left), translateExpr(c.right))
+
+      // A numeric operator: +, -, *, /, %, integer division (BinaryArithmetic,
+      // Catalyst's real supertype for all of them) or unary negation.
+      case a: BinaryArithmetic =>
+        ir.Arithmetic(a.symbol, List(translateExpr(a.left), translateExpr(a.right)))
+      case u: UnaryMinus =>
+        ir.Arithmetic("NEGATE", List(translateExpr(u.child)))
+
+      // CASE WHEN ... [ELSE ...] END, and the two-way IF(cond, then, else)
+      // form — both represented as one Conditional node (see Expr.scala's
+      // doc: If is a single-branch Conditional with an elseValue).
+      case cw: CaseWhen =>
+        ir.Conditional(cw.branches.map { case (c, v) => (translateExpr(c), translateExpr(v)) }.toList, cw.elseValue.map(translateExpr))
+      case iff: If =>
+        ir.Conditional(List((translateExpr(iff.predicate), translateExpr(iff.trueValue))), Some(translateExpr(iff.falseValue)))
+
+      // A user-defined function (Scala/Java/Python/Hive) whose body is
+      // opaque to this IR — see Expr.scala's `UDF` doc for why this is
+      // never collapsed into `Function`. Matched before the generic
+      // Expression fallback so an opaque UDF is always visibly distinct
+      // from a built-in, never merely a `Function` whose name happens to
+      // look unfamiliar.
       case udf: Expression if isOpaqueUdf(udf) =>
+        val engineType = udf.getClass.getSimpleName
         report(
-          udf.getClass.getSimpleName,
-          "User-defined function body is opaque to lineage tracing; translated as a function call over its declared arguments only"
+          engineType,
+          "User-defined function body is opaque to lineage tracing; translated as a UDF node over its declared arguments only"
         )
-        ir.FunctionCall(udf.prettyName.toUpperCase, udf.children.map(translateExpr).toList)
+        ir.UDF(udfNameOf(udf), udf.children.map(translateExpr).toList, Some(engineType))
 
-      // Every other built-in expression (arithmetic beyond BinaryOperator,
-      // IS NULL, CASE WHEN, string/date functions, ...) exposes
-      // `.prettyName` and `.children` generically on Expression — no need
-      // to hardcode Spark's several dozen built-in function classes.
+      // Every other built-in expression (string/date/math functions, IS
+      // NULL/IS NOT NULL, COALESCE, non-aggregate window functions like
+      // RANK/ROW_NUMBER/LAG/LEAD, ...) exposes `.prettyName` and
+      // `.children` generically on Expression — no need to hardcode
+      // Spark's several dozen remaining built-in function classes.
       case e: Expression =>
-        ir.FunctionCall(e.prettyName.toUpperCase, e.children.map(translateExpr).toList)
+        ir.Function(e.prettyName.toUpperCase, e.children.map(translateExpr).toList)
     }
 
     private def isOpaqueUdf(e: Expression): Boolean = {
       val n = e.getClass.getSimpleName
       n == "ScalaUDF" || n == "PythonUDF" || n.endsWith("HiveSimpleUDF") || n.endsWith("HiveGenericUDF")
+    }
+
+    /** A UDF's registered/declared name, when the engine exposes one
+      * meaningfully. Tried reflectively (rather than importing e.g.
+      * `ScalaUDF` directly) so this works uniformly across Scala, Python,
+      * and Hive UDF classes without this module needing a compile-time
+      * dependency on every one of their host modules (Hive UDFs in
+      * particular live in `spark-hive`, not this module's `provided`
+      * `spark-catalyst`/`spark-sql` dependencies — the same reflection
+      * convention `WriteCommandSupport`'s Delta/Hive cases already use).
+      * Spark's own generic fallback name (`"UDF"`, `ScalaUDF`'s default
+      * when no name was ever assigned) is deliberately treated as "no name
+      * available", not a real identifier — see `ir.UDF`'s own doc for why
+      * a misleading placeholder is worse than an honest `None`.
+      */
+    private def udfNameOf(e: Expression): Option[String] = {
+      def tryMethod(methodName: String): Option[String] =
+        scala.util.Try(e.getClass.getMethod(methodName).invoke(e)).toOption.flatMap {
+          case Some(s: String) => Some(s)
+          case s: String        => Some(s)
+          case _                => None
+        }
+      val name = tryMethod("udfName").orElse(tryMethod("name"))
+      name.filter(n => n.nonEmpty && n != "UDF" && n != "<lambda>")
     }
 
     /** `AggregateCall` models exactly one argument; most aggregate
@@ -552,7 +650,7 @@ private[sparkadapter] object SparkPlanAdapter {
           s"Aggregate function takes ${multiple.size} arguments; combining them into a single ARGS(...) " +
             "wrapper since AggregateCall models one argument"
         )
-        ir.FunctionCall("ARGS", multiple.map(translateExpr))
+        ir.Function("ARGS", multiple.map(translateExpr))
     }
 
     private def translateSortOrder(so: CatalystSortOrder): ir.SortOrder =

@@ -95,11 +95,15 @@ Both are `NamedExpression`s (`.name` is defined on the trait), so one
 `translateNamed` helper handles both uniformly rather than needing an
 `Alias`-only code path.
 
-**`BinaryOperator.symbol` gives clean, uniform operator names** — `Add`,
-`And`, `EqualTo`, `GreaterThan`, etc. all expose `.symbol` (`"+"`, `"&&"`,
-`"="`, `">"`), letting one `case b: BinaryOperator` cover arithmetic,
-comparison, and boolean logic without enumerating Catalyst's dozens of
-`Expression` subclasses.
+**`BinaryArithmetic.symbol`/`BinaryComparison.symbol` give clean, uniform
+operator names** — `Add`, `Subtract`, `EqualTo`, `GreaterThan`, etc. all
+expose `.symbol` (`"+"`, `"-"`, `"="`, `">"`), letting one `case a:
+BinaryArithmetic` and one `case c: BinaryComparison` each cover their
+whole category (translated to `ir.Arithmetic`/`ir.Comparison`
+respectively) without enumerating Catalyst's dozens of `Expression`
+subclasses individually. `And`/`Or`/`Not` are matched by name instead
+(they don't share a `.symbol`-exposing supertype the same way), producing
+`ir.BooleanExpr("AND"/"OR"/"NOT", ...)`.
 
 **`count(*)` is `count(1)` under the hood** — its `AggregateFunction` has
 exactly one child (a `Literal(1)`), same shape as `SUM`/`AVG`/`MIN`/`MAX`.
@@ -114,31 +118,47 @@ adapter will meet constructs it doesn't have a precise translation for —
 the question is what happens then, and the answer here is: **degrade, never
 crash.**
 
-- An unrecognized **plan** node becomes `ir.Unsupported(description, children)` —
-  its own children are still translated and remain inspectable.
-- An unrecognized **expression** falls through to a generic translation
-  built from Catalyst's own `prettyName`/`children` (available on every
-  `Expression`) rather than needing to be enumerated — this alone covers
-  most of Spark SQL's built-in functions (string/date functions, `CASE
-  WHEN`, `IS NULL`, casts-adjacent operators) without hardcoding them.
+- An unrecognized **plan** node becomes `ir.UnknownPlan(description,
+  sourceType, children)` — its own children are still translated and
+  remain inspectable.
+- An unrecognized **expression** falls through to `ir.Function`, a
+  generic translation built from Catalyst's own `prettyName`/`children`
+  (available on every `Expression`) rather than needing to be enumerated
+  — this alone covers most of Spark SQL's built-in functions (string/date
+  functions, `IS NULL`, `COALESCE`, non-aggregate window functions like
+  `RANK`/`ROW_NUMBER`) without hardcoding them. (`ir.UnknownExpression`
+  also exists, for the same "must stay visible, never silently dropped"
+  reason `ir.UnknownPlan` does — but Catalyst's `Expression` trait is
+  generic enough on `prettyName`/`children` that this translator has, in
+  practice, never needed it: every construct it meets translates to at
+  least a `Function` fallback.)
 - A user-defined function (`ScalaUDF`, `PythonUDF`, Hive UDFs) is
-  opaque — its *body* can't be reasoned about — so it's translated as a
-  `FunctionCall` over its declared arguments, with a `Diagnostic` flagging
-  that lineage tracing can't see inside it.
+  opaque — its *body* can't be reasoned about — so it's translated as an
+  explicit `ir.UDF` node over its declared arguments (never as an
+  `ir.Function`, which would falsely claim the computation is
+  understood), with a `Diagnostic` flagging that lineage tracing can't
+  see inside it. `ir.UDF.name` is populated only when the engine exposes
+  a real, non-generic identifier (e.g. a `spark.udf.register(...)`
+  name) — Spark's own generic default (`"UDF"`) is treated as "no name
+  available," not a name.
 - A multi-argument aggregate (anything but the single-argument common
-  case) is combined into a synthetic `ARGS(...)` wrapper with a
-  `Diagnostic`, since `AggregateCall` models exactly one argument.
+  case) is combined into a synthetic `ARGS(...)` wrapper (an `ir.Function`)
+  with a `Diagnostic`, since `AggregateCall` models exactly one argument.
 
 Every degradation is paired with a `Diagnostic(nodeType, message)`, and
 `TranslationResult(plan, diagnostics)` carries the complete list. A
 partially understood pipeline is more useful to a verification engine than
 an exception that discards everything the adapter *did* understand.
 
-Both `ir.Unsupported` and `ir.UnsupportedExpr` (see
-[TRANSFORMATION_IR.md](TRANSFORMATION_IR.md)) were added to the IR itself
-as part of this work — a principled, engine-agnostic vocabulary for "could
-not translate this," usable by any future front-end, not a Spark-specific
-workaround bolted onto the adapter alone.
+`ir.UnknownPlan`/`ir.UnknownExpression` (see
+[TRANSFORMATION_IR.md](TRANSFORMATION_IR.md)) are a principled,
+engine-agnostic vocabulary for "could not translate this," usable by any
+future front-end, not a Spark-specific workaround bolted onto the adapter
+alone — originally added (as `ir.Unsupported`/`ir.UnsupportedExpr`) as
+part of this module's initial work, and renamed as part of the broader
+expression-algebra rework this doc describes (see TRANSFORMATION_IR.md's
+"API compatibility" section for the deliberate MiMa break that rename is
+part of).
 
 ## Translation coverage
 
@@ -158,20 +178,23 @@ workaround bolted onto the adapter alone.
 | `Union` | `Union(children)` |
 | `Sort` | `Sort(input, order)` |
 | `Window` | `Window(input, windowExpressions, partitionSpec, orderSpec)` |
-| `GlobalLimit` / `LocalLimit` | transparent pass-through (row count doesn't affect column lineage) |
+| `GlobalLimit` + `LocalLimit` (`.limit(n)`) | `Limit(input, limitValue, offset = 0)` — both nodes (sharing one literal) collapse to one `ir.Limit`, not two |
 | `Deduplicate` (`.distinct()`) | transparent pass-through (row count only, no column change) |
 | `Repartition` / `RepartitionByExpression` (`.repartition()`, `.coalesce()`) | transparent pass-through (physical partitioning only) |
-| `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier))` |
+| `AttributeReference` | `ColumnReference(ColumnRef(name, qualifier, Some(exprId.id)))` — the `id` is translator-assigned identity, opaque outside this module |
 | `Alias` (top-level, in an output list) | `NamedExpr(name, translated child)` |
-| `Alias` (nested elsewhere) | translated child, name discarded (no `Alias` expression node in the IR — see design doc) |
+| `Alias` (nested elsewhere, e.g. a struct field's name) | `Alias(name, translated child)` — a real `Expr` node, not discarded |
 | `Literal` | `Literal(value, logicalTypeName)` |
-| `Cast` | `FunctionCall("CAST", [child, Literal(targetType, "type")])` |
+| `Cast` | `Cast(translated child, targetTypeName)` |
 | `WindowExpression` | translated `windowFunction`; spec discarded (already captured at the `Window` plan node) |
 | `AggregateExpression` | `AggregateCall(prettyName, arg, isDistinct)` |
-| `BinaryOperator` (arithmetic/comparison/boolean) | `FunctionCall(symbol, [left, right])` |
-| `ScalaUDF` / `PythonUDF` / Hive UDFs | `FunctionCall(prettyName, args)` + `Diagnostic` |
-| everything else | `FunctionCall(prettyName, children)` (generic) |
-| any other plan node | `Unsupported(description, translated children)` + `Diagnostic` |
+| `And` / `Or` / `Not` | `BooleanExpr("AND"/"OR"/"NOT", [translated operands])` |
+| `BinaryComparison` (`EqualTo`, `LessThan`, ...) | `Comparison(symbol, left, right)` |
+| `BinaryArithmetic` (`Add`, `Subtract`, ...) / `UnaryMinus` | `Arithmetic(symbol, [left, right])` / `Arithmetic("NEGATE", [child])` |
+| `CaseWhen` / `If` | `Conditional(branches, elseValue)` |
+| `ScalaUDF` / `PythonUDF` / Hive UDFs | `UDF(name, args, Some(engineType))` + `Diagnostic` — never `Function` |
+| everything else | `Function(prettyName, children)` (generic) |
+| any other plan node | `UnknownPlan(description, sourceType, translated children)` + `Diagnostic` |
 
 ## Worked example
 
@@ -198,8 +221,8 @@ Write(gold.customer_orders)
 `Lineage.trace(result.plan)`:
 
 ```
-ColumnLineage(id, Set(.../sample.csv.id), aggregated = false)
-ColumnLineage(lifetime_value, Set(.../sample.csv.value), aggregated = true)
+ColumnLineage(id, Set(.../sample.csv.id), Direct, Set())
+ColumnLineage(lifetime_value, Set(.../sample.csv.value), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 Zero diagnostics — every construct in this pipeline has a precise
@@ -219,49 +242,133 @@ real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 3. Prints the rendered plan to the console.
 
 Actual output from `./dev/test` against the real `InvaractPlugin`
-(`value_squared = value * value`, per `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
+(`value_squared = value * value`, `value_tier = CASE WHEN value > 50 THEN
+"high" ELSE "low" END`, per
+`plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
 
 ```
 Transformation IR (translated from the real Spark logical plan):
-Write(file:/home/user/Invaract/demo/output/result.parquet)
+Write(file:/home/user/Invaract/demo/output/result.parquet, format=parquet, saveMode=overwrite)
 └─ Project
-   ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+   ├─ Project
+   │  ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+   │  ├─ id = id
+   │  ├─ value = value
+   │  └─ value_squared = (value * value)
    ├─ id = id
    ├─ value = value
-   └─ value_squared = value * value
+   ├─ value_squared = value_squared
+   └─ value_tier = CASE WHEN value > 50 THEN high ELSE low END
 ```
 
-`demo/output/report.json`'s `transformationIR.lineage`:
+The two nested `Project` nodes are Invaract translating Spark's
+**analyzed** plan, not the optimized one (see ARCHITECTURE.md's ADR-002):
+each chained `.withColumn()` call in `InvaractPlugin`
+produces its own `Project` in the analyzed plan, and only the Catalyst
+optimizer's `CollapseProject` rule would flatten them — a rewrite Invaract
+deliberately doesn't run, so it can still see the original aliases.
+
+`demo/output/report.json`'s `transformationIR.lineage` (`derivation`,
+`aggregations`, and `sensitivityTags` are covered in their own right below,
+in "Sensitivity propagation"):
 
 ```json
 [
-  { "output": "id", "sources": ["file:.../sample.csv.id"], "aggregated": false },
-  { "output": "value", "sources": ["file:.../sample.csv.value"], "aggregated": false },
-  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "aggregated": false }
+  { "output": "id", "sources": ["file:.../sample.csv.id"], "derivation": "Direct", "aggregations": [], "sensitivityTags": [] },
+  { "output": "value", "sources": ["file:.../sample.csv.value"], "derivation": "Direct", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] }
 ]
 ```
 
 Note `value_squared`'s single source: `value` is referenced twice in
 `value * value`, and `ColumnLineage.sources` is a `Set`, so the duplicate
 collapses — correctly reporting "derives from `value`," not "derives from
-`value` twice."
+`value` twice." `value_tier` traces back to the same single source column,
+despite being derived through a `Comparison` feeding a `Conditional`
+rather than an `Arithmetic` expression.
+
+## Sensitivity propagation
+
+`SensitivityLineage` (`SensitivityLineage.scala`) cross-references
+`ir.Lineage`'s traced column provenance against a `Contract`'s declared
+input `Field.sensitivityTags` (see docs/CONTRACT_MODEL.md), propagating
+each tagged input field's labels forward to every output column whose
+`sources` resolves to it — directly, or transitively through however many
+`Cast`/`Arithmetic`/`Conditional`/... steps sit between them, since
+`Lineage.trace` has already resolved that chain down to the real `Read`
+columns before this ever runs.
+
+```scala
+case class SensitiveColumnLineage(lineage: ColumnLineage, sensitivityTags: Set[String])
+
+object SensitivityLineage {
+  def propagate(lineage: List[ColumnLineage], contract: Contract): List[SensitiveColumnLineage]
+}
+```
+
+Matching a traced source to a contract input field is by column name *and*
+by location — reusing `StructuralVerifier.locationsMatch`'s own
+normalized-suffix rule (a contract's declared, portable location against
+Spark's actual, often `file:`-prefixed absolute one), so a same-named field
+on a *different*, untagged input dataset never gets cross-attributed a tag
+that belongs to another dataset's field of the same name.
+
+**This is reporting, not enforcement.** `StructuralVerifier` never reads
+`Field.sensitivityTags` at all, and a tagged field does not by itself cause
+verification to fail — `SensitivityLineage` exists to surface, for a human
+or downstream tooling auditing a transformation, which output columns
+carry data a contract author flagged as sensitive on the input side, even
+through several transformation steps that say nothing about sensitivity
+themselves. `runner/DemoJobHarness.scala` wires this into
+`demo/output/report.json`'s `transformationIR.lineage`, alongside each
+column's `derivation`/`aggregations` (see docs/TRANSFORMATION_IR.md's
+"Lineage tracing" section) — every entry carries a `sensitivityTags`
+array, empty for the common case of a column with no tagged source.
+
+Real output from `./dev/test`, after tagging the demo contract's `value`
+input field `sensitivityTags: [internal]`
+(`demo/contracts/invaract_output.yaml`):
+
+```json
+[
+  { "output": "id", "sources": ["file:.../sample.csv.id"], "derivation": "Direct", "aggregations": [], "sensitivityTags": [] },
+  { "output": "value", "sources": ["file:.../sample.csv.value"], "derivation": "Direct", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_squared", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] },
+  { "output": "value_tier", "sources": ["file:.../sample.csv.value"], "derivation": "Computed", "aggregations": [], "sensitivityTags": ["internal"] }
+]
+```
+
+`value`'s `internal` tag propagates to both `value_squared` and
+`value_tier`, even though neither's own declaration mentions sensitivity
+at all — the whole point: a governance label declared once, on the input,
+reaches every downstream column that actually carries data derived from it,
+without a contract author needing to re-declare it on each one by hand.
+`id` carries no tag, since it never reads a tagged field.
 
 ## Diagnostics: plan extraction examples
 
 From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
 
 - **Filter + Cast** — `df.filter(col("value") > 20).withColumn("value_d", col("value").cast("double"))`
-  translates the cast as `FunctionCall("CAST", [ColumnReference(value), Literal("double", "type")])`,
-  zero diagnostics.
+  translates the filter as `Comparison(">", ColumnReference(value),
+  Literal(20, "integer"))` and the cast as `Cast(ColumnReference(value),
+  "double")`, zero diagnostics.
 - **Self-join** — `df.as("cur").join(df.as("arch"), ...)` translates to
   `Join(Read(_, Some("cur")), Read(_, Some("arch")), Inner, Some(...))` —
   both sides individually addressable via `ColumnRef.qualifier`.
-- **UDF** — `spark.udf.register("triple", ...)` used in a projection
-  produces a `Diagnostic` whose `nodeType` contains `"UDF"`, alongside a
-  best-effort `FunctionCall("TRIPLE", [...])` translation — the pipeline
-  keeps going.
+- **UDF** — `spark.udf.register("triple", (x: Int) => x * 3)` used in a
+  projection produces a `Diagnostic` whose `nodeType` contains `"UDF"`,
+  alongside an explicit `UDF(Some("triple"), [...], Some("ScalaUDF"))`
+  translation — the pipeline keeps going. Confirmed empirically that
+  Spark's analyzer additionally wraps this in a null-propagation
+  `Conditional` (`IF(value IS NULL, NULL, triple(KNOWNNOTNULL(value)))`)
+  since the UDF's declared parameter is a non-nullable Scala `Int` — a
+  real rewrite the translator preserves rather than assumes away (see
+  `ExpressionTranslationSpec`/`SparkPlanAdapterSpec`'s own UDF tests for
+  the exact structure).
 - **Unsupported construct** — `explode(array(...))` (a `Generate` logical
-  node, which has no translation case) produces an `ir.Unsupported` node
+  node, which has no translation case) produces an `ir.UnknownPlan` node
   nested exactly where the untranslatable construct sits in the plan, plus
   a `Diagnostic`, rather than an exception.
 
@@ -292,7 +399,7 @@ belongs on which side of it.
 Every translation gap above — `.saveAsTable()` before
 `CreateDataSourceTableAsSelectCommand` was added, Delta's `MERGE INTO`
 today, and any future write shape this adapter hasn't been taught yet —
-shares the same failure mode: `SparkPlanAdapter` produces `ir.Unsupported`
+shares the same failure mode: `SparkPlanAdapter` produces `ir.UnknownPlan`
 instead of `ir.Write`, and `ContractEnforcementRule.verifyOrThrow`
 previously treated *any* non-`ir.Write` plan as "not a write, nothing to
 gate." A write Invaract simply doesn't recognize was, until this change,
@@ -373,7 +480,7 @@ Also added in the same change: `CreateDataSourceTableAsSelectCommand`
 (`.saveAsTable(...)`/`CREATE TABLE ... AS SELECT` against a *new* V1 data
 source table) is now a real, recognized `ir.Write` — a third distinct
 write shape, found via the same reflective survey, that previously fell
-through to `Unsupported` exactly like the pre-fix Delta gap. Unlike the
+through to `UnknownPlan` exactly like the pre-fix Delta gap. Unlike the
 other two write cases, its format comes straight from `table.provider`
 (already the clean identifier string, no `DataSourceRegister` lookup
 needed). Verified with the same PASS/FAIL enforcement pair pattern as the
@@ -416,7 +523,7 @@ All three sites now consult exactly this:
 - `SparkPlanAdapter.Translator.translatePlan`: `WriteCommandSupport.combined.lift(plan)` →
   `Some(info)` becomes `ir.Write(DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode)`,
   reporting `info.diagnostic` if present; `None` falls through to the
-  rest of the match (reads, `Project`, `Filter`, ..., the `Unsupported`
+  rest of the match (reads, `Project`, `Filter`, ..., the `UnknownPlan`
   fallback).
 - `ContractEnforcementRule.verifyOrThrow`: `WriteCommandSupport.combined.lift(plan).map(_.outputSchema).getOrElse(plan.schema)` —
   one line, replacing the three-case match that used to live here.
@@ -463,7 +570,7 @@ undetected — see "Mutation testing" below for the resulting score.
   against a real embedded-Derby Hive session, that turned out to be
   imprecise about the mechanism (worse than described, in fact —
   `HiveTableRelation` is not `LogicalRelation`-wrapped at all, so it fell
-  all the way through to the fully generic `Unsupported` translation, not
+  all the way through to the fully generic `UnknownPlan` translation, not
   even the `catalogTable` fallback) but correct about the conclusion (a
   real, previously-untested gap). Both the read side and two real write-
   side false-rejection bugs are now fixed; one known, documented,
@@ -649,15 +756,20 @@ Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. W
 
 What the contract expects:
   input  'orders' at demo/input/sample.csv: id: integer, value: integer
-  output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, customer_name: string
+  output 'result' at demo/output/result_broken_example.parquet: id: integer, value: integer, value_squared: integer, value_tier: string, customer_name: string
 
 What the plan contains:
-  Write(file:/home/user/Invaract/demo/output/result_broken_example.parquet)
+  Write(file:/home/user/Invaract/demo/output/result_broken_example.parquet, format=parquet, saveMode=overwrite)
   └─ Project
-     ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+     ├─ Project
+     │  ├─ Read(file:/home/user/Invaract/demo/input/sample.csv)
+     │  ├─ id = id
+     │  ├─ value = value
+     │  └─ value_squared = (value * value)
      ├─ id = id
      ├─ value = value
-     └─ value_squared = value * value
+     ├─ value_squared = value_squared
+     └─ value_tier = CASE WHEN value > 50 THEN high ELSE low END
 
 Why it violates the contract (1 violation):
   1. [MISSING_OUTPUT_FIELD] required field 'customer_name' is absent from the actual OUTPUT schema
@@ -1393,16 +1505,37 @@ cd spark-adapter
 sbt test
 ```
 
-51 tests against a real `local[*]` `SparkSession` (no mocked plans):
+389+ tests against a real `local[*]` `SparkSession` (no mocked plans) as
+of this writing — the grand total moves with every connector added, so
+run `sbt test` for the current figure rather than trusting a number
+frozen in prose:
 
-- **`SparkPlanAdapterSpec`** (20) — a bare read, the worked example,
-  filter+cast, self-join alias disambiguation, union, window, a UDF, an
-  unsupported construct, `Sort`, every `JoinType`, a multi-way join chain,
-  `COUNT`/`AVG`/`MIN`/`MAX`/`COUNT(DISTINCT ...)`, a multi-argument
-  aggregate, `CASE WHEN`/`IS NULL`, `.limit(n)`, `.distinct()`,
-  `.repartition()`/`.coalesce()`, format-agnosticism across CSV/JSON/
-  Parquet, a real H2 JDBC read, and a full write (format + save mode)
-  captured end-to-end through `SparkAdapterListener`.
+- **`SparkPlanAdapterSpec`** (28) — a bare read, the worked example,
+  filter+`Cast`, self-join alias disambiguation, union, window, a
+  registered UDF (including Spark's own null-check `Conditional`
+  rewrite) and a DataFrame-API UDF (including an implicit argument
+  `Cast`), an unsupported construct, `Sort`, every `JoinType`, a
+  multi-way join chain, `COUNT`/`AVG`/`MIN`/`MAX`/`COUNT(DISTINCT ...)`,
+  a multi-argument aggregate, `CASE WHEN` as an explicit `Conditional`
+  and `IS NULL` via the generic fallback, `.limit(n)` as an explicit
+  `Limit` node, `.distinct()`, `.repartition()`/`.coalesce()`,
+  format-agnosticism across CSV/JSON/Parquet, a real H2 JDBC read, and a
+  full write (format + save mode) captured end-to-end through
+  `SparkAdapterListener`.
+- **`ExpressionTranslationSpec`** (17) — literal types (integer, long,
+  double, float, string, boolean, decimal, date, null) with exact
+  structural assertions; arithmetic operators (`+`/`-`/`*`/`/`/`%`/unary
+  negation) as `Arithmetic`; `AND`/`OR`/`NOT` as `BooleanExpr`; a deeply
+  nested arithmetic/comparison/boolean expression preserving every level;
+  common built-in and nested functions; multiple chained filter/project
+  transformations, asserted by exact plan shape; a join condition over
+  multiple columns; two ambiguous same-named columns from different
+  relations remaining distinguishable by qualifier post-join, including
+  through `Lineage.trace`; a left outer join's condition and both
+  relations; duplicate output names preserved as distinct entries; an
+  alias over a derived expression vs. a pure rename; multiple references
+  to the same input column resolving to structurally-equal `ColumnRef`s;
+  and multiple aggregates sharing one grouping key.
 - **`StructuralVerifierSpec`** (22) — the real demo pipeline passing its
   own contract; every violation type (`MISSING_INPUT`, `UNDECLARED_INPUT`,
   `MISSING_OUTPUT`, `OUTPUT_LOCATION_MISMATCH`, `MISSING_OUTPUT_FIELD`,
@@ -1434,7 +1567,7 @@ sbt test
   individually (filter, recomputed columns, sort, aggregate, self-join,
   union, distinct, limit, repartition/coalesce, CASE WHEN), composed in
   random order and depth, asserting `translate`/`render`/`trace` never
-  throw and any `Unsupported` node carries a `Diagnostic`. See *Property-
+  throw and any `UnknownPlan` node carries a `Diagnostic`. See *Property-
   based fuzzing* below.
 
 ### Property-based fuzzing
@@ -1463,7 +1596,7 @@ which is exactly what the hand-written spec doesn't cover.
 Each generated case builds the chain against a real `local[*]` session,
 takes `.queryExecution.analyzed` (cheap — analysis only, no job ever
 executes), and asserts `SparkPlanAdapter.translate`/`PlanPrinter.render`/
-`Lineage.trace` all complete without throwing, and that any `Unsupported`
+`Lineage.trace` all complete without throwing, and that any `UnknownPlan`
 node in the result is paired with a `Diagnostic` (the pairing the class
 doc promises). ~200 cases run in a few seconds inside the existing forked
 test JVM.
@@ -1898,6 +2031,44 @@ per generated mutant against real Delta- and Iceberg-backed Spark
 sessions, which is genuine, unavoidable work, not overhead. These two
 levers reduce wasted time around that core cost (serialization,
 under-utilized cores), not the cost itself.
+
+#### Mutation testing: the expression-algebra rework
+
+CLAUDE.md's per-PR 70% bar, scoped to the two touched files (not a
+whole-module run):
+
+```bash
+cd spark-adapter
+sbt 'set strykerMutate := Seq("src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala", "src/main/scala/com/example/sparkadapter/RuleVerifier.scala")' stryker
+```
+
+(`strykerExcludedMutations := Seq("StringLiteral")` from the whole-module
+setting above still applies — 138 mutants generated, 90 excluded as
+`StringLiteral`, 48 real behavioral mutants tested.)
+
+First pass: 83.33% (of total)/85.11% (of covered code), 40/48 detected.
+One real, addressable gap in genuinely new code, not the pre-existing
+gaps below: `udfNameOf`'s `n.nonEmpty && n != "UDF" && n != "<lambda>"`
+filter had two surviving `&&`→`||` mutants, because every existing UDF
+test used a real, meaningful name (`"triple"`, `"calculateRisk"`) — for
+an all-true predicate, `&&` and `||` compute the same result, so neither
+operator distinguishes them. Real Spark UDF registration essentially
+never surfaces the literal placeholder itself via reflection (an unnamed
+UDF's `udfName` is `None`, not `Some("UDF")`), so proving the exclusion
+logic actually works needed a `ScalaUDF` constructed directly with
+`udfName = Some("UDF")` (and separately `Some("<lambda>")`) — ordinary
+DataFrame-API test fixtures can't reach that state. Added as a dedicated
+`SparkPlanAdapterSpec` test.
+
+Second pass: **87.5%** (of total) / **89.36%** (of covered code), 42/48
+detected. The 6 remaining survivors are all in `translateNonWritePlan`'s
+pre-existing `Read`-relation location-fallback logic (`LogicalRelation`/
+`HiveTableRelation`/`StreamingRelation`/`StreamingRelationV2`/`JDBCRelation`,
+lines 247-400) — untouched by this rework, the same category of
+already-investigated gap this section documents elsewhere for other
+sub-phases; none are in the `Cast`/`Arithmetic`/`Comparison`/
+`BooleanExpr`/`Conditional`/`UDF`/`Alias`/`Limit` code this rework
+actually added.
 
 ### API compatibility
 

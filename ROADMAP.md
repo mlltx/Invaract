@@ -1958,6 +1958,77 @@ DELETE's predicate is trivially satisfiable — all still tracked below.
       columns does it touch") would be needed for the De Morgan/`NOT`/
       `CASE WHEN` piece specifically — not started.
 
+#### Sub-phase: Expression-algebra rework — a small, named vocabulary
+for semantic lineage, not one `FunctionCall` bucket (done)
+
+The first stage of Invaract's semantic-lineage capability: hardening the
+transformation IR/translator so a Spark plan's real structure (which
+source columns contribute to an output, whether it's a pure rename or a
+derived computation, what a filter/join condition actually says) is
+preserved with enough granularity for a future fingerprint/diff to reason
+about *what kind* of expression changed, not just *that* one did.
+Deliberately scoped to representation only — no Virtual Data Environment,
+IO interception, snapshot persistence, fingerprinting, or diffing, and no
+contract-format change.
+
+- [x] **`ir.Expr` split into named categories** where the distinction is
+      semantically load-bearing: `Cast`, `Arithmetic`, `Comparison`,
+      `BooleanExpr` (`AND`/`OR`/`NOT`), `Conditional` (`CASE WHEN`/`IF`),
+      and a new expression-level `Alias` for a rename occurring
+      mid-expression (e.g. a struct field's name) — previously silently
+      discarded by both the IR and the translator. `Function` remains the
+      catch-all for everything else (string/date functions, null checks,
+      non-aggregate window functions); `AggregateCall` unchanged.
+- [x] **`UDF` as its own node**, never conflated with `Function`: carries
+      the UDF's declared name (only when the engine exposes a real,
+      non-generic identifier — Spark's own generic `"UDF"` placeholder is
+      treated as "no name available"), its argument dependencies, and an
+      `engineType` diagnostic (`ScalaUDF`/`PythonUDF`/Hive). Confirmed
+      empirically against real Spark sessions that (a) a
+      `spark.udf.register`-registered UDF's name genuinely round-trips,
+      and (b) Spark's analyzer real-rewrites a UDF call in two ways this
+      IR must preserve, not assume away: wrapping it in a null-propagation
+      `CASE WHEN` when the UDF's parameter is a non-nullable Scala value
+      type, and inserting an implicit argument `Cast` when an argument's
+      runtime type doesn't match the UDF's declared parameter type.
+- [x] **`ir.Plan` gained `Limit`** (`GlobalLimit`+`LocalLimit` collapse to
+      one node, not the previous transparent pass-through) — a row cap is
+      part of a transformation's observable semantics.
+- [x] **`Unsupported`/`UnsupportedExpr` renamed to `UnknownPlan`/
+      `UnknownExpression`**, each gaining a `sourceType` field (the
+      front-end's own class name, e.g. Catalyst's `getClass.getSimpleName`
+      — a plain string, never an engine type) alongside `description` and
+      any still-resolvable `children` — never silently dropping structure
+      a translator could still identify even when it couldn't interpret
+      the construct as a whole.
+- [x] **`ColumnRef` gained an optional `id: Option[Long]`**: a
+      translator-assigned, opaque per-attribute identity (Spark's
+      `exprId.id`, when a front end has one) that strengthens — never
+      replaces — the existing qualifier-based disambiguation a self-join
+      already relies on. Inert (`None`) for hand-constructed IR.
+- [x] **`SparkPlanAdapter`/`RuleVerifier` rewritten** to produce and
+      consume the new node types (`BinaryComparison`/`BinaryArithmetic`/
+      `And`/`Or`/`Not`/`CaseWhen`/`If` matched directly instead of one
+      generic `BinaryOperator` case; `RuleVerifier.equalityPairedColumns`
+      now matches `BooleanExpr("AND", ...)`/`Comparison` instead of
+      `FunctionCall("&&", ...)`/`FunctionCall("=", ...)`).
+- [x] **A deliberate, documented MAJOR-version MiMa break** for `ir`
+      (`mimaBinaryIssueFilters` in `ir/build.sbt`, each line the real
+      output of `sbt mimaReportBinaryIssues` against a local
+      `publishLocal` of the pre-change module) — see CLAUDE.md's "API
+      Compatibility Requirement." `spark-adapter`'s own MiMa passed clean
+      with no filters needed: none of the changed types are part of its
+      own public surface.
+- [x] **`ExpressionTranslationSpec`** (new, 17 tests) plus expanded
+      `PlanSpec`/`LineageSpec`/`PlanPrinterSpec` (`ir`) and
+      `SparkPlanAdapterSpec`/`RuleVerifierSpec` (`spark-adapter`) coverage
+      for every new node type, real literal types, nested/chained
+      expressions, multi-column and ambiguous joins (qualifier
+      disambiguation verified through `Lineage.trace`, not just the raw
+      `Project`), duplicate output names, and repeated column references
+      — all against real analyzed Spark plans, structural assertions, not
+      snapshots. `spark-adapter`'s full suite: 389 tests, all passing.
+
 #### Dependencies
 
 - Phase 1a completion (contract model)

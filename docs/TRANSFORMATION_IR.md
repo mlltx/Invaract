@@ -16,44 +16,82 @@ engine.
 ## Critical principle: semantics, not syntax
 
 The instruction that shaped every design decision in this module: **do not
-build an IR that mirrors Spark's Catalyst classes.** Catalyst has dozens of
-`Expression` subclasses (`Add`, `Subtract`, `EqualTo`, `GreaterThan`, `And`,
-`Or`, `Cast`, ...), an `Alias` that's itself an expression wrapping any
-other expression, and attribute resolution via globally unique `exprId`s.
-None of that is *transformation semantics* — it's implementation machinery
-for one specific execution engine's optimizer.
+build an IR that mirrors Spark's Catalyst classes one-for-one.** Catalyst
+has dozens of `Expression` subclasses (`Add`, `Subtract`, `EqualTo`,
+`GreaterThan`, `And`, `Or`, `Cast`, ...), an `Alias` that's itself an
+expression wrapping any other expression, and attribute resolution via
+globally unique `exprId`s. None of that is *transformation semantics* on
+its own — it's implementation machinery for one specific execution
+engine's optimizer. The IR distinguishes node kinds only where the
+distinction is semantically load-bearing for lineage, contract
+verification, or (eventually) fingerprinting/diffing a transformation's
+business logic — never merely because Catalyst happens to have a
+dedicated class for it.
 
-Three concrete decisions follow from that:
+Concrete decisions that follow from that:
 
-1. **One `FunctionCall` node, not dozens of operator classes.** An
-   arithmetic operator, a comparison, a boolean combinator, and a cast are
-   all "apply a named function to some arguments" as far as lineage and
-   contract verification are concerned — none of them change *which source
-   columns* an output value depends on. Collapsing them to
-   `FunctionCall(name, args)` is a direct application of the principle: the
-   IR only distinguishes node kinds when the distinction actually changes
-   what can be proven about the transformation. The one function-like
-   exception is `AggregateCall`, because aggregation *does* change something
-   semantically load-bearing — cardinality (many input rows collapse into
-   one output value) — which lineage tracing must be able to detect.
+1. **Named categories, not one node per Catalyst class — but not one
+   node per *concept* either.** Arithmetic (`+`, `-`, `*`, `/`, `%`, unary
+   negation), comparison (`=`, `<=>`, `<`, `<=`, `>`, `>=`), boolean
+   combinators (`AND`/`OR`/`NOT`), casts, and conditionals (`CASE WHEN`)
+   each get their own node — `Arithmetic`, `Comparison`, `BooleanExpr`,
+   `Cast`, `Conditional` — because a future semantic diff needs to say "a
+   filter's comparison operator flipped" or "an arithmetic operator
+   changed," not just "some function call's arguments differ." Everything
+   else that computes a scalar value per row — string/date/math functions,
+   null checks, non-aggregate window functions (`RANK`, `ROW_NUMBER`,
+   `LAG`, ...) — still collapses into one catch-all, `Function(name,
+   args)`, exactly as the original single-`FunctionCall` design did: Spark
+   alone exposes dozens of these, and enumerating a node type per built-in
+   function would defeat the point of a small IR. `AggregateCall` remains
+   its own category too, because aggregation changes something
+   semantically load-bearing no other category does — cardinality (many
+   input rows collapse into one output value) — which lineage tracing must
+   be able to detect. (Named `AggregateCall` rather than `Aggregate` to
+   avoid colliding with the `Aggregate` *plan* node in the same Scala
+   package; `BooleanExpr` rather than `Boolean` for the same reason against
+   `scala.Boolean`.)
 
-2. **No `Alias` expression node.** In Catalyst, `Alias` is itself an
-   `Expression`, so naming can appear nested anywhere in an expression tree.
-   In this IR, naming an output column isn't a computation on values — it's
-   metadata about how a plan stage exposes a value downstream. So it lives
-   at the plan boundary instead: `NamedExpr(name, expr)` is how `Project`,
-   `Aggregate`, and `Window` declare their output columns, and it is not
-   itself an `Expr` — it cannot be nested inside a `FunctionCall` the way a
-   Catalyst `Alias` could be nested inside anything.
+2. **`UDF` is not `Function`.** A `Function` node is a claim that this IR
+   understands what a named operation computes. A user-defined function's
+   body is opaque — Scala/Java/Python/Hive UDFs alike — so it gets its own
+   node, `UDF(name, args, engineType)`, that never masquerades as a
+   built-in. `name` is populated only when the source engine exposes a
+   real, non-generic identifier (a `spark.udf.register(...)`-assigned name,
+   for instance) — Spark's own generic placeholder (`"UDF"` for an
+   anonymous closure) is treated as "no name available," not a name.
 
-3. **No exprId-based resolution.** Catalyst binds every attribute reference
-   to its producer via a globally unique ID, resolved by an analysis pass.
-   This IR has no analysis pass and no IDs: a `ColumnRef` is just a name
-   plus an optional qualifier (`customer_id` from `raw.orders`), and
-   `Lineage` resolves bare names by walking the plan structurally (see
-   below). This is a deliberate simplification — it can't disambiguate
-   every case a full resolver could (see *Known limitations*) — but it
-   keeps the IR itself free of engine-internal bookkeeping.
+3. **`Alias` exists, but only for a *nested* rename.** In Catalyst, `Alias`
+   is itself an `Expression`, so naming can appear nested anywhere in an
+   expression tree (e.g. a struct field's name inside `struct(col("a").as(
+   "x"))`). At a plan's own output boundary, naming still isn't a
+   computation on values — it's metadata about how a plan stage exposes a
+   value downstream — so `Project`/`Aggregate`/`Window` still declare their
+   output columns via `NamedExpr(name, expr)`, which is not itself an
+   `Expr`. But a rename that occurs *mid*-expression (not at that boundary)
+   has no other home in the algebra; discarding it (an earlier version of
+   both this IR and its Spark translator did exactly that) silently drops
+   real information. `Alias(name, expr)` — a genuine `Expr` — exists for
+   exactly that case, and only that case: a top-level Catalyst `Alias` a
+   translator finds at a `Project`/`Aggregate`/`Window` output list is
+   still unwrapped straight into `NamedExpr`, never double-wrapped.
+
+4. **Column identity stays name/qualifier-based, with one narrow, optional
+   exception.** Catalyst binds every attribute reference to its producer
+   via a globally unique `exprId`, resolved by an analysis pass. This IR
+   still has no analysis pass of its own: a `ColumnRef` is a name plus an
+   optional qualifier (`customer_id` from `raw.orders`), and `Lineage`
+   resolves bare names by walking the plan structurally (see below) — the
+   qualifier (a `Read`'s dataset or `alias`) is what disambiguates a
+   self-join's two occurrences of the same source, which is the case that
+   actually matters in practice (Spark itself requires distinct aliases for
+   a self-join to analyze at all). `ColumnRef` additionally carries an
+   optional `id: Option[Long]` a front end may populate from real
+   per-attribute identity when it has one (Spark's `exprId.id`, exposed as
+   a plain, opaque number — never a Catalyst type) — a narrow strengthening
+   for the rare case name/qualifier alone can't tell apart, never a
+   replacement for the qualifier-based scheme, and inert (`None`) for
+   hand-constructed IR and any front end that doesn't have one.
 
 ## The IR
 
@@ -67,9 +105,17 @@ specifically):
 | Node | Represents |
 |---|---|
 | `ColumnReference(ref: ColumnRef)` | Reads one column. |
-| `Literal(value, literalType)` | A constant. `literalType` uses the same logical-type vocabulary as a contract field's `type`. |
-| `FunctionCall(name, args)` | Any scalar function: arithmetic, comparison, boolean logic, casts, string/date functions. |
+| `Literal(value, literalType)` | A constant. `literalType` uses the same logical-type vocabulary as a contract field's `type`. `value == null` (type still populated) is a typed SQL `NULL` — fully understood, not `UnknownExpression`. |
+| `Alias(name, expr)` | A rename occurring *mid*-expression (e.g. a struct field's name) — not the plan-boundary `NamedExpr` below. |
+| `Cast(expr, targetType)` | An explicit type conversion. `targetType` uses the same logical-type vocabulary as `Literal.literalType`. |
+| `Arithmetic(operator, operands)` | A numeric operator: `+`, `-`, `*`, `/`, `%`, or unary `NEGATE`. `operands` has one entry for a unary operator, two for binary. |
+| `Comparison(operator, left, right)` | A binary comparison: `=`, `<=>`, `<`, `<=`, `>`, `>=`. |
+| `BooleanExpr(operator, operands)` | A boolean combinator: `AND`/`OR` (two operands) or `NOT` (one). |
+| `Conditional(branches, elseValue)` | `CASE WHEN ... THEN ... [ELSE ...] END`, or a two-way `IF` (a single-branch `Conditional` with an `elseValue`). |
+| `Function(name, args)` | The catch-all for any other scalar function: string/date/math functions, null checks, non-aggregate window functions (`RANK`, `ROW_NUMBER`, ...). |
+| `UDF(name, args, engineType)` | A user-defined function whose body is opaque to this IR — never conflated with `Function`. `name` is `None` when the engine exposes no real (non-generic) identifier. |
 | `AggregateCall(function, arg, distinct)` | An aggregate function (SUM, COUNT, AVG, MIN, MAX, ...). The one expression that changes cardinality. |
+| `UnknownExpression(description, sourceType, children)` | A construct a front-end translator couldn't represent — always paired with a diagnostic, never silently dropped. |
 | `NamedExpr(name, expr)` | Binds a name to a computed expression — how a plan stage declares an output column. Not an `Expr`. |
 | `SortOrder(expr, ascending, nullsFirst)` | One key of a `Sort` or `Window` ordering. |
 
@@ -90,7 +136,9 @@ the plan, not a different kind of expression.
 | `Aggregate(input, groupBy, aggregates)` | Groups by `groupBy`, collapses each group via `aggregates`. `aggregates` is the complete output schema — `groupBy` contributes no output columns of its own (see below). |
 | `Union(inputs)` | Concatenates rows from multiple same-shaped plans. Output names follow the first branch. |
 | `Sort(input, order)` | Orders rows; column set unchanged. |
+| `Limit(input, limit, offset)` | Restricts the number of rows; column set unchanged. `offset` is `0` when the source plan has none. |
 | `Window(input, windowExprs, partitionBy, orderBy)` | Adds columns computed over a window of related rows, without collapsing row count. Input columns pass through unchanged. |
+| `UnknownPlan(description, sourceType, children)` | A plan node a front-end translator couldn't represent — always paired with a diagnostic, never silently dropped. |
 
 Every `Plan` exposes `children: List[Plan]`, the one generic traversal
 mechanism used by both `Lineage` and `PlanPrinter` — neither needs its own
@@ -186,18 +234,36 @@ inlined per branch.
 `Lineage.trace(plan)` — actual output:
 
 ```
-ColumnLineage(customer_id, Set(raw.orders.customer_id), aggregated = false)
-ColumnLineage(lifetime_value, Set(raw.orders.amount), aggregated = true)
+ColumnLineage(customer_id, Set(raw.orders.customer_id), Direct, Set())
+ColumnLineage(lifetime_value, Set(raw.orders.amount), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 This is the semantic content the spec's diagram is asking for: which source
-column each output column traces to, and whether that trace passes through
-an aggregation.
+column each output column traces to, whether that trace passes through an
+aggregation (and which one), and how directly the output relates to its
+source (a plain passthrough vs. a real computation).
 
 ## Lineage tracing (`Lineage.scala`)
 
 ```scala
-case class ColumnLineage(output: ColumnRef, sources: Set[ColumnRef], aggregated: Boolean)
+sealed trait DerivationKind
+object DerivationKind {
+  case object Direct extends DerivationKind    // exactly one source column, possibly renamed
+  case object Constant extends DerivationKind  // no source columns at all (a literal, or built entirely from literals)
+  case object Computed extends DerivationKind  // built from real columns using only operations this IR understands
+  case object Opaque extends DerivationKind    // contains a UDF or UnknownExpression anywhere in the tree
+}
+
+case class AggregationDetail(function: String, distinct: Boolean = false)
+
+case class ColumnLineage(
+  output: ColumnRef,
+  sources: Set[ColumnRef],
+  derivation: DerivationKind,
+  aggregations: Set[AggregationDetail] = Set.empty
+) {
+  def aggregated: Boolean = aggregations.nonEmpty
+}
 
 object Lineage {
   def trace(plan: Plan): List[ColumnLineage]
@@ -229,10 +295,53 @@ with no symbol table:
    resolved conservatively by unioning both sides' sources rather than
    guessing or throwing.
 
-Aggregation propagates: if any input to a `FunctionCall` traces through an
-`AggregateCall`, the result is marked `aggregated = true`. This is the
-signal a future verification engine needs to know that a uniqueness or
-row-level constraint doesn't directly apply to that output column.
+**Aggregation detail.** Every `AggregateCall` an output column's expression
+traces through contributes an `AggregationDetail(function, distinct)` to
+that column's `aggregations` set — not just a single `aggregated: Boolean`
+flag. An output combining more than one aggregate function
+(`sum(x) / count(y)`) reports both, since collapsing that to one boolean
+loses exactly the detail (which function, over what) a human auditing *how*
+a column's meaning changed across a schema-compatible contract revision
+would need. `aggregated` remains available as a convenience for "was this
+aggregated at all," without inspecting the set.
+
+**Derivation classification.** Alongside `sources`, each `ColumnLineage`
+carries a `DerivationKind` — a coarse, human-auditable summary of *how* the
+output relates to its sources:
+
+- **`Direct`** — the output is exactly one source column, possibly renamed
+  (`id = id`, or a mid-expression `Alias` over a bare reference). No
+  computation anywhere along the way.
+- **`Constant`** — no source columns whatsoever: a literal, or an
+  expression built entirely from literals.
+- **`Computed`** — derives from real source columns using only operations
+  this IR fully understands (`Cast`/`Arithmetic`/`Comparison`/
+  `BooleanExpr`/`Conditional`/`Function`/`AggregateCall`). A `CASE WHEN`
+  built from a `Comparison` is the canonical example: every operation
+  involved has known, named semantics — auditable, even if it happened
+  several plan stages before the column's final declaration.
+- **`Opaque`** — a `UDF` or `UnknownExpression` sits *anywhere* along the
+  resolved computation, even nested arbitrarily deep beneath
+  otherwise-understood operations or behind several layers of passthrough.
+  A `CASE WHEN` whose result calls a UDF is opaque overall, not "mostly
+  computed" — this IR knows what columns the UDF structurally depends on,
+  but not what it actually computes from them, and `Opaque` always wins
+  over every other classification once it applies anywhere.
+
+Critically, this is computed *through* the same resolution `sources` already
+uses, not by inspecting only a column's outermost declaring expression.
+Because Invaract translates Spark's *analyzed* plan rather than the
+optimized one (ADR-002), a chain of `.withColumn()` calls produces *nested*
+`Project`s — the outermost `Project`'s own declaration for an untouched
+column is frequently nothing more than a bare passthrough reference to an
+inner `Project`'s real computation (`value_squared = value_squared`, where
+the actual `value * value` lives one level down). Classifying only that
+outer syntax would misreport the column `Direct`; `Lineage`'s internal
+`resolveExpr`/`resolveInScope` walk resolves straight through any number of
+such passthrough hops to find the real computation, exactly as it already
+does to find `sources`. An unresolvable reference (e.g. one sitting on an
+`UnknownPlan`) falls back to `Direct` — the honest, syntax-level answer when
+there's nothing further to resolve into.
 
 ### Known limitations
 
@@ -265,9 +374,20 @@ consume the same `children`-based structure.
   bridge Phase 1b (the verification engine) needs, and is a substantial
   piece of work on its own — walking Catalyst's `LogicalPlan`/`Expression`
   trees and re-expressing them here.
-- **No connection to the `contract` module yet.** `ir` and `contract` are
-  independent modules by design; wiring "does this plan's `Lineage.trace`
-  output satisfy this `Contract`'s declared outputs and rules" is Phase 1b.
+- **No structural verification of lineage against a contract yet.** `ir`
+  and `contract` stay independent modules by design (`ir` has no
+  dependency on `contract` at all); wiring "does this plan's
+  `Lineage.trace` output satisfy this `Contract`'s declared outputs and
+  rules" is still Phase 1b. One narrower bridge does exist today, in
+  `spark-adapter` rather than here: `SensitivityLineage.propagate` cross-
+  references traced lineage against a contract's declared input
+  `Field.sensitivityTags`, so a governance-tagged input's labels surface
+  on every output column that transitively derives from it (see
+  docs/SPARK_ADAPTER.md's "Sensitivity propagation" section) — but this is
+  reporting, not enforcement: it never fails verification, and it says
+  nothing about outputs/rules generally, only about propagating a specific
+  kind of input-declared metadata forward through the same `sources` this
+  module already computes.
 - **No type inference.** Expressions carry no inferred/declared result
   type; `Literal.literalType` is the only type information in the IR today.
 
@@ -278,18 +398,30 @@ cd ir
 sbt test
 ```
 
-42 tests across `PlanSpec` (10 — construction, `children`,
-`Expr.references`), `LineageSpec` (16 — the worked example verbatim, a
-full `GROUP BY` stage, `Filter`/`Sort` passthrough, `Join` attribution —
-both unambiguous and ambiguous, including mixed aggregation status —
-`Window`/`Aggregate`/`Union` resolution when a `Project` sits directly on
-top of them, literal- and multi-argument-function-derived outputs),
-`PlanPrinterSpec` (12 — rendering of each node kind, exact branch/
-continuation-prefix structure at nested depth, `DISTINCT`, empty
-`GROUP BY`, `Sort` direction, and `Window`'s `PARTITION BY`/`ORDER BY`),
-and `RowMutationSpec` (4 — default shape, `matchCondition` carrying a
-full `Expr`, `DeleteScope`'s three distinct states, `updatedColumns`).
-All run against real constructed plans, not mocks.
+48 tests across `PlanSpec` (12 — construction, `children` (now including
+`Limit`), `Expr.references`, `UnknownPlan`/`UnknownExpression` carrying
+their `sourceType` and any still-resolvable children), `LineageSpec` (20
+— the worked example verbatim, a full `GROUP BY` stage, `Filter`/`Sort`
+passthrough, `Join` attribution — both unambiguous and ambiguous,
+including mixed aggregation status — `Window`/`Aggregate`/`Union`
+resolution when a `Project` sits directly on top of them, literal- and
+multi-argument-function-derived outputs, and — new for the expression
+algebra rework — `Cast`/`Alias`/`Arithmetic`/`Comparison`/`BooleanExpr`/
+`Conditional`/`UDF` all resolving transparently to their operands'
+sources, a `Conditional`'s branch *conditions* counting as sources
+alongside its values, and an `UnknownExpression`'s still-resolvable
+children continuing to contribute sources even though the node itself is
+opaque), `PlanPrinterSpec` (13 — rendering of each node kind, exact
+branch/continuation-prefix structure at nested depth, `DISTINCT`, empty
+`GROUP BY`, `Sort` direction, `Window`'s `PARTITION BY`/`ORDER BY`, and
+`Cast`/`Arithmetic`/`BooleanExpr`/`Conditional`/`UDF`/`Alias` rendering in
+their natural infix/prefix forms), and `RowMutationSpec` (4 — default
+shape, `matchCondition` carrying a full `Expr`, `DeleteScope`'s three
+distinct states, `updatedColumns`). All run against real constructed
+plans, not mocks. `spark-adapter`'s own test suite (389 tests, including
+`ExpressionTranslationSpec`) is the other half of this coverage — real
+analyzed Spark plans translated and asserted structurally, not just
+hand-constructed IR; see docs/SPARK_ADAPTER.md.
 
 ### Mutation testing
 
@@ -316,10 +448,15 @@ Adding tests for the real survivors — and widening to the whole module,
 which pulled `PlanPrinter.scala` in too — brought it to **86.36%**
 (76/100 mutants killed):
 
-- **`l.aggregated || r.aggregated` → `&&`** (`Lineage.scala:120`, `Join`'s
-  ambiguous-both-sides resolution) — fixed with a test joining a plain
-  passthrough side against an aggregated side on an ambiguous reference,
-  the minimum shape where `||` and `&&` actually disagree.
+- **`l.aggregated || r.aggregated` → `&&`** (`Join`'s ambiguous-both-sides
+  resolution) — fixed with a test joining a plain passthrough side against
+  an aggregated side on an ambiguous reference, the minimum shape where
+  `||` and `&&` actually disagree. The aggregation-detail rework (see
+  "Aggregation detail" above) later replaced this boolean `||` with a
+  `Set` union (`l.aggregations ++ r.aggregations`) — the exact operator
+  this bullet names no longer exists in the current code, but the lesson
+  (test a mixed aggregating/non-aggregating join side, not just an
+  all-or-nothing one) still applies, and the same test still exercises it.
 - **`columns.find(_.name == ref.name)` → `!=`** (`Lineage.scala:97`,
   `Project`'s name-matching in `resolveInScope`) — fixed by asserting the
   resolved *sources*, not just the aggregation flag, on the existing
@@ -352,6 +489,50 @@ which is byte-for-byte the same value the correct `None` produces after
 `resolveExpr`'s `.getOrElse` — mathematically unobservable, not a real
 gap).
 
+**Follow-up: the expression-algebra rework** (CLAUDE.md's per-PR 70% bar,
+scoped to the 5 touched files — `Expr.scala`, `Plan.scala`,
+`Identifiers.scala`, `Lineage.scala`, `PlanPrinter.scala` — not a
+whole-module run; `RowMutation.scala` was untouched by this change and
+excluded from scope):
+
+```bash
+cd ir
+sbt 'set strykerMutate := Seq("src/main/scala/com/example/ir/Expr.scala", "src/main/scala/com/example/ir/Plan.scala", "src/main/scala/com/example/ir/Identifiers.scala", "src/main/scala/com/example/ir/Lineage.scala", "src/main/scala/com/example/ir/PlanPrinter.scala")' stryker
+```
+
+First pass (before writing tests for the new `Cast`/`Arithmetic`/
+`Comparison`/`BooleanExpr`/`Conditional`/`UDF`/`Alias`/`Limit`/
+`UnknownPlan`/`UnknownExpression` code specifically): 74.34% (84/113).
+Two real, addressable gaps, both in genuinely new code, not the
+pre-existing 12 above:
+
+- **`Limit`'s rendering was entirely `NoCoverage`** (`PlanPrinter.scala`,
+  the `offset > 0` branch and both `s"Limit(...)"` string forms) — no
+  test had ever called `PlanPrinter.render` on a `Limit` node at all
+  (the one `Limit` test that existed, in `PlanSpec`, only checked
+  `.children`). Fixed with a direct `PlanPrinterSpec` test rendering
+  `Limit` both with and without a nonzero `offset`.
+- **`BooleanExpr`'s unary (`NOT`) and 3+-operand fallback forms, and
+  `Arithmetic`'s 3+-operand fallback form, were untested** — the
+  combined "Cast/Arithmetic/BooleanExpr/Conditional/UDF/Alias" test only
+  exercised `AND` (2 operands) and the binary arithmetic case. Fixed with
+  a dedicated test covering `NOT` and a 3-operand case of each.
+- Additionally strengthened `LineageSpec`'s new-node-type test: several
+  assertions had a `Literal` on one side of a `Comparison`/`Arithmetic`
+  (contributing no sources either way), so a mutant that silently
+  dropped one operand's contribution to `combine`'s `flatMap` wouldn't
+  have been observable. Added three more cases with real columns on
+  *both* sides.
+
+Second pass, after those fixes: **84.96%** (96/113) — every remaining
+survivor is either the same `StringLiteral`-formatting category as
+above, or the same genuinely-equivalent `found.isEmpty` mutant
+(unchanged by this rework, just at a shifted line number). No whole-module
+rerun was done locally for this follow-up — CI's own whole-module job
+(50% break threshold, well below both the prior 86.36% baseline and this
+scoped 84.96%) covers that; `RowMutation.scala`'s own coverage is
+untouched by this change.
+
 ### API compatibility
 
 `Plan`, `Expr`, every case class in `Identifiers.scala` (`DatasetRef`,
@@ -367,6 +548,38 @@ added as a wholly new, standalone case class rather than a new field on
 the existing `Write` — adding a field to a case class already in the
 0.1.0 baseline changes its constructor's arity, which breaks every
 already-compiled caller; a new class has no such history to break.
+
+`ColumnLineage` replacing its single `aggregated: Boolean` field with
+`derivation: DerivationKind` and `aggregations: Set[AggregationDetail]`
+(the "Aggregation detail"/"Derivation classification" section above) is a
+real binary-incompatible change to that case class's constructor. By the
+time this landed, the `com.example` → `com.invaract` rebrand's own
+transitional `mimaPreviousArtifacts`/wildcard-filter state (which this
+paragraph originally described riding on for free) had already reached
+the base branch — so `ir/build.sbt`'s "FOLLOW-UP" flip to a real
+`com.invaract:0.2.0` baseline happened as part of *this* change instead of
+a later one, and a real `sbt mimaReportBinaryIssues` run against that
+baseline confirmed the break for real (not assumed): `ColumnLineage`'s and
+`Lineage`'s private `Provenance`'s `apply`/`copy`/`this`/`copy$default$*`
+all changed shape. `ir/build.sbt` now carries the exact filter lines that
+run suggested, and the module version moved to 0.3.0 — the MINOR-digit
+bump docs/VERSIONING.md's pre-1.0 policy calls for a deliberate break,
+alongside the unrelated expression-algebra rework's own real MiMa break
+(`FunctionCall`/`Unsupported`/`UnsupportedExpr` removed, `ColumnRef`
+gained a field) that surfaced in the same flip.
+
+The expression-algebra rework this doc otherwise describes (splitting
+`FunctionCall` into `Cast`/`Arithmetic`/`Comparison`/`BooleanExpr`/
+`Conditional`/`Function`/`UDF`/`Alias`, renaming `Unsupported`/
+`UnsupportedExpr` to `UnknownPlan`/`UnknownExpression`, and adding an `id`
+field to `ColumnRef`) **is** exactly the kind of deliberate, documented
+MAJOR-version break this section warns about — not an exception to it.
+`ir/build.sbt`'s `mimaBinaryIssueFilters` carries the exact
+`ProblemFilters.exclude[...]` lines `sbt mimaReportBinaryIssues` reported
+against a real local `publishLocal` of this module as it stood
+immediately before the change, each with a comment pointing back here,
+per CLAUDE.md's "the break is deliberate" path (option 2, not a loosened
+`mimaPreviousArtifacts`).
 
 ---
 

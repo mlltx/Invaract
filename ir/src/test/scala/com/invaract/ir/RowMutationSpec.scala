@@ -15,12 +15,10 @@ class RowMutationSpec extends AnyFunSuite {
   }
 
   test("matchCondition carries the merge ON clause as a full Expr") {
-    val condition = FunctionCall(
+    val condition = Comparison(
       "=",
-      List(
-        ColumnReference(ColumnRef("customer_id", Some("target"))),
-        ColumnReference(ColumnRef("customer_id", Some("source")))
-      )
+      ColumnReference(ColumnRef("customer_id", Some("target"))),
+      ColumnReference(ColumnRef("customer_id", Some("source")))
     )
     val mutation = RowMutation(matchCondition = Some(condition))
     assert(mutation.matchCondition.contains(condition))

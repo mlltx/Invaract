@@ -546,8 +546,8 @@ If `./dev/test` fails:
 ### Engine and plugin JARs
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.2.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.2.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.3.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.3.0.jar`
 - `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar`
 - `runner/target/scala-2.12/invaract-spark-runner.jar` — the demo job,
   bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
@@ -646,7 +646,10 @@ id,value
 `InvaractPlugin.scala` illustrates:
 
 1. **Schema Validation**: Checks for required columns
-2. **Transformation**: Adds a computed column (`value_squared`)
+2. **Transformation**: Adds two computed columns — `value_squared`
+   (arithmetic) and `value_tier` (a comparison feeding a `CASE WHEN`),
+   so the demo's own translated IR exercises more than one expression
+   category — see docs/TRANSFORMATION_IR.md
 3. **Event Logging**: Records execution steps
 4. **Error Handling**: Validates input before processing
 

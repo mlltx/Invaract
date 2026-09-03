@@ -251,7 +251,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   // Closes the enforcement half of the gap SparkPlanAdapterSpec's Delta
   // translation test documents: before SparkPlanAdapter recognized
-  // SaveIntoDataSourceCommand, a Delta write translated to Unsupported,
+  // SaveIntoDataSourceCommand, a Delta write translated to UnknownPlan,
   // and ContractEnforcementRule only gates plans that translate to
   // ir.Write — meaning a Delta write passed through completely
   // unverified, silently, contract or no contract. These two tests are

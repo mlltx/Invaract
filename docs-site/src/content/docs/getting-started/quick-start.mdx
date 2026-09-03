@@ -28,9 +28,10 @@ write — using the example job this repository ships with. It assumes you've co
    2. Runs a real Spark job — `DemoJobHarness` — via actual `spark-submit`, with
       Invaract's `ContractEnforcementRule` installed in the `SparkSession`.
    3. The job reads `demo/input/sample.csv`, runs a small example transformation
-      (`InvaractPlugin`, which adds a `value_squared` column), and writes the result to
-      `demo/output/result.parquet` — a write that Invaract verifies against
-      `demo/contracts/invaract_output.yaml` before it's allowed to happen.
+      (`InvaractPlugin`, which adds two computed columns — `value_squared` and
+      `value_tier`), and writes the result to `demo/output/result.parquet` — a write
+      that Invaract verifies against `demo/contracts/invaract_output.yaml` before it's
+      allowed to happen.
    4. Generates and validates `demo/output/report.json`.
 
    Expect output ending in something like:

@@ -143,9 +143,9 @@ dependencyOverrides ++= Seq(
 // paths for real, per the same note in spark-adapter/build.sbt.
 
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar")
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.2.0.jar")
+unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.3.0.jar")
 unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.2.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.3.0.jar")
 
 assembly / assemblyJarName := "invaract-spark-runner.jar"
 assembly / assemblyMergeStrategy := {

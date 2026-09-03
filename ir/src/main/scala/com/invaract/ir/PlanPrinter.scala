@@ -51,19 +51,31 @@ object PlanPrinter {
       }
     }
 
-  private val InfixOperators = Set("=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "AND", "OR")
-
   private def renderExpr(expr: Expr): String = expr match {
     case ColumnReference(ref) => ref.toString
+    case Literal(null, _)     => "NULL"
     case Literal(value, _)    => String.valueOf(value)
-    case FunctionCall(name, List(left, right)) if InfixOperators.contains(name) =>
-      s"${renderExpr(left)} $name ${renderExpr(right)}"
-    case FunctionCall(name, args) =>
+    case Alias(name, inner)   => s"${renderExpr(inner)} AS $name"
+    case Cast(inner, targetType) => s"CAST(${renderExpr(inner)} AS $targetType)"
+    case Arithmetic(op, List(single))     => s"$op(${renderExpr(single)})"
+    case Arithmetic(op, List(left, right)) => s"(${renderExpr(left)} $op ${renderExpr(right)})"
+    case Arithmetic(op, args)              => s"$op(${args.map(renderExpr).mkString(", ")})"
+    case Comparison(op, left, right) => s"${renderExpr(left)} $op ${renderExpr(right)}"
+    case BooleanExpr(op, List(single)) => s"$op ${renderExpr(single)}"
+    case BooleanExpr(op, List(left, right)) => s"${renderExpr(left)} $op ${renderExpr(right)}"
+    case BooleanExpr(op, args) => s"$op(${args.map(renderExpr).mkString(", ")})"
+    case Conditional(branches, elseValue) =>
+      val when = branches.map { case (c, v) => s"WHEN ${renderExpr(c)} THEN ${renderExpr(v)}" }.mkString(" ")
+      val otherwise = elseValue.map(e => s" ELSE ${renderExpr(e)}").getOrElse("")
+      s"CASE $when$otherwise END"
+    case Function(name, args) =>
       s"$name(${args.map(renderExpr).mkString(", ")})"
+    case UDF(name, args, _) =>
+      s"UDF[${name.getOrElse("?")}](${args.map(renderExpr).mkString(", ")})"
     case AggregateCall(function, arg, distinct) =>
       val d = if (distinct) "DISTINCT " else ""
       s"$function($d${renderExpr(arg)})"
-    case UnsupportedExpr(description) => s"<unsupported: $description>"
+    case UnknownExpression(description, _, _) => s"<unknown: $description>"
   }
 
   private def label(plan: Plan): String = plan match {
@@ -79,11 +91,13 @@ object PlanPrinter {
     case Union(_)           => "Union"
     case Sort(_, order) =>
       s"Sort(${order.map(o => s"${renderExpr(o.expr)} ${if (o.ascending) "ASC" else "DESC"}").mkString(", ")})"
+    case Limit(_, limit, offset) =>
+      if (offset > 0) s"Limit($limit, offset=$offset)" else s"Limit($limit)"
     case Window(_, _, partitionBy, orderBy) =>
       val p = if (partitionBy.nonEmpty) s"PARTITION BY ${partitionBy.map(renderExpr).mkString(", ")}" else ""
       val o = if (orderBy.nonEmpty) s"ORDER BY ${orderBy.map(so => renderExpr(so.expr)).mkString(", ")}" else ""
       val spec = List(p, o).filter(_.nonEmpty).mkString(" ")
       s"Window($spec)"
-    case Unsupported(description, _) => s"Unsupported($description)"
+    case UnknownPlan(description, _, _) => s"UnknownPlan($description)"
   }
 }

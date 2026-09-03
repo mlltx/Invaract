@@ -43,6 +43,9 @@ outputs:
         - name: value_squared
           type: integer
           required: true
+        - name: value_tier
+          type: string
+          required: true
         - name: customer_name
           type: string
           required: true
@@ -56,7 +59,7 @@ invokes the resulting jars directly:
 spark-submit \
   --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
-  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
   demo/input/sample.csv \
   demo/output/result_broken_example.parquet \

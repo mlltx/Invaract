@@ -96,7 +96,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
-  test("translates Filter and Cast, preserving the target type as a CAST(...) function call") {
+  test("translates Filter and Cast, preserving the target type as an explicit Cast node") {
     val df = readSample()
     val filtered = df.filter(col("value") > 20).withColumn("value_d", col("value").cast("double"))
 
@@ -105,9 +105,13 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     result.plan match {
       case Project(Filter(_, condition), columns) =>
         assert(condition.references.exists(_.name == "value"))
+        condition match {
+          case Comparison(">", ColumnReference(ColumnRef("value", _, _)), Literal(20, "integer")) => // expected
+          case other => fail(s"unexpected filter condition translation: $other")
+        }
         val castExpr = columns.find(_.name == "value_d").get.expr
         castExpr match {
-          case FunctionCall("CAST", List(ColumnReference(ColumnRef("value", _)), Literal("double", "type"))) => // expected
+          case Cast(ColumnReference(ColumnRef("value", _, _)), "double") => // expected
           case other => fail(s"unexpected cast translation: $other")
         }
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
@@ -165,7 +169,19 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(runningTotal.isInstanceOf[AggregateCall])
   }
 
-  test("flags a UDF with a diagnostic but still produces a best-effort translation") {
+  // Confirmed empirically, not assumed: a `ScalaUDF` registered via
+  // `spark.udf.register` DOES carry its registered name (`triple`) —
+  // udfNameOf's reflection finds it — but Spark's analyzer also wraps the
+  // call in a null-propagation CASE WHEN (`IF(value IS NULL, NULL,
+  // triple(KNOWNNOTNULL(value)))`) whenever the UDF's declared parameter
+  // type is a Scala value type (`Int`, here) that can't itself represent
+  // SQL NULL. This is exactly the "expression Catalyst rewrites/resolves
+  // differently from its source form" case: `df.selectExpr("triple(value)
+  // as tripled")` reads like a bare function call, but the analyzed plan
+  // is a Conditional wrapping the UDF wrapping a KNOWNNOTNULL Function —
+  // and the translator must preserve that real structure, not the
+  // surface syntax.
+  test("translates a registered UDF as an explicit UDF node, preserving its name, dependency, and Spark's own null-check rewrite") {
     spark.udf.register("triple", (x: Int) => x * 3)
     val df = readSample()
     val withUdf = df.selectExpr("id", "triple(value) as tripled")
@@ -175,26 +191,92 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.exists(_.nodeType.contains("UDF")))
     result.plan match {
       case Project(_, columns) =>
-        assert(columns.exists(_.name == "tripled"))
+        columns.find(_.name == "tripled").get.expr match {
+          case Conditional(
+                List((Function("ISNULL", List(ColumnReference(ColumnRef("value", _, _)))), Literal(null, _))),
+                Some(UDF(Some("triple"), List(Function("KNOWNNOTNULL", List(ColumnReference(ColumnRef("value", _, _))))), Some(engineType)))
+              ) =>
+            assert(engineType.contains("UDF"), s"expected an engineType naming the UDF implementation, got $engineType")
+          case other => fail(s"expected Spark's real null-check-wrapped UDF shape, got $other")
+        }
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
   }
 
-  test("falls back to Unsupported with a diagnostic for a plan node with no translation, instead of throwing") {
+  // Confirmed empirically: `age` (a Long from spark.range) reaching a UDF
+  // declaring an `Int` parameter is coerced by Spark's analyzer with an
+  // implicit Cast BEFORE the UDF call — another real rewrite (distinct
+  // from the null-check above) this IR must preserve rather than assume
+  // away, per the same "Catalyst rewrites the expression" requirement.
+  test("translates a DataFrame-API UDF, preserving multiple declared dependencies and an implicit argument Cast, even though its body is opaque") {
+    val riskUdf = udf((age: Int, balance: Double) => if (age > 60) balance * 0.1 else balance * 0.05).withName("calculateRisk")
+    val df = spark.range(1).toDF("age").withColumn("balance", lit(100.0))
+    val withUdf = df.select(col("age"), col("balance"), riskUdf(col("age"), col("balance")).as("risk"))
+
+    val result = SparkPlanAdapter.translate(withUdf.queryExecution.analyzed)
+
+    result.plan match {
+      case Project(_, columns) =>
+        columns.find(_.name == "risk").get.expr match {
+          case UDF(Some("calculateRisk"), List(Cast(ColumnReference(ColumnRef("age", _, _)), "integer"), ColumnReference(ColumnRef("balance", _, _))), _) =>
+          // expected: name and both dependencies preserved (one wrapped in
+          // Spark's own real implicit Cast), even though the UDF's actual
+          // risk-scoring logic is opaque to this IR
+          case other => fail(s"expected a named UDF over both its declared arguments, got $other")
+        }
+      case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
+    }
+    assert(result.diagnostics.exists(d => d.nodeType.contains("UDF") && d.message.contains("opaque")))
+  }
+
+  // `udfNameOf`'s filter excludes Spark's own generic non-identifiers
+  // ("UDF", the ScalaUDF default when no name was ever assigned; and
+  // "<lambda>") from being treated as a real name — real Spark UDF
+  // registration essentially never actually surfaces the literal string
+  // "UDF" via reflection (an unnamed UDF's `udfName` is `None`, not
+  // `Some("UDF")`, so the exclusion is defense-in-depth against a value
+  // this module has never observed in practice) — so this constructs a
+  // `ScalaUDF` directly with that value forced, to prove the exclusion
+  // logic itself is correct rather than merely untriggered.
+  test("a UDF whose reflected name is Spark's own generic placeholder ('UDF' or '<lambda>') is treated as unnamed, not a real identifier") {
+    import org.apache.spark.sql.catalyst.expressions.{Literal => CatalystLiteral, ScalaUDF}
+    import org.apache.spark.sql.types.IntegerType
+
+    val arg = CatalystLiteral(1)
+
+    def udfNamed(name: Option[String]) =
+      ScalaUDF((x: Int) => x, IntegerType, Seq(arg), Nil, None, name, nullable = true, udfDeterministic = true)
+
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("UDF"))) match {
+      case UDF(None, _, _) => // expected: the generic placeholder is not a real name
+      case other             => fail(s"expected 'UDF' to be treated as no real name, got $other")
+    }
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("<lambda>"))) match {
+      case UDF(None, _, _) => // expected
+      case other             => fail(s"expected '<lambda>' to be treated as no real name, got $other")
+    }
+    SparkPlanAdapter.translateExprStandalone(udfNamed(Some("realName"))) match {
+      case UDF(Some("realName"), _, _) => // expected: a genuine name still passes through
+      case other                         => fail(s"expected a real name to pass through, got $other")
+    }
+  }
+
+  test("falls back to UnknownPlan with a diagnostic for a plan node with no translation, instead of throwing") {
     val df = readSample()
     val exploded = df.select(col("id"), explode(array(col("value"), col("value"))).as("v"))
 
     val result = SparkPlanAdapter.translate(exploded.queryExecution.analyzed)
 
     assert(result.diagnostics.nonEmpty)
-    val hasUnsupportedNode = {
-      def contains(plan: Plan): Boolean = plan match {
-        case _: Unsupported => true
-        case other           => other.children.exists(contains)
+    val unknownNode = {
+      def find(plan: Plan): Option[UnknownPlan] = plan match {
+        case u: UnknownPlan => Some(u)
+        case other           => other.children.flatMap(find).headOption
       }
-      contains(result.plan)
+      find(result.plan)
     }
-    assert(hasUnsupportedNode, s"expected an Unsupported node somewhere in ${PlanPrinter.render(result.plan)}")
+    val unknown = unknownNode.getOrElse(fail(s"expected an UnknownPlan node somewhere in ${PlanPrinter.render(result.plan)}"))
+    assert(unknown.sourceType.nonEmpty, "UnknownPlan should carry the Catalyst class name as sourceType")
   }
 
   test("translates Sort, capturing direction and null ordering") {
@@ -213,7 +295,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     val sort = findSort(result.plan).getOrElse(fail(s"no Sort node found in ${PlanPrinter.render(result.plan)}"))
     sort.order match {
-      case List(SortOrder(ColumnReference(ColumnRef("value", _)), ascending, nullsFirst)) =>
+      case List(SortOrder(ColumnReference(ColumnRef("value", _, _)), ascending, nullsFirst)) =>
         assert(!ascending, "desc_nulls_last should translate to ascending = false")
         assert(!nullsFirst, "desc_nulls_last should translate to nullsFirst = false")
       case other => fail(s"unexpected sort order: $other")
@@ -301,15 +383,15 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     result.plan match {
       case Aggregate(_, _, aggregates) =>
         aggregates.find(_.name == "correlation").get.expr match {
-          case AggregateCall(_, FunctionCall("ARGS", args), _) => assert(args.size == 2)
-          case other                                            => fail(s"unexpected multi-arg aggregate translation: $other")
+          case AggregateCall(_, Function("ARGS", args), _) => assert(args.size == 2)
+          case other                                        => fail(s"unexpected multi-arg aggregate translation: $other")
         }
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.nonEmpty, "a multi-argument aggregate should be flagged, not silently narrowed")
   }
 
-  test("translates CASE WHEN and IS NULL via the generic expression fallback, with no diagnostic needed") {
+  test("translates CASE WHEN as an explicit Conditional, and IS NULL via the generic expression fallback, with no diagnostic needed") {
     val df = readSample()
     // A single select(), not chained withColumn() calls: chaining nests a
     // second Project atop the first, and the outer one just re-references
@@ -327,26 +409,37 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     result.plan match {
       case Project(_, columns) =>
         val bucket = columns.find(_.name == "bucket").get.expr
-        assert(bucket.isInstanceOf[FunctionCall], s"expected CASE WHEN to fall through to a generic FunctionCall, got $bucket")
+        bucket match {
+          case Conditional(List((Comparison(">", ColumnReference(ColumnRef("value", _, _)), Literal(20, "integer")), Literal("high", "string"))), Some(Literal("low", "string"))) =>
+          // expected
+          case other => fail(s"unexpected CASE WHEN translation: $other")
+        }
 
         columns.find(_.name == "value_is_null").get.expr match {
-          case FunctionCall("ISNULL", List(ColumnReference(ColumnRef("value", _)))) => // expected
-          case other                                                                  => fail(s"unexpected IS NULL translation: $other")
+          case Function("ISNULL", List(ColumnReference(ColumnRef("value", _, _)))) => // expected
+          case other                                                                 => fail(s"unexpected IS NULL translation: $other")
         }
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
-    assert(result.diagnostics.isEmpty, "the generic fallback is not opaque — it shouldn't need a diagnostic")
+    assert(result.diagnostics.isEmpty, "CASE WHEN and IS NULL are both fully understood — neither should need a diagnostic")
   }
 
-  test("translates .limit(n) as a transparent pass-through, preserving the underlying plan") {
+  // Confirmed empirically: `.limit(n)` analyzes to a GlobalLimit wrapping a
+  // LocalLimit sharing the same literal (per-partition cap, then a global
+  // re-cap on the merged result) — translated as a single ir.Limit, not
+  // two, and not transparently dropped: a row cap is part of a
+  // transformation's observable semantics, so this IR represents it
+  // explicitly rather than silently discarding it the way an earlier
+  // version of this translator did.
+  test("translates .limit(n) as an explicit Limit node wrapping the underlying plan") {
     val df = readSample()
     val limited = df.limit(2)
 
     val result = SparkPlanAdapter.translate(limited.queryExecution.analyzed)
 
     result.plan match {
-      case Read(DatasetRef(location), None) => assert(location.contains("sample.csv"))
-      case other                            => fail(s"expected Limit to be transparent to translation, got ${PlanPrinter.render(other)}")
+      case Limit(Read(DatasetRef(location), None), 2, 0) => assert(location.contains("sample.csv"))
+      case other => fail(s"expected an explicit Limit(2) node, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.isEmpty)
   }

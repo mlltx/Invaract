@@ -23,6 +23,7 @@ inputs:
           type: integer
           required: true
           nullable: true
+          sensitivityTags: [internal]
 
 outputs:
   - name: result
@@ -41,6 +42,10 @@ outputs:
           nullable: true
         - name: value_squared
           type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
           required: true
           nullable: true
 

@@ -114,6 +114,12 @@
           "default": [],
           "items": { "$ref": "#/$defs/field" },
           "description": "Nested fields, for a struct/record type. A field with a non-empty `properties` list is treated as a struct regardless of its declared `type`."
+        },
+        "sensitivityTags": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Open-vocabulary governance labels for this field (e.g. \"pii\", \"financial\", \"restricted\") - Invaract does not define or restrict which tags exist. spark-adapter's SensitivityLineage propagates whichever tags an input field carries to every output column that transitively derives from it, for audit/governance visibility - this is reporting, not enforcement, so a tagged field does not by itself cause verification to fail. A non-list value for this key is a ContractParser hard failure, not silently ignored."
         }
       }
     },

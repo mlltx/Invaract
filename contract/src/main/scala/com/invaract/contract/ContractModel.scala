@@ -47,13 +47,21 @@ object ContractVersion {
   *
   * @param required whether the field must be present (contract-level semantics)
   * @param nullable whether the field's value may be null when present
+  * @param sensitivityTags open-vocabulary governance labels for this field
+  *   (e.g. `"pii"`, `"financial"`, `"restricted"`) — Invaract does not
+  *   define or restrict which tags exist, the same way `ContractRule.ruleType`
+  *   accepts any string; it only propagates whichever tags an input field
+  *   carries to every output column that transitively derives from it (see
+  *   `spark-adapter`'s `SensitivityLineage`). Empty for a field with no
+  *   declared sensitivity, which is most fields.
   */
 case class Field(
   name: String,
   fieldType: String,
   required: Boolean = false,
   nullable: Boolean = true,
-  properties: List[Field] = Nil
+  properties: List[Field] = Nil,
+  sensitivityTags: Set[String] = Set.empty
 ) {
   def isStruct: Boolean = properties.nonEmpty
 }

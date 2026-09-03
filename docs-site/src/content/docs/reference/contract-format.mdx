@@ -79,6 +79,7 @@ extensions:
 | `required` | no | Defaults to `false`. Whether the field must be present. |
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested field list, for `struct`/record types. |
+| `sensitivityTags` | no | List of governance labels (e.g. `[pii, financial]`) — see [Sensitivity tags](#sensitivity-tags) below. Defaults to none. |
 
 ### Known types
 
@@ -109,6 +110,32 @@ well-formed. `ContractValidator` collects every issue in one pass:
 
 Validation recurses into nested struct fields, so a warning on a deeply nested field
 reports its full dotted path (e.g. `outputs[0].schema.address.zip`).
+
+## Sensitivity tags
+
+```yaml
+inputs:
+  - name: customers
+    location: raw.customers
+    schema:
+      fields:
+        - name: ssn
+          type: string
+          sensitivityTags: [pii, restricted]
+```
+
+`sensitivityTags` is an open vocabulary — Invaract doesn't define or restrict which
+labels exist, the same way a rule's `type` accepts any string. Declared on an *input*
+field, a tag propagates forward to every *output* column that transitively derives from
+it — directly, or through however many computation steps sit in between — via
+`spark-adapter`'s `SensitivityLineage`, surfaced in `demo/output/report.json`'s
+`transformationIR.lineage[].sensitivityTags` (see
+[Concepts → The Transformation IR](/concepts/transformation-ir/)'s "Column-level
+lineage"). This is reporting, for a human or downstream tooling auditing a
+transformation, not enforcement: a tagged field never causes `StructuralVerifier` to
+reject a write on its own — there is no "forbid this tag from reaching that output"
+rule type yet (see [What isn't part of the contract format](#what-isnt-part-of-the-contract-format)
+below).
 
 ## Location matching
 
@@ -156,8 +183,13 @@ engine-only.
 
 - **Compatibility mode, quality expectations**, and anything else `rules` can carry
   beyond the three interpreted types — recorded, not yet enforced.
-- **Column-level lineage** and **governance rules** (masking, residency, purpose
-  limitation) — no vocabulary exists for these in the contract format yet.
+- **Governance rules** (masking, residency, purpose limitation, or any policy that
+  would *reject* a write based on where sensitive data ends up) — `sensitivityTags`
+  (above) gives a field-level labeling vocabulary and propagates it through lineage for
+  reporting, but there is no rule type yet that turns a tag into an enforced constraint.
+- **Column-level lineage** as a first-class contract concept — a contract can label an
+  input field, but it cannot yet *declare* an expected lineage shape for verification to
+  check an output against (e.g. "this column must derive only from these sources").
 
 See [Data Contracts](/concepts/data-contracts/) for how this format relates to
 ODCS, and [What is Invaract?](/introduction/what-is-this/) for what's verified

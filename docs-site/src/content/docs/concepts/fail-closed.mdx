@@ -16,7 +16,7 @@ write it can't verify is rejected, not passed.
 
 Every Spark write shape Invaract hasn't been taught to translate — an early gap in
 Delta Lake support, and any future write shape the adapter doesn't yet recognize — shares
-the same failure mode: `SparkPlanAdapter` produces `ir.Unsupported` instead of `ir.Write`.
+the same failure mode: `SparkPlanAdapter` produces `ir.UnknownPlan` instead of `ir.Write`.
 Early on, `ContractEnforcementRule` treated *any* non-`ir.Write` plan as "not a write,
 nothing to gate" — so a write Invaract simply didn't recognize was indistinguishable
 from a `SELECT` or a `.count()`, and was silently let through, contract or no contract.

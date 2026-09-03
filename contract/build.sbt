@@ -1,5 +1,13 @@
 name := "invaract-contract"
-version := "0.2.0"
+// 0.2.0 -> 0.3.0: Field gained a sensitivityTags constructor parameter
+// (see docs/CONTRACT_MODEL.md / docs-site's "Sensitivity tags" section),
+// changing Field.apply/copy/this's arity - a real binary break, confirmed
+// by a real `sbt mimaReportBinaryIssues` run against the 0.2.0 baseline
+// below, not assumed. Pre-1.0, docs/VERSIONING.md's FAQ calls for bumping
+// the MINOR digit (not MAJOR, pinned at 0 until 1.0.0) to signal a
+// deliberate break - the same convention the 0.1.0 -> 0.2.0 rebrand
+// itself used.
+version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -20,7 +28,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.2.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.3.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -42,31 +50,26 @@ assembly / assemblyMergeStrategy := {
 // alone - see CLAUDE.md's "API Compatibility Requirement".
 //
 // This module was renamed invariant-contract -> invaract-contract by the
-// rebrand PR, which left this coordinate pointing at the transitional
-// "invariant-contract" name with a comment saying it needed flipping once
-// that PR reached the base branch - it now has, so base-ref's own build.sbt
-// (like this one) publishes under "invaract-contract", and this must match.
-mimaPreviousArtifacts := Set("com.example" %% "invaract-contract" % "0.1.0")
+// rebrand PR, which has now landed on the base branch (main): base-ref's
+// own build.sbt already publishes under organization "com.invaract",
+// version "0.2.0" (CI's api-compatibility job runs `sbt publishLocal`
+// against base-ref's own build.sbt settings, not this file's), so this
+// must match that, not the pre-rebrand "com.example"/"0.1.0" coordinate -
+// see this file's own prior revision for the transitional state and the
+// "FOLLOW-UP" comment that called for this exact flip once the rebrand PR
+// reached the base branch (confirmed via `git merge-base` against
+// origin/main: it has).
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.2.0")
 
-// com.example -> com.invaract namespace rebrand (this PR): the package and
-// `organization` moved wholesale, so every symbol in this module now has a
-// different fully-qualified name than the artifact published above - MiMa
-// correctly reports every one of them as "removed." This is the real,
-// intended shape of a deliberate break (CLAUDE.md's "API Compatibility
-// Requirement" option 2), not something to silence per-symbol: the version
-// bump to 0.2.0 above is the MAJOR-equivalent bump docs/VERSIONING.md's
-// pre-1.0 policy calls for, and this filter is the honest, broad
-// acknowledgment that the entire com.example.contract.* surface was
-// intentionally moved to com.invaract.contract.*, not accidentally deleted.
-//
-// FOLLOW-UP (once this PR lands on the base branch): flip
-// `mimaPreviousArtifacts` above to
-// `Set("com.invaract" %% "invaract-contract" % "0.2.0")` and remove this
-// filter, so future PRs compare against the new namespace's own baseline
-// instead of comparing against the pre-rename one forever. Do not make that
-// flip in this PR - base-ref won't have the rename yet, so CI's publish of
-// base-ref would fail to produce anything at the new coordinate.
+// Deliberate break against the 0.2.0 baseline above: Field gained a
+// sensitivityTags: Set[String] constructor parameter (see the version
+// comment above), changing Field.apply/copy/this's arity from 5 params to
+// 6 - the exact filter lines below are copied verbatim from a real `sbt
+// mimaReportBinaryIssues` run's own suggested output, not guessed.
 import com.typesafe.tools.mima.core._
 mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[Problem]("com.example.contract.*")
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Field$")
 )

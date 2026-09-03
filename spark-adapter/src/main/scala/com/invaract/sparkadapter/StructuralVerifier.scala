@@ -352,7 +352,13 @@ private[sparkadapter] object StructuralVerifier {
     case other    => other.children.flatMap(collectReads)
   }
 
-  private def locationsMatch(declared: String, actual: String): Boolean = {
+  // private[sparkadapter], not private: reused by SensitivityLineage to
+  // match a traced ColumnRef's qualifier (a Read's actual reported
+  // location) against a contract input's declared, portable location -
+  // the same normalized-suffix rule this method already documents, not a
+  // second copy of it (mirrors why normalizeSparkLocation below already
+  // has this same widened visibility, for ContractInference's reuse).
+  private[sparkadapter] def locationsMatch(declared: String, actual: String): Boolean = {
     // A contract's declared location can come from anywhere (a config file
     // authored on Windows, e.g.), while Spark always reports actual plan
     // locations with forward slashes regardless of OS. Normalize both

@@ -46,6 +46,10 @@ outputs:
           type: integer
           required: true
           nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
         - name: customer_name
           type: string
           required: true

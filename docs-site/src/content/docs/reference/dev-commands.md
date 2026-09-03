@@ -37,7 +37,7 @@ contract against the demo job without the full harness (as in
 spark-submit \
   --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
-  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
   <input-path> <output-path> <report-path> <contract-path> <notify-config-path>
 ```

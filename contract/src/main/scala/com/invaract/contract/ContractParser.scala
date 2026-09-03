@@ -131,6 +131,12 @@ object ContractParser {
     m.put("type", field.fieldType)
     m.put("required", Boolean.box(field.required))
     m.put("nullable", Boolean.box(field.nullable))
+    // Sorted, not insertion-order: Set's iteration order is only
+    // guaranteed stable for the small literal-Set implementations Scala
+    // uses up to 4 elements, so a fifth tag would make write()'s output
+    // depend on hash order - sorting keeps round-tripping deterministic
+    // regardless of how many tags a field carries.
+    if (field.sensitivityTags.nonEmpty) m.put("sensitivityTags", field.sensitivityTags.toList.sorted.asJava)
     if (field.properties.nonEmpty) m.put("properties", field.properties.map(fieldToJava).asJava)
     m
   }
@@ -196,13 +202,14 @@ object ContractParser {
     val fieldType = requireString(raw, "type", context)
     val required = optBoolean(raw, "required", context).getOrElse(false)
     val nullable = optBoolean(raw, "nullable", context).getOrElse(!required)
+    val sensitivityTags = optStringSet(raw, "sensitivityTags", context)
 
     val properties = raw.get("properties") match {
       case Some(value) => parseListOf(value, s"$context.properties")(parseField)
       case None        => Nil
     }
 
-    Field(name, fieldType, required, nullable, properties)
+    Field(name, fieldType, required, nullable, properties, sensitivityTags)
   }
 
   private def parseRules(raw: Option[Any]): List[ContractRule] = raw match {
@@ -262,5 +269,27 @@ object ContractParser {
       case s: String            => s.toBoolean
       case other =>
         throw new ContractParseException(s"Expected boolean for '$context.$key', got: $other")
+    }
+
+  /** Parses an optional YAML list-of-strings key into a `Set[String]`,
+    * deduplicating and discarding order (a field's `sensitivityTags` is a
+    * set of governance labels, not an ordered list — see `Field`'s doc).
+    * An absent key yields the empty set; a present key that isn't a list of
+    * strings is a parse error, the same strictness `optBoolean` applies to
+    * a malformed `required`/`nullable` — deliberately not the silent
+    * "malformed decodes to empty" leniency `ContractRule.stringList` uses
+    * for rule properties (where "not a rule Invaract knows how to
+    * interpret" and "malformed properties for one it does" are meant to
+    * look identical); a schema field's own declared structure should fail
+    * loudly instead.
+    */
+  private def optStringSet(raw: Map[String, Any], key: String, context: String): Set[String] =
+    optValue(raw, key) match {
+      case None => Set.empty
+      case Some(value) =>
+        loadList(value, s"$context.$key").map {
+          case s: String => s
+          case other => throw new ContractParseException(s"Expected a list of strings for '$context.$key', got: $other")
+        }.toSet
     }
 }

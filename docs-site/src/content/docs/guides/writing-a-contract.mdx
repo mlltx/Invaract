@@ -84,6 +84,10 @@ outputs:
           type: integer
           required: true
           nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
 ```
 
 `saveMode` (`append`/`overwrite`/`ignore`/`error`) is checked against the write's actual
@@ -96,6 +100,7 @@ save mode when both are known.
 | `required` | `false` | The field must be present in the actual schema. |
 | `nullable` | `!required` | The field's values may be null. |
 | `properties` | — | Nested fields, for a `struct` type. |
+| `sensitivityTags` | none | Governance labels (e.g. `[pii, financial]`) — see [Reference → Contract Format](/reference/contract-format/)'s "Sensitivity tags". Declared on an *input* field, propagated to every output column derived from it — reporting only, not enforced. |
 
 <Aside type="caution">
 Marking a field both `required: true` and `nullable: true` is legal — Invaract warns

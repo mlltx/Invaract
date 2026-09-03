@@ -332,6 +332,114 @@ class ContractParserTest extends AnyFunSuite {
     assert(roundTripped == original)
   }
 
+  test("parse should default sensitivityTags to an empty set when omitted") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).output("out").get.schema.field("id").get.sensitivityTags.isEmpty)
+  }
+
+  test("parse should capture a field's declared sensitivityTags, deduplicated") {
+    val yaml =
+      """id: pii_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: ssn
+        |          type: string
+        |          sensitivityTags: [pii, restricted, pii]
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val contract = ContractParser.parse(yaml)
+    assert(contract.output("out").get.schema.field("ssn").get.sensitivityTags == Set("pii", "restricted"))
+    assert(contract.output("out").get.schema.field("id").get.sensitivityTags.isEmpty)
+  }
+
+  test("parse should raise ContractParseException when sensitivityTags is not a list of strings") {
+    val notAList =
+      """id: bad_tags
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: ssn
+        |          type: string
+        |          sensitivityTags: pii
+        |""".stripMargin
+
+    val ex1 = intercept[ContractParseException] { ContractParser.parse(notAList) }
+    assert(ex1.getMessage.contains("sensitivityTags"))
+
+    val wrongElementType =
+      """id: bad_tags
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: ssn
+        |          type: string
+        |          sensitivityTags: [pii, 42]
+        |""".stripMargin
+
+    val ex2 = intercept[ContractParseException] { ContractParser.parse(wrongElementType) }
+    assert(ex2.getMessage.contains("sensitivityTags"))
+  }
+
+  test("write should round-trip a field's sensitivityTags") {
+    val yaml =
+      """id: pii_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: ssn
+        |          type: string
+        |          sensitivityTags: [restricted, pii, financial]
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped == original)
+    assert(roundTripped.output("out").get.schema.field("ssn").get.sensitivityTags == Set("restricted", "pii", "financial"))
+  }
+
+  test("write should omit sensitivityTags entirely for a field that declares none") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val written = ContractParser.write(ContractParser.parse(yaml))
+    assert(!written.contains("sensitivityTags"))
+  }
+
   test("write should omit empty inputs/rules/extensions rather than emitting empty collections") {
     val yaml =
       """id: minimal_contract

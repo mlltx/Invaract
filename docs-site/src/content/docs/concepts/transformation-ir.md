@@ -7,8 +7,11 @@ sidebar:
 
 Before a Spark write is checked against a contract, it's translated into Invaract's own
 **transformation IR** (intermediate representation) — an engine-independent algebra of
-plan and expression nodes: `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`,
-`Union`, `Sort`, `Window`, and their expression-level counterparts.
+plan and expression nodes. Plan nodes: `Read`, `Write`, `Project`, `Filter`, `Join`,
+`Aggregate`, `Union`, `Sort`, `Limit`, and `Window`. Expression nodes: `ColumnReference`,
+`Literal`, `Alias`, `Cast`, `Arithmetic`, `Comparison`, a boolean combinator (`AND`/`OR`/
+`NOT`), `Conditional` (`CASE WHEN`), `Function` (the catch-all for built-in functions),
+`UDF` (a user-defined function, kept explicitly distinct — see below), and `AggregateCall`.
 
 ## Why not check Spark's plan directly
 
@@ -41,31 +44,44 @@ columns were *referenced*, not a dataset's complete column set. Schema informati
 
 ## Column-level lineage
 
-`Lineage.trace` walks a translated plan and reports, for each output column, which source
-columns it derives from — and whether it passed through an aggregation:
+`Lineage.trace` walks a translated plan and reports, for each output column: which source
+columns it derives from, how directly (a plain passthrough vs. a real computation vs.
+something opaque this IR can't see inside), and which aggregate function(s), if any, it
+passed through:
 
 ```
-ColumnLineage(id, Set(.../sample.csv.id), aggregated = false)
-ColumnLineage(lifetime_value, Set(.../sample.csv.value), aggregated = true)
+ColumnLineage(id, Set(.../sample.csv.id), Direct, Set())
+ColumnLineage(lifetime_value, Set(.../sample.csv.value), Computed, Set(AggregationDetail(SUM, false)))
 ```
 
 This is structural provenance traced from the plan itself, not business-logic
 verification — it answers "where did this column's value come from," not "is the formula
-correct."
+correct." A contract can also declare a `sensitivityTags` label on an input field (e.g.
+`pii`, `financial`); `spark-adapter`'s `SensitivityLineage` propagates those tags forward
+through this same traced provenance to every output column that transitively derives from
+the tagged field — see [Reference → Contract Format](/reference/contract-format/)'s
+"Sensitivity tags" section. This is reporting, for audit/governance visibility, not
+enforcement: a tagged field never causes verification to fail on its own.
 
 ## Degrading, never crashing
 
 A real adapter will meet constructs it has no precise translation for. Invaract's answer
 is: **degrade, never crash.**
 
-- An unrecognized **plan** node becomes `ir.Unsupported(description, children)` — its own
-  children are still translated and remain inspectable.
-- An unrecognized **expression** falls back to a generic translation built from
+- An unrecognized **plan** node becomes `ir.UnknownPlan(description, sourceType, children)`
+  — its own children are still translated and remain inspectable.
+- An unrecognized **expression** falls back to `ir.Function`, built generically from
   Catalyst's own `prettyName`/`children`, covering most of Spark SQL's built-in functions
-  without hardcoding each one.
-- A user-defined function is opaque (its body can't be reasoned about), so it's
-  translated as a function call over its declared arguments, with a diagnostic flagging
-  that lineage tracing can't see inside it.
+  without hardcoding each one. (The IR also has an explicit `ir.UnknownExpression` node
+  for a front end that genuinely can't represent a construct at all — Spark's own
+  expression algebra is generic enough that this translator essentially never needs it,
+  but the node exists for the same reason `ir.UnknownPlan` does: an unrepresentable
+  construct must be visible, never silently dropped.)
+- A user-defined function's body is opaque (it can't be reasoned about), so it's
+  translated as an explicit `ir.UDF` node — never conflated with a real `ir.Function` —
+  carrying its declared name (when the engine exposes one meaningfully) and its
+  argument dependencies, with a diagnostic flagging that lineage tracing can't see
+  inside its actual logic.
 
 Every degradation is paired with a diagnostic, so a partially understood pipeline is
 still useful to check — rather than an exception that discards everything the adapter

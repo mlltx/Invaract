@@ -36,12 +36,10 @@ class PlanPrinterSpec extends AnyFunSuite {
       orders,
       customers,
       JoinType.Inner,
-      Some(FunctionCall(
+      Some(Comparison(
         "=",
-        List(
-          ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
-          ColumnReference(ColumnRef("id", Some("raw.customers")))
-        )
+        ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
+        ColumnReference(ColumnRef("id", Some("raw.customers")))
       ))
     )
 
@@ -87,20 +85,79 @@ class PlanPrinterSpec extends AnyFunSuite {
     assert(rendered.contains("Read(raw.orders AS arch)"))
   }
 
-  test("render shows an Unsupported node's description and any resolvable children") {
+  test("render shows an UnknownPlan node's description and any resolvable children") {
     val known = Read(DatasetRef("raw.orders"))
-    val rendered = PlanPrinter.render(Unsupported("Generate(explode)", List(known)))
+    val rendered = PlanPrinter.render(UnknownPlan("Generate(explode)", sourceType = "Generate", children = List(known)))
 
-    assert(rendered.contains("Unsupported(Generate(explode))"))
+    assert(rendered.contains("UnknownPlan(Generate(explode))"))
     assert(rendered.contains("Read(raw.orders)"))
   }
 
-  test("render shows an UnsupportedExpr inline within a Project column") {
+  test("render shows an UnknownExpression inline within a Project column") {
     val orders = Read(DatasetRef("raw.orders"))
-    val plan = Project(orders, List(NamedExpr("mystery", UnsupportedExpr("ScalaUDF(myFunc)"))))
+    val plan = Project(orders, List(NamedExpr("mystery", UnknownExpression("ScalaUDF(myFunc)", sourceType = "ScalaUDF"))))
 
     val rendered = PlanPrinter.render(plan)
-    assert(rendered.contains("mystery = <unsupported: ScalaUDF(myFunc)>"))
+    assert(rendered.contains("mystery = <unknown: ScalaUDF(myFunc)>"))
+  }
+
+  test("render shows Cast, Arithmetic, BooleanExpr, Conditional, UDF, and Alias in their natural forms") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val amount = ColumnReference(ColumnRef("amount"))
+    val status = ColumnReference(ColumnRef("status"))
+    val plan = Project(
+      orders,
+      List(
+        NamedExpr("amount_d", Cast(amount, "double")),
+        NamedExpr("value", Arithmetic("*", List(amount, Literal(1.2, "double")))),
+        NamedExpr("negated", Arithmetic("NEGATE", List(amount))),
+        NamedExpr(
+          "flag",
+          BooleanExpr("AND", List(Comparison("=", status, Literal("ACTIVE", "string")), Comparison(">", amount, Literal(0, "integer"))))
+        ),
+        NamedExpr(
+          "tier",
+          Conditional(List((Comparison("=", status, Literal("ACTIVE", "string")), Literal("gold", "string"))), Some(Literal("none", "string")))
+        ),
+        NamedExpr("risk", UDF(Some("calculateRisk"), List(amount))),
+        NamedExpr("struct_field", Alias("renamed_amount", amount))
+      )
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("amount_d = CAST(amount AS double)"))
+    assert(rendered.contains("value = (amount * 1.2)"))
+    assert(rendered.contains("negated = NEGATE(amount)"))
+    assert(rendered.contains("flag = status = ACTIVE AND amount > 0"))
+    assert(rendered.contains("tier = CASE WHEN status = ACTIVE THEN gold ELSE none END"))
+    assert(rendered.contains("risk = UDF[calculateRisk](amount)"))
+    assert(rendered.contains("struct_field = amount AS renamed_amount"))
+  }
+
+  test("render shows a unary BooleanExpr(NOT, ...) and a 3+ operand Arithmetic/BooleanExpr in their prefix forms") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val a = ColumnReference(ColumnRef("a"))
+    val b = ColumnReference(ColumnRef("b"))
+    val c = ColumnReference(ColumnRef("c"))
+    val plan = Project(
+      orders,
+      List(
+        NamedExpr("not_active", BooleanExpr("NOT", List(ColumnReference(ColumnRef("active"))))),
+        NamedExpr("all_three", BooleanExpr("AND", List(a, b, c))),
+        NamedExpr("sum_three", Arithmetic("+", List(a, b, c)))
+      )
+    )
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("not_active = NOT active"))
+    assert(rendered.contains("all_three = AND(a, b, c)"))
+    assert(rendered.contains("sum_three = +(a, b, c)"))
+  }
+
+  test("render shows Limit with and without a nonzero offset") {
+    val orders = Read(DatasetRef("raw.orders"))
+    assert(PlanPrinter.render(Limit(orders, 10)).contains("Limit(10)"))
+    assert(PlanPrinter.render(Limit(orders, 10, offset = 5)).contains("Limit(10, offset=5)"))
   }
 
   // The tests above only ever assert `.contains(...)` on a node's own
@@ -182,7 +239,7 @@ class PlanPrinterSpec extends AnyFunSuite {
 
   test("render shows Window's PARTITION BY and ORDER BY, and omits both when absent") {
     val orders = Read(DatasetRef("raw.orders"))
-    val windowExprs = List(NamedExpr("rn", FunctionCall("ROW_NUMBER", Nil)))
+    val windowExprs = List(NamedExpr("rn", Function("ROW_NUMBER", Nil)))
 
     val withSpec = Window(
       orders,

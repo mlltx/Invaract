@@ -24,12 +24,10 @@ class PlanSpec extends AnyFunSuite {
       left,
       right,
       JoinType.Inner,
-      Some(FunctionCall(
+      Some(Comparison(
         "=",
-        List(
-          ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
-          ColumnReference(ColumnRef("id", Some("raw.customers")))
-        )
+        ColumnReference(ColumnRef("customer_id", Some("raw.orders"))),
+        ColumnReference(ColumnRef("id", Some("raw.customers")))
       ))
     )
     assert(join.children == List(left, right))
@@ -50,10 +48,11 @@ class PlanSpec extends AnyFunSuite {
     assert(Aggregate(input, Nil, Nil).children == List(input))
     assert(Sort(input, Nil).children == List(input))
     assert(Window(input, Nil).children == List(input))
+    assert(Limit(input, 5).children == List(input))
   }
 
-  test("Expr.references reports the columns an expression reads, through nested function calls") {
-    val expr = FunctionCall(
+  test("Expr.references reports the columns an expression reads, through nested arithmetic") {
+    val expr = Arithmetic(
       "+",
       List(
         ColumnReference(ColumnRef("a")),
@@ -73,13 +72,24 @@ class PlanSpec extends AnyFunSuite {
     assert(ColumnRef("id", Some("raw.orders")).toString == "raw.orders.id")
   }
 
-  test("Unsupported carries through whatever children a translator could still resolve") {
+  test("UnknownPlan carries through whatever children a translator could still resolve, plus its sourceType") {
     val known = Read(DatasetRef("raw.orders"))
-    val unsupported = Unsupported("Generate(explode)", List(known))
-    assert(unsupported.children == List(known))
+    val unknown = UnknownPlan("Generate(explode)", sourceType = "Generate", children = List(known))
+    assert(unknown.children == List(known))
+    assert(unknown.sourceType == "Generate")
   }
 
-  test("UnsupportedExpr contributes no references") {
-    assert(UnsupportedExpr("ScalaUDF(myFunc)").references.isEmpty)
+  test("UnknownExpression contributes no references when it has no resolvable children") {
+    assert(UnknownExpression("ScalaUDF(myFunc)", sourceType = "ScalaUDF").references.isEmpty)
+  }
+
+  test("UnknownExpression contributes its resolvable children's references, even though the node itself is unknown") {
+    val expr = UnknownExpression("Generate(explode)", sourceType = "Generate", children = List(ColumnReference(ColumnRef("tags"))))
+    assert(expr.references == Set(ColumnRef("tags")))
+  }
+
+  test("Limit exposes its input as its single child") {
+    val input = Read(DatasetRef("raw.orders"))
+    assert(Limit(input, 10).children == List(input))
   }
 }
