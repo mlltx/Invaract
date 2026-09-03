@@ -15,7 +15,7 @@ This is a multi-hour, architecturally significant task. Work through the
 phases in order and **pause for explicit user confirmation at every
 checkpoint marked ⏸** — especially Phase 5, where a wrong "this command
 is safe" call silently defeats the entire fail-closed feature
-(`spark-adapter/src/main/scala/com/example/sparkadapter/FailClosedCommands.scala`).
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala`).
 Getting Phase 5 wrong doesn't fail loudly; it fails invisibly, months
 later, on someone else's data. Slow down there specifically.
 

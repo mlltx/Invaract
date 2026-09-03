@@ -1,7 +1,7 @@
 name := "invaract-contract"
-version := "0.1.0"
+version := "0.2.0"
 scalaVersion := "2.12.18"
-organization := "com.example"
+organization := "com.invaract"
 
 libraryDependencies ++= Seq(
   "org.yaml" % "snakeyaml" % "2.2",
@@ -20,7 +20,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.1.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.2.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -47,3 +47,26 @@ assembly / assemblyMergeStrategy := {
 // that PR reached the base branch - it now has, so base-ref's own build.sbt
 // (like this one) publishes under "invaract-contract", and this must match.
 mimaPreviousArtifacts := Set("com.example" %% "invaract-contract" % "0.1.0")
+
+// com.example -> com.invaract namespace rebrand (this PR): the package and
+// `organization` moved wholesale, so every symbol in this module now has a
+// different fully-qualified name than the artifact published above - MiMa
+// correctly reports every one of them as "removed." This is the real,
+// intended shape of a deliberate break (CLAUDE.md's "API Compatibility
+// Requirement" option 2), not something to silence per-symbol: the version
+// bump to 0.2.0 above is the MAJOR-equivalent bump docs/VERSIONING.md's
+// pre-1.0 policy calls for, and this filter is the honest, broad
+// acknowledgment that the entire com.example.contract.* surface was
+// intentionally moved to com.invaract.contract.*, not accidentally deleted.
+//
+// FOLLOW-UP (once this PR lands on the base branch): flip
+// `mimaPreviousArtifacts` above to
+// `Set("com.invaract" %% "invaract-contract" % "0.2.0")` and remove this
+// filter, so future PRs compare against the new namespace's own baseline
+// instead of comparing against the pre-rename one forever. Do not make that
+// flip in this PR - base-ref won't have the rename yet, so CI's publish of
+// base-ref would fail to produce anything at the new coordinate.
+import com.typesafe.tools.mima.core._
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[Problem]("com.example.contract.*")
+)

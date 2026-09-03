@@ -20,11 +20,14 @@ are covered below.
 |---|---|---|
 | JDK | 21 | Building and running every module |
 | sbt | 1.9.8 (`contract`/`plugin`/`runner`), 1.11.7 (`ir`/`spark-adapter`) | Building each module |
-| Apache Spark | 3.5.1 | Running a real job via `spark-submit` |
+| Apache Spark | 3.5.7 | Running a real job via `spark-submit` |
 | Node.js | 20 | The results web UI (`web/`) |
 
 You don't need to install these by hand if you use Codespaces — its dev container
 provisions all of them automatically.
+
+See [Spark Version Support](/reference/spark-version-support/) for the full range of Spark
+3.5.x patches actually verified, not just this default.
 
 ## Set up
 
@@ -47,10 +50,10 @@ provisions all of them automatically.
    ./cs install sbt
    ```
 
-3. Install Apache Spark 3.5.1 and put `spark-submit` on your `PATH`:
+3. Install Apache Spark 3.5.7 and put `spark-submit` on your `PATH`:
 
    ```bash
-   SPARK_VERSION="3.5.1"
+   SPARK_VERSION="3.5.7"
    HADOOP_VERSION="3"
    wget "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz"
    tar -xzf "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" -C /opt
@@ -90,7 +93,7 @@ with `sbt test` and hit an `InaccessibleObjectException`, see
    Open the repository on GitHub and choose **Code → Codespaces → Create codespace**.
 
 2. Wait for the dev container to provision. `.devcontainer/post-create.sh` installs sbt,
-   Apache Spark 3.5.1, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
+   Apache Spark 3.5.7, and sets `SPARK_HOME` — about 5 minutes on first boot, and nothing
    further to configure.
 
 3. Confirm the toolchain is ready:

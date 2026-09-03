@@ -87,15 +87,25 @@ Delta PASS/FAIL pair in `ContractEnforcementRuleSpec` and the translation
 test in `SparkPlanAdapterSpec`), not by inspection — consistent with this
 module's general testing philosophy.
 
-**Known limitation:** `.save(path)`-style writes are recognized here;
-`.saveAsTable(...)` against a *new* V1 data source table is a separate,
-later addition (`CreateDataSourceTableAsSelectCommand` — see "Fail-closed
-on unverifiable writes" below). DataFrameWriterV2 and SQL `MERGE INTO`
-against a Delta (or any DataSourceV2 catalog) table go through a different
-plan shape entirely (`AppendData`/`OverwriteByExpression`/Delta's own
-`MergeIntoCommand`/similar) that still has no translation — not a silent
-gap any more, though: see "Fail-closed on unverifiable writes" for why
-these now abort instead of passing through unverified.
+**Known limitation (current, not the original one — see the operation-surface
+ledger below for the full picture):** every write shape in the ledger below
+is ✅ covered structurally — `.saveAsTable(...)`, `.writeTo(...)`'s DSv2
+sub-ops, and `MERGE`/`UPDATE`/`DELETE` all translate and get checked against
+the contract's declared output. `rules`-based DML verification (contract
+types `merge_condition`/`forbid_unconditional_delete`/`allowed_update_columns`,
+interpreted by `RuleVerifier` against `RowMutationSupport.classifyDelta`'s
+extracted facts) *is* wired up for Delta — real `merge_condition` predicate-
+equality-pairing, `forbid_unconditional_delete`, and `allowed_update_columns`
+(via `UpdateExpressionsSupport`-grounded column-change detection) all check
+against a live Delta MERGE/UPDATE/DELETE, not just Iceberg's. What's still
+genuinely open is *beyond* those three rule types: which specific **rows**
+an UPDATE touches (row-level predicate targeting, not just column-level),
+and whether a DELETE's predicate is trivially satisfiable rather than merely
+present. Tracked as deliberate future work in ROADMAP.md's "Full semantic
+DML verification" item, not a silent gap — see the operation-surface
+ledger's "Format-specific DML" row and the "Interpreting `rules`"/
+"Predicate-logic `merge_condition`" sub-phases for the exact boundary of
+what is and isn't checked today.
 
 ## Delta Lake reads
 
@@ -192,7 +202,7 @@ is future work, unless stated otherwise.
 | `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Analyzes to `AppendData`, now a real `WriteCommandSupport` entry. Location prefers the resolved `DataSourceV2Relation`'s `Table.properties()["location"]` (the physical warehouse path, confirmed empirically) over its qualified identifier. Verified via a PASS/FAIL pair. |
 | `.insertInto(...)` | ✅ **Covered — closed this pass** | Same `AppendData` shape, same `WriteCommandSupport` entry, same test. |
 | `.writeTo(...)` (DataFrameWriterV2), all sub-ops | ✅ **Covered — closed this pass** | `.append()` → `AppendData`; `.overwrite(cond)` → `OverwriteByExpression`, mapped to the contract's `saveMode: overwrite` uniformly (the delete predicate itself isn't modeled — `StructuralVerifier`'s save-mode check doesn't need it, so no IR extension was needed, contrary to what was first assumed); `.createOrReplace()` → `ReplaceTableAsSelect`, same entry as the new-table `.saveAsTable()` row above. All verified via the same PASS/FAIL pairs. |
-| Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally, deliberately not semantically** | All three (`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand`) confirmed empirically to be Delta-internal classes, matched by reflection (public `target()`/`catalogTable()`/`source()` methods, no compile-time Delta dependency) and recognized as real `WriteCommandSupport` entries. **What this checks:** the operation's *target* against the contract's declared output location and current schema (catching the wrong-table mistake and schema drift) — MERGE's `source` is additionally checked as a contract input. **What this deliberately does not check, and cannot yet:** the actual row-level logic — the merge condition, which columns an `UPDATE` touches, whether a `DELETE` is unconditional. There is no contract vocabulary for that (see docs/CONTRACT_MODEL.md's `rules` field — recorded, not interpreted). Verified through real enforcement: PASS/FAIL pairs for all three, including a FAIL proving the target-schema check and a separate FAIL proving the source-as-input check (which needed a real fix along the way — see below). Full semantic verification (a real `ir.Merge`/`ir.RowMutation` IR node plus contract rules to check it against) is tracked as deliberate future work in ROADMAP.md's "Full semantic DML verification" item, not attempted here — see docs/ADDING_A_SPARK_CONNECTOR.md's "What 'fails closed' means" for why building the IR node without the rules to consume it would be premature. |
+| Format-specific DML (`MERGE INTO`/`UPDATE`/`DELETE`) | ✅ **Covered — structurally and, for three specific rule types, semantically** | All three (`MergeIntoCommand`/`UpdateCommand`/`DeleteCommand`) confirmed empirically to be Delta-internal classes, matched by reflection (public `target()`/`catalogTable()`/`source()` methods, no compile-time Delta dependency) and recognized as real `WriteCommandSupport` entries. **Structural check:** the operation's *target* against the contract's declared output location and current schema (catching the wrong-table mistake and schema drift) — MERGE's `source` is additionally checked as a contract input. **Rule-based semantic check (added by the "Interpreting `rules`" / "Predicate-logic `merge_condition`" sub-phases):** `RowMutationSupport.classifyDelta` extracts the merge condition, updated columns, and delete predicate; `RuleVerifier` checks them against a contract's `merge_condition` (genuine equality-pairing, not just "referenced anywhere"), `forbid_unconditional_delete`, and `allowed_update_columns` rules when declared. **What's still open:** row-level targeting (which specific *rows* an UPDATE touches, not just which columns) and DELETE-predicate satisfiability beyond mere presence, plus any rule vocabulary beyond these three types. Verified through real enforcement: PASS/FAIL pairs for all three DML shapes, including a FAIL proving the target-schema check, a separate FAIL proving the source-as-input check, and real PASS/FAIL pairs per rule type against a live Delta session. The remaining, narrower gap is tracked as deliberate future work in ROADMAP.md's "Full semantic DML verification" item, not attempted here — see docs/ADDING_A_SPARK_CONNECTOR.md's "What 'fails closed' means" for why building further verification ahead of a real need would be premature. |
 | Streaming write | ✅ **Covered — closed this pass** | Previously the most serious gap found: `WriteToStream` (the streaming write's top-level plan) isn't `Command`-shaped, so `ContractEnforcementRule`'s fail-closed policy — which only gates `Command`-shaped plans — never saw it at all. Confirmed empirically (not assumed): a probe found zero of the plans `injectCheckRule` saw during a real streaming Delta write were `Command`-shaped, and `javap` on Spark's catalyst jar confirmed `WriteToStream` doesn't implement `Command`. This was categorically worse than every other row here: not "fails closed but unverified," but genuinely unenforced — a streaming write committed silently, with no contract check at all. **Closed by adding `WriteToStream` as a real `WriteCommandSupport` entry** (see "Write command recognition: a single registry" below) rather than special-casing it in the fail-closed check: `WriteToStream.inputQuery` gives the schema being written; location comes from a resolved `catalogTable` (`.toTable(...)`, confirmed to carry `storage.locationUri`/`provider`), or from the sink's `name()` when that doesn't throw (a genuine V2 sink), or — since Delta's `DeltaSink` is a legacy V1 `Sink` wrapper whose `name()`/`schema()` unconditionally throw, confirmed empirically — a reflective call to its public `path()` accessor, the same reflection-over-a-class-this-module-has-no-compile-time-dependency-on technique `jdbcLocationOf` already uses for `JDBCRelation`. Verified through real enforcement: a PASS/FAIL pair for `.start(path)`, a PASS test for `.toTable(...)` (the `catalogTable`-populated path), and a test confirming a streaming write to a location unrelated to the active contract is correctly rejected (`OUTPUT_LOCATION_MISMATCH`) — the same behavior batch writes have always had, not special-cased for streaming. All in `ContractEnforcementRuleSpec`. |
 | Maintenance operations that touch data (`OPTIMIZE`/`VACUUM`/`RESTORE`/`CLONE`/`CONVERT TO DELTA`) | ✅ Covered by policy classification | `FailClosedCommands.scala`'s `knownSafe` set already includes `VacuumTableCommand`/`OptimizeTableCommand` (rewrites/removes files, doesn't change a table's committed row content) and deliberately excludes `RestoreTableCommand`/`CloneTableCommand`/`ConvertToDeltaCommand` (row-content-changing) — built from a class-by-class enumeration of all 164 `Command` subclasses across Spark 3.5.1 + Delta 3.2.0, reasoned and documented in that file's header comment. Not re-probed individually this pass (the classification predates it); if any one of these is ever doubted, a targeted probe test is cheap to add. |
 
@@ -365,12 +375,79 @@ difference between "fails closed" and "silently unchecked"/"falsely
 rejected" is exactly the distinction this ledger exists to keep visible)
 are now ✅ Covered, alongside every V2 catalog write shape
 (`AppendData`/`OverwriteByExpression`/`ReplaceTableAsSelect`) and
-row-level DML (`MERGE`/`UPDATE`/`DELETE`) — the last of these
-*structurally* rather than semantically, deliberately: verifying the
-actual merge condition/update columns/delete predicate needs both a real
-IR extension and contract rules to check it against, neither of which
-exist yet, and building the IR half alone would be speculative API
-surface nothing could consume. That's real, scoped future work, tracked
-explicitly in ROADMAP.md's "Full semantic DML verification" item, not a
-silent gap.
+row-level DML (`MERGE`/`UPDATE`/`DELETE`) — the last of these covered both
+structurally (target/schema, MERGE source-as-input) and, for three
+specific rule types (`merge_condition`/`forbid_unconditional_delete`/
+`allowed_update_columns`), semantically, via the "Interpreting `rules`"
+sub-phase's `RuleVerifier`/`RowMutationSupport.classifyDelta` pairing —
+see the "Format-specific DML" ledger row above for the exact boundary.
+What's still open is narrower than a full semantic model: row-level
+targeting (which specific rows an UPDATE touches, not just which
+columns), DELETE-predicate satisfiability beyond mere presence, and any
+rule vocabulary beyond these three types. That's real, scoped future
+work, tracked explicitly in ROADMAP.md's "Full semantic DML verification"
+item, not a silent gap.
+
+## Version compatibility
+
+Everything above was verified against a single pinned `delta-spark` release
+(`spark-adapter/build.sbt`'s `deltaVersion`, currently `3.3.3`) — passing
+tests against one version proves nothing about any other. CI's
+`delta-version-matrix` job (`.github/workflows/test.yml`) closes that gap
+for the versions this repo claims to support.
+
+**Scope**: the three specs that actually build a Delta-extended session —
+`ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
+`SparkPlanAdapterSpec` — not the full `spark-adapter` suite (Delta has no
+dedicated spec file the way Iceberg does, but these three are the complete
+set that touch it; a full-suite rerun per Delta version would spend most of
+its time on code no Delta-version change can affect).
+
+**Versions tested**: `3.3.3` only — a single-leg matrix, not a
+floor-plus-current pair, and that's a real finding rather than a design
+choice. `3.3.0` was the original floor candidate; the matrix's first real
+CI run tried it and hit the *identical* `TableCapabilityCheck` failure
+("Table ... does not support truncate in batch mode") that excluded
+`3.2.x` in the first place (see "Why 3.2.0 → 3.3.3" above). Checked
+delta-io/delta's own `LATEST_RELEASED_SPARK_VERSION` constant directly at
+each `3.3.x` tag rather than assuming a shared floor across a minor line:
+
+| Tag | `LATEST_RELEASED_SPARK_VERSION` |
+|-----|----------------------------------|
+| `v3.3.0` | `3.5.3` |
+| `v3.3.1` | `3.5.3` |
+| `v3.3.2` | `3.5.3` |
+| `v3.3.3` | `3.5.6` |
+
+Only `3.3.3` moved to `3.5.6` — the Spark version this repo's own floor
+(`docs/SPARK_ADAPTER.md`'s "Spark version compatibility" section) already
+requires. So `3.3.3` isn't just the current pin, it's currently the
+**only** `delta-spark` release compatible with this repo's supported Spark
+range at all, and (confirmed via `delta-spark_2.12`'s own
+`maven-metadata.xml`) also the latest published release — there is neither
+a working floor below it nor a newer release above it to test today. The
+`delta-version-matrix` CI job is still kept as its own job rather than
+folded away, so it picks up a second leg for free the moment delta-io
+publishes a release that also targets Spark 3.5.6+.
+
+**Mechanism**: `deltaVersion` reads an `INVARACT_TEST_DELTA_VERSION`
+environment variable, falling back to `3.3.3` when unset, so a plain local
+`sbt test` is unaffected:
+
+```bash
+cd spark-adapter
+INVARACT_TEST_DELTA_VERSION=3.3.3 sbt "testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec"
+```
+
+**If a leg fails for real**: per `docs/ADDING_A_SPARK_CONNECTOR.md`'s
+"verify, don't assert" step and the precedent set by both the Spark-version
+matrix's own 3.5.1→3.5.6 floor correction and this section's own 3.3.0
+finding above, the failure gets root-caused before the matrix's version
+list is adjusted — not just swapped to a version that happens to pass. A
+few places in this module's own code already anticipate this kind of drift
+rather than assume it can't happen: `WriteCommandSupport.deltaRowLevelDml`
+wraps its Delta-command-class matching in `Try`, and
+`RowMutationSupport.scala`'s own comment flags "a future Delta version
+renaming/removing" one of those classes as a live risk, not a hypothetical
+one.
 

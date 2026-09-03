@@ -6,7 +6,7 @@ It's the first concrete front-end for the IR, and the first piece of
 ROADMAP.md Phase 1c (Verification Engine) — the IR now has one real source
 of transformation plans, not just hand-constructed test fixtures.
 
-Code lives in the `spark-adapter/` sbt module (`com.example.sparkadapter`
+Code lives in the `spark-adapter/` sbt module (`com.invaract.sparkadapter`
 package), which depends on `ir` and on Spark (`provided`, same convention as
 `plugin`/`runner`).
 
@@ -207,7 +207,7 @@ translation.
 
 ## Integrated with the test Spark app
 
-`runner/src/main/scala/com/example/runner/DemoJobHarness.scala` registers
+`runner/src/main/scala/com/invaract/runner/DemoJobHarness.scala` registers
 `SparkAdapterListener` before running `InvaractPlugin`, and after the
 real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 
@@ -219,7 +219,7 @@ real `outputDf.write.mode("overwrite").parquet(outputPath)` call:
 3. Prints the rendered plan to the console.
 
 Actual output from `./dev/test` against the real `InvaractPlugin`
-(`value_squared = value * value`, per `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala`):
+(`value_squared = value * value`, per `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`):
 
 ```
 Transformation IR (translated from the real Spark logical plan):
@@ -495,7 +495,7 @@ undetected — see "Mutation testing" below for the resulting score.
 ## Structural verification
 
 `StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala`)
 is ROADMAP.md Phase 1c's structural verifier (its own spec called this
 "Phase 4"): the first genuinely useful check, covering every item in
 MISSION.md §8's "Structural" class — for both inputs and outputs, not just
@@ -585,7 +585,7 @@ alongside, to avoid two overlapping verifiers in the codebase.
 Everything above (`SparkAdapterListener`, `StructuralVerifier`) verifies
 *after* a write has already executed — useful for reporting, useless for
 prevention. `ContractEnforcementRule`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala`)
 moves verification *into* the execution lifecycle:
 
 ```
@@ -725,8 +725,8 @@ inferred locations the same way `locationsMatch` expects.
 ## Notification sinks
 
 Everything above answers "does this write satisfy its contract" and, if
-not, aborts it. `com.example.sparkadapter.notification`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/notification/`)
+not, aborts it. `com.invaract.sparkadapter.notification`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/notification/`)
 answers a different, additive question: how does an external system find
 out that a check happened at all — PASS or FAIL — or that a write actually
 completed? This is opt-in observability, not a new enforcement mechanism:
@@ -1185,7 +1185,7 @@ as an input) verifies the *shape* of what's written. It has never checked
 a contract's `rules` — recorded by `contract` since Phase 1a, never
 interpreted (see docs/CONTRACT_MODEL.md's "What Phase 1 Does *Not* Do
 Yet"). `RuleVerifier`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/RuleVerifier.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala`)
 closes the first slice of that gap: the three DML rule types
 `ContractRule.interpret` decodes (see docs/CONTRACT_MODEL.md's
 "Interpreted rules") — `merge_condition`, `forbid_unconditional_delete`,
@@ -1194,7 +1194,7 @@ DELETE.
 
 **Extraction is a separate, parallel path from `WriteCommandSupport`, not
 a change to it.** `RowMutationSupport`
-(`spark-adapter/src/main/scala/com/example/sparkadapter/RowMutationSupport.scala`)
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala`)
 matches the exact same Delta `UpdateCommand`/`DeleteCommand`/
 `MergeIntoCommand` classes (plus DSv2's plain `DeleteFromTable`)
 `WriteCommandSupport.deltaRowLevelDml`/`deleteFromTable` already
@@ -1711,7 +1711,7 @@ existing private matchers and one new `private[sparkadapter]` helper).
 #### Mutation testing: Avro connector support
 
 Scoped to the one file this pass changed:
-`sbt stryker --mutate "src/main/scala/com/example/sparkadapter/WriteCommandSupport.scala"`
+`sbt stryker --mutate "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"`
 — **76.74%** (33/43 non-excluded mutants killed; 145 generated, 102
 excluded as `StringLiteral`). Clears the 70% break threshold. All 10
 survivors fall **outside** the code this pass added or changed
@@ -1754,7 +1754,7 @@ unchanged).
 
 #### Delta feature-by-feature confidence pass
 
-Scoped `sbt stryker --mutate "src/main/scala/com/example/sparkadapter/WriteCommandSupport.scala"`
+Scoped `sbt stryker --mutate "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"`
 (this sub-phase's only changed file) scored **73.08%** (19/26 non-excluded
 mutants killed) after the schema-evolution fix, generated-columns fix,
 and the `/simplify` pass that followed (extracting `unionNewFields` and
@@ -1948,4 +1948,82 @@ To see the translation adapter running against the actual demo pipeline:
 # demo/output/report.json's "transformationIR" section has the full
 # rendered plan, lineage, and diagnostics.
 ```
+
+### Spark version compatibility
+
+`SparkPlanAdapter` translates Catalyst's `LogicalPlan` — an API this module
+does not own and Spark does not guarantee stable node-by-node across
+releases (see "Empirical findings" above: "Catalyst's node shapes vary
+across Spark versions and are not fully specified"). Passing tests against
+the single Spark patch `build.sbt`'s `sparkVersion` happens to be pinned to
+proves nothing about any other patch — a real risk this module already
+works around structurally in a few places (`WriteFiles` unwrapped by
+`getClass.getSimpleName` rather than a typed import, Delta/Hive command
+recognition by class name rather than a compile-time dependency — see
+"The write path wraps the query in an internal `WriteFiles` node" above and
+"Write command recognition: a single registry"), but that's a design
+mitigation, not proof it actually holds across versions. ROADMAP.md named
+this gap explicitly: a multi-Spark-version compatibility matrix was
+still-outstanding future scope until now.
+
+CI's `spark-version-matrix` job (`.github/workflows/test.yml`) closes it
+for the currently-supported floor, Spark 3.5.x: it runs this module's
+**full** `sbt test` suite — the same suite `sbt test` runs locally, no
+subset — against every 3.5.x patch this repo claims to support (currently
+3.5.6, 3.5.7, 3.5.9), one job per patch. `spark-adapter/build.sbt`'s
+`sparkVersion` val reads an `INVARACT_TEST_SPARK_VERSION` environment
+variable (falling back to `3.5.7`, today's real pin, when unset — so a
+plain local `sbt test` is unaffected):
+
+```scala
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
+```
+
+Run a single leg locally with:
+
+```bash
+cd spark-adapter
+INVARACT_TEST_SPARK_VERSION=3.5.6 sbt test
+```
+
+**Why the floor is 3.5.6, not 3.5.1**: the matrix's own first real run
+tried 3.5.1 and failed with a `ClassNotFoundException` on
+`org.apache.spark.sql.catalyst.plans.logical.SupportsNonDeterministicExpression`
+inside `DeltaSparkSessionExtension`, aborting every spec that builds a
+Delta-extended session (`ContractEnforcementRuleSpec`,
+`SparkAdapterListenerSpec`, `IcebergConnectorSpec`, `SparkPlanAdapterSpec`).
+Root cause: `delta-spark` 3.3.3 (this module's own pinned `deltaVersion`)
+is only built against Spark 3.5.6+ — `build.sbt`'s own `deltaVersion`
+comment already documented this ("3.3.3 against 3.5.6 — the closest
+published delta-spark release to our new Spark 3.5.7") before the matrix
+existed to prove it by actually failing at 3.5.1. 3.5.6 is the real,
+CI-confirmed floor for this module's full suite, not an assumption.
+
+**Why the full suite, not just the connector-agnostic specs**: Iceberg/
+ClickHouse/Hive/Avro's own test-scope dependencies
+(`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
+`spark-hive`/`spark-avro` at `sparkVersion`) are published per-Spark-
+*minor*-line, not per-patch, so they stay resolvable and correct across
+every patch in the matrix — Delta is the one exception, and its own
+lower bound (3.5.6) is now the matrix's floor rather than something
+patched around per-leg. Splitting the suite into a "core" subset would
+only be necessary for a different Spark *minor* line (3.4.x, or a
+hypothetical future line), where connector artifacts might not exist or
+might not have been validated at all — out of scope for now, since Spark
+3.5.x is the confirmed supported floor (see the "No Spark binary
+install" note in `spark-version-matrix`'s own comment in
+`test.yml`: this job resolves Spark as an ordinary managed dependency and
+never needs `spark-submit`, unlike the `test`/`mutation-testing-spark-
+adapter`/`docker-regression` jobs).
+
+**Deferred: Spark 4.x.** Every module in this repo pins `scalaVersion :=
+"2.12.18"` with no cross-build configured anywhere, and Spark 4.0 dropped
+Scala 2.12 in favor of Scala 2.13-only builds. Supporting a 4.x line is
+therefore not an additional matrix leg — it would need a real Scala 2.13
+cross-compilation project across all 5 modules (likely new Delta/Iceberg/
+Hive/ClickHouse version pins too, since those publish per-Scala-version)
+plus a fresh empirical plan-shape investigation, the same rigor
+`docs/ADDING_A_SPARK_CONNECTOR.md` requires for a new connector — not
+something to assume compatible. See ROADMAP.md's compatibility-matrix
+entry for tracking.
 

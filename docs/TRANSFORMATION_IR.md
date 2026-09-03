@@ -5,7 +5,7 @@ This document describes the Invaract transformation IR delivered in Phase
 enough to establish column-level lineage and, eventually, verify a
 transformation against a [contract](CONTRACT_MODEL.md).
 
-Code lives in the `ir/` sbt module (`com.example.ir` package). It has no
+Code lives in the `ir/` sbt module (`com.invaract.ir` package). It has no
 dependency on Spark, or on the `contract` module — it is pure Scala data
 structures and algorithms over them. That independence is the point: this
 is meant to be the thing a Spark logical plan, a SQL AST, or a dbt model

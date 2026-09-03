@@ -1,7 +1,7 @@
 name := "invaract-spark-plugin"
-version := "0.1.0"
+version := "0.2.0"
 scalaVersion := "2.12.18"
-organization := "com.example"
+organization := "com.invaract"
 
 // 3.5.1 -> 3.5.7: CVE-2025-54920 (Spark History Server Code Execution,
 // a Direct dependency, not transitive - no dependencyOverrides
@@ -142,7 +142,7 @@ dependencyOverrides ++= Seq(
 // `local[*]`-only tests never configure or exercise, so a passing suite
 // here couldn't prove a bump safe either.
 
-assembly / assemblyJarName := "invaract-spark-plugin-0.1.0.jar"
+assembly / assemblyJarName := "invaract-spark-plugin-0.2.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first

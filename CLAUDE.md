@@ -111,7 +111,7 @@ So: when a feature adds or changes code in `ir/src/main/scala/...` or
 call it done. Before considering such a feature complete, you MUST:
 
 1. From inside the module directory, run mutation testing scoped to just
-   the file(s) you touched, e.g. `sbt stryker --mutate "src/main/scala/com/example/ir/YourFile.scala"`.
+   the file(s) you touched, e.g. `sbt stryker --mutate "src/main/scala/com/invaract/ir/YourFile.scala"`.
 2. Confirm the score for those file(s) is at least **70%**.
 3. For every real Survived/NoCoverage mutant in the code you added or
    changed, either strengthen an assertion to kill it, add a test that
@@ -172,7 +172,7 @@ this repository itself.
 
 There is no Maven Central release yet to compare against, so each
 module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
-`com.example %% <module> % 0.1.0` coordinate, and CI's
+`com.invaract %% <module> % <previous version>` coordinate, and CI's
 `api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
 base branch to the runner's local Ivy cache under that exact coordinate
 before running `sbt mimaReportBinaryIssues` against the PR's head — "did
@@ -210,6 +210,16 @@ just silence it:
 
 Never react to a MiMa failure by loosening `mimaPreviousArtifacts` or
 disabling the check — that defeats the entire point of running it.
+
+The `com.invaract` → `com.invaract` groupId/package rebrand is a worked example of option 2
+above: `contract`/`ir`/`spark-adapter`'s `build.sbt` each keep `mimaPreviousArtifacts`
+pointing at the old `com.invaract` coordinate for the one PR that makes the move (so CI's
+publish of the PR's base-ref, still on `com.invaract`, resolves correctly), add a
+`mimaBinaryIssueFilters` entry excluding the whole old package path as a deliberate break,
+and leave a comment marking a required follow-up: once that PR lands on the base branch, a
+later PR flips `mimaPreviousArtifacts` to the new `com.invaract` coordinate and removes the
+transitional filter, so future comparisons run against the new namespace's own baseline
+instead of the pre-rename one forever.
 
 ## Documentation Policy
 
@@ -305,22 +315,22 @@ would be.
 │   └── post-create.sh           # Setup script (JDK, sbt, Spark)
 │
 ├── contract/                     # Verification engine: contract model
-│   ├── src/main/scala/com/example/contract/
+│   ├── src/main/scala/com/invaract/contract/
 │   │   ├── ContractModel.scala
 │   │   ├── ContractParser.scala       # YAML → object model
 │   │   ├── ContractValidator.scala    # structural validation
 │   │   └── ContractCompatibility.scala # version-diff classification
-│   └── src/test/scala/com/example/contract/
+│   └── src/test/scala/com/invaract/contract/
 │
 ├── ir/                            # Verification engine: transformation IR
-│   ├── src/main/scala/com/example/ir/
+│   ├── src/main/scala/com/invaract/ir/
 │   │   ├── Expr.scala, Plan.scala, Identifiers.scala  # engine-independent algebra
 │   │   ├── Lineage.scala              # column-level provenance tracing
 │   │   └── PlanPrinter.scala          # human-readable rendering
-│   └── src/test/scala/com/example/ir/
+│   └── src/test/scala/com/invaract/ir/
 │
 ├── spark-adapter/                 # Verification engine: Spark integration
-│   ├── src/main/scala/com/example/sparkadapter/
+│   ├── src/main/scala/com/invaract/sparkadapter/
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
@@ -331,13 +341,13 @@ would be.
 │   │       ├── NotificationSink.scala       # trait + Logging/File/Http/HadoopFs built-ins
 │   │       ├── NotificationConfig.scala     # .properties-based sink configuration
 │   │       └── NotificationSinkFactory.scala # reflective sink loading
-│   └── src/test/scala/com/example/sparkadapter/
+│   └── src/test/scala/com/invaract/sparkadapter/
 │
 ├── plugin/                       # Example harness: demo transformation
 │   ├── src/
-│   │   ├── main/scala/com/example/plugin/
+│   │   ├── main/scala/com/invaract/plugin/
 │   │   │   └── InvaractPlugin.scala
-│   │   └── test/scala/com/example/plugin/
+│   │   └── test/scala/com/invaract/plugin/
 │   │       └── InvaractPluginTest.scala
 │   ├── build.sbt
 │   └── project/assembly.sbt
@@ -350,16 +360,16 @@ would be.
 │       └── result.parquet
 │
 ├── runner/                       # Example harness: demo job
-│   ├── src/main/scala/com/example/runner/
+│   ├── src/main/scala/com/invaract/runner/
 │   │   └── DemoJobHarness.scala # Runs InvaractPlugin through the engine, generates report
 │   ├── build.sbt
 │   └── project/assembly.sbt
 │
 ├── notification-kafka/           # Optional extension: Kafka NotificationSink
-│   ├── src/main/scala/com/example/sparkadapter/notification/kafka/
+│   ├── src/main/scala/com/invaract/sparkadapter/notification/kafka/
 │   │   └── KafkaNotificationSink.scala # real, unscoped kafka-clients dependency —
 │   │                                    # of this module only, not spark-adapter's
-│   ├── src/test/scala/com/example/sparkadapter/notification/kafka/
+│   ├── src/test/scala/com/invaract/sparkadapter/notification/kafka/
 │   └── build.sbt                # unmanagedJars against spark-adapter's assembly jar
 │
 ├── web/                          # Example harness: mobile-friendly results UI
@@ -446,8 +456,8 @@ When opening the repository in GitHub Codespaces:
 
 #### 2. Make Harness Changes
 
-Edit files under `plugin/src/main/scala/com/example/plugin/` (the demo
-transformation) or `runner/src/main/scala/com/example/runner/` (the demo
+Edit files under `plugin/src/main/scala/com/invaract/plugin/` (the demo
+transformation) or `runner/src/main/scala/com/invaract/runner/` (the demo
 job / `DemoJobHarness`).
 
 #### 3. Test the Harness
@@ -535,17 +545,17 @@ If `./dev/test` fails:
 
 ### Engine and plugin JARs
 
-- `plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.1.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.1.0.jar`
-- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar`
+- `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.2.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.2.0.jar`
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar`
 - `runner/target/scala-2.12/invaract-spark-runner.jar` — the demo job,
   bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
 
 All created by `sbt assembly` (via `./dev/build`); used by Spark through
 `spark-submit --jars <plugin jar> <runner jar>`.
 
-- `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.1.0.jar`
+- `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.2.0.jar`
   — not built by `./dev/build` (opt-in, like `plugin`/`runner`): a user who
   wants `KafkaNotificationSink` runs `cd notification-kafka && sbt assembly`
   themselves and adds the resulting jar to their own `--jars` list. See
@@ -596,9 +606,9 @@ The demo job runs **via real Spark submission**, not unit test mocking
 
 ```bash
 spark-submit \
-  --class com.example.runner.DemoJobHarness \
+  --class com.invaract.runner.DemoJobHarness \
   --master local[*] \
-  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
   runner/target/scala-2.12/invaract-spark-runner.jar \
   demo/input/sample.csv \
   demo/output/result.parquet \
@@ -642,8 +652,8 @@ id,value
 
 To modify it:
 
-1. Edit `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala`
-2. Add or update tests in `plugin/src/test/scala/com/example/plugin/InvaractPluginTest.scala`
+1. Edit `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala`
+2. Add or update tests in `plugin/src/test/scala/com/invaract/plugin/InvaractPluginTest.scala`
 3. Run `./dev/test`
 4. Verify the report
 
@@ -729,10 +739,10 @@ head -5 demo/input/sample.csv
   unit tests (`cd spark-adapter && sbt test`) before assuming it's the
   demo harness
 - Demo transformation issue → check
-  `plugin/src/main/scala/com/example/plugin/InvaractPlugin.scala` for
+  `plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala` for
   null pointer exceptions, schema assumptions, case sensitivity, type
   mismatches
-- Report/harness wiring issue → check `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`
+- Report/harness wiring issue → check `runner/src/main/scala/com/invaract/runner/DemoJobHarness.scala`
 
 ### 6. Run unit tests in isolation
 
@@ -755,7 +765,7 @@ harness-specific notes:
 The harness uses `local[*]` Spark master (see ARCHITECTURE.md's ADR-007).
 To use a real cluster later:
 
-1. Modify `runner/src/main/scala/com/example/runner/DemoJobHarness.scala`
+1. Modify `runner/src/main/scala/com/invaract/runner/DemoJobHarness.scala`
 2. Change `.master("local[*]")` to `.master("spark://cluster:7077")` or YARN/Kubernetes
 3. Update `.github/workflows/test.yml` to provision the cluster
 4. Report format remains unchanged
@@ -818,11 +828,11 @@ Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ```bash
 # Start Spark shell with the engine + plugin JARs
-spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.1.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.1.0.jar
+spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)
-// scala> val result = com.example.plugin.InvaractPlugin.process(df)
+// scala> val result = com.invaract.plugin.InvaractPlugin.process(df)
 // scala> result.show()
 ```
 
@@ -842,7 +852,7 @@ git clone https://github.com/mlltx/Invaract.git
 # Wait for post-create.sh to finish (~5 min first time)
 
 # 2. Make a change — engine (contract/ir/spark-adapter) or harness (plugin/runner)
-edit spark-adapter/src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala
+edit spark-adapter/src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala
 
 # 3. Test
 ./dev/test

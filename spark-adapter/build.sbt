@@ -1,7 +1,27 @@
 name := "invaract-spark-adapter"
-version := "0.1.0"
+version := "0.2.0"
 scalaVersion := "2.12.18"
-organization := "com.example"
+organization := "com.invaract"
+
+// Single source of truth for the verified/primary Spark, Delta, and Iceberg
+// versions - see src/main/resources/supported-versions.properties for the
+// data and the rationale for why it exists (avoids the version claim being
+// hand-copied - and drifting - across build.sbt, the runtime compatibility
+// guard, CI's matrix jobs, and the generated docs tables).
+val supportedVersionsProps: java.util.Properties = {
+  val props = new java.util.Properties()
+  val in = new java.io.FileInputStream(
+    new java.io.File("src/main/resources/supported-versions.properties")
+  )
+  try props.load(in)
+  finally in.close()
+  props
+}
+def primaryVersion(key: String): String = {
+  val value = supportedVersionsProps.getProperty(key)
+  require(value != null, s"supported-versions.properties is missing required key '$key'")
+  value
+}
 
 // 3.5.1 -> 3.5.7: CVE-2025-54920 (GHSA-jwp6-cvj8-fw65, Spark History
 // Server Code Execution) - the Spark History Web UI's overly permissive
@@ -23,7 +43,20 @@ organization := "com.example"
 // independently of sparkVersion and stay as they were; only spark-core/
 // spark-sql/spark-hive/spark-avro (Spark's own per-release artifacts)
 // move with this bump.
-val sparkVersion = "3.5.7"
+//
+// Overridable via INVARACT_TEST_SPARK_VERSION for the spark-version-matrix
+// CI job (.github/workflows/test.yml), which runs this module's full suite
+// against every Spark 3.5.x patch this repo claims to support (currently
+// 3.5.6/3.5.7/3.5.9 - see docs/SPARK_ADAPTER.md's "Spark version
+// compatibility" section), without editing this file per matrix leg. A
+// plain local `sbt test` is unaffected - the env var is unset, so this
+// still resolves to 3.5.7, today's real pin. Only the Spark-version-owned
+// artifacts below (spark-core/spark-sql/spark-hive/spark-avro) move with
+// this override; Delta/Iceberg/ClickHouse stay pinned independently since
+// they're not part of what the matrix is proving (Catalyst plan-shape
+// stability across Spark 3.5.x patches), and their own artifacts are
+// already confirmed compatible across this same 3.5.x line.
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", primaryVersion("spark.primary"))
 
 // Test-scope only, not provided: empirical investigation (see
 // docs/SPARK_ADAPTER.md's "Delta Lake support" section) found that Delta
@@ -58,7 +91,34 @@ val sparkVersion = "3.5.7"
 // this module's suite) against 3.3.3 before settling on it - see
 // docs/SPARK_ADAPTER.md's Delta section / docs/connectors/delta.md for
 // the full citation trail.
-val deltaVersion = "3.3.3"
+//
+// The "3.5.6+" floor above isn't just delta-io's own metadata - the
+// spark-version-matrix CI job (.github/workflows/test.yml) proved it
+// directly: an initial attempt at a 3.5.1 floor failed with
+// ClassNotFoundException on
+// org.apache.spark.sql.catalyst.plans.logical.SupportsNonDeterministicExpression
+// inside DeltaSparkSessionExtension, aborting every spec that builds a
+// Delta-extended session. See docs/SPARK_ADAPTER.md's "Spark version
+// compatibility" section.
+//
+// Overridable via INVARACT_TEST_DELTA_VERSION for the delta-version-matrix
+// CI job (.github/workflows/test.yml), which runs this module's
+// Delta-touching specs (ContractEnforcementRuleSpec, SparkAdapterListenerSpec,
+// SparkPlanAdapterSpec - the only ones that build a Delta-extended session,
+// per docs/connectors/delta.md) against every delta-spark release this repo
+// claims to support - currently just 3.3.3 itself, not a floor+current
+// pair: a real CI run tried 3.3.0 as a floor candidate and it hit the
+// identical "does not support truncate in batch mode" TableCapabilityCheck
+// failure that excluded 3.2.x. Checked delta-io/delta's own
+// LATEST_RELEASED_SPARK_VERSION constant at each 3.3.x tag directly, not
+// assumed: 3.3.0/3.3.1/3.3.2 all target Spark 3.5.3, only 3.3.3 moved to
+// 3.5.6 - so 3.3.3 is currently the only delta-spark release compatible
+// with this repo's Spark floor at all, confirmed via delta-spark_2.12's
+// own maven-metadata.xml to also be the latest published release. See
+// docs/connectors/delta.md's "Version compatibility" section for the full
+// citation trail. A plain local `sbt test` is unaffected - the env var is
+// unset, so this still resolves to 3.3.3.
+val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", primaryVersion("delta.primary"))
 
 // Same test-scope-only reasoning as Delta above - the shaded "runtime" jar
 // for exactly this Spark/Scala combination (3.5_2.12), needed only to spin
@@ -70,7 +130,23 @@ val deltaVersion = "3.3.3"
 // apache/iceberg#14232), fixed via #14292 and folded into the Avro-1.12.1
 // upgrade that landed before this version - see docs/SPARK_ADAPTER.md's
 // Iceberg section for the citation.
-val icebergVersion = "1.11.0"
+//
+// Overridable via INVARACT_TEST_ICEBERG_VERSION for the
+// iceberg-version-matrix CI job (.github/workflows/test.yml), which runs
+// this module's Iceberg-touching specs (IcebergConnectorSpec,
+// SparkAdapterListenerIcebergSpec - the only two, per this file's own
+// JDK17+ exclusion-filter comment below, plus FailClosedCommands.scala
+// which references Iceberg only via string literals) against every
+// iceberg-spark-runtime release this repo claims to support (currently
+// 1.10.2/1.11.0 - see docs/connectors/iceberg.md's "Version compatibility"
+// section: confirmed via this artifact's own maven-metadata.xml that
+// 1.11.0 is already the latest published release, so there is no newer
+// leg to test; 1.10.0 is deliberately excluded - its real Avro-API bug is
+// exactly what this matrix would otherwise want as a regression-proof
+// leg, but the extra CI complexity of an expected-failure leg was traded
+// away for a simpler job). A plain local `sbt test` is unaffected - the
+// env var is unset, so this still resolves to 1.11.0.
+val icebergVersion = sys.env.getOrElse("INVARACT_TEST_ICEBERG_VERSION", primaryVersion("iceberg.primary"))
 
 // Hive support, unlike Delta/Iceberg above, is not an external connector
 // library - it's Spark's own first-party integration module, split out of
@@ -683,10 +759,10 @@ excludeDependencies ++= Seq(
 // so even setting reachability aside, there's no first-party call site
 // here that could be affected either way.
 
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.1.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.1.0.jar")
+unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.2.0.jar")
+unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.2.0.jar")
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.1.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -819,3 +895,18 @@ strykerThresholdsBreak := 70
 // PR, which is now on the base branch - see contract/build.sbt's comment
 // for why this coordinate must match base-ref's own published name.
 mimaPreviousArtifacts := Set("com.example" %% "invaract-spark-adapter" % "0.1.0")
+
+// com.example -> com.invaract namespace rebrand (this PR) - see
+// contract/build.sbt's matching comment for the full rationale (deliberate
+// break per CLAUDE.md's "API Compatibility Requirement" option 2, version
+// bumped to 0.2.0 as the MAJOR-equivalent bump docs/VERSIONING.md's pre-1.0
+// policy calls for).
+//
+// FOLLOW-UP (once this PR lands on the base branch): flip
+// `mimaPreviousArtifacts` above to `Set("com.invaract" %%
+// "invaract-spark-adapter" % "0.2.0")` and remove this filter - do not make
+// that flip in this PR.
+import com.typesafe.tools.mima.core._
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[Problem]("com.example.sparkadapter.*")
+)

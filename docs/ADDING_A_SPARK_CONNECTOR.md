@@ -448,7 +448,7 @@ code seem to disagree.
   merge condition, which columns an `UPDATE` touches, whether a `DELETE`
   is unconditional) has no IR representation and isn't checked.
   `ir.Write` models "write a dataset to a location," not "conditionally
-  mutate existing rows" — closing this for real needs a `com.example.ir`
+  mutate existing rows" — closing this for real needs a `com.invaract.ir`
   design decision (a new IR node, e.g. `ir.Merge`/`ir.RowMutation`, plus
   contract `rules` vocabulary to check it against — see
   docs/CONTRACT_MODEL.md's `rules` field and ROADMAP.md's "Full semantic

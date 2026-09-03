@@ -1,6 +1,6 @@
 # Self-contained image for running Invaract's contract regression pack
 # (dev/regression) without installing anything locally. Mirrors
-# .devcontainer/post-create.sh — same JDK 21 base, same Spark 3.5.1
+# .devcontainer/post-create.sh — same JDK 21 base, same Spark 3.5.7
 # distribution — so behavior matches the Codespace dev environment.
 #
 # Build and run:
@@ -24,9 +24,9 @@ RUN curl -fsSL "https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt
       | tar xz -C /usr/local/share \
     && ln -s /usr/local/share/sbt/bin/sbt /usr/local/bin/sbt
 
-# Apache Spark 3.5.1, for spark-submit — same distribution as
+# Apache Spark 3.5.7, for spark-submit — same distribution as
 # .devcontainer/post-create.sh and .github/workflows/test.yml.
-ENV SPARK_VERSION=3.5.1
+ENV SPARK_VERSION=3.5.7
 ENV SPARK_HOME=/opt/spark
 RUN curl -fsSL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz" \
       -o /tmp/spark.tgz \

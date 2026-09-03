@@ -23,7 +23,7 @@ changed afterward. Load your contract *before* building the session.
 1. ### Parse your contract
 
    ```scala
-   import com.example.contract.ContractParser
+   import com.invaract.contract.ContractParser
 
    val contract = ContractParser.parseFile("contracts/my_contract.yaml")
    ```
@@ -31,7 +31,7 @@ changed afterward. Load your contract *before* building the session.
 2. ### Install the check rule when you build the session
 
    ```scala
-   import com.example.sparkadapter.ContractEnforcementRule
+   import com.invaract.sparkadapter.ContractEnforcementRule
    import org.apache.spark.sql.SparkSession
 
    val spark = SparkSession
@@ -64,7 +64,7 @@ Spark's query analysis, so it surfaces as an ordinary Scala exception around wha
 triggered the write (`.write.save(...)`, `.write.parquet(...)`, and so on):
 
 ```scala
-import com.example.sparkadapter.ContractViolationException
+import com.invaract.sparkadapter.ContractViolationException
 import scala.util.{Failure, Success, Try}
 
 Try {
@@ -89,7 +89,7 @@ column-level lineage (for a report, a dashboard, or logging), register
 `SparkAdapterListener` alongside it — it observes the same writes *after* they succeed:
 
 ```scala
-import com.example.sparkadapter.SparkAdapterListener
+import com.invaract.sparkadapter.SparkAdapterListener
 
 val irListener = new SparkAdapterListener
 spark.listenerManager.register(irListener)
@@ -104,6 +104,28 @@ val result = irListener.lastWrite // Option[TranslationResult]
 
 See [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for
 why these are two separate mechanisms rather than one.
+
+## Version compatibility warnings
+
+Every time you build a `SparkSession` with `ContractEnforcementRule` installed (`forContract`
+or [dry-run mode](/reference/dev-commands/)), it also checks the running Spark version — and,
+if either is on the classpath, the running Delta Lake/Iceberg version — against this
+project's own [verified-version list](/reference/spark-version-support/). Running an
+unverified version doesn't block your job: verification proceeds normally, but a line like
+
+```
+WARN VersionCompatibilityGuard: Invaract is running against Spark 3.5.1, which is not in
+this project's verified-version list (verified: 3.5.6, 3.5.7, 3.5.9). This is advisory
+only - verification will continue normally - but Spark 3.5.1's compatibility with
+Invaract has not been checked by this project's own CI. See
+https://mlltx.github.io/Invaract/reference/spark-version-support/ for the current
+verified-version list.
+```
+
+is logged so you have a concrete signal (not a raw stack trace, if something does go
+wrong) that you're outside what's been tested. See
+[Troubleshooting](/troubleshooting/common-problems/) for the two known failure modes this
+warning would predict.
 
 ## What gets checked
 

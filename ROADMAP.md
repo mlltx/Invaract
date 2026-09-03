@@ -160,7 +160,8 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 - [ ] **Spark compatibility**
   - Supported Spark versions
-  - Test matrix for multiple Spark versions
+  - Test matrix for multiple Spark versions — done for the Spark 3.5.x
+    line, see Phase 1c's "Spark version compatibility matrix" sub-phase
   - Adapter pattern for different Spark APIs
 
 - [ ] **Scala compatibility**
@@ -400,10 +401,10 @@ The model supports:
 
 #### Deliverables
 
-- [x] **Contract parser** — `ContractParser` (YAML → object model), fail-fast on structural errors (`contract/src/main/scala/com/example/contract/ContractParser.scala`)
-- [x] **Contract object model** — `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule` (`contract/src/main/scala/com/example/contract/ContractModel.scala`)
-- [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/example/contract/ContractValidator.scala`)
-- [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/example/contract/ContractCompatibility.scala`)
+- [x] **Contract parser** — `ContractParser` (YAML → object model), fail-fast on structural errors (`contract/src/main/scala/com/invaract/contract/ContractParser.scala`)
+- [x] **Contract object model** — `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule` (`contract/src/main/scala/com/invaract/contract/ContractModel.scala`)
+- [x] **Contract validation** — `ContractValidator`, structural checks beyond parseability: duplicate names, empty schemas, contradictory flags, unknown types (`contract/src/main/scala/com/invaract/contract/ContractValidator.scala`)
+- [x] **Versioning semantics** — `ContractCompatibility`, diffs two contract versions and classifies the required MAJOR/MINOR/PATCH bump (`contract/src/main/scala/com/invaract/contract/ContractCompatibility.scala`)
 - [x] **Contract fixtures** — valid, additive, breaking, and invalid example contracts (`contract/src/test/resources/fixtures/`)
 - [x] **JSON Schema** — `contract/schema/invaract-contract.schema.json` (Draft 2020-12), the public, language-agnostic contract format spec for authoring/generating contracts outside Scala; validated against the same fixtures via `ContractSchemaSpec` so it can't silently drift from the parser/validator it documents. `demo/contracts/*.yaml` carry a `yaml-language-server` `$schema` hint for live editor validation. See docs/CONTRACT_MODEL.md's "JSON Schema" section for what it does and deliberately does not enforce.
 - [x] **Documentation** — [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md)
@@ -463,11 +464,11 @@ The IR represents:
 
 #### Deliverables
 
-- [x] **Identifiers** — `DatasetRef`, `ColumnRef` (`ir/src/main/scala/com/example/ir/Identifiers.scala`)
-- [x] **Expression algebra** — `Expr`, `ColumnReference`, `Literal`, `FunctionCall`, `AggregateCall`, `NamedExpr`, `SortOrder` (`ir/src/main/scala/com/example/ir/Expr.scala`)
-- [x] **Plan algebra** — `Plan`, `JoinType`, `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`, `Union`, `Sort`, `Window` (`ir/src/main/scala/com/example/ir/Plan.scala`)
-- [x] **Lineage tracing** — `Lineage.trace`, structural column-level provenance resolution through renames, aggregation, filters, joins, unions, and windows (`ir/src/main/scala/com/example/ir/Lineage.scala`)
-- [x] **Plan rendering** — `PlanPrinter`, ASCII tree rendering for debugging and demonstration (`ir/src/main/scala/com/example/ir/PlanPrinter.scala`)
+- [x] **Identifiers** — `DatasetRef`, `ColumnRef` (`ir/src/main/scala/com/invaract/ir/Identifiers.scala`)
+- [x] **Expression algebra** — `Expr`, `ColumnReference`, `Literal`, `FunctionCall`, `AggregateCall`, `NamedExpr`, `SortOrder` (`ir/src/main/scala/com/invaract/ir/Expr.scala`)
+- [x] **Plan algebra** — `Plan`, `JoinType`, `Read`, `Write`, `Project`, `Filter`, `Join`, `Aggregate`, `Union`, `Sort`, `Window` (`ir/src/main/scala/com/invaract/ir/Plan.scala`)
+- [x] **Lineage tracing** — `Lineage.trace`, structural column-level provenance resolution through renames, aggregation, filters, joins, unions, and windows (`ir/src/main/scala/com/invaract/ir/Lineage.scala`)
+- [x] **Plan rendering** — `PlanPrinter`, ASCII tree rendering for debugging and demonstration (`ir/src/main/scala/com/invaract/ir/PlanPrinter.scala`)
 - [x] **Documentation** — [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md)
 
 21 unit tests covering construction, lineage resolution (including the
@@ -508,14 +509,14 @@ assumption) that shaped the design.
       `Read.alias`, for self-join disambiguation), casts, unions, windows,
       and arbitrarily nested expressions — never throws; an unrecognized
       construct becomes `ir.Unsupported`/`ir.UnsupportedExpr` paired with a
-      `Diagnostic` (`spark-adapter/src/main/scala/com/example/sparkadapter/SparkPlanAdapter.scala`)
+      `Diagnostic` (`spark-adapter/src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala`)
 - [x] **Spark integration tests** — 9 tests against real Spark 3.5.1
       DataFrames (no mocks): the worked example, filter+cast, self-join
       alias disambiguation, union, window, a UDF (diagnostic, not a
       failure), an unsupported construct (`explode`, diagnostic +
       `Unsupported` node, not a crash), and a full write captured via
       `SparkAdapterListener`
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/SparkPlanAdapterSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/SparkPlanAdapterSpec.scala`)
 - [x] **Plan extraction examples** — see docs/SPARK_ADAPTER.md
 - [x] **Unsupported-operation diagnostics** — `Diagnostic`/`TranslationResult`;
       translation always produces a best-effort IR, never an exception
@@ -526,7 +527,7 @@ assumption) that shaped the design.
       `demo/output/report.json`. Run via `./dev/test` — real Spark
       execution, not simulated.
 - [x] Extended the IR itself: `ir.Unsupported` / `ir.UnsupportedExpr`
-      (`ir/src/main/scala/com/example/ir/{Plan,Expr}.scala`), a principled,
+      (`ir/src/main/scala/com/invaract/ir/{Plan,Expr}.scala`), a principled,
       engine-agnostic "could not translate this" node any future front-end
       can use, not a Spark-adapter-specific workaround
 
@@ -541,7 +542,7 @@ schema (required fields, unexpected fields rejectable, type compatibility,
 nullability compatibility).
 
 - [x] `StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options): VerificationResult`
-      (`spark-adapter/src/main/scala/com/example/sparkadapter/StructuralVerifier.scala`) —
+      (`spark-adapter/src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala`) —
       existence/location read directly off the `Plan`'s `Read`/`Write`
       nodes (no Spark data needed); schema checks (presence, type,
       nullability) against caller-supplied real `StructType`s, since the
@@ -578,7 +579,7 @@ nullability compatibility).
       real demo pipeline passing its own contract, and a golden test
       reproducing the spec's own worked example
       (`UNDECLARED_OUTPUT_COLUMN`/`"country"`) exactly
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/StructuralVerifierSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/StructuralVerifierSpec.scala`)
 
 Supersedes the earlier, narrower `ContractVerifier` (output schema only,
 no inputs, no nullability, no undeclared-column rejection) — removed
@@ -604,7 +605,7 @@ Spark application → Logical plan → Invaract → PASS → execute
 ```
 
 - [x] `ContractEnforcementRule`
-      (`spark-adapter/src/main/scala/com/example/sparkadapter/ContractEnforcementRule.scala`) —
+      (`spark-adapter/src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala`) —
       builds a Spark check rule
       (`SparkSessionExtensions.injectCheckRule`) that verifies a write
       against a contract *before* Spark runs it, throwing
@@ -649,7 +650,7 @@ Spark application → Logical plan → Invaract → PASS → execute
       contract that would always fail; `VerificationOptions` thread
       through the enforcement path; `forContract`'s public entry point
       works directly
-      (`spark-adapter/src/test/scala/com/example/sparkadapter/ContractEnforcementRuleSpec.scala`)
+      (`spark-adapter/src/test/scala/com/invaract/sparkadapter/ContractEnforcementRuleSpec.scala`)
 
 #### Sub-phase: Contract regression pack (done)
 
@@ -758,10 +759,11 @@ coverage (see the sub-phase above for the first three).
 
 The first of several regression-testing guardrails identified when
 assessing what "market leading" regression coverage would need beyond the
-example-based suites above: property-based fuzzing, mutation testing, and
-API-compatibility checking are done (this sub-phase, the one below it, and
-"API compatibility checking" further down); a multi-Spark-version
-compatibility matrix and coverage gating remain future scope. (An initial
+example-based suites above: property-based fuzzing, mutation testing,
+API-compatibility checking, and a multi-Spark-version compatibility
+matrix are done (this sub-phase, the one below it, "API compatibility
+checking" further down, and "Spark version compatibility matrix" further
+below); coverage gating remains future scope. (An initial
 idea to add golden-file snapshots of `report.json` was reconsidered and
 redirected — that file is an internal test-harness artifact with no
 external consumers, not a public interface worth pinning; the JSON Schema
@@ -890,7 +892,7 @@ catch it.
       `plugin`/`runner` excluded, consistent with every other guardrail
       here being scoped to the engine, not the example harness.
     - `mimaPreviousArtifacts` in each module's `build.sbt` points at its
-      own `com.example %% <module> % 0.1.0` coordinate — there's no Maven
+      own `com.invaract %% <module> % 0.1.0` coordinate — there's no Maven
       Central release yet to compare against, so CI's new
       `api-compatibility` job (`.github/workflows/test.yml`) publishes
       the PR's base branch to the runner's local Ivy cache under that
@@ -942,6 +944,147 @@ catch it.
     - Full detail in each module's doc: docs/CONTRACT_MODEL.md,
       docs/TRANSFORMATION_IR.md, and docs/SPARK_ADAPTER.md's "API
       compatibility" sections.
+
+#### Sub-phase: Spark version compatibility matrix (done)
+
+The last of the regression-testing guardrails named above: `SparkPlanAdapter`
+translates Catalyst's `LogicalPlan`, an internal Spark API not guaranteed
+stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
+"Empirical findings" section). Passing tests against the single Spark patch
+`build.sbt` happens to be pinned to proved nothing about any other patch.
+
+- [x] **CI job (`spark-version-matrix`, `.github/workflows/test.yml`)**
+      runs `spark-adapter`'s full `sbt test` suite — not a "core" subset —
+      against every Spark 3.5.x patch this repo claims to support: 3.5.6
+      (the floor), 3.5.7 (the current pin), and 3.5.9 (newest). One job
+      per patch, `fail-fast: false` so a failure on one patch doesn't hide
+      results for the others. Added to the `summary` gate like every other
+      guardrail here.
+    - **The floor is 3.5.6, not the originally-planned 3.5.1** — found by
+      the matrix itself, not assumed: the first real CI run of this job
+      failed its 3.5.1 leg with `ClassNotFoundException` on
+      `org.apache.spark.sql.catalyst.plans.logical.SupportsNonDeterministicExpression`
+      inside `DeltaSparkSessionExtension`, aborting every spec that builds
+      a Delta-extended session. Root cause: `delta-spark` 3.3.3 (this
+      module's pinned `deltaVersion`) is only built against Spark 3.5.6+ —
+      `spark-adapter/build.sbt`'s own comment already documented that fact
+      before the matrix existed to prove it by actually failing. Exactly
+      the kind of real, evidence-based correction this repo's own
+      dependency-pinning discipline expects, not a guess accepted without
+      running it.
+    - No Spark binary install needed, unlike `test`/`mutation-testing-
+      spark-adapter`/`docker-regression`: `sbt test` resolves Spark as an
+      ordinary managed dependency and spins up its own in-process
+      `local[*]` `SparkSession` — confirmed via a repo-wide search that no
+      spark-adapter source references `SPARK_HOME`.
+    - **Mechanism**: `spark-adapter/build.sbt`'s `sparkVersion` val reads
+      an `INVARACT_TEST_SPARK_VERSION` environment variable, falling back
+      to `3.5.7` when unset so a plain local `sbt test` is unaffected —
+      only the CI matrix sets it per leg.
+    - Iceberg/ClickHouse/Hive/Avro's test-scope dependencies
+      (`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
+      `spark-hive`/`spark-avro`) are published per-Spark-*minor*-line, not
+      per-patch, so they stay resolvable and correct across every patch in
+      the matrix — Delta is the one exception (see the floor note above),
+      and its own lower bound is now the matrix's floor rather than
+      something worked around per-leg. Splitting the suite into "core" vs.
+      "connector" subsets would only become necessary for a different
+      Spark *minor* line.
+    - Fixed a real, pre-existing inconsistency found while building this:
+      the `test`/`mutation-testing-spark-adapter`/`docker-regression`
+      jobs, `docker/Dockerfile`, `.devcontainer/post-create.sh`, and
+      `docs-site`'s installation guide all still installed Spark 3.5.1 as
+      the real `spark-submit` runtime, while `spark-adapter`'s (and
+      `runner`'s/`plugin`'s) own `build.sbt` had already moved to 3.5.7 for
+      a CVE fix (docs/CVE_REMEDIATION.md) — the bump never propagated.
+      Brought all of them to 3.5.7 to match.
+    - **Deferred, not attempted**: Spark 4.x. Every module here pins
+      `scalaVersion := "2.12.18"` with no cross-build configured, and
+      Spark 4.0 requires Scala 2.13 — supporting 4.x is a real
+      cross-compilation project (all 5 modules, likely new connector
+      version pins too) plus a fresh Catalyst plan-shape investigation,
+      not an additional matrix leg. Tracked here, not silently dropped.
+    - Full detail in docs/SPARK_ADAPTER.md's "Spark version compatibility"
+      section and docs-site's "Spark Version Support" reference page.
+
+#### Sub-phase: Delta Lake / Iceberg version compatibility matrix (done)
+
+The connector-library counterpart to the Spark-version matrix above:
+`spark-adapter/build.sbt` only ever pins one `deltaVersion`/`icebergVersion`
+at a time, with no CI evidence either connector's command recognition still
+holds against a different release of the library itself.
+
+- [x] **`delta-version-matrix` CI job** — `deltaVersion` reads
+      `INVARACT_TEST_DELTA_VERSION` (falls back to `3.3.3` when unset), and
+      the job runs the three specs that actually build a Delta-extended
+      session (`ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
+      `SparkPlanAdapterSpec` — Delta has no dedicated spec file, unlike
+      Iceberg). Ended up a **single-leg matrix against `3.3.3` only**, not
+      the originally-planned floor-plus-current pair — a real finding, not
+      a design choice:
+    - **`3.3.0` was tried as the floor candidate and failed for real**,
+      with the identical `TableCapabilityCheck` "does not support truncate
+      in batch mode" error that excluded the `3.2.x` line in the first
+      place. Root-caused rather than swapped for another guess: checked
+      delta-io/delta's own `LATEST_RELEASED_SPARK_VERSION` constant
+      directly at each `3.3.x` tag — `3.3.0`/`3.3.1`/`3.3.2` all still
+      target Spark `3.5.3`, only `3.3.3` moved to `3.5.6` (this repo's own
+      Spark floor). So `3.3.3` isn't just the current pin, it's the
+      *only* `delta-spark` release compatible with this repo's supported
+      Spark range at all — there's no working floor below it to matrix
+      against today.
+    - No newer leg exists either: confirmed via `delta-spark_2.12`'s own
+      `maven-metadata.xml` that `3.3.3` is already the latest published
+      release.
+    - `3.2.x` remains excluded for the same reason, now generalized: not
+      a Delta-version question this matrix answers, a Spark-compatibility
+      floor delta-io itself hasn't cleared yet for any pre-3.3.3 release.
+    - Kept as its own CI job anyway, not folded away: it gains a real
+      second leg for free the moment delta-io publishes a release that
+      also targets Spark 3.5.6+.
+- [x] **`iceberg-version-matrix` CI job** — `icebergVersion` reads
+      `INVARACT_TEST_ICEBERG_VERSION` (falls back to `1.11.0`), and the job
+      runs the two Iceberg-dependent specs (`IcebergConnectorSpec`,
+      `SparkAdapterListenerIcebergSpec`) against `1.10.2` and `1.11.0`.
+      Same "no newer release exists" finding, confirmed via
+      `iceberg-spark-runtime-3.5_2.12`'s own `maven-metadata.xml`.
+    - **Deliberately excluded: `1.10.0`.** Its real, already-diagnosed Avro
+      API bug (`apache/iceberg#14232`) — internal to that Iceberg release,
+      unlike Delta 3.2.0's Spark-side issue — would have made it a
+      genuinely useful "known-bad, expected-to-fail" regression-proof leg,
+      the same validation the fuzz spec and API-compatibility check
+      already got. Traded away deliberately (user's call) for a simpler
+      job: every leg in both new matrix jobs is expected to pass, no
+      special-case failure handling needed, same shape as every other
+      guardrail here.
+- [x] Both jobs added to the `summary` gate, same as every other guardrail.
+- [x] **Two pre-existing stale comments found and fixed while researching
+      this, unrelated to version compatibility itself but directly
+      adjacent to the files this work touches:**
+    - `docs/connectors/delta.md` claimed in three separate places (a
+      "Known limitation" paragraph, the operation-surface ledger's
+      "Format-specific DML" row, and the file's closing "Net assessment")
+      that Delta's row-level DML has no rule-based semantic verification —
+      false since the "Interpreting `rules`" and "Predicate-logic
+      `merge_condition`" sub-phases landed (`merge_condition`/
+      `forbid_unconditional_delete`/`allowed_update_columns` are genuinely
+      checked against live Delta MERGE/UPDATE/DELETE via
+      `RowMutationSupport.classifyDelta`/`RuleVerifier`, confirmed by
+      reading that code directly, not assumed from the stale prose). All
+      three corrected to state the real, narrower remaining gap (row-level
+      targeting, DELETE-predicate satisfiability, rule vocabulary beyond
+      these three types).
+    - `spark-adapter/src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala`'s
+      comment said "the other ten [Iceberg CALL procedures]... stay
+      unmodeled and fail closed" — stale relative to the later CALL-
+      procedure-classification sub-phases below: 9 of those 10 are now
+      genuinely verified via `StateChangingCallSupport.scala`, and the
+      10th (`rewrite_table_path`) moved to the safe list. Corrected; no
+      functional code changed, the safe-list itself was already accurate.
+- [x] Full detail in `docs/connectors/delta.md` and
+      `docs/connectors/iceberg.md`'s own "Version compatibility" sections,
+      and `docs/COMPATIBILITY.md`'s "Connector Library Compatibility"
+      section.
 
 #### Sub-phase: Delta Lake support (done)
 

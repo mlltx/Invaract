@@ -74,9 +74,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.1-hadoop3
+          key: spark-${{ runner.os }}-3.5.7-hadoop3
 
-      - name: Download Spark 3.5.1
+      - name: Download Spark 3.5.7
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
@@ -87,7 +87,7 @@ jobs:
         # path everywhere; it's a no-op passthrough on Linux/macOS where
         # cygpath doesn't exist.
         run: |
-          SPARK_VERSION="3.5.1"
+          SPARK_VERSION="3.5.7"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
 
@@ -98,7 +98,7 @@ jobs:
           fi
           SPARK_DIR="${RUNNER_TEMP_POSIX}/spark"
 
-          echo "Installing Apache Spark 3.5.1..."
+          echo "Installing Apache Spark 3.5.7..."
           curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP_POSIX}/spark.tgz"
           mkdir -p "$SPARK_DIR"
           tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
@@ -211,7 +211,7 @@ jobs:
 
       # Validates the same path a contributor with only Docker installed
       # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
-      # sbt, Spark 3.5.1, every module built at image-build time) and run
+      # sbt, Spark 3.5.7, every module built at image-build time) and run
       # it. docker run's exit code is dev/regression's — non-zero fails
       # this step, and therefore the job, exactly as a local run would.
       #
@@ -340,13 +340,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.1-hadoop3
+          key: spark-${{ runner.os }}-3.5.7-hadoop3
 
-      - name: Download Spark 3.5.1
+      - name: Download Spark 3.5.7
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          SPARK_VERSION="3.5.1"
+          SPARK_VERSION="3.5.7"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
           SPARK_DIR="${RUNNER_TEMP}/spark"
@@ -441,6 +441,325 @@ jobs:
           name: mutation-report-spark-adapter
           path: spark-adapter/target/stryker4s-report/**
           if-no-files-found: warn
+
+  spark-version-matrix:
+    name: Spark version compatibility (spark-adapter, ${{ matrix.spark-version }})
+    runs-on: ubuntu-latest
+    # This is the "multi-Spark-version compatibility matrix" ROADMAP.md and
+    # CLAUDE.md's "Supporting Multiple Spark Versions" section named as
+    # still-outstanding: proof that spark-adapter's own suite actually
+    # passes against more than the single Spark patch its build.sbt happens
+    # to be pinned to, catching Catalyst plan-shape drift across patches
+    # the adapter would otherwise silently mistranslate. Scoped to
+    # spark-adapter's own `sbt test` (not the full 5-module ./dev/test
+    # harness, which stays pinned to one real Spark runtime by design) and
+    # to the Spark 3.5.x line specifically (the currently-supported floor -
+    # see docs/SPARK_ADAPTER.md's "Spark version compatibility" section for
+    # why a 4.x line is out of scope here).
+    #
+    # No Spark binary install here, unlike `test`/`mutation-testing-spark-
+    # adapter`/`docker-regression` above: those exist to run real
+    # spark-submit against DemoJobHarness, which does need SPARK_HOME on
+    # PATH. This job only runs spark-adapter's own sbt test suite, which
+    # resolves Spark as an ordinary managed dependency (the `provided`/
+    # `test`-scope `sparkVersion` val in spark-adapter/build.sbt, now
+    # overridable via INVARACT_TEST_SPARK_VERSION below) and spins up its
+    # own in-process `local[*]` SparkSession - confirmed via a repo-wide
+    # search that no spark-adapter source references SPARK_HOME, so a real
+    # Spark distribution on PATH is not something this suite needs.
+    # 3.5.6, not 3.5.1: an initial attempt at 3.5.1 as the floor failed with
+    # a real ClassNotFoundException (org.apache.spark.sql.catalyst.plans.
+    # logical.SupportsNonDeterministicExpression) inside
+    # DeltaSparkSessionExtension whenever a spec builds a Delta-extended
+    # session - confirmed via a real CI run, not assumed. delta-spark 3.3.3
+    # (spark-adapter/build.sbt's pinned version) is only built against
+    # Spark 3.5.6+ (see that file's own delta-version comment, which
+    # already documented this before the matrix existed to prove it: "3.3.3
+    # against 3.5.6 - the closest published delta-spark release"). 3.5.6 is
+    # the real, evidenced floor for this module's full suite, not 3.5.1.
+    strategy:
+      fail-fast: false
+      matrix:
+        spark-version: ["3.5.6", "3.5.7", "3.5.9"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # spark-adapter's build.sbt reads ../ir and ../contract's jars
+      # directly off disk (unmanagedJars — there's no aggregating root
+      # build), so both need to be assembled first, same as the mutation-
+      # testing job above. These are Spark-version-independent (contract/ir
+      # have no Spark dependency at all), so they're built once per matrix
+      # leg rather than shared - simpler than rigging a cross-job artifact
+      # hand-off for a build that only takes a few seconds.
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
+
+      - name: Test spark-adapter against Spark ${{ matrix.spark-version }}
+        shell: bash
+        env:
+          INVARACT_TEST_SPARK_VERSION: ${{ matrix.spark-version }}
+        run: cd spark-adapter && sbt test
+
+  delta-version-matrix:
+    name: Delta Lake version compatibility (spark-adapter, ${{ matrix.delta-version }})
+    runs-on: ubuntu-latest
+    # The connector-library counterpart to spark-version-matrix above: that
+    # job proves spark-adapter's translation holds across Spark patches;
+    # this one proves it holds across delta-spark releases specifically,
+    # since spark-adapter/build.sbt only ever pinned one at a time (3.2.0,
+    # then 3.3.3) and never had CI evidence either still works against the
+    # other. See docs/connectors/delta.md's "Version compatibility" section
+    # for the full rationale, including why 3.2.x is excluded (a known
+    # Spark-side incompatibility unrelated to the Delta version itself, not
+    # something this matrix is built to answer) and why there's no "newer"
+    # leg (delta-spark_2.12's own maven-metadata.xml confirms 3.3.3 is
+    # already the latest published release).
+    #
+    # Scoped to `testOnly` against the three specs that actually build a
+    # Delta-extended session (ContractEnforcementRuleSpec,
+    # SparkAdapterListenerSpec, SparkPlanAdapterSpec) rather than the full
+    # `sbt test` spark-version-matrix runs: Delta has no dedicated spec
+    # file, and a full-suite rerun per Delta version would spend most of
+    # its ~30-40 minutes on code no Delta-version change can affect.
+    #
+    # Single-leg matrix, not a guess: this job's first real run tried
+    # 3.3.0 as a floor candidate and it failed with the exact same "Table
+    # ... does not support truncate in batch mode" TableCapabilityCheck
+    # error that excluded the 3.2.x line. Checked delta-io/delta's own
+    # LATEST_RELEASED_SPARK_VERSION constant at each 3.3.x tag directly
+    # (not assumed): 3.3.0/3.3.1/3.3.2 all target Spark 3.5.3 - only 3.3.3
+    # moved to 3.5.6. So 3.3.3 isn't just the current pin, it's currently
+    # the *only* delta-spark release compatible with this repo's Spark
+    # floor at all - there is no second version to matrix against today.
+    # Kept as its own job (not folded back into a single sbt test run)
+    # so it gains a second leg for free the moment delta-io publishes a
+    # release that also targets Spark 3.5.6+.
+    strategy:
+      fail-fast: false
+      matrix:
+        delta-version: ["3.3.3"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
+
+      - name: Test spark-adapter's Delta specs against delta-spark ${{ matrix.delta-version }}
+        shell: bash
+        env:
+          INVARACT_TEST_DELTA_VERSION: ${{ matrix.delta-version }}
+        run: |
+          cd spark-adapter
+          sbt "testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec"
+
+  iceberg-version-matrix:
+    name: Iceberg version compatibility (spark-adapter, ${{ matrix.iceberg-version }})
+    runs-on: ubuntu-latest
+    # Same rationale as delta-version-matrix above, for Iceberg. See
+    # docs/connectors/iceberg.md's "Version compatibility" section for why
+    # 1.10.0 is excluded (a real, known Avro-API bug inside that release
+    # itself, apache/iceberg#14232 - deliberately not used as an
+    # expected-failure regression-proof leg here, to keep this job the
+    # same shape as every other matrix job: every leg expected to pass, no
+    # special-case failure handling) and why there's no "newer" leg
+    # (iceberg-spark-runtime-3.5_2.12's own maven-metadata.xml confirms
+    # 1.11.0 is already the latest published release).
+    #
+    # Scoped to `testOnly` against the two specs that actually reference
+    # Iceberg (IcebergConnectorSpec, SparkAdapterListenerIcebergSpec) -
+    # spark-adapter/build.sbt's own JDK17+ exclusion-filter comment already
+    # confirms these are the only two Iceberg-dependent test sources.
+    # Runs on JDK 21 (set up below), satisfying Iceberg's own JDK17+
+    # class-file-version requirement with no extra gating needed.
+    #
+    # 1.9.2 (latest patch of the prior 1.9.x minor line) was tried as a
+    # candidate leg to push the verified floor down one step below 1.10.2,
+    # mirroring exactly how 1.10.2 itself was chosen - and failed for real:
+    # IcebergConnectorSpec's JdbcCatalog-backed tests hit a genuine bug in
+    # 1.9.2's own JdbcCatalog.initializeCatalogTables (a lowercase-only
+    # table-existence check that misses H2's uppercase-folded table name,
+    # so it tries to re-create an already-existing table and H2 rejects
+    # it) - fixed in 1.10.2's atomicCreateTable. See docs/connectors/
+    # iceberg.md's "Version compatibility" section, "Investigated and
+    # rejected: 1.9.2" for the full root-cause comparison of both
+    # versions' real source. 1.10.2 stays the floor; not re-added here.
+    strategy:
+      fail-fast: false
+      matrix:
+        iceberg-version: ["1.10.2", "1.11.0"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
+
+      - name: Test spark-adapter's Iceberg specs against iceberg-spark-runtime ${{ matrix.iceberg-version }}
+        shell: bash
+        env:
+          INVARACT_TEST_ICEBERG_VERSION: ${{ matrix.iceberg-version }}
+        run: |
+          cd spark-adapter
+          sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec"
+
+  version-matrix-drift-check:
+    name: Version matrix drift check
+    runs-on: ubuntu-latest
+    # spark-adapter/src/main/resources/supported-versions.properties is the
+    # single canonical claim of which Spark/Delta/Iceberg versions this repo
+    # has real CI evidence for (build.sbt's defaults, the runtime
+    # compatibility guard, and the generated docs tables all read it - see
+    # that file's own header comment). The three *-version-matrix jobs above
+    # stay hand-written strategy.matrix arrays rather than being generated
+    # from that file (lowest-risk choice: they already work, and a dynamic
+    # fromJSON()-driven matrix would restructure proven jobs for marginal
+    # benefit) - which means nothing stops the two from silently disagreeing.
+    # That's not hypothetical: this session already found and fixed a stale
+    # hand-copied version claim twice before this file existed. This job
+    # fails CI the moment supported-versions.properties claims a "verified"
+    # version that isn't actually exercised by the matching *-version-matrix
+    # job's own array, so a doc claiming CI evidence it doesn't have is a
+    # same-PR failure instead of a quietly stale claim.
+    #
+    # One-directional (verified ⊆ matrix), not exact-set equality: a matrix
+    # job's array is allowed to carry a *candidate* version supported-
+    # versions.properties doesn't claim yet - that's exactly the real
+    # workflow used to find this repo's actual Spark/Delta floors (a
+    # version is added to the matrix first, proven or disproven by a real
+    # CI run, and only then promoted into the properties file - see
+    # docs/connectors/iceberg.md's "Version compatibility" section for the
+    # Iceberg case this was written for). Exact equality would make that
+    # workflow impossible post-this-job: the moment you added an
+    # unproven candidate leg to try it out, this check would fail before
+    # the real Iceberg job even got a chance to run.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Compare supported-versions.properties against this workflow's matrix arrays
+        shell: python3 {0}
+        run: |
+          import re
+          import sys
+
+          def parse_properties(path):
+              values = {}
+              with open(path) as f:
+                  for line in f:
+                      line = line.strip()
+                      if not line or line.startswith("#") or "=" not in line:
+                          continue
+                      key, _, value = line.partition("=")
+                      values[key.strip()] = [v for v in value.strip().split(",") if v]
+              return values
+
+          def parse_matrix(path, job, key):
+              with open(path) as f:
+                  text = f.read()
+              # Isolate the named job's block (up to the next top-level - 2-space
+              # indented - job key) so this can't accidentally match another
+              # job's matrix array of the same key name.
+              job_match = re.search(rf"(?m)^  {re.escape(job)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text, re.S)
+              if not job_match:
+                  sys.exit(f"Could not find job '{job}' in {path}")
+              block = job_match.group(1)
+              array_match = re.search(rf"{re.escape(key)}:\s*\[([^\]]*)\]", block)
+              if not array_match:
+                  sys.exit(f"Could not find matrix key '{key}' in job '{job}' in {path}")
+              return [v.strip().strip('"') for v in array_match.group(1).split(",") if v.strip()]
+
+          props = parse_properties("spark-adapter/src/main/resources/supported-versions.properties")
+          workflow_path = ".github/workflows/test.yml"
+
+          checks = [
+              ("spark", "spark-version-matrix", "spark-version"),
+              ("delta", "delta-version-matrix", "delta-version"),
+              ("iceberg", "iceberg-version-matrix", "iceberg-version"),
+          ]
+
+          drifted = False
+          for prop_prefix, job, key in checks:
+              expected = set(props.get(f"{prop_prefix}.verified", []))
+              actual = set(parse_matrix(workflow_path, job, key))
+              missing = expected - actual
+              if missing:
+                  drifted = True
+                  print(f"DRIFT in {prop_prefix}: supported-versions.properties claims {sorted(missing)} as "
+                        f"verified, but {job}'s {key} matrix ({sorted(actual)}) doesn't test it")
+              primary_key = f"{prop_prefix}.primary"
+              primary = props.get(primary_key, [None])[0]
+              if primary not in expected:
+                  drifted = True
+                  print(f"DRIFT in {prop_prefix}: {primary_key}={primary} is not in its own 'verified' list {sorted(expected)}")
+
+          if drifted:
+              sys.exit(1)
+          print("No drift: every version supported-versions.properties claims as verified is exercised by its *-version-matrix job.")
+
+  docs-drift-check:
+    name: Version docs drift check
+    runs-on: ubuntu-latest
+    # dev/generate-version-docs regenerates the "Supported versions"
+    # sections of docs-site/src/content/docs/reference/spark-version-
+    # support.mdx, connector-support.mdx, and docs/COMPATIBILITY.md from
+    # supported-versions.properties (see that file's own header comment,
+    # and dev/generate-version-docs's own comment for the exact scope - the
+    # investigative prose around each table stays hand-written, only the
+    # version enumeration and status badges are generated). This job runs
+    # unconditionally, the same as version-matrix-drift-check above, rather
+    # than being folded into deploy-docs.yml/preview-docs.yml: those only
+    # trigger on pushes that touch docs-site/ itself, so a change to
+    # supported-versions.properties alone (with no docs-site/ edit in the
+    # same push) would never be checked there - exactly the drift this job
+    # exists to catch.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check generated version docs are up to date
+        shell: bash
+        run: ./dev/generate-version-docs --check
 
   api-compatibility:
     name: API compatibility (contract, ir, spark-adapter)
@@ -671,12 +990,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, api-compatibility, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else
