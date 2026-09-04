@@ -1415,6 +1415,42 @@ partitions, codegen), which found no real lever there.
       ARCHITECTURE.md estimate (`~1-5 min`) that never matched the real
       observed time, unrelated to today's split.
 
+#### Sub-phase: Shard `spark-adapter`'s whole-module mutation run (done)
+
+Closed the gap the sub-phase above left open on purpose: `mutation-
+testing-spark-adapter`'s own whole-module run, not the `ir`/`spark-
+adapter` split, was still the real ~30-40 min bottleneck and the thing
+most painful to recover when a transient failure hit partway through.
+
+- [x] **Split `mutation-testing-spark-adapter` into a 4-way matrix job**,
+      each leg's `sbt stryker --mutate` scoped to a fixed subset of the
+      module's 17 source files, hand-balanced by line count (not file
+      count - files range 50 to 1100+ lines) into ~1300-line groups.
+      Doesn't reduce the underlying work (Stryker4s still reruns the full
+      suite once per mutant) - parallelizes it across four runners
+      instead of one, with `fail-fast: false` so one shard's failure
+      doesn't cancel the other three.
+- [x] **Kept the module-level 70% gate intact without an aggregation
+      step**: build.sbt's `strykerThresholdsBreak` already applies
+      unmodified to each shard's `--mutate`-scoped run, and because
+      Stryker4s's score is a mutant-count-weighted average, every shard
+      independently clearing 70% is sufficient for the whole module
+      clearing 70% - actually a bit stricter, since it also catches a
+      single shard dipping locally even if others would have pulled a
+      combined average back up.
+- [x] **Pulled the changed-files incremental check into its own parallel
+      job** (`mutation-testing-spark-adapter-incremental`): it was never
+      the source of the wall-clock cost (already scoped to just what a PR
+      touched), so it no longer waits in line behind a shard it happened
+      to be bolted onto.
+- [x] **Added `mutation-shard-drift-check`**: parses the workflow's own
+      `mutation-testing-spark-adapter` matrix (same regex-isolate-the-
+      job-block approach as `version-matrix-drift-check`) and fails CI if
+      any real `spark-adapter/src/main/scala` file is claimed by zero
+      shards (silently unmutated - the actual risk a hand-written
+      per-file list introduces) or more than one (duplicated, wasted
+      work).
+
 #### Sub-phase: Verify `rollback_to_snapshot` against a contract — pilot,
 #### with a mid-course design correction (done)
 

@@ -316,9 +316,70 @@ jobs:
           path: ir/target/stryker4s-report/**
           if-no-files-found: warn
 
+  # spark-adapter's own whole-module Stryker run was, by itself, the real
+  # CI bottleneck this repo had left to fix (docs/SPARK_ADAPTER.md's "CI
+  # mutation-testing wall-clock" section explicitly flagged it as "what
+  # this doesn't change" when ir/spark-adapter were split into separate
+  # jobs: "~30-40 min ... genuine, unavoidable work" at the time, because
+  # it ran every generated mutant, for every one of the module's 17
+  # source files, sequentially on a single runner). Splitting it further
+  # doesn't reduce that work (Stryker4s still reruns the full real-Spark
+  # test suite once per mutant, same as before) - it parallelizes it: each
+  # shard below runs `--mutate` scoped to a fixed subset of files (see
+  # mutation-testing-spark-adapter's `matrix.include`, balanced by line
+  # count into four ~1300-line groups so no shard dominates the others'
+  # wall-clock), on its own runner, at the same time as the other three.
+  # `fail-fast: false` on the matrix means one shard hitting a transient
+  # failure (a flaky Spark-session startup, a runner hiccup) no longer
+  # takes the other three down with it, and GitHub's "re-run failed jobs"
+  # only has to redo that one ~8-10 min shard instead of the entire
+  # previous ~30-40 min monolith - the actual ask behind this split, not
+  # just the wall-clock reduction.
+  #
+  # Because Stryker4s's mutation score is a mutant-count-weighted average,
+  # every shard clearing build.sbt's existing 70% break threshold on its
+  # own subset is a *sufficient* condition for the whole module clearing
+  # 70% overall (a weighted average of numbers that are each >= 70% is
+  # itself >= 70%) - so gating each shard independently, with no CLI
+  # threshold override needed, preserves the module-level guarantee
+  # CLAUDE.md's "Mutation Testing Requirement" describes. It's actually a
+  # bit stricter than the old single whole-module score: a shard that dips
+  # locally below 70% now fails CI even if other shards' higher scores
+  # would have pulled a single aggregate average back above the bar - the
+  # same "a large, well-tested module can absorb a weakly-tested new file"
+  # gap CLAUDE.md already calls out mutation testing as only partially
+  # solving, narrowed a bit further for free.
+  #
+  # The four-way split trades a single ~30-40 min compute run for four
+  # ~8-10 min ones, each paying its own Spark-distribution-restore +
+  # contract/ir-assembly setup cost - not free, but the Spark distribution
+  # itself is cached (actions/cache, keyed on OS + version, same as the
+  # `test` job above) and sbt's own cache is warmed by actions/setup-java's
+  # `cache: 'sbt'`, so each shard's repeated setup is a cache restore, not
+  # a fresh network download/compile every time.
+  #
+  # mutation-shard-drift-check (below) is the safety net for the one real
+  # risk a hand-written, per-file shard list introduces: a new file added
+  # to spark-adapter/src/main/scala that nobody assigns to a shard would
+  # otherwise silently never get mutated at all, rather than failing loudly
+  # the way an unassigned file should - the same class of silent-drift bug
+  # version-matrix-drift-check already exists to catch for the Spark/Delta/
+  # Iceberg version matrices.
   mutation-testing-spark-adapter:
-    name: Mutation testing (spark-adapter)
+    name: Mutation testing (spark-adapter, ${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: shard-1
+            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala"
+          - name: shard-2
+            files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala"
+          - name: shard-3
+            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala"
+          - name: shard-4
+            files: "src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala,src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -371,9 +432,82 @@ jobs:
           cd contract && sbt assembly && cd ..
           cd ir && sbt assembly
 
-      - name: Mutation test spark-adapter
+      # No --thresholds override here (unlike the incremental step below):
+      # build.sbt's own strykerThresholdsHigh/Low/Break (90/80/70) already
+      # apply to whatever --mutate scopes this run to, which is exactly
+      # what makes per-shard gating at the module's real break threshold
+      # work without duplicating it in the workflow.
+      - name: Mutation test spark-adapter (${{ matrix.name }})
         shell: bash
-        run: cd spark-adapter && sbt "stryker --concurrency 4"
+        run: |
+          cd spark-adapter
+          sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 4"
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-spark-adapter-${{ matrix.name }}
+          path: spark-adapter/target/stryker4s-report/**
+          if-no-files-found: warn
+
+  # The changed-files, 70%-on-new-code incremental check pulled out of the
+  # (now sharded) whole-module job above into its own job: it doesn't share
+  # anything with the shards - it always mutates only what a PR actually
+  # touched, so it was never the source of the 30-40 min bottleneck the
+  # sharding above addresses, and running it standalone lets it start
+  # immediately in parallel with all four shards instead of waiting in line
+  # behind whichever shard it used to be bolted onto.
+  mutation-testing-spark-adapter-incremental:
+    name: Mutation testing (spark-adapter, incremental)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Cache Spark distribution
+        id: cache-spark
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spark
+          key: spark-${{ runner.os }}-3.5.7-hadoop3
+
+      - name: Download Spark 3.5.7
+        if: steps.cache-spark.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          SPARK_VERSION="3.5.7"
+          SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
+          SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
+          SPARK_DIR="${RUNNER_TEMP}/spark"
+          curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP}/spark.tgz"
+          mkdir -p "$SPARK_DIR"
+          tar -xzf "${RUNNER_TEMP}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
+          rm -f "${RUNNER_TEMP}/spark.tgz"
+
+      - name: Configure Spark environment
+        shell: bash
+        run: |
+          echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
+          echo "${RUNNER_TEMP}/spark/bin" >> "$GITHUB_PATH"
+
+      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+        shell: bash
+        run: |
+          cd contract && sbt assembly && cd ..
+          cd ir && sbt assembly
 
       # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
       # specific file(s) a feature adds or changes to ir/spark-adapter -
@@ -381,8 +515,8 @@ jobs:
       # incremental/diff mode (see docs/SPARK_ADAPTER.md). This automates
       # it for PRs: diff against a base commit, scope --mutate to just the
       # changed .scala files (brace-expansion glob for multiple files -
-      # confirmed to work locally), and override the whole-module 50%
-      # break threshold with a stricter 70% via CLI flags only, leaving
+      # confirmed to work locally), and override the whole-module break
+      # threshold with a stricter 70% via CLI flags only, leaving
       # build.sbt's whole-module gate untouched. Runs only on pull_request
       # events, where a base commit is available - a bare push has no
       # equivalent reference point.
@@ -438,9 +572,89 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: mutation-report-spark-adapter
+          name: mutation-report-spark-adapter-incremental
           path: spark-adapter/target/stryker4s-report/**
           if-no-files-found: warn
+
+  mutation-shard-drift-check:
+    name: Mutation shard drift check
+    runs-on: ubuntu-latest
+    # Companion to version-matrix-drift-check further down: that job
+    # catches a version claim drifting from what's actually tested, this
+    # one catches a spark-adapter source file drifting from
+    # mutation-testing-spark-adapter's hand-written per-shard `files` lists
+    # above. Parses this workflow file's own YAML the same way
+    # version-matrix-drift-check does (regex-isolate the job block, pull
+    # every matrix entry's values out of it) rather than maintaining a
+    # second, separate list of files somewhere else that could itself drift
+    # from the matrix - the workflow file is the one source of truth for
+    # which files each shard covers.
+    #
+    # Fails on any file under spark-adapter/src/main/scala not claimed by
+    # exactly one shard: zero shards means a new file silently never gets
+    # mutated at all (the actual failure mode this guards against); more
+    # than one means the same mutants get generated and killed twice for no
+    # benefit, at real wall-clock cost, on whichever shard runs longest.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Compare mutation-testing-spark-adapter's shard file lists against real spark-adapter sources
+        shell: python3 {0}
+        run: |
+          import re
+          import subprocess
+          import sys
+
+          workflow_path = ".github/workflows/test.yml"
+          with open(workflow_path) as f:
+              text = f.read()
+
+          job_match = re.search(
+              r"(?m)^  mutation-testing-spark-adapter:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+              text,
+              re.S,
+          )
+          if not job_match:
+              sys.exit("Could not find job 'mutation-testing-spark-adapter' in workflow")
+          block = job_match.group(1)
+
+          shard_file_lists = re.findall(r'files:\s*"([^"]*)"', block)
+          if not shard_file_lists:
+              sys.exit("Could not find any shard 'files' entries in job 'mutation-testing-spark-adapter'")
+
+          claimed = []
+          for shard in shard_file_lists:
+              claimed.extend(f.strip() for f in shard.split(",") if f.strip())
+
+          duplicates = sorted({f for f in claimed if claimed.count(f) > 1})
+          if duplicates:
+              sys.exit(f"DRIFT: file(s) claimed by more than one mutation-testing shard: {duplicates}")
+
+          claimed_set = set(claimed)
+
+          actual = subprocess.run(
+              ["git", "ls-files", "spark-adapter/src/main/scala"],
+              capture_output=True,
+              text=True,
+              check=True,
+          ).stdout.splitlines()
+          actual_set = {p[len("spark-adapter/"):] for p in actual if p.endswith(".scala")}
+
+          missing = sorted(actual_set - claimed_set)
+          stale = sorted(claimed_set - actual_set)
+
+          drifted = False
+          if missing:
+              drifted = True
+              print(f"DRIFT: file(s) under spark-adapter/src/main/scala not assigned to any mutation-testing shard: {missing}")
+          if stale:
+              drifted = True
+              print(f"DRIFT: mutation-testing shard references file(s) that no longer exist: {stale}")
+
+          if drifted:
+              sys.exit(1)
+          print(f"No drift: all {len(actual_set)} spark-adapter source file(s) are assigned to exactly one mutation-testing shard.")
 
   spark-version-matrix:
     name: Spark version compatibility (spark-adapter, ${{ matrix.spark-version }})
@@ -990,12 +1204,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

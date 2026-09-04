@@ -2025,12 +2025,69 @@ cache/download/configure sequence `spark-adapter`'s job still needs —
 much larger cost rather than adding to it serially. `summary`'s `needs:`
 list and result-check condition were updated to the two new job names.
 
-**What this doesn't change**: `spark-adapter`'s own whole-module run is
-still the real bottleneck (~30-40 min) — it runs the full test suite once
-per generated mutant against real Delta- and Iceberg-backed Spark
-sessions, which is genuine, unavoidable work, not overhead. These two
-levers reduce wasted time around that core cost (serialization,
-under-utilized cores), not the cost itself.
+**What this didn't change, at the time**: `spark-adapter`'s own
+whole-module run was still the real bottleneck (~30-40 min) — it runs the
+full test suite once per generated mutant against real Delta- and
+Iceberg-backed Spark sessions, which is genuine, unavoidable work, not
+overhead. The two levers above reduced wasted time around that core cost
+(serialization, under-utilized cores), not the cost itself.
+
+#### Sharding `spark-adapter`'s whole-module run
+
+The bottleneck named above was addressed directly by splitting
+`mutation-testing-spark-adapter` itself into a 4-way matrix job
+(`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
+scoped to a fixed subset of the module's 17 source files
+(`strategy.matrix.include`, one entry per shard). This doesn't reduce the
+underlying work — Stryker4s still reruns the full real-Spark test suite
+once per mutant, exactly as before — it parallelizes it across four
+runners instead of one. The four shards were hand-balanced by source line
+count (not file count, since the module's files range from 50 to over
+1100 lines) into roughly 1300-line groups, the same order of magnitude as
+`WriteCommandSupport.scala` alone, so no single shard dominates the
+others' wall-clock.
+
+Splitting by file, rather than by mutator category or some other axis,
+composes with the existing gating story for free: build.sbt's
+`strykerThresholdsBreak` (70%) still applies unmodified to each shard's
+`--mutate`-scoped run (no `--thresholds` CLI override needed, unlike the
+incremental check below), and because Stryker4s's mutation score is a
+mutant-count-weighted average, every shard independently clearing 70% is
+a *sufficient* condition for the whole module clearing 70% overall — the
+module-level guarantee CLAUDE.md's "Mutation Testing Requirement"
+describes still holds, just enforced per-shard instead of via one
+aggregate number. It's actually a little stricter: a shard that dips
+locally below 70% now fails CI even in a hypothetical case where other
+shards' higher scores would have pulled a single whole-module average
+back above the bar.
+
+The changed-files incremental check (above) moved out into its own
+standalone job (`mutation-testing-spark-adapter-incremental`) rather than
+being sharded too — it already only mutates what a PR touched, so it was
+never the source of the 30-40 minute cost, and running it standalone lets
+it start immediately alongside all four shards instead of waiting behind
+whichever shard it used to run after.
+
+A new `mutation-shard-drift-check` job guards the one real risk a
+hand-written per-shard file list introduces: a new file added to
+`spark-adapter/src/main/scala` that nobody assigns to a shard would
+otherwise silently never get mutated — no error, just permanently
+untested by Stryker. It parses the workflow file's own
+`mutation-testing-spark-adapter` matrix (the same regex-isolate-the-job-
+block approach `version-matrix-drift-check` already uses lower in this
+file, so there's exactly one source of truth for the shard assignment,
+not two lists that could drift from each other) and fails if any real
+`.scala` file under `spark-adapter/src/main/scala` is claimed by zero
+shards (silently unmutated) or more than one (wasted, duplicated work on
+whichever shard runs longest).
+
+**What this changes for recovery, specifically**: previously, a
+transient failure anywhere in the ~30-40 minute whole-module run (a flaky
+Spark-session startup, a runner resource hiccup) meant re-running the
+entire job from scratch. Now each shard is an independent ~8-10 minute
+job with `fail-fast: false`, so a transient failure in one shard doesn't
+cancel the other three, and GitHub's "re-run failed jobs" only has to
+redo the one shard that actually failed.
 
 #### Mutation testing: the expression-algebra rework
 

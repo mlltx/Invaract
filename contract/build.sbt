@@ -50,26 +50,31 @@ assembly / assemblyMergeStrategy := {
 // alone - see CLAUDE.md's "API Compatibility Requirement".
 //
 // This module was renamed invariant-contract -> invaract-contract by the
-// rebrand PR, which has now landed on the base branch (main): base-ref's
-// own build.sbt already publishes under organization "com.invaract",
-// version "0.2.0" (CI's api-compatibility job runs `sbt publishLocal`
-// against base-ref's own build.sbt settings, not this file's), so this
-// must match that, not the pre-rebrand "com.example"/"0.1.0" coordinate -
-// see this file's own prior revision for the transitional state and the
-// "FOLLOW-UP" comment that called for this exact flip once the rebrand PR
-// reached the base branch (confirmed via `git merge-base` against
-// origin/main: it has).
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.2.0")
+// rebrand PR, which landed on the base branch (main) some time ago -
+// base-ref's own build.sbt publishes under organization "com.invaract"
+// (CI's api-compatibility job runs `sbt publishLocal` against base-ref's
+// own build.sbt settings, not this file's), so this must always match
+// base-ref's own current `version` above, not some fixed historical one.
+//
+// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
+// the base branch in its own PR, which left this pointing at the
+// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
+// lands" comment - the same pattern the rebrand itself used (see git
+// history for both prior revisions). That PR has now landed (base-ref
+// itself publishes 0.3.0, not 0.2.0, confirmed the hard way: CI's
+// api-compatibility job failed with a real "Not found" resolving 0.2.0,
+// since base-ref never publishes that coordinate once its own `version`
+// moved past it), so this is that follow-up flip.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.3.0")
 
-// Deliberate break against the 0.2.0 baseline above: Field gained a
-// sensitivityTags: Set[String] constructor parameter (see the version
-// comment above), changing Field.apply/copy/this's arity from 5 params to
-// 6 - the exact filter lines below are copied verbatim from a real `sbt
-// mimaReportBinaryIssues` run's own suggested output, not guessed.
-import com.typesafe.tools.mima.core._
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Field$")
-)
+// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
+// that new version and add filters for whatever real break motivated the
+// bump, mirroring this section's own history - do not make that flip in
+// the PR doing the bump itself (base-ref won't have it yet).
+//
+// No filters needed right now: mimaPreviousArtifacts above already equals
+// this module's own current version, so there is nothing between them to
+// filter - the sensitivityTags-on-Field break that motivated the 0.2.0 ->
+// 0.3.0 bump is now baked into both sides of the comparison. The filters
+// that documented it against the old 0.2.0 baseline were removed here
+// rather than left as dead entries with nothing left to match.
