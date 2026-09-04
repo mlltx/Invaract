@@ -171,11 +171,15 @@ jobs:
 
       - name: Build all modules
         # dev/build compiles+tests+assembles contract, ir, plugin and
-        # spark-adapter before runner, in that dependency order (runner's
-        # build.sbt pulls each of their jars in via unmanagedJars — there's
-        # no aggregating root build.sbt). Building only plugin+runner here
-        # previously worked only by accident when their jars happened to
-        # already exist; on a clean checkout it fails runner's compile.
+        # spark-adapter before runner, in that dependency order — contract/
+        # ir/spark-adapter resolve each other as real libraryDependencies
+        # (publishLocal'd by dev/build itself before the next module needs
+        # them), plugin via unmanagedJars (harness-only, never published) -
+        # see dev/build's own comments and spark-adapter/build.sbt's for the
+        # full rationale. There's still no aggregating root build.sbt.
+        # Building only plugin+runner here previously worked only by
+        # accident when their jars happened to already exist; on a clean
+        # checkout it fails runner's compile.
         run: ./dev/build
         shell: bash
 
@@ -422,15 +426,21 @@ jobs:
           echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
           echo "${RUNNER_TEMP}/spark/bin" >> "$GITHUB_PATH"
 
-      # spark-adapter's build.sbt reads ../ir and ../contract's jars
-      # directly off disk (unmanagedJars — there's no aggregating root
-      # build), so both need to be assembled before `sbt stryker` can even
-      # compile spark-adapter's sources, let alone mutate them.
-      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+      # spark-adapter's build.sbt resolves ir and contract as real
+      # libraryDependencies against their own published coordinate (no
+      # aggregating root build.sbt), so both need `publishLocal` before
+      # `sbt stryker` can even compile spark-adapter's sources, let alone
+      # mutate them.
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their own published coordinate (not
+      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
+      # fix and why), so they need `publishLocal`, not just `assembly`,
+      # before anything that compiles spark-adapter can resolve them.
+      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+          cd contract && sbt publishLocal && cd ..
+          cd ir && sbt publishLocal
 
       # No --thresholds override here (unlike the incremental step below):
       # build.sbt's own strykerThresholdsHigh/Low/Break (90/80/70) already
@@ -503,11 +513,16 @@ jobs:
           echo "SPARK_HOME=${RUNNER_TEMP}/spark" >> "$GITHUB_ENV"
           echo "${RUNNER_TEMP}/spark/bin" >> "$GITHUB_PATH"
 
-      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their own published coordinate (not
+      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
+      # fix and why), so they need `publishLocal`, not just `assembly`,
+      # before anything that compiles spark-adapter can resolve them.
+      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+          cd contract && sbt publishLocal && cd ..
+          cd ir && sbt publishLocal
 
       # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
       # specific file(s) a feature adds or changes to ir/spark-adapter -
@@ -709,18 +724,24 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # spark-adapter's build.sbt reads ../ir and ../contract's jars
-      # directly off disk (unmanagedJars — there's no aggregating root
-      # build), so both need to be assembled first, same as the mutation-
-      # testing job above. These are Spark-version-independent (contract/ir
-      # have no Spark dependency at all), so they're built once per matrix
+      # spark-adapter's build.sbt resolves ir and contract as real
+      # libraryDependencies against their own published coordinate (no
+      # aggregating root build.sbt), so both need `publishLocal` first,
+      # same as the mutation-testing job above. These are Spark-version-
+      # independent (contract/ir have no Spark dependency at all), so
+      # they're built once per matrix
       # leg rather than shared - simpler than rigging a cross-job artifact
       # hand-off for a build that only takes a few seconds.
-      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their own published coordinate (not
+      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
+      # fix and why), so they need `publishLocal`, not just `assembly`,
+      # before anything that compiles spark-adapter can resolve them.
+      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+          cd contract && sbt publishLocal && cd ..
+          cd ir && sbt publishLocal
 
       - name: Test spark-adapter against Spark ${{ matrix.spark-version }}
         shell: bash
@@ -780,11 +801,16 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their own published coordinate (not
+      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
+      # fix and why), so they need `publishLocal`, not just `assembly`,
+      # before anything that compiles spark-adapter can resolve them.
+      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+          cd contract && sbt publishLocal && cd ..
+          cd ir && sbt publishLocal
 
       - name: Test spark-adapter's Delta specs against delta-spark ${{ matrix.delta-version }}
         shell: bash
@@ -843,11 +869,16 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Build contract and ir (spark-adapter's unmanagedJars dependencies)
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their own published coordinate (not
+      # unmanagedJars — see spark-adapter/build.sbt's own comment on the
+      # fix and why), so they need `publishLocal`, not just `assembly`,
+      # before anything that compiles spark-adapter can resolve them.
+      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
-          cd contract && sbt assembly && cd ..
-          cd ir && sbt assembly
+          cd contract && sbt publishLocal && cd ..
+          cd ir && sbt publishLocal
 
       - name: Test spark-adapter's Iceberg specs against iceberg-spark-runtime ${{ matrix.iceberg-version }}
         shell: bash
@@ -1037,10 +1068,18 @@ jobs:
       # future PR opened against an up-to-date base branch, every module
       # will already exist there and this check runs for real.
       #
-      # spark-adapter's build.sbt reads ../ir and ../contract's jars
-      # directly off disk (unmanagedJars - there's no aggregating root
-      # build), in both checkouts, so contract/ir's own iterations below
-      # assemble theirs before spark-adapter's iteration needs them.
+      # spark-adapter's build.sbt resolves ir and contract as real
+      # libraryDependencies against their own published coordinate (no
+      # aggregating root build.sbt) - PR-head's own contract/ir builds are
+      # published to the local Ivy cache in their own loop iterations below
+      # (overwriting whatever base-ref's iteration put there for the MiMa
+      # comparison, which is no longer needed once that module's own check
+      # has run), so spark-adapter's iteration compiles against the PR's
+      # actual current contract/ir, not whatever version happens to be
+      # sitting in the cache. Without this, spark-adapter's compile step
+      # here would only work by coincidence when contract/ir's version
+      # didn't change in the same PR - which is exactly the trap a version
+      # bump landing alongside a spark-adapter change would fall into.
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
@@ -1048,12 +1087,6 @@ jobs:
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
               continue
-            fi
-
-            if [ "$module" != "spark-adapter" ]; then
-              echo "=== $module: building assembly jar in both checkouts (spark-adapter's unmanagedJars dependency) ==="
-              (cd "$module" && sbt assembly)
-              (cd "base-ref/$module" && sbt assembly)
             fi
 
             echo "=== $module: publishing base-ref build to the local Ivy cache ==="
@@ -1068,6 +1101,11 @@ jobs:
             # versus a MAJOR version bump.
             echo "=== $module: checking PR head for binary compatibility ==="
             (cd "$module" && sbt mimaReportBinaryIssues)
+
+            if [ "$module" != "spark-adapter" ]; then
+              echo "=== $module: publishing PR head's own build to the local Ivy cache (spark-adapter's libraryDependencies) ==="
+              (cd "$module" && sbt publishLocal)
+            fi
           done
 
   sbom:
@@ -1096,9 +1134,10 @@ jobs:
 
       # Reuses the same build entrypoint the `test` job uses, in the same
       # dependency order (contract, ir, plugin concurrently, then
-      # spark-adapter, then runner). spark-adapter and runner both need
-      # sibling modules' jars physically present on disk (unmanagedJars),
-      # so `sbt makeBom` can't safely run standalone per-module the way the
+      # spark-adapter, then runner). spark-adapter/runner both need sibling
+      # modules resolvable — contract/ir/spark-adapter via publishLocal'd
+      # libraryDependencies, plugin via unmanagedJars — so `sbt makeBom`
+      # can't safely run standalone per-module the way the
       # dependency-graph.yml submissions do. dev/build is a pure sbt
       # compile/assemble step - no Spark install needed (unlike the `test`
       # and `mutation-testing` jobs, which run/mutate against a real
@@ -1183,18 +1222,22 @@ jobs:
         uses: sbt/setup-sbt@v1
 
       # notification-kafka needs spark-adapter's assembly jar (for
-      # NotificationSink/NotificationEvent), which itself needs ir/
-      # contract's - the same chain dev/build establishes, reproduced
-      # minimally here since this job needs no Spark installation at all
-      # (spark-core/spark-sql are `provided`-scope *compile* dependencies
-      # of spark-adapter, resolved from Maven Central - no local Spark
-      # distribution or spark-submit required just to produce its jar).
-      - name: Build contract, ir, and spark-adapter assembly jars
+      # NotificationSink/NotificationEvent) via unmanagedJars - unchanged.
+      # But spark-adapter's own build.sbt now resolves ir/contract as real
+      # libraryDependencies (see spark-adapter/build.sbt's comment), so
+      # those two need `publishLocal`, not `assembly`, before spark-adapter
+      # itself can even compile - the same chain dev/build establishes,
+      # reproduced minimally here since this job needs no Spark installation
+      # at all (spark-core/spark-sql are `provided`-scope *compile*
+      # dependencies of spark-adapter, resolved from Maven Central - no
+      # local Spark distribution or spark-submit required just to produce
+      # its jar).
+      - name: Build contract, ir, and spark-adapter
         shell: bash
         run: |
           set -e
-          (cd contract && sbt assembly)
-          (cd ir && sbt assembly)
+          (cd contract && sbt publishLocal)
+          (cd ir && sbt publishLocal)
           (cd spark-adapter && sbt assembly)
 
       - name: Test notification-kafka
