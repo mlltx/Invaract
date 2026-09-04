@@ -1,0 +1,86 @@
+name: Release to Maven Central
+
+# Publishes contract/ir/spark-adapter to Maven Central via Sonatype's
+# Central Portal — see docs/RELEASING.md for the full process, the
+# required repo secrets, and why only these three modules (not
+# plugin/runner/notification-kafka) are published (CLAUDE.md's "What's
+# the product").
+#
+# Triggered by pushing a `v*` tag (e.g. `v2026.09.0`, or any tag name a
+# maintainer chooses per docs/RELEASING.md — the tag itself carries no
+# version number the workflow reads; each module's own `build.sbt`
+# `ThisBuild / version` is authoritative) or manually via
+# workflow_dispatch. Always attempts to release all three modules at
+# their current build.sbt versions — Central rejects re-publishing a
+# version that already exists, so re-running this workflow (or tagging
+# again before bumping every module) is a safe no-op for whichever
+# modules haven't changed.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  release:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    # Sequential, not a matrix: spark-adapter's libraryDependencies resolve
+    # contract/ir from the *same runner's* local Ivy cache (dev/build's
+    # publishLocal pattern — see its own comment for the full rationale),
+    # so contract and ir must be built+publishLocal'd in this job before
+    # spark-adapter's own build step runs.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Imports the private key into a real gpg keyring and configures
+      # gpg-agent for non-interactive passphrase use (loopback pinentry) —
+      # sbt-pgp shells out to gpg by default when one is on PATH, so no
+      # further sbt-side wiring is needed beyond the pgpPassphrase setting
+      # already in each module's build.sbt.
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.PGP_SECRET }}
+          passphrase: ${{ secrets.PGP_PASSPHRASE }}
+
+      - name: Publish contract
+        working-directory: contract
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      - name: Publish ir
+        working-directory: ir
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      # Resolves contract/ir from this runner's local Ivy cache, populated
+      # by the two publishLocal steps above (same libraryDependencies fix
+      # dev/build relies on for local builds — see spark-adapter/build.sbt's
+      # own comment on the coordinates it depends on).
+      - name: Publish spark-adapter
+        working-directory: spark-adapter
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishSigned sonatypeCentralRelease

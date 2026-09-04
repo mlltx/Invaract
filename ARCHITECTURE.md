@@ -283,11 +283,18 @@ runner/           depends on: contract, ir, plugin, spark-adapter
 web/              next, react, typescript — independent of every Scala module
 ```
 
-Cross-module references go through `unmanagedJars` pointing at a sibling
-module's assembled jar (no aggregating root `build.sbt`), so
-`dev/build`'s build order — `contract`/`ir`/`plugin` concurrently, then
-`spark-adapter`, then `runner` — is load-bearing, not incidental. See
-`dev/build`'s own comments for the exact dependency graph.
+Cross-module references go through real `libraryDependencies` against each
+published module's own coordinate (`contract`/`ir`/`spark-adapter` — the
+three modules published to Maven Central, see "API Contracts" below and
+docs/RELEASING.md) resolved from the local Ivy cache via `publishLocal`,
+except `plugin` (harness-only, never published), which stays on
+`unmanagedJars` pointing at its assembled jar directly. Either way, there
+is still no aggregating root `build.sbt` — each module remains an
+independent sbt project — so `dev/build`'s build order —
+`contract`/`ir`/`plugin` concurrently (with `contract`/`ir` also
+`publishLocal`ed), then `spark-adapter` (also `publishLocal`ed), then
+`runner` — is load-bearing, not incidental. See `dev/build`'s own comments
+for the exact dependency graph.
 
 ## API Contracts
 

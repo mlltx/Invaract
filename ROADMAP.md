@@ -133,12 +133,15 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - Establish deprecation policy
   - Document version lifecycle
 
-- [ ] **Release process**
-  - Define release criteria
-  - Create release checklist
-  - Automate version bumping
-  - Tag releases in git
-  - Publish to repositories (Maven Central, etc.)
+- [x] **Release process** — CI publishing infrastructure (see
+  docs/RELEASING.md): tag-triggered `.github/workflows/release.yml`
+  builds, signs (sbt-pgp), and releases `contract`/`ir`/`spark-adapter` to
+  Sonatype's Central Portal, in dependency order.
+  - [x] Tag releases in git (a `v*` tag triggers the workflow)
+  - [x] Publish to repositories (Maven Central, via Central Portal)
+  - [ ] Define release criteria / create a formal release checklist beyond
+    docs/RELEASING.md's step list
+  - [ ] Automate version bumping
 
 - [ ] **Release notes**
   - Changelog format (CHANGELOG.md)
@@ -146,10 +149,18 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - Migration guides for major versions
   - Security update notification
 
-- [ ] **Artifact distribution**
-  - Maven Central or similar registry
-  - GitHub Releases with binaries
-  - Documentation on artifact locations
+- [ ] **Artifact distribution** — infrastructure is in place
+  (docs/RELEASING.md) but **no release has actually been published yet**:
+  blocked on completing Sonatype's namespace verification for
+  `com.invaract` (a DNS TXT record proving control of the invaract.com
+  domain — see docs/RELEASING.md's one-time setup) and generating/
+  registering a real signing key. Once the first release lands, add its
+  install instructions to docs-site/ per CLAUDE.md's Documentation Policy.
+  - [x] Maven Central or similar registry (Central Portal, pending
+    namespace verification)
+  - [ ] GitHub Releases with binaries
+  - [ ] Documentation on artifact locations (docs-site/, once a real
+    release exists)
 
 #### 7. Compatibility Policy
 
