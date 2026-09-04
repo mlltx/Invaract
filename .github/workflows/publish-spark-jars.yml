@@ -1,0 +1,102 @@
+name: Publish Spark Engine Jars
+
+# Builds the three verification-engine modules (contract/ir/spark-adapter —
+# see CLAUDE.md's "What's the product, and what's the test harness") into
+# their sbt-assembly fat jars and republishes them as assets on a single
+# rolling GitHub Release. This exists for a Spark job built with a
+# different toolchain (Maven, Gradle, plain javac) that wants to install
+# Invaract's verification engine without a Maven Central release to depend
+# on and without needing sbt at all — see
+# docs-site's "Use Prebuilt Jars Without sbt" guide.
+#
+# Triggered by "Test and Build" (test.yml) finishing on main, not by push
+# directly: publishing must never happen from a commit whose own test
+# matrix, docker-regression proof, or mutation-testing gate didn't pass —
+# same bar CLAUDE.md holds every engine change to. workflow_dispatch is
+# available for a manual republish (e.g. after this workflow file itself
+# changes) without needing a throwaway commit to main.
+on:
+  workflow_run:
+    workflows: ["Test and Build"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A second push landing mid-publish must not race the first onto the same
+# rolling release; queue rather than cancel so every successful main build
+# still gets published, in order, instead of some being silently dropped.
+concurrency:
+  group: publish-spark-jars
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish engine jars
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout the tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # contract and ir have no dependency on each other; spark-adapter
+      # needs both (see dev/build's comments for the full graph). No need
+      # to build plugin/runner here — they're the example harness, not
+      # something an external Spark job installs (CLAUDE.md).
+      - name: Build contract
+        run: cd contract && sbt -batch clean compile test assembly
+
+      - name: Build ir
+        run: cd ir && sbt -batch clean compile test assembly
+
+      - name: Build spark-adapter
+        run: cd spark-adapter && sbt -batch clean compile test assembly
+
+      - name: Record the commit these jars were built from
+        run: echo "JAR_SHA=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_ENV"
+
+      # tag_name is a fixed, non-version tag on purpose: this is a rolling
+      # "latest known-good build" release, not a versioned one. Re-running
+      # against the same tag updates the existing release in place and
+      # replaces same-named assets (overwrite_files defaults to true), so
+      # the download URLs below stay stable across every republish.
+      - name: Publish/update the rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: spark-jars-latest
+          name: "Spark engine jars (latest)"
+          body: |
+            Prebuilt `sbt assembly` fat jars for Invaract's verification engine —
+            `contract`, `ir`, and `spark-adapter` (see CLAUDE.md's "What's the product,
+            and what's the test harness" for why those three and not `plugin`/`runner`).
+
+            For a Spark job built with a toolchain other than sbt (Maven, Gradle, ...)
+            that wants to install Invaract without a Maven Central release to depend on.
+            See the "Use Prebuilt Jars Without sbt" guide in the docs site for how to
+            wire these into a Maven build and `spark-submit`.
+
+            Built from commit `${{ env.JAR_SHA }}`, after that commit's full CI suite
+            (`Test and Build`, including `docker-regression` and mutation testing) passed.
+
+            **This is a rolling release, not a version tag.** These assets are replaced
+            every time a new commit lands on `main`. If you need the exact jar a specific
+            commit produced, build it yourself from that commit instead of relying on
+            this release staying put.
+          files: |
+            contract/target/scala-2.12/invaract-contract-*.jar
+            ir/target/scala-2.12/invaract-ir-*.jar
+            spark-adapter/target/scala-2.12/invaract-spark-adapter-*.jar

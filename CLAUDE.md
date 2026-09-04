@@ -555,6 +555,15 @@ If `./dev/test` fails:
 All created by `sbt assembly` (via `./dev/build`); used by Spark through
 `spark-submit --jars <plugin jar> <runner jar>`.
 
+The `contract`/`ir`/`spark-adapter` jars specifically are also republished as GitHub
+Release assets on the rolling `spark-jars-latest` tag by
+`.github/workflows/publish-spark-jars.yml`, triggered once a push to `main` passes the
+full `Test and Build` suite. This exists for a Spark job built with a non-sbt toolchain
+(Maven, Gradle, ...) to install the engine without a Maven Central release — see the
+"Use Prebuilt Jars Without sbt" docs-site guide. It is a distribution convenience, not a
+new build artifact: the jars are the same `sbt assembly` output described above, just
+handed to CI to publish instead of a person copying them by hand.
+
 - `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.2.0.jar`
   — not built by `./dev/build` (opt-in, like `plugin`/`runner`): a user who
   wants `KafkaNotificationSink` runs `cd notification-kafka && sbt assembly`

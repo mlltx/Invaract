@@ -8,10 +8,16 @@ sidebar:
 import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
 
 <Aside type="note" title="No published package yet">
-Invaract is early-stage and hasn't published a Maven artifact yet. Today, you use it by
-cloning the repository and building its modules from source, either on your own machine
-or, if you'd rather not install the toolchain yourself, in GitHub Codespaces. Both paths
-are covered below.
+Invaract is early-stage and hasn't published a Maven Central artifact yet. If you're
+contributing to Invaract itself, or want to build the example harness and web UI, you use
+it by cloning the repository and building its modules from source — either on your own
+machine or, if you'd rather not install the toolchain yourself, in GitHub Codespaces. Both
+paths are covered below.
+
+If you just want to install the verification engine into a Spark job of your own and
+your build tool isn't sbt (Maven, Gradle, ...), see
+[Use Prebuilt Jars Without sbt](/guides/using-prebuilt-jars-without-sbt/) instead — it
+skips building from source entirely.
 </Aside>
 
 ## Prerequisites
