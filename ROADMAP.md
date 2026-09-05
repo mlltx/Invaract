@@ -2086,6 +2086,63 @@ contract-format change.
 
 ---
 
+#### Sub-phase: Semantic lineage fingerprinting (design complete, implementation not started)
+
+The transformation IR (Phase 1b) is precise enough to represent business
+logic independently of Spark's plan representation; this sub-phase designs
+— but does not yet implement — the next step the architecture always
+pointed toward: turning that IR into a deterministic fingerprint so a
+future revision of the same transformation can be compared against a prior
+one, and a business-logic change (e.g. `amount * 1.20` → `amount * 1.25`)
+is detected even when the output schema stays identical.
+
+- [x] **Design document**: [docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+      — canonicalisation strategy (tagged, length-prefixed node encoding,
+      never `toString`), a `TransformationFingerprint` hierarchy
+      (overall/input/output/expression/operator levels), which IR fields
+      are stable vs. must be excluded or normalised (`ColumnRef.id`
+      excluded outright; `Read.alias` replaced by a positional
+      scope-substitution table so relabelling a self-join's aliases is
+      alpha-renaming, not a semantic change; `Set`-valued `Lineage`
+      output canonically sorted since Scala `Set` iteration order isn't
+      guaranteed stable), explicit field-ordering rules (preserved where
+      order is semantically meaningful — `Join` sides, `Arithmetic`/
+      `BooleanExpr` operands, `Conditional` branches — canonically sorted
+      only where it provably isn't, e.g. `Aggregate.groupBy`/
+      `Window.partitionBy`), literal/type normalisation rules, a
+      conservative UDF strategy (identity/args/dependencies hashed;
+      `engineType` surfaced but excluded from the hash as
+      translator-quirk-prone metadata; never claims to detect an
+      implementation change the model doesn't represent), an unknown-node
+      strategy (`UnknownPlan`/`UnknownExpression` always visible in the
+      canonical form; free-text `description` surfaced but excluded from
+      the hash, `sourceType` included), a non-deterministic-expression
+      strategy (fingerprints the call's static definition, not a runtime
+      value; flags known-non-deterministic names as metadata without
+      perturbing the hash), SHA-256 hashing with an explicit
+      `fingerprint_version`, and a full testing strategy (determinism,
+      per-element meaningful-change coverage, locality, incidental-
+      difference invariance, unknown-node and UDF handling,
+      property-based canonicalisation invariants).
+- [ ] Implementation: a new `fingerprint` module (depends only on `ir`,
+      no Spark dependency) providing the canonicalizer and hasher the
+      design document specifies.
+- [ ] Per-output/per-column fingerprint hierarchy wired into a
+      human-readable change report (out of scope for this sub-phase's
+      design — see the design doc's explicit non-goals).
+- [ ] Persistence, publication, remote comparison, and CI/CD wiring
+      around comparing two fingerprints over time — explicitly out of
+      scope for both this sub-phase and its design document; a separate,
+      later sub-phase once the fingerprint itself exists.
+
+##### Dependencies
+
+- Phase 1b completion (transformation IR) — the fingerprint's only input
+- Phase 1c's `Lineage.trace` (reused, not reimplemented, for the
+  per-output lineage-summary fingerprint layer)
+
+---
+
 ## Phase 2 — Multi-Engine Support
 
 ### Objective
