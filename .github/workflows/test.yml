@@ -1089,6 +1089,19 @@ jobs:
               continue
             fi
 
+            if [ "$module" != "spark-adapter" ]; then
+              # base-ref is checked out at the PR's base commit, which
+              # predates this fix - base-ref/spark-adapter's build.sbt still
+              # uses the OLD unmanagedJars, needing base-ref/contract's and
+              # base-ref/ir's assembly jar physically on disk (relative
+              # ../contract, ../ir paths) to even compile, let alone
+              # publishLocal. PR-head's own contract/ir no longer need this
+              # (real libraryDependencies now - see spark-adapter/build.sbt's
+              # comment), so this only runs for the base-ref checkout.
+              echo "=== $module: building base-ref's assembly jar (base-ref/spark-adapter's own unmanagedJars dependency) ==="
+              (cd "base-ref/$module" && sbt assembly)
+            fi
+
             echo "=== $module: publishing base-ref build to the local Ivy cache ==="
             (cd "base-ref/$module" && sbt publishLocal)
 
