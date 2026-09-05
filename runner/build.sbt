@@ -142,10 +142,28 @@ dependencyOverrides ++= Seq(
 // if this harness ever needs to exercise Spark's cluster-recovery code
 // paths for real, per the same note in spark-adapter/build.sbt.
 
+// contract/ir/spark-adapter are the three modules published to Maven
+// Central (see CLAUDE.md's "What's the product") - resolved here as real
+// libraryDependencies against their published coordinates (from the local
+// Ivy cache via dev/build's `publishLocal` step, or Maven Central once a
+// real release exists), the same fix and the same reasoning as
+// spark-adapter/build.sbt's own identical change: unmanagedJars never
+// shows up in a module's POM, and runner's own jar is never published to
+// Central regardless (it's harness, not the product), but building it
+// against unmanagedJars files masked exactly the gap that mattered for
+// spark-adapter. Versions must track contract/ir/spark-adapter's own
+// current `version :=` exactly.
+libraryDependencies ++= Seq(
+  "com.invaract" %% "invaract-contract" % "0.3.0",
+  "com.invaract" %% "invaract-ir" % "0.3.0",
+  "com.invaract" %% "invaract-spark-adapter" % "0.2.0"
+)
+
+// plugin is harness-only (CLAUDE.md's "example integration and test
+// harness", never published to Central) - no Maven coordinate to depend on
+// via libraryDependencies, so this one stays as a direct jar reference,
+// same as before.
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar")
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.3.0.jar")
-unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.3.0.jar")
 
 assembly / assemblyJarName := "invaract-spark-runner.jar"
 assembly / assemblyMergeStrategy := {

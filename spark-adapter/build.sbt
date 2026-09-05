@@ -1,7 +1,66 @@
 name := "invaract-spark-adapter"
-version := "0.2.0"
+// ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
+// matching comment for why (sonatypePublishToBundle reads ThisBuild/version
+// specifically; confirmed the gap directly with
+// `sbt "show version" "show ThisBuild/version"` before fixing it there).
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
+
+// --- Maven Central publishing (Central Portal) ---
+// This module is one of the three published to Maven Central (see
+// CLAUDE.md's "What's the product": contract/ir/spark-adapter). No release
+// has actually been published yet - the `organization` above is the
+// intended groupId, contingent on completing Sonatype's namespace
+// verification for it (a DNS TXT record proving control of the invaract.com
+// domain; see docs/RELEASING.md). Everything below is the POM metadata and
+// Central Portal settings Sonatype requires before it will accept any
+// release at all, regardless of namespace.
+publishMavenStyle := true
+Test / publishArtifact := false
+pomIncludeRepository := { _ => false }
+
+homepage := Some(url("https://github.com/mlltx/Invaract"))
+licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0.txt"))
+scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/mlltx/Invaract"),
+    "scm:git@github.com:mlltx/Invaract.git"
+  )
+)
+developers := List(
+  // id/url are the real GitHub org this repo lives under; email is
+  // GitHub's own noreply-alias convention, to avoid publishing a personal
+  // address in a public POM. Update `name` with a real maintainer name
+  // before the first real release.
+  Developer(
+    id = "mlltx",
+    name = "mlltx",
+    email = "mlltx@users.noreply.github.com",
+    url = url("https://github.com/mlltx")
+  )
+)
+
+// Pre-1.0 (docs/VERSIONING.md): a 0.x -> 0.(x+1) bump may be
+// binary-breaking, so "early-semver" is the accurate scheme - the same
+// convention this file's own mimaPreviousArtifacts comment already bumps
+// MINOR (not PATCH) for a deliberate break under.
+versionScheme := Some("early-semver")
+
+// The OSSRH/Nexus staging host sbt-sonatype originally targeted is
+// retired; Central Portal (central.sonatype.com) is the only route onto
+// Maven Central now. See docs/RELEASING.md for credentials/CI wiring and
+// the actual release commands (publishSigned, then sonatypeCentralRelease).
+import xerial.sbt.Sonatype.sonatypeCentralHost
+sonatypeCredentialHost := sonatypeCentralHost
+publishTo := sonatypePublishToBundle.value
+
+// Non-interactive PGP passphrase for CI (crazy-max/ghaction-import-gpg
+// imports the key + configures gpg-agent; this just supplies the
+// passphrase sbt-pgp needs when it shells out to gpg). Unset locally -
+// sbt-pgp falls back to an interactive prompt, which is fine for a
+// maintainer cutting a release by hand.
+pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 
 // Single source of truth for the verified/primary Spark, Delta, and Iceberg
 // versions - see src/main/resources/supported-versions.properties for the
@@ -759,8 +818,29 @@ excludeDependencies ++= Seq(
 // so even setting reachability aside, there's no first-party call site
 // here that could be affected either way.
 
-unmanagedJars in Compile += file("../ir/target/scala-2.12/invaract-ir-0.3.0.jar")
-unmanagedJars in Compile += file("../contract/target/scala-2.12/invaract-contract-0.3.0.jar")
+// Real Maven-resolvable dependencies, not unmanagedJars pointing at a
+// sibling module's assembled jar (the pattern runner/plugin still use for
+// harness-only jars) - this module is one of the three published to Maven
+// Central (see CLAUDE.md's "What's the product"), so its own published POM
+// must actually declare these two dependencies for a real downstream
+// consumer to resolve them transitively. unmanagedJars never appears in a
+// module's POM at all, so the previous version of this file would have
+// published a spark-adapter jar whose POM listed zero dependency on
+// invaract-contract/invaract-ir - a real ClassNotFoundException for anyone
+// pulling it from Central, not just a local-build inconvenience. Resolved
+// the same way any other sbt cross-module dependency is: via each
+// project's own published coordinate, found either in the local Ivy cache
+// (dev/build's `publishLocal` step, or a contributor's own manual
+// `sbt publishLocal` in contract/ir) or, once a real release exists, on
+// Maven Central itself - no root aggregating build.sbt needed either way,
+// keeping ARCHITECTURE.md's "five independent sbt projects" property
+// intact. Versions must match contract/ir's own current `version :=`
+// exactly, the same invariant this module's mimaPreviousArtifacts
+// comments already track for the base-branch coordinate.
+libraryDependencies ++= Seq(
+  "com.invaract" %% "invaract-ir" % "0.3.0",
+  "com.invaract" %% "invaract-contract" % "0.3.0"
+)
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"
 assembly / assemblyMergeStrategy := {

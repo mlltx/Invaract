@@ -1,22 +1,37 @@
 #!/bin/bash
 # Builds every sbt module and assembles a fat jar for each. Each top-level
 # module (contract/, ir/, plugin/, spark-adapter/, runner/) is an
-# independent sbt project (no aggregating root build.sbt); cross-module
-# references go through `unmanagedJars` pointing at a sibling module's
-# target/scala-2.12/*.jar, so a dependency's jar must exist and be up to
-# date *before* sbt compiles anything that depends on it. This script is
-# the single source of truth for that dependency graph — see build.sbt in
-# each module for the unmanagedJars lines that encode it:
+# independent sbt project (no aggregating root build.sbt). Cross-module
+# references split two ways:
+#
+#   - contract, ir, spark-adapter (the three modules Maven Central
+#     publishing is set up for — see CLAUDE.md's "What's the product") are
+#     real `libraryDependencies` against each other's own published
+#     coordinate, resolved from the local Ivy cache. That means the
+#     dependency's `publishLocal` must have run — not just `compile`/
+#     `assembly` — *before* sbt resolves anything that depends on it, or
+#     resolution fails exactly the way a real Central lookup would if the
+#     artifact didn't exist yet.
+#   - plugin, the demo harness's example transformation (never published to
+#     Central), is still referenced via `unmanagedJars` pointing at its
+#     assembled jar directly — runner's build.sbt keeps that one line for
+#     exactly this reason.
+#
+# This script is the single source of truth for the resulting build order —
+# see build.sbt in each module for the libraryDependencies/unmanagedJars
+# lines that encode it:
 #
 #   contract, ir, plugin   (no cross-module deps — built concurrently)
-#   spark-adapter          (needs contract, ir — not plugin)
-#   runner                 (needs contract, ir, plugin, spark-adapter)
+#   spark-adapter          (needs contract, ir published locally — not plugin)
+#   runner                 (needs contract, ir, spark-adapter published
+#                            locally, plus plugin's jar directly)
 #
 # contract/ir/plugin have no dependency on each other, so they build in
 # parallel (background jobs) rather than one after another on every OS
 # except Windows (see the OSTYPE check below — concurrent sbt/coursier
 # cache access hits hard file locks there); spark-adapter starts as soon
-# as contract+ir are ready, without waiting on plugin.
+# as contract+ir are ready (and locally published), without waiting on
+# plugin.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -90,15 +105,15 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
   # running them in parallel failed plugin's dependency resolution with
   # "not found: ...\Coursier\Cache\v1\.structure.lock (The process cannot
   # access the file because it is being used by another process)".
-  start_module contract "compile test assembly"
+  start_module contract "compile test assembly publishLocal"
   wait_module contract
-  start_module ir "compile test assembly"
+  start_module ir "compile test assembly publishLocal"
   wait_module ir
   start_module plugin "compile test assembly"
   wait_module plugin
 else
-  start_module contract "compile test assembly"
-  start_module ir       "compile test assembly"
+  start_module contract "compile test assembly publishLocal"
+  start_module ir       "compile test assembly publishLocal"
   start_module plugin   "compile test assembly"
   wait_module contract
   wait_module ir
@@ -106,7 +121,7 @@ else
 fi
 
 echo ""
-start_module spark-adapter "compile test assembly"
+start_module spark-adapter "compile test assembly publishLocal"
 wait_module spark-adapter
 
 echo ""
