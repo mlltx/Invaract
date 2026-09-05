@@ -57,11 +57,18 @@ jobs:
       # needs both (see dev/build's comments for the full graph). No need
       # to build plugin/runner here — they're the example harness, not
       # something an external Spark job installs (CLAUDE.md).
+      #
+      # spark-adapter's build.sbt resolves contract/ir as real
+      # libraryDependencies against their published coordinates (Maven
+      # Central publishing setup, no aggregating root build.sbt), so both
+      # need `publishLocal`, not just `assembly`, before spark-adapter can
+      # resolve them from the local Ivy cache the way `dev/build` and every
+      # spark-adapter-building job in test.yml already do.
       - name: Build contract
-        run: cd contract && sbt -batch clean compile test assembly
+        run: cd contract && sbt -batch clean compile test assembly publishLocal
 
       - name: Build ir
-        run: cd ir && sbt -batch clean compile test assembly
+        run: cd ir && sbt -batch clean compile test assembly publishLocal
 
       - name: Build spark-adapter
         run: cd spark-adapter && sbt -batch clean compile test assembly
