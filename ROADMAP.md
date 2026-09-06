@@ -2136,25 +2136,54 @@ is detected even when the output schema stays identical.
 - [x] **Implementation**: the `fingerprint` module (depends only on `ir`,
       no Spark dependency), providing `Canonicalizer`/`Encoding`/
       `FingerprintHasher`/`TransformationFingerprinter` exactly as
-      specified. 128 tests (hand-written + ScalaCheck property tests);
-      whole-module Stryker4s mutation score **96.52%**, every survivor a
-      documented, already-established-precedent exclusion (message-text
-      `StringLiteral`s, one structurally-unreachable defensive branch) —
-      see the design doc's new "Implementation notes" section for the
-      full accounting, including the one real underspecification found
-      and fixed while implementing (deep passthrough resolution for the
-      per-output `expression` fingerprint, needed for the `amount * 1.20
-      → 1.25` example to actually work against a realistic nested-Project
-      plan).
+      specified. 128 tests initially (hand-written + ScalaCheck property
+      tests); whole-module Stryker4s mutation score **96.52%**, every
+      survivor a documented, already-established-precedent exclusion
+      (message-text `StringLiteral`s, one structurally-unreachable
+      defensive branch) — see the design doc's "Implementation notes"
+      section for the full accounting, including the one real
+      underspecification found and fixed while implementing (deep
+      passthrough resolution for the per-output `expression` fingerprint,
+      needed for the `amount * 1.20 → 1.25` example to actually work
+      against a realistic nested-Project plan).
 - [x] **Wired into `spark-adapter` per the design's §14**:
       `VerificationOptions.computeFingerprint`, `VerificationResult`/
       `ContractValidationEvent.fingerprints`, `ContractEnforcementRule.
       explain`'s printed section, `NotificationJson`'s field. Verified
       against the real toolchain, not just compiled: `spark-adapter`'s
-      full suite (413 tests, including 2 new fingerprint-specific
+      full suite (413 tests initially, including 2 new fingerprint-specific
       `ContractEnforcementRuleSpec` cases and a `NotificationJsonSpec`
       case) passes; `sbt-assembly`'s bundling confirmed by inspecting the
       built `invaract-spark-adapter-*.jar` directly.
+- [x] **Gap-closing pass on the initial implementation**, after an honest
+      self-assessment surfaced four real gaps: (1) zero test coverage of
+      `resolveRefDeepT`'s `Union`/ambiguous-`Join` resolution branches —
+      closed with dedicated `CanonicalizerSpec` cases; (2) no stack-safety
+      testing, a real risk confirmed directly (a plain-recursive
+      `Canonicalizer` stack-overflowed at ~700-1700 nested nodes, well
+      within a realistic chained-`.withColumn()` plan) — closed by
+      trampolining every recursive function in `Canonicalizer.scala` via
+      `scala.util.control.TailCalls`, rewriting `CanonicalNode.scala`'s
+      `Encoding.writeNode` as an explicit-stack iterative walk, and fixing
+      the same root cause in `ir.Lineage`'s own `outputsOf`/`resolveExpr`/
+      `resolveInScope` (which `TransformationFingerprinter.fingerprint`
+      calls into via `Lineage.trace`), regression-tested at 50,000 levels
+      of depth in a new `StackSafetySpec`; (3) narrow property-based test
+      generators (`genExpr`/`genPlan` covering only a handful of node
+      kinds) — expanded to cover every `Expr`/`Plan` kind; (4) `ir.
+      RowMutation` (MERGE/UPDATE/DELETE facts) invisible to fingerprinting
+      entirely, since `spark-adapter`'s `WriteCommandSupport` extracts a
+      MERGE's `ON` condition/DELETE predicate separately from `ir.Plan` —
+      closed via `Canonicalizer.canonicalizeRowMutation`, a new optional
+      `rowMutation` parameter on `TransformationFingerprinter.fingerprint`
+      (byte-identical `overall` when absent), and `ContractEnforcementRule`
+      reusing its existing `RowMutationSupport.classify(plan)` call for
+      both rule verification and fingerprinting, proven end to end with a
+      real Delta `MERGE INTO` whose `ON` condition alone changes the
+      published fingerprint. `fingerprint`'s suite grew to 153 tests (whole-
+      module Stryker **96.27%**, same accepted survivor categories plus one
+      new documented equivalent mutant in the stack-safety fix); `ir`'s 70
+      tests and `spark-adapter`'s full suite (414 tests) both still pass.
 - [ ] Per-output/per-column fingerprint hierarchy wired into a
       human-readable change report (out of scope for this sub-phase's
       design — see the design doc's explicit non-goals).
@@ -2168,8 +2197,8 @@ is detected even when the output schema stays identical.
       `build.sbt` now resolves it as a real `libraryDependency`: the 5
       mutation-testing/version-matrix jobs' shared "publish contract and
       ir locally" step, `api-compatibility` (a standalone publish step,
-      since `fingerprint` isn't itself in that job's MiMa-checked module
-      list — see below), `notification-kafka`, and `sbom` (added to its
+      needed unconditionally even after `fingerprint` joined that job's
+      own MiMa-checked module list too — see below), `notification-kafka`, and `sbom` (added to its
       per-module `makeBom` loop and artifact-upload path, backed by a new
       `fingerprint/project/sbom.sbt` — confirmed with a real
       `sbt makeBom` run). `dependency-graph.yml` and
@@ -2182,18 +2211,31 @@ is detected even when the output schema stays identical.
       + `./dev/test` run passed, and every touched CI job's own shell
       commands were run locally to confirm they resolve correctly (not
       just read for plausibility).
-- [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
-      Central publishing (Sonatype/PGP) and MiMa baseline — deferred per
-      `fingerprint/build.sbt`'s own "FOLLOW-UP" comment, since there is no
-      previous release to compare against or sign yet. Concretely still
-      missing: a `mutation-testing-fingerprint` CI job (whole-module,
-      like `mutation-testing-ir`) and a `fingerprint` entry in
+- [x] **Close `fingerprint`'s CI gaps: whole-module mutation testing and
+      MiMa (api-compatibility) wiring.** A `mutation-testing-fingerprint`
+      job now runs `sbt stryker` (whole-module, plus the PR-scoped
+      incremental 70% check) for `fingerprint`, mirroring
+      `mutation-testing-ir` exactly (same zero-Spark-dependency reasoning),
+      and is added to `summary`'s `needs:`/failure-check. `fingerprint/
+      build.sbt` now sets `mimaPreviousArtifacts` (pointing at its own
+      current `0.1.0` coordinate) and `versionScheme`, with a new
+      `fingerprint/project/mima.sbt`; `fingerprint` joined
       `api-compatibility`'s own `for module in contract ir spark-adapter`
-      MiMa-checked list — both real, open gaps, not yet added, since
-      `fingerprint/build.sbt` carries no `mimaPreviousArtifacts` for the
-      latter to check against yet. Until then, `sbt stryker` for
-      `fingerprint` is a manual, not CI-enforced, step (see CLAUDE.md's
-      Mutation Testing Requirement).
+      MiMa-checked list (now `... spark-adapter fingerprint`). This PR is
+      the one that first adds `fingerprint/` to the repository, so — the
+      same position `contract`/`ir`/`spark-adapter`'s own introducing PR
+      was in — CI's api-compatibility job finds no `base-ref/fingerprint`
+      to compare against and skips it gracefully this one time; the check
+      runs for real starting with the next PR that touches this module.
+      `sbt stryker` for `fingerprint` was previously a manual, not
+      CI-enforced, step (see CLAUDE.md's Mutation Testing Requirement) —
+      it no longer is.
+- [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
+      Central publishing (Sonatype/PGP) — still deferred per
+      `fingerprint/build.sbt`'s own "FOLLOW-UP" comment: this is the one
+      remaining piece from the item above, now that MiMa/mutation-testing
+      CI wiring is done. No previous release exists yet to sign or publish
+      against.
 
 ##### Dependencies
 

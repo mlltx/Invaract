@@ -11,17 +11,26 @@ organization := "com.invaract"
 // produces `ir.Plan`, not just `spark-adapter`.
 //
 // Deliberately NOT wired up for Maven Central publishing (no sonatype.sbt/
-// pgp.sbt/sbom.sbt, no `mimaPreviousArtifacts`) yet, unlike contract/ir/
-// spark-adapter: there is no previous version of this module to compare
-// against or release metadata to carry — the same position contract/ir/
-// spark-adapter were in for the PR that first introduced them (see
-// CLAUDE.md's API Compatibility Requirement: "A module that doesn't exist
-// yet at the base commit is skipped gracefully"). FOLLOW-UP, once this
-// module is ready to join contract/ir/spark-adapter as a real published
-// artifact: add sonatype.sbt/pgp.sbt/sbom.sbt/mima.sbt (mirroring ir's own),
-// set `mimaPreviousArtifacts` once a 0.1.0 baseline actually exists to
-// compare against, and fold it into CI's api-compatibility/mutation-testing
-// jobs the way ir/spark-adapter already are.
+// pgp.sbt) yet, unlike contract/ir/spark-adapter — no release metadata to
+// carry until this module is ready to actually be published there.
+// FOLLOW-UP, once it is: add sonatype.sbt/pgp.sbt (mirroring ir's own).
+//
+// API compatibility (MiMa) IS wired up below, same as contract/ir/
+// spark-adapter, and in the same state their own very first introducing PR
+// left them in: `mimaPreviousArtifacts` points at this module's own current
+// coordinate, but this is the PR that first adds `fingerprint/` to the
+// repository at all, so CI's api-compatibility job (.github/workflows/
+// test.yml) will find no `base-ref/fingerprint` to compare against and skip
+// this module gracefully this one time (see CLAUDE.md's API Compatibility
+// Requirement: "A module that doesn't exist yet at the base commit is
+// skipped gracefully"). Starting with the next PR that touches this module,
+// the check runs for real.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.1.0")
+
+// Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
+// spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
+// "early-semver" is the accurate scheme.
+versionScheme := Some("early-semver")
 
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.3.0",

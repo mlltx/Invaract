@@ -329,4 +329,71 @@ class CanonicalizerSpec extends AnyFunSuite {
     assert(encodeExpr(before("customer_id")) == encodeExpr(after("customer_id")))
     assert(encodeExpr(before("value")) != encodeExpr(after("value")))
   }
+
+  // -----------------------------------------------------------------
+  // resolveRefDeep's Union and ambiguous-Join branches (previously
+  // untested - documented in code comments as a narrower-than-ir.Lineage
+  // limitation, but never actually exercised).
+  // -----------------------------------------------------------------
+
+  private def unionBranch(dataset: String, rate: String): Plan =
+    Project(
+      Read(DatasetRef(dataset)),
+      List(NamedExpr("value", Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some(dataset))), Literal(BigDecimal(rate), "decimal")))))
+    )
+
+  test("resolveExprDeep resolves through a Union by taking the first branch that declares the name") {
+    val branch1 = unionBranch("a", "1.1")
+    val branch2 = unionBranch("b", "1.2")
+    val outer = Project(Union(List(branch1, branch2)), List(NamedExpr("out", ColumnReference(ColumnRef("value")))))
+    val resolved = Canonicalizer.resolvedOutputs(outer)("out")
+    assert(resolved == Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some("a"))), Literal(BigDecimal("1.1"), "decimal"))))
+  }
+
+  test("Union branch order affects which branch's expression a bare reference resolves to") {
+    val branch1 = unionBranch("a", "1.1")
+    val branch2 = unionBranch("b", "1.2")
+    val outerOriginal = Project(Union(List(branch1, branch2)), List(NamedExpr("out", ColumnReference(ColumnRef("value")))))
+    val outerSwapped = Project(Union(List(branch2, branch1)), List(NamedExpr("out", ColumnReference(ColumnRef("value")))))
+    val resolvedOriginal = Canonicalizer.resolvedOutputs(outerOriginal)("out")
+    val resolvedSwapped = Canonicalizer.resolvedOutputs(outerSwapped)("out")
+    assert(resolvedOriginal != resolvedSwapped)
+    assert(resolvedSwapped == Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some("b"))), Literal(BigDecimal("1.2"), "decimal"))))
+  }
+
+  test("a Union branch whose qualifier can't match is skipped in favor of one that does") {
+    // A bare Read vacuously "matches" any *unqualified* reference (it
+    // declares no columns of its own - see ir.Lineage's identical Read
+    // case and its own "no schema catalog" doc), so a qualified reference
+    // is needed to make branch1 genuinely return None here: its qualifier
+    // ("b") can't match branch1's own Read scope ("x"), so resolveRefDeep
+    // correctly falls through to branch2 rather than stopping at branch1.
+    val branch1 = Read(DatasetRef("x"))
+    val branch2 = unionBranch("b", "1.2")
+    val outer = Project(Union(List(branch1, branch2)), List(NamedExpr("out", ColumnReference(ColumnRef("value", Some("b"))))))
+    val resolved = Canonicalizer.resolvedOutputs(outer)("out")
+    assert(resolved == Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some("b"))), Literal(BigDecimal("1.2"), "decimal"))))
+  }
+
+  test("resolveExprDeep resolves an ambiguous unqualified reference matching both Join sides by preferring the left side") {
+    val left = Read(DatasetRef("raw.orders"))
+    val right = Read(DatasetRef("raw.customers"))
+    // An unqualified "id" - ref.qualifier.forall(_ == scope) is vacuously
+    // true for None regardless of scope, so this genuinely matches both
+    // sides, unlike a qualified reference (already covered by the
+    // "locality across a Join" test, which only ever hits the
+    // unambiguous Some/None and None/Some cases).
+    val outer = Project(Join(left, right, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("id")))))
+    val resolved = Canonicalizer.resolvedOutputs(outer)("out")
+    assert(resolved == ColumnReference(ColumnRef("id", Some("raw.orders"))))
+  }
+
+  test("Join side order affects which side an ambiguous unqualified reference resolves to") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val customers = Read(DatasetRef("raw.customers"))
+    val outerOriginal = Project(Join(orders, customers, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("id")))))
+    val outerSwapped = Project(Join(customers, orders, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("id")))))
+    assert(Canonicalizer.resolvedOutputs(outerOriginal)("out") == ColumnReference(ColumnRef("id", Some("raw.orders"))))
+    assert(Canonicalizer.resolvedOutputs(outerSwapped)("out") == ColumnReference(ColumnRef("id", Some("raw.customers"))))
+  }
 }

@@ -93,6 +93,7 @@ can be localized to a specific column, not just detected somewhere in the whole 
 | `outputs(name).lineage` | Did this column's *resolved* dependency shape change — which source columns it derives from, how directly, and through which aggregate function(s)? |
 | `outputs(name).combined` | The practical "did this column change" signal — moves whenever either of the two above does. |
 | `outputs(name).nonDeterministic` | `true`/`false`/absent (unknown) — does this column's definition contain a call Invaract recognizes as producing a different result every run (`rand()`, `current_timestamp()`, ...)? Metadata only; it never affects any hash above. |
+| `rowMutation` | Present only for a MERGE/UPDATE/DELETE: did the row-matching logic itself change — a MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an UPDATE assigns? Absent (and `overall` unaffected by its absence) for an ordinary INSERT/overwrite write. |
 
 Changing `amount * 1.20` to `amount * 1.25` moves `value`'s `expression`/`combined` but
 **not** its `lineage` (same source column, same kind of computation) or `customer_id`'s
@@ -116,6 +117,13 @@ it — never a runtime value, and never anything outside that representation:
   join a table sits on, two arguments to a non-commutative operator) **does**, even in
   cases where the reorder happens to be logically equivalent — Invaract does not attempt to
   prove operand reordering safe, since getting that wrong would silently hide a real change.
+- A MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an
+  UPDATE assigns — detected, via `rowMutation` (see the table above), and folded into
+  `overall` too. This is not part of the translated `Plan` itself (Invaract translates a
+  MERGE's `query` as its source side only, never the `ON` clause), so it only appears when
+  Invaract can extract it — the same extraction the `merge_condition`/
+  `forbid_unconditional_delete` [contract rules](/reference/violation-types/) already rely
+  on for enforcement.
 
 See the design document's "Key risks and design trade-offs" section for the complete,
 itemized account of both categories.

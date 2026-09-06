@@ -275,14 +275,16 @@ sync with the encoder.
 ```
 TransformationFingerprint
 ├── version: Int
-├── overall: Fingerprint                        // canonicalize(whole Plan, incl. Write)
+├── overall: Fingerprint                        // canonicalize(whole Plan, incl. Write) —
+│                                                 // or, when rowMutation is Some, hash(Transformation(that plan node, the row mutation node))
 ├── inputs: Map[String, Fingerprint]             // key = "<location>#<occurrenceIndex>"
 │                                                 // value = canonicalize(that Read node alone)
-└── outputs: Map[String, OutputFingerprint]      // key = output column name
-        ├── expression: Fingerprint              // canonicalize(that NamedExpr.expr alone)
-        ├── lineage: Fingerprint                 // canonicalize(Lineage.trace's ColumnLineage for this output)
-        ├── combined: Fingerprint                // hash(expression ++ lineage) — the practical "did this column change" signal
-        └── nonDeterministic: Option[Boolean]    // metadata only, see §9 — never affects any hash above
+├── outputs: Map[String, OutputFingerprint]      // key = output column name
+│       ├── expression: Fingerprint              // canonicalize(that NamedExpr.expr alone)
+│       ├── lineage: Fingerprint                 // canonicalize(Lineage.trace's ColumnLineage for this output)
+│       ├── combined: Fingerprint                // hash(expression ++ lineage) — the practical "did this column change" signal
+│       └── nonDeterministic: Option[Boolean]    // metadata only, see §9 — never affects any hash above
+└── rowMutation: Option[Fingerprint]             // canonicalize(ir.RowMutation), only for MERGE/UPDATE/DELETE — see "Row mutation facts" below
 ```
 
 Plus, **on demand, not eagerly precomputed** (to avoid materializing a
@@ -336,13 +338,50 @@ raw alias, for the same alpha-renaming reason as §2.3 — but
 many distinct occurrences of each" is legible directly from the map's
 keys without decoding anything.
 
+**Row mutation facts (`rowMutation`).** `ir.Plan` alone cannot represent
+a MERGE's `ON` condition or a conditional DELETE/UPDATE's predicate:
+`spark-adapter`'s `WriteCommandSupport` translates a MERGE's `query` as
+its `source` side only, and an UPDATE/DELETE's `query` as a bare
+reference to the `target` — the condition/predicate itself has no `ir.Plan`
+representation at all (this is also why `RuleVerifier`'s DML rules, e.g.
+`merge_condition`/`forbid_unconditional_delete`, are checked against a
+*separately* extracted `ir.RowMutation`, not against `translated.plan`;
+see docs/SPARK_ADAPTER.md). Fingerprinting `translated.plan` alone would
+therefore be blind to exactly the part of a MERGE/UPDATE/DELETE that
+usually matters most — *which rows* get touched, not just what the
+touched columns are computed from.
+
+`Canonicalizer.canonicalizeRowMutation(mutation: ir.RowMutation, scope)`
+closes this gap by canonicalizing the same `RowMutation` value
+`RuleVerifier` already checks — `matchCondition` (via the ordinary
+`Expr` canonicalizer), `delete` (a 3-way tag over `DeleteScope.
+NotApplicable`/`Unconditional`/`Conditional(condition)`), and
+`updatedColumns` (set-like, canonically sorted like `Aggregate.groupBy` —
+an UPDATE's assigned-column list carries no meaningful order).
+`TransformationFingerprinter.fingerprint` takes this as a second, optional
+parameter (`fingerprint(plan: Plan, rowMutation: Option[RowMutation] =
+None)`); when absent (the default, and every ordinary INSERT/overwrite
+`Write`), `overall`/`rowMutation` are byte-identical to a version of this
+module with no `RowMutation` support at all. When present, `overall`
+becomes `hash(Transformation(planNode, rowMutationNode))` — wrapping,
+not replacing, the plan's own canonical form — so a MERGE's `ON`
+condition changing moves `overall` (and the standalone `rowMutation`
+fingerprint) even though `translated.plan`'s own shape (`source`, in
+`ir.Write.input`) is byte-identical. `inputs`/`outputs` are computed from
+`plan` exactly as before and never see `rowMutation` — the per-column
+layer answers "what does this column compute," which a MERGE's `ON`
+condition or a DELETE's predicate never changes.
+
 ---
 
 ## 4. What is included and excluded
 
 **Included (identity- and logic-bearing):** every `Plan`/`Expr` field
 enumerated in §2.2's table as "hashed", plus, for the lineage layer,
-`ColumnLineage.sources`/`derivation`/`aggregations`.
+`ColumnLineage.sources`/`derivation`/`aggregations`, plus — when the
+transformation is a MERGE/UPDATE/DELETE and a `RowMutation` is supplied —
+`RowMutation.matchCondition`/`delete`/`updatedColumns` (§3's "Row
+mutation facts").
 
 **Excluded (never influences any hash):**
 
@@ -1171,10 +1210,24 @@ that isn't already governed by "is a sink configured."
 `StructuralVerifier.verify`. This is the one place a real, complete
 `ir.Plan` for the write being checked already exists — fingerprinting
 reuses it directly, computing `TransformationFingerprinter.fingerprint
-(translated.plan)` immediately alongside `StructuralVerifier.verify`'s
-own call, only when `options.computeFingerprint` is true. No second
-Spark-plan translation, and no fingerprinting of anything
+(translated.plan, mutation)` immediately alongside `StructuralVerifier.
+verify`'s own call, only when `options.computeFingerprint` is true. No
+second Spark-plan translation, and no fingerprinting of anything
 `SparkPlanAdapter` hasn't already turned into IR.
+
+`mutation` here is not a second, independent extraction: this same branch
+already calls `RowMutationSupport.classify(plan)` once, to feed
+`RuleVerifier.verify`'s DML rule checks (`merge_condition`,
+`forbid_unconditional_delete`, ...) — the classification result is
+computed exactly once and reused for both purposes, so `ruleViolations`
+and the fingerprint can never see a different view of the same MERGE/
+UPDATE/DELETE. Only `RowMutationSupport.Classification.Extracted`'s own
+`RowMutation` value is ever passed through; `Unverifiable` (recognized as
+DML of some kind, but this module couldn't extract everything a rule of
+that kind needs) and `None` (not row-level DML at all) both mean "no
+`RowMutation` to fold in" for fingerprinting purposes — the fingerprint in
+that case is exactly what it would have been before `RowMutation` support
+existed, not a silently-degraded one.
 
 The state-changing-CALL branch and the invalid-contract branch
 (`requireValidContract`) do **not** get a computed fingerprint, even with
@@ -1426,31 +1479,36 @@ tag id" suggestion, chosen for implementation simplicity; it costs a few
 bytes per node and changes nothing about the unambiguity property the
 numeric-table version would also have provided.
 
-**Mutation testing.** A real `sbt stryker` run (whole-module scope, this
-being a brand-new module with no prior baseline to widen from) scored
-**96.52%** (111/115 non-static mutants killed) after writing the test
-suite with Stryker's own mutation categories in mind up front, per
-CLAUDE.md's "write mutation-resistant tests the first time" guidance —
-not as a first-draft score. All 4 survivors are the same two categories
-CLAUDE.md's Mutation Testing Requirement already names as legitimate to
-leave, not new ones invented for this module:
+**Mutation testing.** A real whole-module `sbt stryker` run currently
+scores **96.27%** (129/134 non-static mutants killed, of 146 generated —
+12 are `[Ignored]`/static and don't count toward the score), now covered
+by CI's own `mutation-testing-fingerprint` job (see "MiMa/mutation-testing
+CI wiring, closed" below) rather than only run by hand. The 5 survivors
+are the same categories CLAUDE.md's Mutation Testing Requirement already
+names as legitimate to leave, not new ones invented for this module:
 
-- Three `StringLiteral` mutants on `require`/exception message text
-  (`CanonicalNode.scala`'s malformed-input diagnostics) — the exact
-  human-readable-prose category `spark-adapter`'s own mutation-testing
-  history documents as not worth chasing (asserting exact exception text
-  is brittle and doesn't verify real behavior); the *type* of exception
-  thrown for each malformed-input case is tested directly instead.
-- One `StringLiteral` mutant on `"NoExpression"`
-  (`TransformationFingerprint.scala`) — the tag for a defensive fallback
-  branch that is structurally unreachable for any real plan (see the code
-  comment at its call site): `resolvedOutputs` and `ir.Lineage.trace` are
-  two parallel top-level dispatches over the same plan shape, so every
-  name the latter produces already has a matching entry in the former by
-  construction. Kept as a fail-safe rather than a bare `.get`, not chased
-  for coverage, the same "genuinely unreachable given how it's called"
-  reasoning `ir.Lineage.scala`'s own documented `found.isEmpty` survivor
-  uses.
+- Four `StringLiteral` mutants on `require`/exception message text
+  (`CanonicalNode.scala`'s malformed-input diagnostics) and one on
+  `"NoExpression"` (`TransformationFingerprint.scala`, the tag for a
+  defensive fallback branch that is structurally unreachable for any real
+  plan — see the code comment at its call site: `resolvedOutputs` and
+  `ir.Lineage.trace` are two parallel top-level dispatches over the same
+  plan shape, so every name the latter produces already has a matching
+  entry in the former by construction). The message-text mutants are the
+  exact human-readable-prose category `spark-adapter`'s own mutation-
+  testing history documents as not worth chasing (asserting exact
+  exception text is brittle and doesn't verify real behavior); the *type*
+  of exception thrown for each malformed-input case is tested directly
+  instead. `"NoExpression"` is kept as a fail-safe rather than a bare
+  `.get`, not chased for coverage, the same "genuinely unreachable given
+  how it's called" reasoning `ir.Lineage.scala`'s own documented
+  `found.isEmpty` survivor uses.
+- One `ConditionalExpression` mutant forcing `Encoding.writeNode`'s
+  `fields.nonEmpty` check to always `true` — a documented genuine
+  equivalent (see that method's own doc comment, added alongside the
+  stack-safety fix below): for empty `fields`, the "forced" branch pushes
+  and then immediately pops back out on the very next iteration, with zero
+  difference in the bytes written.
 
 Every genuinely load-bearing survivor category from the first,
 naive test pass — every canonical tag string (`"Read"`, `"Join"`,
@@ -1473,13 +1531,82 @@ only `invaract-spark-adapter-*.jar` gets fingerprinting for free, with no
 separate jar or CI publishing step required for it to reach that
 artifact.
 
+**Gap-closing pass.** A follow-up self-review after the initial
+implementation above surfaced four real gaps, all since closed:
+
+- **Union/ambiguous-Join resolution paths had zero test coverage** —
+  `resolveRefDeepT`'s `Union`/ambiguous-`Join` branches (the "pick the
+  first/left candidate deterministically" cases described above) were
+  exercised by no test at all. `CanonicalizerSpec.scala` now covers both
+  directly, including the "a Union branch whose qualifier can't match is
+  skipped in favor of one that does" case and order-sensitivity for both
+  `Union` and `Join`.
+- **No stack-safety testing — a real, not theoretical, risk.** Every
+  genuinely recursive traversal in `Canonicalizer.scala` was plain
+  recursion at first, despite the "hundreds of chained `.withColumn()`
+  calls" shape being an ordinary, documented translation output (see
+  docs/TRANSFORMATION_IR.md's "Derivation classification"), not an edge
+  case. Measured directly: a plain-recursive version stack-overflowed on
+  a forked default-stack JVM at roughly 700-1700 nested nodes. Fixed by
+  trampolining every recursive function in `Canonicalizer.scala` via
+  `scala.util.control.TailCalls` (public signatures unchanged — the
+  trampoline is purely internal, run via `.result` at each entry point),
+  rewriting `CanonicalNode.scala`'s `Encoding.writeNode` as an explicit-
+  stack iterative pre-order walk (a `TailRec` trampoline is unnecessary
+  there — it only ever appends bytes, never combines children's results,
+  so a flat worklist of "remaining fields at this level" suffices), and —
+  the same root cause reached through a different module — rewriting
+  `ir.Lineage`'s own `outputsOf`/`resolveExpr`/`resolveInScope` the same
+  way, since `TransformationFingerprinter.fingerprint` calls `Lineage.
+  trace` directly. `StackSafetySpec.scala` regression-tests all of this at
+  50,000 levels of depth (two orders of magnitude past the original
+  failure point), verified under both a generous and a forked small-stack
+  JVM.
+- **Narrow property-based test generators.** `PropertyBasedSpec.scala`'s
+  `genExpr`/`genPlan` originally covered only a handful of `Expr`/`Plan`
+  node kinds. Rewritten to generate every kind of each (including
+  `Conditional`, `UDF`, `AggregateCall`, `UnknownExpression`, `Union`,
+  `Window`, `UnknownPlan`), so the determinism/round-trip/injectivity
+  properties actually exercise the whole canonicalisation surface.
+- **`RowMutation` (MERGE/UPDATE/DELETE facts) was invisible to
+  fingerprinting entirely** — see "Row mutation facts" in §3 above for the
+  fix (`Canonicalizer.canonicalizeRowMutation`, `TransformationFingerprint.
+  rowMutation`, `TransformationFingerprinter.fingerprint`'s new optional
+  parameter) and §14.2's updated description of how `ContractEnforcementRule`
+  now reuses one `RowMutationSupport.classify(plan)` call for both rule
+  verification and fingerprinting. Proven end to end (not just at the
+  canonicalizer's unit-test level): a real Delta `MERGE INTO`, unchanged
+  in every respect except its `ON` condition, now produces two different
+  published `TransformationFingerprint`s — `ContractEnforcementRuleSpec`'s
+  "computeFingerprint = true: a MERGE's ON condition changing moves the
+  published fingerprint" test.
+
+Each of these was found and fixed with the same discipline this document
+asks of the code itself: a clean/high mutation score does not, by itself,
+prove behavioral coverage of a code path with nothing for Stryker's own
+mutators to target (`case (Some(l), Some(_)) => Some(l)` has no
+comparison/boolean operator to flip) — the Union/Join gap above is exactly
+that shape, and was found by asking "what does this branch actually do"
+rather than by trusting an aggregate score.
+
+**MiMa/mutation-testing CI wiring, closed.** `fingerprint/build.sbt` now
+sets `mimaPreviousArtifacts`/`versionScheme` (a new `fingerprint/project/
+mima.sbt` adds the plugin), `fingerprint` joined `api-compatibility`'s
+`for module in contract ir spark-adapter` MiMa-checked list, and a new
+`mutation-testing-fingerprint` CI job (mirroring `mutation-testing-ir`
+exactly — whole-module Stryker plus the PR-scoped incremental 70% check)
+is wired into `summary`'s `needs:`/failure-check. This PR is the one that
+first adds `fingerprint/` to the repository, so `api-compatibility` finds
+no `base-ref/fingerprint` to diff against and skips it gracefully this one
+time — the same position `contract`/`ir`/`spark-adapter`'s own introducing
+PR was in (see CLAUDE.md's API Compatibility Requirement); the check runs
+for real starting with the next PR that touches this module.
+
 **What's still outstanding**, tracked in ROADMAP.md's fingerprinting
-sub-phase rather than repeated here: Maven Central publishing, MiMa
-baseline, and CI wiring (`test.yml`'s whole-module and incremental
-mutation-testing jobs, `api-compatibility` job) for `fingerprint` itself
-— all deferred per `fingerprint/build.sbt`'s own "FOLLOW-UP" comment,
-since none of them can be meaningfully set up (or verified) without a
-real CI run and a first tagged release to compare against. Persistence,
-publication (beyond §14's channels), remote comparison, and Spark-plan-
-extraction integration remain out of this document's scope entirely, per
-"Non-goals" above.
+sub-phase rather than repeated here: `fingerprint` joining `contract`/`ir`/
+`spark-adapter`'s own Maven Central publishing (Sonatype/PGP) — deferred
+per `fingerprint/build.sbt`'s own "FOLLOW-UP" comment, since there is no
+previous release to sign or publish against yet. Persistence, publication
+(beyond §14's channels), remote comparison, and Spark-plan-extraction
+integration remain out of this document's scope entirely, per "Non-goals"
+above.

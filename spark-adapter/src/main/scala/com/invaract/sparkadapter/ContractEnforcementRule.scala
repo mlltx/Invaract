@@ -281,7 +281,13 @@ object ContractEnforcementRule {
         // RuleVerifier.appliesTo decides that, so an UPDATE this module
         // can't fully verify doesn't spuriously fail a contract that only
         // declares forbid_unconditional_delete, say.
-        val ruleViolations = RowMutationSupport.classify(plan) match {
+        // Classified once and reused below by both ruleViolations and
+        // fingerprinting - RowMutationSupport.classify re-derives the same
+        // RowMutation from the same `plan` either way, so computing it
+        // twice would be pure waste (and, worse, a second place that could
+        // silently drift from the first).
+        val rowMutationClassification = RowMutationSupport.classify(plan)
+        val ruleViolations = rowMutationClassification match {
           case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
             RuleVerifier.verify(contract.rules, mutation)
           case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
@@ -295,8 +301,23 @@ object ContractEnforcementRule {
         // itself) - the state-changing-CALL and invalid-contract branches
         // below have no equivalent real plan to fingerprint, so they never
         // populate this field, flag on or not.
+        //
+        // The RowMutation (if any) feeds the fingerprint too - a MERGE's ON
+        // condition, or a conditional DELETE's predicate, is real
+        // transformation-defining behavior that ir.Plan alone never
+        // captures (see Canonicalizer.canonicalizeRowMutation's own doc);
+        // only the Extracted case has an actual RowMutation value to pass -
+        // Unverifiable/None both mean "no RowMutation to fold in," not
+        // "known to be absent," so the fingerprint in that case still just
+        // reflects translated.plan alone, exactly as before RowMutation
+        // support existed.
         val fingerprints =
-          if (options.computeFingerprint) Some(TransformationFingerprinter.fingerprint(translated.plan)) else None
+          if (options.computeFingerprint) {
+            val mutation = rowMutationClassification.collect {
+              case RowMutationSupport.Classification.Extracted(_, m) => m
+            }
+            Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
+          } else None
         val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations, fingerprints)
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {

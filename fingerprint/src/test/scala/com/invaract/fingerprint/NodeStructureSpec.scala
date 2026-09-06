@@ -228,6 +228,39 @@ class NodeStructureSpec extends AnyFunSuite {
       ))
   }
 
+  // --- Row mutation facts (MERGE/UPDATE/DELETE) ---
+
+  test("RowMutation structure, with a match condition, a conditional delete, and updated columns") {
+    val mutation = RowMutation(Some(Comparison("=", x, x)), DeleteScope.Conditional(Comparison(">", x, x)), List("b", "a"))
+    assert(Canonicalizer.canonicalizeRowMutation(mutation, emptyScope) ==
+      CTag(
+        "RowMutation",
+        List(
+          CTag("Option", List(CTag("Comparison", List(stringLeaf("="), cRef("x"), cRef("x"))))),
+          CTag("Conditional", List(CTag("Comparison", List(stringLeaf(">"), cRef("x"), cRef("x"))))),
+          CTag("UpdatedColumns", List(stringLeaf("a"), stringLeaf("b")))
+        )
+      ))
+  }
+
+  test("RowMutation structure, with no match condition, an unconditional delete, and no updated columns") {
+    val mutation = RowMutation(None, DeleteScope.Unconditional, Nil)
+    assert(Canonicalizer.canonicalizeRowMutation(mutation, emptyScope) ==
+      CTag("RowMutation", List(CTag("Option"), CTag("Unconditional"), CTag("UpdatedColumns"))))
+  }
+
+  test("RowMutation structure, with DeleteScope.NotApplicable (a plain UPDATE/MERGE, no delete branch)") {
+    val mutation = RowMutation(Some(x), DeleteScope.NotApplicable, List("a"))
+    assert(Canonicalizer.canonicalizeRowMutation(mutation, emptyScope) ==
+      CTag("RowMutation", List(CTag("Option", List(cRef("x"))), CTag("NotApplicable"), CTag("UpdatedColumns", List(stringLeaf("a"))))))
+  }
+
+  test("RowMutation.updatedColumns is canonically sorted - declaration order never affects the encoding") {
+    val a = RowMutation(None, DeleteScope.NotApplicable, List("z", "a", "m"))
+    val b = RowMutation(None, DeleteScope.NotApplicable, List("m", "z", "a"))
+    assert(Canonicalizer.canonicalizeRowMutation(a, emptyScope) == Canonicalizer.canonicalizeRowMutation(b, emptyScope))
+  }
+
   // --- Literal value-kind tags (LiteralEncoding) ---
 
   private def literalValueNode(value: Any): CanonicalNode = LiteralEncoding.encode(value, "t") match {

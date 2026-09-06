@@ -3,6 +3,8 @@
 
 package com.invaract.ir
 
+import scala.util.control.TailCalls._
+
 /** How an output column's *fully resolved* computation relates to its
   * source columns — a coarse, human-auditable classification, not a full
   * replay of the expression tree (see `Expr.scala`'s own doc for why the
@@ -118,13 +120,28 @@ case class ColumnLineage(
   * the result on an ambiguous unqualified name rather than resolving
   * arbitrarily, so lineage tracing degrades to "attributed to all
   * plausible sources" instead of failing or guessing.
+  *
+  * Every genuinely recursive traversal below (`outputsOf`/`resolveExpr`/
+  * `resolveInScope`) is implemented via `scala.util.control.TailCalls`,
+  * trampolining the recursion onto the heap instead of the JVM call stack.
+  * This is load-bearing, not defensive-only: measured directly, a plain-
+  * recursive version of this code (and of `com.invaract.fingerprint`'s own
+  * structurally analogous walks, which found this) stack-overflowed on a
+  * chain of roughly 700-1700 nested nodes on a forked, default-stack JVM —
+  * well within reach of a real generated pipeline with hundreds of chained
+  * `.withColumn()` calls, exactly the shape this class's own doc above
+  * already calls out as an ordinary, expected translation output, not an
+  * edge case. `trace`'s public signature is unaffected — the trampoline is
+  * purely an internal implementation detail, run to completion via
+  * `.result` once, at `trace` itself.
   */
 object Lineage {
 
-  def trace(plan: Plan): List[ColumnLineage] = plan match {
-    case Write(_, input, _, _) => outputsOf(input)
-    case other           => outputsOf(other)
-  }
+  def trace(plan: Plan): List[ColumnLineage] =
+    (plan match {
+      case Write(_, input, _, _) => outputsOfT(input)
+      case other                 => outputsOfT(other)
+    }).result
 
   /** An expression's fully resolved provenance: which Read columns it
     * depends on, how it was derived (following passthrough references
@@ -134,36 +151,61 @@ object Lineage {
     */
   private case class Provenance(sources: Set[ColumnRef], derivation: DerivationKind, aggregations: Set[AggregationDetail])
 
-  private def outputsOf(plan: Plan): List[ColumnLineage] = plan match {
+  /** Runs `f` over every element of `xs`, left to right, trampolined - see
+    * `com.invaract.fingerprint.Canonicalizer`'s identical helper for why
+    * this is stack-safe to *construct* regardless of `xs`'s length, not
+    * only to eventually run.
+    */
+  private def traverseT[A, B](xs: List[A])(f: A => TailRec[B]): TailRec[List[B]] = xs match {
+    case Nil => done(Nil)
+    case head :: tail =>
+      for {
+        b <- tailcall(f(head))
+        bs <- traverseT(tail)(f)
+      } yield b :: bs
+  }
+
+  private def outputsOfT(plan: Plan): TailRec[List[ColumnLineage]] = plan match {
     case Project(input, columns) =>
-      columns.map { case NamedExpr(name, expr) => named(name, resolveExpr(expr, input)) }
+      traverseT(columns) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
 
     case Aggregate(input, _, aggregates) =>
-      aggregates.map { case NamedExpr(name, expr) => named(name, resolveExpr(expr, input)) }
+      traverseT(aggregates) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
 
     case Window(input, windowExprs, _, _) =>
-      outputsOf(input) ++ windowExprs.map { case NamedExpr(name, expr) => named(name, resolveExpr(expr, input)) }
+      for {
+        base <- tailcall(outputsOfT(input))
+        windowOnes <- traverseT(windowExprs) { case NamedExpr(name, expr) => tailcall(resolveExprT(expr, input)).map(named(name, _)) }
+      } yield base ++ windowOnes
 
-    case Filter(input, _) => outputsOf(input)
-    case Sort(input, _)   => outputsOf(input)
-    case Limit(input, _, _) => outputsOf(input)
-    case Union(inputs)    => inputs.headOption.map(outputsOf).getOrElse(Nil)
-    case Join(left, right, _, _) => outputsOf(left) ++ outputsOf(right)
-    case Write(_, input, _, _)  => outputsOf(input)
+    case Filter(input, _)   => tailcall(outputsOfT(input))
+    case Sort(input, _)     => tailcall(outputsOfT(input))
+    case Limit(input, _, _) => tailcall(outputsOfT(input))
+    case Union(inputs) =>
+      inputs.headOption match {
+        case Some(p) => tailcall(outputsOfT(p))
+        case None    => done(Nil)
+      }
+    case Join(left, right, _, _) =>
+      for {
+        l <- tailcall(outputsOfT(left))
+        r <- tailcall(outputsOfT(right))
+      } yield l ++ r
+    case Write(_, input, _, _) => tailcall(outputsOfT(input))
 
     // A bare Read declares no output list of its own (see Plan.scala) —
     // there is nothing to trace until something downstream projects it.
-    case Read(_, _) => Nil
+    case Read(_, _) => done(Nil)
 
     // An untranslated construct declares no known output list either —
     // there is nothing to trace past it.
-    case UnknownPlan(_, _, _) => Nil
+    case UnknownPlan(_, _, _) => done(Nil)
   }
 
   private def named(name: String, p: Provenance): ColumnLineage =
     ColumnLineage(ColumnRef(name), p.sources, p.derivation, p.aggregations)
 
-  private def resolveExpr(expr: Expr, input: Plan): Provenance = expr match {
+  private def resolveExprT(expr: Expr, input: Plan): TailRec[Provenance] = expr match {
     case ColumnReference(ref) =>
       // Direct is the right fallback for a reference this plan can't
       // resolve at all (e.g. it sits on an UnknownPlan): with nothing to
@@ -171,32 +213,45 @@ object Lineage {
       // column, unchanged" is the honest, syntax-level answer — the same
       // one a resolvable pure passthrough chain would eventually bottom
       // out at via Read's own base case below.
-      resolveInScope(ref, input).getOrElse(Provenance(Set.empty, DerivationKind.Direct, Set.empty))
+      tailcall(resolveInScopeT(ref, input)).map(_.getOrElse(Provenance(Set.empty, DerivationKind.Direct, Set.empty)))
     case Literal(_, _) =>
-      Provenance(Set.empty, DerivationKind.Constant, Set.empty)
+      done(Provenance(Set.empty, DerivationKind.Constant, Set.empty))
     case Alias(_, inner) =>
       // A rename is not a computation - inherits the inner expression's
       // resolved provenance verbatim, Direct included.
-      resolveExpr(inner, input)
+      tailcall(resolveExprT(inner, input))
     case Cast(inner, _) =>
-      combineOperation(List(resolveExpr(inner, input)))
+      tailcall(resolveExprT(inner, input)).map(p => combineOperation(List(p)))
     case Arithmetic(_, operands) =>
-      combineOperation(operands.map(resolveExpr(_, input)))
+      traverseT(operands)(resolveExprT(_, input)).map(combineOperation)
     case Comparison(_, left, right) =>
-      combineOperation(List(resolveExpr(left, input), resolveExpr(right, input)))
+      for {
+        l <- tailcall(resolveExprT(left, input))
+        r <- tailcall(resolveExprT(right, input))
+      } yield combineOperation(List(l, r))
     case BooleanExpr(_, operands) =>
-      combineOperation(operands.map(resolveExpr(_, input)))
+      traverseT(operands)(resolveExprT(_, input)).map(combineOperation)
     case Conditional(branches, elseValue) =>
-      val branchProvenance = branches.flatMap { case (cond, value) => List(resolveExpr(cond, input), resolveExpr(value, input)) }
-      combineOperation(branchProvenance ++ elseValue.map(resolveExpr(_, input)).toList)
+      for {
+        branchProvenance <- traverseT(branches) { case (cond, value) =>
+          for {
+            c <- tailcall(resolveExprT(cond, input))
+            v <- tailcall(resolveExprT(value, input))
+          } yield List(c, v)
+        }
+        elseProvenance <- elseValue match {
+          case Some(e) => tailcall(resolveExprT(e, input)).map(p => List(p))
+          case None    => done(Nil: List[Provenance])
+        }
+      } yield combineOperation(branchProvenance.flatten ++ elseProvenance)
     case Function(_, args) =>
-      combineOperation(args.map(resolveExpr(_, input)))
+      traverseT(args)(resolveExprT(_, input)).map(combineOperation)
     case UDF(_, args, _) =>
       // Opaque unconditionally, regardless of what its arguments resolve
       // to - a UDF's body is opaque to this IR by design (see UDF's own
       // doc in Expr.scala), never a function of its arguments' own
       // derivation.
-      combineOperation(args.map(resolveExpr(_, input))).copy(derivation = DerivationKind.Opaque)
+      traverseT(args)(resolveExprT(_, input)).map(ps => combineOperation(ps).copy(derivation = DerivationKind.Opaque))
     case AggregateCall(function, arg, distinct) =>
       // combineOperation handles sources/derivation (an aggregate call is
       // always a real operation, never Direct); aggregations is replaced
@@ -204,13 +259,13 @@ object Lineage {
       // itself expected to already be aggregated (nested aggregates
       // aren't valid SQL), and this call is the one aggregation that
       // matters at this level.
-      combineOperation(List(resolveExpr(arg, input))).copy(aggregations = Set(AggregationDetail(function, distinct)))
+      tailcall(resolveExprT(arg, input)).map(p => combineOperation(List(p)).copy(aggregations = Set(AggregationDetail(function, distinct))))
     case UnknownExpression(_, _, children) =>
       // Opaque unconditionally, regardless of whether any children
       // resolved real, understood sources - an unrepresentable construct
       // is opaque by definition, the same "opaque anywhere wins" rule a
       // nested UDF gets.
-      combineOperation(children.map(resolveExpr(_, input))).copy(derivation = DerivationKind.Opaque)
+      traverseT(children)(resolveExprT(_, input)).map(ps => combineOperation(ps).copy(derivation = DerivationKind.Opaque))
   }
 
   /** Combines the resolved provenances of a real operation's operands
@@ -264,29 +319,37 @@ object Lineage {
     * rules out this branch entirely (used by `Join` to avoid attributing a
     * qualified reference to the wrong side).
     */
-  private def resolveInScope(ref: ColumnRef, plan: Plan): Option[Provenance] = plan match {
+  private def resolveInScopeT(ref: ColumnRef, plan: Plan): TailRec[Option[Provenance]] = plan match {
     case Read(dataset, alias) =>
       val scope = alias.getOrElse(dataset.location)
-      if (ref.qualifier.forall(_ == scope))
-        Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty))
-      else
-        None
+      done(
+        if (ref.qualifier.forall(_ == scope))
+          Some(Provenance(Set(ColumnRef(ref.name, Some(scope))), DerivationKind.Direct, Set.empty))
+        else
+          None
+      )
 
     case Project(input, columns) =>
-      columns.find(_.name == ref.name).map(nc => resolveExpr(nc.expr, input))
+      columns.find(_.name == ref.name) match {
+        case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
+        case None     => done(None)
+      }
 
     case Aggregate(input, _, aggregates) =>
-      aggregates.find(_.name == ref.name).map(nc => resolveExpr(nc.expr, input))
+      aggregates.find(_.name == ref.name) match {
+        case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
+        case None     => done(None)
+      }
 
     case Window(input, windowExprs, _, _) =>
-      windowExprs
-        .find(_.name == ref.name)
-        .map(nc => resolveExpr(nc.expr, input))
-        .orElse(resolveInScope(ref, input))
+      windowExprs.find(_.name == ref.name) match {
+        case Some(nc) => tailcall(resolveExprT(nc.expr, input)).map(Some(_))
+        case None     => tailcall(resolveInScopeT(ref, input))
+      }
 
-    case Filter(input, _) => resolveInScope(ref, input)
-    case Sort(input, _)   => resolveInScope(ref, input)
-    case Limit(input, _, _) => resolveInScope(ref, input)
+    case Filter(input, _)   => tailcall(resolveInScopeT(ref, input))
+    case Sort(input, _)     => tailcall(resolveInScopeT(ref, input))
+    case Limit(input, _, _) => tailcall(resolveInScopeT(ref, input))
 
     case Union(inputs) =>
       // A Stryker mutant flipping `found.isEmpty` to `false` here is a
@@ -302,20 +365,25 @@ object Lineage {
       // all-Direct check only stays true if the other side is also
       // Direct, matching what using that other side alone would give).
       // Every caller sees the identical result either way.
-      val found = inputs.flatMap(resolveInScope(ref, _))
-      if (found.isEmpty) None
-      else Some(combineUnion(found))
-
-    case Join(left, right, _, _) =>
-      (resolveInScope(ref, left), resolveInScope(ref, right)) match {
-        case (Some(l), None)    => Some(l)
-        case (None, Some(r))    => Some(r)
-        case (Some(l), Some(r)) => Some(combineUnion(List(l, r)))
-        case (None, None)       => None
+      traverseT(inputs)(resolveInScopeT(ref, _)).map { results =>
+        val found = results.flatten
+        if (found.isEmpty) None
+        else Some(combineUnion(found))
       }
 
-    case Write(_, input, _, _) => resolveInScope(ref, input)
+    case Join(left, right, _, _) =>
+      for {
+        l <- tailcall(resolveInScopeT(ref, left))
+        r <- tailcall(resolveInScopeT(ref, right))
+      } yield (l, r) match {
+        case (Some(lv), None)     => Some(lv)
+        case (None, Some(rv))     => Some(rv)
+        case (Some(lv), Some(rv)) => Some(combineUnion(List(lv, rv)))
+        case (None, None)         => None
+      }
 
-    case UnknownPlan(_, _, _) => None
+    case Write(_, input, _, _) => tailcall(resolveInScopeT(ref, input))
+
+    case UnknownPlan(_, _, _) => done(None)
   }
 }

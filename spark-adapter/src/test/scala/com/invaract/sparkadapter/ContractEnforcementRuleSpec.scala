@@ -1391,6 +1391,66 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
   }
 
+  // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's RowMutation section: a MERGE's
+  // ON condition (or a conditional DELETE's predicate) is real
+  // transformation-defining behavior that ir.Plan alone never captures -
+  // WriteCommandSupport's own doc notes `query = source` for MERGE, never
+  // the ON condition. Proven here end to end through the real check rule,
+  // not just at the fingerprint module's own unit-test level: the SAME
+  // target/source shape, differing only in the MERGE's ON condition, must
+  // still produce different published fingerprints.
+  test("computeFingerprint = true: a MERGE's ON condition changing moves the published fingerprint, even though the plan shape is unchanged") {
+    def runMerge(onClause: String, tableSuffix: String): com.invaract.fingerprint.TransformationFingerprint = {
+      val tablePath = scratchDir.resolve(s"rule_merge_fingerprint_target_$tableSuffix").toString
+      val tableName = s"rule_merge_fingerprint_tbl_$tableSuffix"
+      spark.range(5).withColumn("doubled", col("id") * 2).withColumn("region", lit("us")).write.format("delta").mode("overwrite").save(tablePath)
+      spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $tablePath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: false
+           |        - name: doubled
+           |          type: long
+           |          required: false
+           |        - name: region
+           |          type: string
+           |          required: false
+           |""".stripMargin
+      val sink = new TestNotificationSink
+
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled, 'us' as region) s
+             |ON $onClause
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect() // must not throw - this contract declares no rule
+      }
+
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing MERGE too"))
+    }
+
+    val byId = runMerge("t.id = s.id", "by_id")
+    val byIdAndRegion = runMerge("t.id = s.id AND t.region = s.region", "by_id_and_region")
+
+    assert(byId.overall != byIdAndRegion.overall, "the ON condition is real behavior - it must move the fingerprint")
+    assert(byId.rowMutation.isDefined && byIdAndRegion.rowMutation.isDefined)
+    assert(byId.rowMutation != byIdAndRegion.rowMutation)
+    // Neither MERGE's target/source shape itself changed - only the ON
+    // condition - so the plan-only pieces must stay identical.
+    assert(byId.inputs.keySet == byIdAndRegion.inputs.keySet)
+    assert(byId.outputs == byIdAndRegion.outputs)
+  }
+
   test("PASS: a DELETE with a filtering predicate satisfies its contract's forbid_unconditional_delete rule") {
     val tablePath = scratchDir.resolve("rule_delete_pass_target").toString
     val tableName = "rule_delete_pass_tbl"

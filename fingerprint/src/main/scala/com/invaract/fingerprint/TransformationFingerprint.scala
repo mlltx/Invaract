@@ -3,7 +3,7 @@
 
 package com.invaract.fingerprint
 
-import com.invaract.ir.{Lineage, Plan}
+import com.invaract.ir.{Lineage, Plan, RowMutation}
 
 /** One output column's fingerprints — see
   * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §3.
@@ -43,18 +43,33 @@ final case class OutputFingerprint(
   * keyed `"<location>#<occurrenceIndex>"` so two occurrences of the same
   * physical dataset (a self-join) never collapse into one entry; `outputs`
   * is keyed by declared output column name.
+  *
+  * `rowMutation` is `None` for an ordinary INSERT/overwrite `Write` — the
+  * common case — and `Some` only when `TransformationFingerprinter.
+  * fingerprint` is called with an `ir.RowMutation` (a MERGE/UPDATE/DELETE's
+  * `ON`/predicate/touched-columns facts, extracted separately from
+  * `ir.Plan` by `spark-adapter`'s `RowMutationSupport` — see
+  * `Canonicalizer.canonicalizeRowMutation`'s own doc for why `ir.Plan`
+  * alone can never see these). When `Some`, `overall` also folds this
+  * value in (wrapped together with the plan under a `"Transformation"`
+  * tag), so a MERGE's `ON` condition changing moves `overall` even though
+  * the `Write`'s own `input` plan is byte-identical; when `None`, `overall`
+  * is exactly `hash(canonicalizePlan(plan))`, unchanged from before this
+  * field existed.
   */
 final case class TransformationFingerprint(
   version: Int,
   overall: Fingerprint,
   inputs: Map[String, Fingerprint],
-  outputs: Map[String, OutputFingerprint]
+  outputs: Map[String, OutputFingerprint],
+  rowMutation: Option[Fingerprint] = None
 ) {
   def toMap: Map[String, Any] = Map(
     "version" -> version,
     "overall" -> overall.toMap,
     "inputs" -> inputs.map { case (k, v) => k -> v.toMap },
-    "outputs" -> outputs.map { case (k, v) => k -> v.toMap }
+    "outputs" -> outputs.map { case (k, v) => k -> v.toMap },
+    "rowMutation" -> rowMutation.map(_.toMap)
   )
 }
 
@@ -66,11 +81,23 @@ final case class TransformationFingerprint(
   */
 object TransformationFingerprinter {
 
-  def fingerprint(plan: Plan): TransformationFingerprint = {
+  /** @param rowMutation the MERGE/UPDATE/DELETE facts `spark-adapter`'s
+    *   `RowMutationSupport.classify` extracted for this same `plan`, if
+    *   any — `None` for an ordinary INSERT/overwrite `Write`. See
+    *   `TransformationFingerprint.rowMutation`'s own doc for exactly how
+    *   this affects `overall`.
+    */
+  def fingerprint(plan: Plan, rowMutation: Option[RowMutation] = None): TransformationFingerprint = {
     val scopeInfo = Canonicalizer.buildScopeInfo(plan)
     val substitution = scopeInfo.substitution
 
-    val overall = FingerprintHasher.hash(Canonicalizer.canonicalizePlan(plan, substitution))
+    val planNode = Canonicalizer.canonicalizePlan(plan, substitution)
+    val rowMutationNode = rowMutation.map(Canonicalizer.canonicalizeRowMutation(_, substitution))
+    val overall = rowMutationNode match {
+      case Some(rmNode) => FingerprintHasher.hash(CTag("Transformation", List(planNode, rmNode)))
+      case None         => FingerprintHasher.hash(planNode)
+    }
+    val rowMutationFingerprint = rowMutationNode.map(FingerprintHasher.hash)
 
     val inputs = scopeInfo.reads
       .map(r => r.inputKey -> FingerprintHasher.hash(CTag("Read", List(CanonicalNode.stringLeaf(r.location)))))
@@ -101,6 +128,6 @@ object TransformationFingerprinter {
       name -> OutputFingerprint(exprFingerprint, lineageFingerprint, combinedFingerprint, nonDeterministic)
     }.toMap
 
-    TransformationFingerprint(FingerprintHasher.CurrentVersion, overall, inputs, outputs)
+    TransformationFingerprint(FingerprintHasher.CurrentVersion, overall, inputs, outputs, rowMutationFingerprint)
   }
 }

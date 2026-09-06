@@ -52,8 +52,9 @@ class TransformationFingerprinterSpec extends AnyFunSuite {
     assert(outputMap("expression") == fp.outputs("value").expression.toMap)
 
     val topMap = fp.toMap
-    assert(topMap.keySet == Set("version", "overall", "inputs", "outputs"))
+    assert(topMap.keySet == Set("version", "overall", "inputs", "outputs", "rowMutation"))
     assert(topMap("version") == fp.version)
+    assert(topMap("rowMutation") == None)
   }
 
   test("determinism: fingerprinting the same plan twice yields identical results") {
@@ -293,5 +294,77 @@ class TransformationFingerprinterSpec extends AnyFunSuite {
     // this hashes the call's static definition, never a runtime value.
     val fp2 = TransformationFingerprinter.fingerprint(plan)
     assert(fp.outputs("ts").expression == fp2.outputs("ts").expression)
+  }
+
+  // --- RowMutation (MERGE/UPDATE/DELETE facts, invisible to ir.Plan alone) ---
+
+  private def mergeStylePlan: Plan = {
+    // Stands in for what spark-adapter's WriteCommandSupport actually
+    // produces for a MERGE - `query = source`, never the ON condition
+    // itself (see WriteCommandSupport's own doc). The RowMutation's
+    // matchCondition below is the only thing that carries the ON clause.
+    val source = Read(DatasetRef("raw.updates"))
+    Write(DatasetRef("gold.customers"), source)
+  }
+
+  test("rowMutation defaults to None, and overall is unaffected by its absence (backward-compatible with pre-RowMutation fingerprints)") {
+    val plan = mergeStylePlan
+    val withoutParam = TransformationFingerprinter.fingerprint(plan)
+    val withExplicitNone = TransformationFingerprinter.fingerprint(plan, None)
+    assert(withoutParam.rowMutation.isEmpty)
+    assert(withoutParam == withExplicitNone)
+    assert(withoutParam.overall == FingerprintHasher.hash(Canonicalizer.canonicalizePlan(plan, Canonicalizer.buildScopeInfo(plan).substitution)))
+  }
+
+  test("a MERGE's ON condition changing moves overall and rowMutation even though the Write's own plan is byte-identical") {
+    val plan = mergeStylePlan
+    val before = TransformationFingerprinter.fingerprint(
+      plan,
+      Some(RowMutation(Some(Comparison("=", ColumnReference(ColumnRef("id")), ColumnReference(ColumnRef("id")))), DeleteScope.NotApplicable, List("name")))
+    )
+    val after = TransformationFingerprinter.fingerprint(
+      plan,
+      Some(RowMutation(Some(Comparison("=", ColumnReference(ColumnRef("id")), ColumnReference(ColumnRef("email")))), DeleteScope.NotApplicable, List("name")))
+    )
+    assert(before.overall != after.overall)
+    assert(before.rowMutation != after.rowMutation)
+    // The underlying plan-only pieces (inputs/outputs) never see the
+    // RowMutation at all - only overall/rowMutation fold it in.
+    assert(before.inputs == after.inputs)
+    assert(before.outputs == after.outputs)
+  }
+
+  test("a conditional DELETE's predicate changing moves rowMutation; DeleteScope.Unconditional vs Conditional differ even with an equivalent condition") {
+    val plan = mergeStylePlan
+    val unconditional = TransformationFingerprinter.fingerprint(plan, Some(RowMutation(None, DeleteScope.Unconditional, Nil)))
+    val conditional = TransformationFingerprinter.fingerprint(
+      plan,
+      Some(RowMutation(None, DeleteScope.Conditional(Comparison("=", ColumnReference(ColumnRef("status")), Literal("INACTIVE", "string"))), Nil))
+    )
+    assert(unconditional.rowMutation != conditional.rowMutation)
+    assert(unconditional.overall != conditional.overall)
+  }
+
+  test("presence of a RowMutation at all (vs None) moves overall, holding the plan fixed") {
+    val plan = mergeStylePlan
+    val noMutation = TransformationFingerprinter.fingerprint(plan, None)
+    val withMutation = TransformationFingerprinter.fingerprint(plan, Some(RowMutation(None, DeleteScope.NotApplicable, Nil)))
+    assert(noMutation.overall != withMutation.overall)
+  }
+
+  test("determinism: fingerprinting the same plan+RowMutation twice yields identical results") {
+    val plan = mergeStylePlan
+    val mutation = Some(RowMutation(Some(ColumnReference(ColumnRef("id"))), DeleteScope.Conditional(ColumnReference(ColumnRef("flag"))), List("a", "b")))
+    assert(TransformationFingerprinter.fingerprint(plan, mutation) == TransformationFingerprinter.fingerprint(plan, mutation))
+  }
+
+  test("overall, when a RowMutation is present, is exactly hash(Transformation(plan node, row mutation node))") {
+    val plan = mergeStylePlan
+    val mutation = RowMutation(Some(ColumnReference(ColumnRef("id"))), DeleteScope.NotApplicable, List("name"))
+    val scope = Canonicalizer.buildScopeInfo(plan).substitution
+    val planNode = Canonicalizer.canonicalizePlan(plan, scope)
+    val rowMutationNode = Canonicalizer.canonicalizeRowMutation(mutation, scope)
+    val expected = FingerprintHasher.hash(CTag("Transformation", List(planNode, rowMutationNode)))
+    assert(TransformationFingerprinter.fingerprint(plan, Some(mutation)).overall == expected)
   }
 }

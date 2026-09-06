@@ -320,6 +320,76 @@ jobs:
           path: ir/target/stryker4s-report/**
           if-no-files-found: warn
 
+  # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) gets the same
+  # treatment as ir above, for the same reason: zero Spark dependency (its
+  # only real dependency is ir itself - see fingerprint/build.sbt), so it
+  # skips the Spark cache/download/configure sequence spark-adapter's job
+  # needs, and its own whole-module Stryker run is small and fast enough
+  # not to need spark-adapter's shard-per-runner split. This was a real,
+  # tracked gap (CLAUDE.md's Mutation Testing Requirement: fingerprint
+  # "carries the same Stryker4s settings ... but, unlike ir/spark-adapter,
+  # is not yet wired into CI") - fingerprint has had `strykerThresholdsBreak
+  # := 50` in its own build.sbt since the module was introduced, with
+  # nothing in CI actually enforcing it until this job existed.
+  mutation-testing-fingerprint:
+    name: Mutation testing (fingerprint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Mutation test fingerprint
+        shell: bash
+        run: cd fingerprint && sbt "stryker --concurrency 4"
+
+      # See the shared comment on CLAUDE.md's "Mutation Testing
+      # Requirement" / the base-commit-not-previous-push reasoning on the
+      # spark-adapter job's equivalent step below - identical logic,
+      # scoped to just this module.
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "Diffing against base commit: $BASE_SHA"
+
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "fingerprint/src/main/scala/" | grep '\.scala$' | sed "s|^fingerprint/||" || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "=== fingerprint: no changed files under src/main/scala, skipping ==="
+          else
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== fingerprint: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd fingerprint && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-fingerprint
+          path: fingerprint/target/stryker4s-report/**
+          if-no-files-found: warn
+
   # spark-adapter's own whole-module Stryker run was, by itself, the real
   # CI bottleneck this repo had left to fix (docs/SPARK_ADAPTER.md's "CI
   # mutation-testing wall-clock" section explicitly flagged it as "what
@@ -1012,7 +1082,7 @@ jobs:
         run: ./dev/generate-version-docs --check
 
   api-compatibility:
-    name: API compatibility (contract, ir, spark-adapter)
+    name: API compatibility (contract, ir, spark-adapter, fingerprint)
     runs-on: ubuntu-latest
     # MiMa (sbt-mima-plugin) needs a previously *published* artifact to
     # diff the current build against, and there's no Maven Central release
@@ -1061,31 +1131,39 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) is not yet
-      # MiMa-gated itself (no mimaPreviousArtifacts set - see its own
-      # build.sbt's FOLLOW-UP comment), so it's deliberately not one of the
-      # `for module in ...` loop's entries below. But spark-adapter's own
-      # build.sbt now resolves it as a real libraryDependency, so the PR
-      # head's copy still needs publishing before spark-adapter's iteration
-      # of that loop can even compile for its own MiMa check - unconditionally,
-      # not per-module like contract/ir (this is a brand-new module for any
-      # PR predating it, so there's never a base-ref copy to compare against).
+      # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) IS MiMa-gated
+      # (mimaPreviousArtifacts set - see its own build.sbt) and IS one of the
+      # `for module in ...` loop's entries below, same as contract/ir/
+      # spark-adapter. But spark-adapter's own build.sbt resolves it as a
+      # real libraryDependency, so the PR head's copy still needs publishing
+      # before spark-adapter's iteration of that loop can even compile for
+      # its own MiMa check - unconditionally and up front here, not only
+      # inside the loop's own per-module "publish PR head's build" step
+      # (which runs too late for spark-adapter's iteration to see it, and -
+      # for whichever PR first adds fingerprint/ to the repository - the
+      # loop's fingerprint iteration is skipped entirely per the "did not
+      # exist at the base commit" branch below, so this step is the only
+      # place that PR's own fingerprint build gets published at all).
       - name: Publish PR head's fingerprint locally (spark-adapter's libraryDependency)
         run: cd fingerprint && sbt publishLocal
 
       # One module at a time, in dependency order (contract, ir, then
-      # spark-adapter, which needs both of theirs): if a module doesn't
-      # exist at the base commit, it has no prior public API to be
-      # compatible with, so it's skipped entirely rather than erroring
-      # (base-ref/$module wouldn't exist to build) or treating "brand new"
-      # as "broke everything" - the correct, honest answer either way is
-      # "nothing to compare, nothing can have broken." That's the normal
-      # case for PR #1 specifically (all three modules postdate its base
-      # commit - introducing them *is* what this PR does); for any normal
-      # future PR opened against an up-to-date base branch, every module
-      # will already exist there and this check runs for real.
+      # spark-adapter, which needs both of theirs; fingerprint last - it
+      # depends on ir alone, and nothing inside this loop depends on it, so
+      # its position doesn't affect correctness): if a module doesn't exist
+      # at the base commit, it has no prior public API to be compatible
+      # with, so it's skipped entirely rather than erroring (base-ref/
+      # $module wouldn't exist to build) or treating "brand new" as "broke
+      # everything" - the correct, honest answer either way is "nothing to
+      # compare, nothing can have broken." That's the normal case for PR #1
+      # specifically (contract/ir/spark-adapter all postdate its base commit
+      # - introducing them *is* what that PR does) and, later, for whichever
+      # PR first adds fingerprint/ to the repository; for any normal future
+      # PR opened against an up-to-date base branch, every module will
+      # already exist there and this check runs for real.
       #
-      # spark-adapter's build.sbt resolves ir and contract as real
+      # spark-adapter's build.sbt resolves ir and contract (and, as of
+      # docs/SEMANTIC_LINEAGE_FINGERPRINTING.md, fingerprint) as real
       # libraryDependencies against their own published coordinate (no
       # aggregating root build.sbt) - PR-head's own contract/ir builds are
       # published to the local Ivy cache in their own loop iterations below
@@ -1097,10 +1175,14 @@ jobs:
       # here would only work by coincidence when contract/ir's version
       # didn't change in the same PR - which is exactly the trap a version
       # bump landing alongside a spark-adapter change would fall into.
+      # fingerprint's own PR-head build is instead published unconditionally
+      # above (see that step's own comment for why: spark-adapter needs it
+      # even on the one PR where this loop's own fingerprint iteration is
+      # skipped for having no base-ref counterpart yet).
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          for module in contract ir spark-adapter; do
+          for module in contract ir spark-adapter fingerprint; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
               continue
@@ -1279,12 +1361,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

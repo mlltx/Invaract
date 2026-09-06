@@ -68,18 +68,68 @@ object Encoding {
     buf.toArray
   }
 
-  private def writeNode(node: CanonicalNode, buf: scala.collection.mutable.ArrayBuffer[Byte]): Unit = node match {
-    case CTag(tag, fields) =>
-      buf += TagKind
-      val tagBytes = tag.getBytes(UTF_8)
-      writeVarInt(tagBytes.length, buf)
-      buf ++= tagBytes
-      writeVarInt(fields.length, buf)
-      fields.foreach(writeNode(_, buf))
-    case CLeaf(bytes) =>
-      buf += LeafKind
-      writeVarInt(bytes.length, buf)
-      buf ++= bytes
+  /** Writes `root`'s pre-order encoding into `buf` - an explicit-stack
+    * iterative walk, not recursive descent. `Canonicalizer`'s own
+    * `CanonicalNode` trees are only *constructed* stack-safely (via its
+    * `TailCalls` trampolining); a `CTag`'s own `fields` writing this
+    * function still needs to visit is an ordinary, already-built
+    * `List`/tree structure whose depth can match the original `Plan`'s
+    * (e.g. a long chain of nested `Project`s canonicalizes to an equally
+    * deep chain of nested `CTag("Project", ...)` values) - measured
+    * directly: a plain-recursive version of exactly this function was the
+    * one remaining stack-overflow site after `Canonicalizer`'s own
+    * traversals were trampolined, on the identical realistic depth
+    * (hundreds to low thousands of chained `.withColumn()` calls) that
+    * motivated fixing those in the first place. A stack frame per `CTag`
+    * only needs to remember "which fields are left to write," which is
+    * an easy fit for an explicit worklist rather than a full `TailCalls`
+    * trampoline - unlike `Canonicalizer`'s tree-*construction* functions
+    * (which combine children's results into a new value only after every
+    * child is done), this only ever appends bytes in the same left-to-
+    * right order a recursive walk would, so a flat stack of "remaining
+    * fields at this level" is sufficient and produces byte-for-byte
+    * identical output to the original recursive version.
+    */
+  private def writeNode(root: CanonicalNode, buf: scala.collection.mutable.ArrayBuffer[Byte]): Unit = {
+    val pending = scala.collection.mutable.Stack.empty[List[CanonicalNode]]
+    var current: List[CanonicalNode] = List(root)
+    while (current.nonEmpty || pending.nonEmpty) {
+      current match {
+        case Nil =>
+          // Finished every field at this level - pop back up to whatever
+          // remaining siblings the enclosing CTag still has.
+          current = pending.pop()
+        case node :: rest =>
+          current = rest
+          node match {
+            case CTag(tag, fields) =>
+              buf += TagKind
+              val tagBytes = tag.getBytes(UTF_8)
+              writeVarInt(tagBytes.length, buf)
+              buf ++= tagBytes
+              writeVarInt(fields.length, buf)
+              // Descend into this node's own fields first (pre-order),
+              // remembering the rest of the current level to resume once
+              // they're all written. A Stryker mutant forcing this
+              // condition to always `true` is a genuine equivalent, not a
+              // coverage gap: for empty `fields`, the "forced" branch
+              // pushes the current `current` value and then immediately
+              // sets `current = Nil`, which the loop's own `case Nil =>
+              // current = pending.pop()` branch pops right back out again
+              // on the very next iteration - one extra no-op push/pop
+              // round trip, zero difference in the bytes written or in
+              // any other observable state.
+              if (fields.nonEmpty) {
+                pending.push(current)
+                current = fields
+              }
+            case CLeaf(bytes) =>
+              buf += LeafKind
+              writeVarInt(bytes.length, buf)
+              buf ++= bytes
+          }
+      }
+    }
   }
 
   private def writeVarInt(nonNegative: Int, buf: scala.collection.mutable.ArrayBuffer[Byte]): Unit = {
