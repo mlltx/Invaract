@@ -152,6 +152,59 @@ class CanonicalizerSpec extends AnyFunSuite {
   }
 
   // -----------------------------------------------------------------
+  // Seed-bearing functions: rand/random/randn (see Canonicalizer's own
+  // SeedBearingFunctionNames doc) - Spark's analyzer bakes a fresh random
+  // Long into an unseeded call's own translated arguments, confirmed
+  // directly against a real Spark session (ContractEnforcementRuleSpec's
+  // "an unseeded rand() call fingerprints identically across separate
+  // analyses" is the real-Spark-backed version of this same guarantee).
+  // -----------------------------------------------------------------
+
+  test("Function(\"rand\", <any single arg>) always encodes identically - the arg is excluded, not just insensitive to its value") {
+    val withSeedA = Function("rand", List(Literal(123L, "long")))
+    val withSeedB = Function("rand", List(Literal(456L, "long")))
+    val noArgs = Function("rand", Nil)
+    assert(encodeExpr(withSeedA) == encodeExpr(withSeedB))
+    assert(encodeExpr(withSeedA) == encodeExpr(noArgs), "the arg list itself must be excluded, not merely tolerant of different values")
+  }
+
+  test("rand/random/randn (case-insensitive) all get the same seed-argument exclusion") {
+    // Not asserting different names encode identically to each other
+    // (that would be a real difference) - only that each one's own seed
+    // argument is excluded, proven by comparing against a freshly
+    // different seed for that same name.
+    List("rand", "RAND", "Random", "randn", "RANDN").foreach { n =>
+      val a = encodeExpr(Function(n, List(Literal(111L, "long"))))
+      val b = encodeExpr(Function(n, List(Literal(222L, "long"))))
+      assert(a == b, s"$n's seed argument must be excluded from the hash")
+    }
+  }
+
+  test("a genuinely different function name is still a real difference, even among seed-excluded functions") {
+    assert(encodeExpr(Function("rand", Nil)) != encodeExpr(Function("randn", Nil)))
+    assert(encodeExpr(Function("rand", Nil)) != encodeExpr(Function("random", Nil)))
+  }
+
+  test("uuid/shuffle are NOT seed-excluded - an ordinary Function keeps hashing its real arguments") {
+    val uuid1 = Function("uuid", Nil)
+    val uuid2 = Function("uuid", Nil)
+    assert(encodeExpr(uuid1) == encodeExpr(uuid2), "uuid() never carries its seed as a translatable arg in the first place")
+
+    val shuffleA = Function("shuffle", List(Function("array", List(Literal(1, "integer"), Literal(2, "integer")))))
+    val shuffleB = Function("shuffle", List(Function("array", List(Literal(1, "integer"), Literal(3, "integer")))))
+    assert(encodeExpr(shuffleA) != encodeExpr(shuffleB), "shuffle's real array argument must still be hashed - only rand/random/randn's seed is excluded")
+  }
+
+  test("a non-seed function whose name happens to be checked case-insensitively is unaffected") {
+    // Guards against an overly broad match (e.g. accidentally matching any
+    // function *containing* "rand", or matching on the unresolved arg
+    // count rather than name).
+    val a = Function("brand", List(Literal(1, "integer")))
+    val b = Function("brand", List(Literal(2, "integer")))
+    assert(encodeExpr(a) != encodeExpr(b), "an unrelated function name must never be swept into the seed exclusion")
+  }
+
+  // -----------------------------------------------------------------
   // UDF strategy (§7)
   // -----------------------------------------------------------------
 

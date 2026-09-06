@@ -292,6 +292,141 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.fingerprints.contains(expected))
   }
 
+  // A real, confirmed false positive: Spark's own analyzer
+  // (Catalyst's ResolveRandomSeed rule) bakes a fresh random Long into an
+  // unseeded rand()/random()/randn() call as a genuine child expression,
+  // confirmed directly by analyzing the identical .withColumn("r", rand())
+  // twice in one JVM and observing two different seed literals every time.
+  // Without Canonicalizer's seed exclusion (see its own SeedBearingFunctionNames
+  // doc), this would make the fingerprint of the exact same, unchanged code
+  // different on every single run - the "same model -> same fingerprint"
+  // guarantee this whole module exists to provide, broken for what is
+  // likely the single most common non-deterministic construct in practice.
+  test("computeFingerprint = true: an unseeded rand() call fingerprints identically across separate analyses of the identical code") {
+    val outputPath = scratchDir.resolve("rand_fp.parquet").toString
+    def fingerprintOfRandColumn(): com.invaract.fingerprint.TransformationFingerprint = {
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $outputPath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: true
+           |""".stripMargin
+      val sink = new TestNotificationSink
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val df = spark.range(5).withColumn("r", rand())
+        df.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
+      }
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    }
+
+    val fp1 = fingerprintOfRandColumn()
+    val fp2 = fingerprintOfRandColumn()
+    assert(fp1.overall == fp2.overall, "rand()'s analyzer-assigned seed must never leak into the fingerprint")
+    assert(fp1.outputs("r") == fp2.outputs("r"))
+  }
+
+  // A real, confirmed false NEGATIVE, deliberately left unfixed and
+  // pinned here rather than silently present: an unaliased DataFrame-API
+  // self-join of the same catalog table (`spark.table("t")` on both
+  // sides, no `.as()` anywhere) makes Spark's analyzer wrap BOTH physical
+  // Read occurrences in a `SubqueryAlias` using the table's own name -
+  // the identical string on both sides, confirmed directly by printing
+  // the analyzed plan (`SubqueryAlias spark_catalog.default.t` appears
+  // twice). SparkPlanAdapter's SubqueryAlias-handling case (see its own
+  // comment) faithfully carries that identical alias into both `ir.Read`
+  // nodes, and every `ColumnRef.qualifier` reaching a join condition or
+  // output expression is *also* just that same repeated string - Spark's
+  // analyzer resolves the real ambiguity internally via per-session
+  // `exprId`, which this IR deliberately never hashes (see ColumnRef's
+  // own doc), so no signal survives translation that could tell the two
+  // physical occurrences apart. `Canonicalizer.buildScopeInfo` (see its
+  // own doc) then collapses both to the same positional id, exactly like
+  // an explicitly-consistent self-join alias rename - which is legitimate
+  // for that case, but wrong here, since these two occurrences were never
+  // actually the same alias by the user's own naming, just accidentally
+  // identical defaults.
+  //
+  // Confirmed empirically that Spark's own `DetectAmbiguousSelfJoin`
+  // analyzer rule (`spark.sql.analyzer.failAmbiguousSelfJoin`, default
+  // `true` since Spark 3.0) already blocks the most obvious trigger of
+  // this bug: referencing a specific side's non-join-key column
+  // (`right("value")`) via a Dataset-column handle after an unaliased
+  // self-join throws `AnalysisException` before this module ever sees
+  // the plan, for exactly this reason. That default guard is real
+  // protection, not a reason to consider this closed - Spark ships the
+  // config to disable it precisely because it has its own false
+  // positives on legitimate pre-existing self-join code, so real
+  // clusters (this one included, since the org may set Spark configs
+  // Invaract doesn't control) do turn it off. With it off, the collision
+  // is fully live: selecting the LEFT side's `value` column after such a
+  // join fingerprints byte-identically to selecting the RIGHT side's
+  // `value` column - a real difference (a future refactor accidentally
+  // reading the wrong side of a self-join) that this design cannot
+  // detect once that guard is off. A fix requires SparkPlanAdapter
+  // itself to notice the colliding default aliases and synthesize
+  // positionally-distinct ones (or otherwise correlate via exprId before
+  // translation drops it) - a core-translator change with its own
+  // mutation-testing/API-compatibility obligations under CLAUDE.md, out
+  // of scope for this fingerprint-focused pass. Tracked as a named
+  // limitation in docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §11. If this is
+  // ever fixed, this test's assertion must flip to `!=` - until then, it
+  // exists so the gap is visible and tested, not silent.
+  test(
+    "KNOWN LIMITATION (false negative): with Spark's ambiguous-self-join guard disabled, an unaliased " +
+      "self-join of the same catalog table cannot distinguish which side's column was selected"
+  ) {
+    val tableName = "self_join_collision_tbl"
+    spark.sql(s"DROP TABLE IF EXISTS $tableName")
+    spark.range(5).withColumn("value", col("id") * 10).write.saveAsTable(tableName)
+
+    def fingerprintOfSelectedSide(pickRight: Boolean): com.invaract.fingerprint.TransformationFingerprint = {
+      val outputPath = scratchDir.resolve(s"self_join_collision_${if (pickRight) "right" else "left"}.parquet").toString
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $outputPath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: false
+           |""".stripMargin
+      val sink = new TestNotificationSink
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val left = spark.table(tableName)
+        val right = spark.table(tableName)
+        val joined = left.join(right, left("id") === right("id"))
+        val projected =
+          if (pickRight) joined.select(right("id").as("id"), right("value").as("value"))
+          else joined.select(left("id").as("id"), left("value").as("value"))
+        projected.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
+      }
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    }
+
+    val previousGuard = spark.conf.get("spark.sql.analyzer.failAmbiguousSelfJoin")
+    spark.conf.set("spark.sql.analyzer.failAmbiguousSelfJoin", "false")
+    try {
+      val fpLeft = fingerprintOfSelectedSide(pickRight = false)
+      val fpRight = fingerprintOfSelectedSide(pickRight = true)
+      assert(
+        fpLeft.outputs("value") == fpRight.outputs("value"),
+        "documents the known gap: selecting the other physical side of an unaliased self-join is currently " +
+          "indistinguishable from selecting the same side again - see this test's own comment"
+      )
+    } finally spark.conf.set("spark.sql.analyzer.failAmbiguousSelfJoin", previousGuard)
+  }
+
   // Found via the ClickHouse connector pass's Phase 8, but not
   // ClickHouse-specific - reproduces with any connector, since it's a
   // contract/spark-adapter boundary issue, not a translation one. A

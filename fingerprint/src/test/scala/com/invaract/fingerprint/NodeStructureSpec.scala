@@ -81,6 +81,17 @@ class NodeStructureSpec extends AnyFunSuite {
     assert(canonExpr(Function("upper", List(x))) == CTag("Function", List(stringLeaf("upper"), cRef("x"))))
   }
 
+  // Pins the exact structure of Canonicalizer's SeedBearingFunctionNames
+  // branch (rand/random/randn) - the seed argument is dropped, but the
+  // node must still be tagged "Function" (not some other tag, and not the
+  // empty string a StringLiteral mutant on that tag would produce) so a
+  // seed-bearing call is never confused with a genuinely different node
+  // kind despite carrying no arguments in its canonical form.
+  test("Function structure: a seed-bearing call (rand/random/randn) keeps the \"Function\" tag with its argument dropped") {
+    assert(canonExpr(Function("rand", List(Literal(123L, "long")))) == CTag("Function", List(stringLeaf("rand"))))
+    assert(canonExpr(Function("RANDOM", Nil)) == CTag("Function", List(stringLeaf("RANDOM"))))
+  }
+
   test("UDF structure, named with one arg") {
     assert(canonExpr(UDF(Some("f"), List(x))) ==
       CTag("UDF", List(CTag("Option", List(stringLeaf("f"))), CTag("Args", List(cRef("x"))))))

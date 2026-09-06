@@ -805,10 +805,46 @@ the same canonicalizer and hasher, just applied to different subtrees.
   type in the IR itself would close it, but that's an IR change outside
   this document's scope.
 - **Positional alias substitution (§2.3) assumes the IR's existing
-  guarantee that a self-join requires distinct scope strings.** This
-  design does not add new validation for that; it inherits whatever
-  guarantee (or lack of one) already exists in `ir`/`spark-adapter` for
-  well-formed plans, the same way `Lineage`'s own resolution does.
+  guarantee that a self-join requires distinct scope strings — a real,
+  confirmed gap when that assumption is false.** This design does not add
+  new validation for that; it inherits whatever guarantee (or lack of
+  one) already exists in `ir`/`spark-adapter` for well-formed plans, the
+  same way `Lineage`'s own resolution does. That assumption is **known to
+  fail** for one concrete, reproduced case: an unaliased DataFrame-API
+  self-join of the same catalog table (`spark.table("t")` on both sides,
+  no `.as()` anywhere). Spark's analyzer wraps both physical `Read`
+  occurrences in a `SubqueryAlias` using the table's own name — the
+  identical string on both sides — and `SparkPlanAdapter` faithfully
+  carries that collision into both `ir.Read.alias` fields, with nothing
+  in `ColumnRef.qualifier` left to tell the two occurrences apart
+  (Spark's own disambiguation lives entirely in per-session `exprId`
+  values, which this design deliberately never hashes — see `ColumnRef`'s
+  own doc). `buildScopeInfo` then collapses both to the same positional
+  id, indistinguishable from a legitimate consistent-alias-rename. Spark's
+  own `DetectAmbiguousSelfJoin` analyzer rule
+  (`spark.sql.analyzer.failAmbiguousSelfJoin`, default `true` since Spark
+  3.0) blocks the most obvious trigger — referencing a specific side's
+  non-join-key column via a Dataset-column handle after such a join
+  throws `AnalysisException` before this module ever sees the plan — but
+  that guard is a Spark config real clusters do disable (it has its own
+  false positives against legitimate pre-existing self-join code), and
+  with it off the gap is fully live: selecting the left side's column
+  after such a join fingerprints byte-identically to selecting the right
+  side's column, a real difference (e.g. a refactor that accidentally
+  reads the wrong side of a self-join) this design cannot currently
+  detect. `canonicalizeLineage` (§3's `lineage` layer) resolves
+  `ColumnLineage.sources` through the exact same `scope` substitution
+  table via `canonicalizeColumnRef`, so this is not an `expression`-layer-
+  only gap — the `lineage` and `combined` hierarchy levels for that output
+  collapse identically too, for the same reason. Confirmed and pinned by
+  `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION (false negative):
+  with Spark's ambiguous-self-join guard disabled, ..." test. A real fix
+  requires `SparkPlanAdapter` itself to notice colliding default aliases
+  at translation time and synthesize positionally-distinct ones (or
+  otherwise correlate via `exprId` before it's dropped) — a core-
+  translator change with its own mutation-testing/API-compatibility
+  obligations under CLAUDE.md, deliberately left as scoped follow-up work
+  rather than rushed into this fingerprint-focused pass.
 
 ---
 
@@ -1533,7 +1569,9 @@ separate jar or CI publishing step required for it to reach that
 artifact.
 
 **Gap-closing pass.** A follow-up self-review after the initial
-implementation above surfaced four real gaps, all since closed:
+implementation above surfaced six real gaps — five since closed, one
+confirmed and deliberately left open as scoped follow-up work (see
+below):
 
 - **Union/ambiguous-Join resolution paths had zero test coverage** —
   `resolveRefDeepT`'s `Union`/ambiguous-`Join` branches (the "pick the
@@ -1613,19 +1651,69 @@ implementation above surfaced four real gaps, all since closed:
   `-Xfatal-warnings`, turning that specific warning into a build failure
   — re-verified with the same temporarily-removed-case test, which now
   fails to compile instead of just warning.
+- **An unseeded `rand()`/`random()`/`randn()` call made the fingerprint of
+  the exact same, unchanged code different on every single run — a real,
+  confirmed false POSITIVE.** Confirmed directly: Catalyst's
+  `ResolveRandomSeed` analyzer rule bakes a fresh random `Long` into an
+  unseeded call as a genuine child `Expression` at analysis time, not
+  Spark-session-scoped state excluded from the plan — analyzing the
+  identical `.withColumn("r", rand())` twice in the same JVM produces two
+  different seed literals every time, and `SparkPlanAdapter`'s generic
+  expression-translation fallback (`ir.Function(name, children)`) faithfully
+  carries that seed into the translated, hashed arguments. This is exactly
+  the "same model to same fingerprint" guarantee this whole module exists
+  to provide, broken for what is likely the single most common
+  non-deterministic construct in practice - despite `rand`/`random`/`randn`
+  already being correctly classified as non-deterministic in §9's metadata,
+  which (by design, see §9) is never consulted by the hash itself.
+  `current_timestamp()`/`current_date()`/`now()`/`unix_timestamp()`
+  (Catalyst's `ComputeCurrentTime` rule runs at optimization, not analysis
+  - Invaract translates the analyzed plan, so these stay zero-value,
+  unevaluated function nodes) and `uuid()`/`shuffle()` (their Catalyst
+  classes never expose their analyzer-assigned seed via `.children` in the
+  first place) were confirmed directly, by the same empirical method, to
+  **not** share this bug. Fixed with a targeted exclusion in
+  `Canonicalizer.canonicalizeExprT`'s `Function` case
+  (`SeedBearingFunctionNames = Set("rand", "random", "randn")`, matched
+  case-insensitively since Spark reports different `prettyName` casing per
+  call-site alias for the identical class) that drops the argument list
+  entirely for exactly these three names - an accepted trade-off is that
+  an explicit seed change (`rand(42)` to `rand(43)`) is no longer detected
+  either, since nothing post-analysis can distinguish "explicit, unchanged
+  seed" from "analyzer-assigned, freshly different seed." Regression-tested
+  both at the canonicalizer level (`CanonicalizerSpec.scala`'s "Seed-bearing
+  functions: rand/random/randn" section) and end to end against a real
+  Spark session (`ContractEnforcementRuleSpec`'s "computeFingerprint = true:
+  an unseeded rand() call fingerprints identically across separate
+  analyses of the identical code").
+- **An unaliased DataFrame-API self-join of the same catalog table can
+  make two genuinely different queries fingerprint identically - a real,
+  confirmed false NEGATIVE, deliberately left open rather than rushed into
+  a partial fix.** See §11's expanded "Positional alias substitution"
+  bullet above for the full mechanism, root cause, and why a proper fix
+  needs a `SparkPlanAdapter` translation-layer change out of this pass's
+  scope. Pinned by `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION
+  (false negative): with Spark's ambiguous-self-join guard disabled, ..."
+  test, which fails (by design, `assert(... == ...)` must flip to `!=`)
+  the moment a future fix changes this behavior - a deliberate tripwire,
+  not an oversight.
 
-Each of these was found and fixed with the same discipline this document
-asks of the code itself: a clean/high mutation score does not, by itself,
-prove behavioral coverage of a code path with nothing for Stryker's own
-mutators to target (`case (Some(l), Some(_)) => Some(l)` has no
-comparison/boolean operator to flip) — the Union/Join gap above is exactly
-that shape, and was found by asking "what does this branch actually do"
-rather than by trusting an aggregate score. The binary-literal and
-exhaustiveness gaps were found the same way: not by running more tests
-against the existing code, but by asking what a real Spark session
-actually produces for a literal runtime type this module hadn't
-considered, and what the compiler would actually let slip through
-un-flagged.
+Each of the closed gaps above was found and fixed with the same discipline
+this document asks of the code itself: a clean/high mutation score does
+not, by itself, prove behavioral coverage of a code path with nothing for
+Stryker's own mutators to target (`case (Some(l), Some(_)) => Some(l)` has
+no comparison/boolean operator to flip) — the Union/Join gap above is
+exactly that shape, and was found by asking "what does this branch
+actually do" rather than by trusting an aggregate score. The
+binary-literal, exhaustiveness, and `rand()`-seed gaps were found the same
+way: not by running more tests against the existing code, but by asking
+what a real Spark session actually produces — for a literal runtime type,
+for an unseeded random-function call, for an unaliased self-join — that
+this module's tests hadn't yet exercised, and what the compiler or the
+canonicalizer would actually let slip through un-flagged. The self-join
+gap is the one place this same process found a real bug and, on balance,
+chose to document and pin rather than fix inline, given the scope of a
+correct fix — see its own bullet above for why.
 
 **MiMa/mutation-testing CI wiring, closed.** `fingerprint/build.sbt` now
 sets `mimaPreviousArtifacts`/`versionScheme` (a new `fingerprint/project/
@@ -1648,3 +1736,98 @@ previous release to sign or publish against yet. Persistence, publication
 (beyond §14's channels), remote comparison, and Spark-plan-extraction
 integration remain out of this document's scope entirely, per "Non-goals"
 above.
+
+**Spark version upgrade risk (audit).** CLAUDE.md's own "Supporting
+Multiple Spark Versions" section already names the underlying gap:
+`spark-adapter`'s suite runs against exactly one pinned Spark version
+(3.5.1), so anything a future Spark upgrade changes about the *analyzed*
+plan's shape is invisible to CI until someone actually performs that
+upgrade — it cannot show up as a failing test today. This is a review of
+where a real Spark upgrade is likely to change fingerprinting behavior
+specifically, based on how Spark's own analyzer has historically evolved,
+not a list of things currently broken:
+
+- **The `SeedBearingFunctionNames` exclusion (see the `rand()` gap-closing
+  entry above) is a closed, three-name list, not a structural detection of
+  "this argument is an analyzer-injected seed."** It works today because
+  `ResolveRandomSeed` happens to name its rewritten function nodes exactly
+  `rand`/`random`/`randn` (case-insensitively) and stores the seed as that
+  node's sole child. A future Spark version adding a new seeded built-in
+  (Spark has added several new non-deterministic functions across major
+  releases — `uuid()` itself and `typedLit`-based helpers being past
+  examples) would silently reintroduce the exact same false-positive bug
+  for that new function unless someone remembers to extend this list by
+  hand; nothing here would fail existing tests, since they only exercise
+  the three names known today. The same applies in reverse if a future
+  Spark version changes `Rand`/`Randn`'s internal representation to no
+  longer expose the seed via `.children` at all (the way `Uuid`/`Shuffle`
+  already don't) — the exclusion would become dead code, harmlessly, but
+  silently.
+- **ANSI mode becoming the default is a real, scheduled Spark change, not
+  a hypothetical one** (Spark's own roadmap flips `spark.sql.ansi.enabled`
+  to `true` by default starting with Spark 4.0). Historically, toggling
+  ANSI mode changes how implicit casts and arithmetic overflow are
+  represented in the *analyzed* plan (Catalyst's `Cast` expression already
+  carries an eval-mode discriminator — legacy/ANSI/try — precisely because
+  this behavior differs by mode). `SparkPlanAdapter`'s `Cast` translation
+  does not currently distinguish eval modes. Upgrading Spark and picking
+  up the new ANSI default would very plausibly change fingerprints for
+  jobs whose own code never changed — arguably *correct* per this
+  document's own "same model, same fingerprint" framing (the runtime
+  overflow/null behavior genuinely did change), but worth calling out
+  explicitly since a team upgrading Spark should expect fingerprint
+  churn from this specific cause, not assume something in their job broke.
+- **`UnknownPlan`/`UnknownExpression.sourceType` (`getClass.getSimpleName`
+  on the untranslated Catalyst node) is hashed, and Catalyst's internal
+  class names are not a stability contract Spark makes to anyone.**
+  Internal Catalyst classes have been renamed and restructured across
+  major versions before (e.g. `DataSourceV2Relation`'s own shape changed
+  materially between Spark 3.0 and 3.3, which is why `spark-adapter`
+  already has version-specific handling for it — see docs/SPARK_ADAPTER.md).
+  Any node that currently falls through to `UnknownPlan`/`UnknownExpression`
+  because `spark-adapter` has no dedicated case for it will silently change
+  fingerprint whenever the underlying Catalyst class is renamed by a
+  version upgrade, purely as a byproduct of the upgrade, not a real change
+  to the job. This is inherent to the fallback's design (documented in §8
+  as intentionally conservative) and is flagged here as the version-drift
+  angle on that same, already-accepted trade-off.
+- **`AttributeReference.qualifier.lastOption`'s truncation to the final
+  namespace segment (see `SparkPlanAdapter`'s `AttributeReference` case)
+  is a latent collision risk that gets more likely, not less, as Spark's
+  own multi-catalog support matures.** Spark 3.x's catalog-plugin API
+  (introduced as a preview in 3.0, matured across the 3.x line) makes
+  three-and-more-part qualified names (`catalog.schema.table`) increasingly
+  common in real deployments; `ColumnRef.qualifier` only ever keeps the
+  last segment, so two distinctly-qualified tables that happen to share a
+  final segment name (`catalog_a.sales.orders` vs. `catalog_b.sales.orders`)
+  would collide the same way the unaliased-self-join case above does. This
+  was raised during this audit but not empirically confirmed or fixed —
+  flagged here as the concrete, upgrade-relevant version of a risk that
+  already exists today and only grows as multi-catalog usage increases.
+- **`SubqueryAlias`'s default-aliasing behavior for unaliased catalog
+  references (the root mechanism behind the self-join collision bug above)
+  is a Catalyst analyzer implementation detail, not a documented Spark
+  API contract.** `SparkPlanAdapter`'s translation of it, and this design's
+  reliance on `Read.alias` being distinct whenever two `Read`s are actually
+  different, both depend on that detail continuing to behave the way it
+  does today. A future Spark version could change *when* it inserts a
+  default `SubqueryAlias`, or use a different default name — Invaract
+  would inherit whatever new behavior results without any code change on
+  its side, for better or worse, and no current test would catch a
+  regression since only one Spark version is under test.
+- **Spark's `DetectAmbiguousSelfJoin` safeguard (`spark.sql.analyzer.
+  failAmbiguousSelfJoin`) is itself version-sensitive** — its rule set and
+  default have evolved since its introduction in Spark 3.0, and a future
+  version could narrow or widen what it catches. Since the self-join
+  collision bug above is only reachable in practice when this guard is
+  off (by explicit user config) or doesn't cover a given query shape, a
+  Spark upgrade that changes this rule's coverage directly changes how
+  exposed real users are to that already-documented gap, independent of
+  anything in this repository.
+
+None of these are proposed as fixes to make now — the point, consistent
+with the rest of this "Implementation notes" section, is that they would
+not surface as a CI failure today (single pinned Spark version, no
+compatibility matrix — see CLAUDE.md's "Supporting Multiple Spark
+Versions") and so are worth a deliberate look the next time `spark-adapter`
+takes on a new Spark version, not something to assume will announce itself.

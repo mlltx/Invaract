@@ -2236,6 +2236,25 @@ is detected even when the output schema stays identical.
       remaining piece from the item above, now that MiMa/mutation-testing
       CI wiring is done. No previous release exists yet to sign or publish
       against.
+- [ ] **`SparkPlanAdapter` translation-layer fix for colliding self-join
+      default aliases (confirmed false negative).** An unaliased
+      DataFrame-API self-join of the same catalog table gets both physical
+      `Read` occurrences the identical default `SubqueryAlias` from Spark's
+      own analyzer, which `Canonicalizer.buildScopeInfo` then collapses to
+      one positional id — selecting the left vs. right side's column after
+      such a join fingerprints identically, a real difference this design
+      cannot currently detect. Root-caused, confirmed against a real Spark
+      session, and pinned (not silently present) by
+      `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION (false negative):
+      with Spark's ambiguous-self-join guard disabled, ..." test — see
+      docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §11 "Positional alias
+      substitution" bullet and its "Gap-closing pass" entry for the full
+      mechanism. Needs `SparkPlanAdapter` itself to detect colliding
+      default aliases at translation time and synthesize positionally-
+      distinct ones (or correlate via Spark's `exprId` before it's
+      dropped) — a core-translator change with its own mutation-testing/
+      API-compatibility obligations under CLAUDE.md, deliberately scoped
+      out of the fingerprinting work above rather than rushed in.
 
 ##### Dependencies
 

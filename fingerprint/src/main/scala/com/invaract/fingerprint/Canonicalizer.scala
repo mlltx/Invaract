@@ -131,6 +131,48 @@ object Canonicalizer {
   // Expressions
   // ---------------------------------------------------------------------
 
+  /** `rand()`/`random()`/`randn()`, called with no explicit seed, get a
+    * fresh random `Long` baked in as a genuine child `Expression` by
+    * Spark's own analyzer (Catalyst's `ResolveRandomSeed` rule) - confirmed
+    * directly against a real Spark session: analyzing the exact same
+    * `.withColumn("r", rand())` twice in one JVM produces two different
+    * seed `Literal`s every time, and there is no way to tell "the analyzer
+    * assigned this" apart from "the user wrote this exact literal" once
+    * the plan is analyzed - Invaract translates only the analyzed plan
+    * (see ARCHITECTURE.md), so that distinction is already gone by the
+    * time this canonicalizer ever sees it. Hashing that seed like any
+    * other `Function` argument would make the fingerprint of the exact
+    * same code - arguably the single most common non-deterministic
+    * construct in real jobs - different on every run, the "same model ->
+    * same fingerprint" guarantee this whole module exists to provide,
+    * broken by the one function family whose own analyzer-injected
+    * argument masquerades as ordinary user-written data.
+    *
+    * `uuid()`/`shuffle()` do *not* need this treatment - confirmed
+    * directly too: Catalyst's `Uuid`/`Shuffle` expressions store their own
+    * analyzer-assigned seed in a field that is never exposed via
+    * `Expression.children`, so it never reaches `Function.args` at all
+    * (`uuid()` always translates to `Function("UUID", Nil)`, seed or not).
+    * `rand`/`randn`'s seed is different: `Rand`/`Randn` model the seed as
+    * a real child `Expression`, so it does reach `args` - confirmed by
+    * inspecting the actual translated `ir.Expr` both ways.
+    *
+    * Both the plain SQL name and Spark's own `random` alias for `rand`
+    * are listed - confirmed directly that calling `random()` produces a
+    * `Function` node whose own name is `"RANDOM"`, not `"RAND"` (Catalyst
+    * reports a different `prettyName` per call-site alias for the
+    * identical `Rand` expression class), matching `NonDeterminism`'s own
+    * allowlist listing both separately for the same reason.
+    *
+    * The accepted trade-off (§9 of docs/SEMANTIC_LINEAGE_FINGERPRINTING.md):
+    * changing an *explicit* seed (`rand(42)` -> `rand(43)`) is no longer
+    * detected either, since nothing post-analysis can tell that case apart
+    * from the unseeded one. A much smaller loss than the alternative - a
+    * fingerprint that never matches itself for the overwhelmingly more
+    * common unseeded call.
+    */
+  private val SeedBearingFunctionNames: Set[String] = Set("rand", "random", "randn")
+
   def canonicalizeColumnRef(ref: ColumnRef, scope: Map[String, String]): CanonicalNode = {
     val qualifierNode = optionNode(ref.qualifier.map(q => stringLeaf(substituteQualifier(q, scope))))
     // ref.id is intentionally never referenced - see this object's own doc.
@@ -172,6 +214,13 @@ object Canonicalizer {
           case None    => done(CTag("Else", List(CTag("Option"))): CanonicalNode)
         }
       } yield CTag("Conditional", branchNodes :+ elseNode)
+    // See SeedBearingFunctionNames' own doc above: rand/random/randn's
+    // sole argument is an analyzer-injected random seed when the call is
+    // unseeded, indistinguishable post-analysis from a genuinely
+    // user-written literal - excluded from the hash entirely for exactly
+    // these three names, never for any other Function.
+    case Function(name, _) if SeedBearingFunctionNames.contains(name.toLowerCase) =>
+      done(CTag("Function", List(stringLeaf(name))))
     case Function(name, args) =>
       traverseT(args)(canonicalizeExprT(_, scope)).map(nodes => CTag("Function", stringLeaf(name) :: nodes))
     case UDF(name, args, _engineType) =>

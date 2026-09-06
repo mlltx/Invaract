@@ -117,6 +117,16 @@ it — never a runtime value, and never anything outside that representation:
   join a table sits on, two arguments to a non-commutative operator) **does**, even in
   cases where the reorder happens to be logically equivalent — Invaract does not attempt to
   prove operand reordering safe, since getting that wrong would silently hide a real change.
+- **Known limitation:** an *unaliased* self-join of the same table (both sides read via
+  `spark.table(...)` with no `.as()` on either) relies on Spark's own analyzer to keep the
+  two occurrences distinguishable, and it doesn't always: Spark assigns both the same
+  default name internally. Spark's own `spark.sql.analyzer.failAmbiguousSelfJoin` guard
+  (on by default) blocks the query shapes where this would actually matter — referencing a
+  specific side's column after the join — so most jobs never hit it; if that guard has been
+  turned off, Invaract cannot currently tell "read the left side's column" apart from "read
+  the right side's column" after such a join, on any hierarchy level. Always aliasing both
+  sides of a self-join explicitly (`.as("a")`/`.as("b")`) avoids this entirely and is good
+  practice regardless.
 - A MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an
   UPDATE assigns — detected, via `rowMutation` (see the table above), and folded into
   `overall` too. This is not part of the translated `Plan` itself (Invaract translates a
