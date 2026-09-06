@@ -77,8 +77,9 @@ project's Sonatype account.
 
 1. Decide which module(s) actually changed and need a version bump.
    `contract`/`ir`/`spark-adapter` version independently (already true
-   today — `contract`/`ir` are at `0.3.0`, `spark-adapter` at `0.2.0`), so
-   a release does not have to touch all three.
+   today — all three are at `0.3.0`, each having bumped independently for
+   its own deliberate break), so a release does not have to touch all
+   three.
 2. Bump `ThisBuild / version :=` in the changed module's `build.sbt`,
    following docs/VERSIONING.md's rules (pre-1.0: MINOR bump for any
    breaking change, PATCH for a non-breaking one).

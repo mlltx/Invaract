@@ -43,7 +43,7 @@ Download the three jars you need:
 RELEASE="https://github.com/mlltx/Invaract/releases/download/spark-jars-latest"
 curl -fLO "$RELEASE/invaract-contract-0.3.0.jar"
 curl -fLO "$RELEASE/invaract-ir-0.3.0.jar"
-curl -fLO "$RELEASE/invaract-spark-adapter-0.2.0.jar"
+curl -fLO "$RELEASE/invaract-spark-adapter-0.3.0.jar"
 ```
 
 Check the release page for the current filenames if these version numbers have moved —
@@ -67,9 +67,9 @@ they follow each module's own `version` in its `build.sbt`, not the release tag.
      -Dversion=0.3.0 -Dpackaging=jar
 
    mvn install:install-file \
-     -Dfile=invaract-spark-adapter-0.2.0.jar \
+     -Dfile=invaract-spark-adapter-0.3.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-spark-adapter \
-     -Dversion=0.2.0 -Dpackaging=jar
+     -Dversion=0.3.0 -Dpackaging=jar
    ```
 
    This puts them in `~/.m2/repository` under the same `com.invaract` coordinates
@@ -94,7 +94,7 @@ they follow each module's own `version` in its `build.sbt`, not the release tag.
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-spark-adapter</artifactId>
-     <version>0.2.0</version>
+     <version>0.3.0</version>
      <scope>provided</scope>
    </dependency>
    ```
@@ -115,7 +115,7 @@ they follow each module's own `version` in its `build.sbt`, not the release tag.
    spark-submit \
      --class com.example.MySparkJob \
      --master local[*] \
-     --jars invaract-contract-0.3.0.jar,invaract-ir-0.3.0.jar,invaract-spark-adapter-0.2.0.jar \
+     --jars invaract-contract-0.3.0.jar,invaract-ir-0.3.0.jar,invaract-spark-adapter-0.3.0.jar \
      target/my-job.jar \
      ...
    ```
