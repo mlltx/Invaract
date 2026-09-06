@@ -62,11 +62,12 @@ jobs:
       # `publishLocal`, not just `assembly`, on every dependency before the
       # next module needs it: contract/ir/fingerprint/spark-adapter all
       # resolve each other as real libraryDependencies against their own
-      # published coordinate (no aggregating root build.sbt, no
+      # published coordinate (Maven Central publishing setup for
+      # contract/ir/spark-adapter, no aggregating root build.sbt, no
       # unmanagedJars between these four - see spark-adapter/build.sbt's own
       # comment on this) - a fresh runner's local Ivy cache has nothing in
-      # it until this job puts it there itself, unlike dev/build's own
-      # ordering, which this mirrors.
+      # it until this job puts it there itself, the same reason `dev/build`
+      # and every spark-adapter-building job in test.yml already do this.
       - name: Build contract
         run: cd contract && sbt -batch clean compile test assembly publishLocal
 
