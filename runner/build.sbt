@@ -166,7 +166,27 @@ libraryDependencies ++= Seq(
 unmanagedJars in Compile += file("../plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar")
 
 assembly / assemblyJarName := "invaract-spark-runner.jar"
+// A blanket META-INF discard breaks log4j-core's own SPI registration:
+// log4j-core declares itself as the LoggerContext provider via
+// META-INF/services/org.apache.logging.log4j.spi.Provider, and discarding
+// it silently leaves log4j-api's own built-in SimpleLoggerContextFactory
+// as the only provider found, which produces a SimpleLoggerContext at
+// runtime instead of a real org.apache.logging.log4j.core.LoggerContext.
+// Confirmed directly: DemoJobHarness invoked via `java -cp` (no
+// spark-submit on PATH, so none of Spark's own unbundled log4j jars are
+// on the classpath to paper over this) threw exactly this
+// ClassCastException the moment Spark's own `setLogLevel` cast the
+// context to log4j-core's type. Every META-INF/services/* entry is kept
+// (concatenated, not just the first one found - safe for ServiceLoader
+// files, which are one-fully-qualified-class-name per line) so log4j-core
+// registers correctly regardless of jar merge order; the plugin cache
+// (Log4j2Plugins.dat, only log4j-core itself ships one) is kept via
+// MergeStrategy.first for the same reason plain classes are - there is
+// only ever one real copy to pick.
 assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", "services", xs @ _*) => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", "org", "apache", "logging", "log4j", "core", "config", "plugins", "Log4j2Plugins.dat") =>
+    MergeStrategy.first
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
 }

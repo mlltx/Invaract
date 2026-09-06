@@ -332,99 +332,102 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(fp1.outputs("r") == fp2.outputs("r"))
   }
 
-  // A real, confirmed false NEGATIVE, deliberately left unfixed and
-  // pinned here rather than silently present: an unaliased DataFrame-API
-  // self-join of the same catalog table (`spark.table("t")` on both
-  // sides, no `.as()` anywhere) makes Spark's analyzer wrap BOTH physical
-  // Read occurrences in a `SubqueryAlias` using the table's own name -
-  // the identical string on both sides, confirmed directly by printing
-  // the analyzed plan (`SubqueryAlias spark_catalog.default.t` appears
-  // twice). SparkPlanAdapter's SubqueryAlias-handling case (see its own
-  // comment) faithfully carries that identical alias into both `ir.Read`
-  // nodes, and every `ColumnRef.qualifier` reaching a join condition or
-  // output expression is *also* just that same repeated string - Spark's
-  // analyzer resolves the real ambiguity internally via per-session
-  // `exprId`, which this IR deliberately never hashes (see ColumnRef's
-  // own doc), so no signal survives translation that could tell the two
-  // physical occurrences apart. `Canonicalizer.buildScopeInfo` (see its
-  // own doc) then collapses both to the same positional id, exactly like
-  // an explicitly-consistent self-join alias rename - which is legitimate
-  // for that case, but wrong here, since these two occurrences were never
-  // actually the same alias by the user's own naming, just accidentally
-  // identical defaults.
+  // A real, confirmed false NEGATIVE, now fixed by
+  // SparkPlanAdapter.computeAliasDisambiguation (see that method's own
+  // doc for the full mechanism): an unaliased DataFrame-API self-join of
+  // the same catalog table (`spark.table("t")` on both sides, no `.as()`
+  // anywhere) makes Spark's analyzer wrap BOTH physical Read occurrences
+  // in a `SubqueryAlias` using the table's own name - the identical
+  // string on both sides, confirmed directly by printing the analyzed
+  // plan (`SubqueryAlias spark_catalog.default.t` appears twice,
+  // verbatim). Before the fix, `translateNonWritePlan`'s SubqueryAlias
+  // case carried that identical string into both `ir.Read.alias` fields,
+  // and every `ColumnRef.qualifier` reaching a join condition or output
+  // expression was *also* just that same repeated string - collapsing a
+  // genuine two-occurrence join into what looked like a degenerate
+  // self-comparison (`t.id = t.id`) once `Canonicalizer.buildScopeInfo`
+  // ran over it.
   //
-  // Confirmed empirically that Spark's own `DetectAmbiguousSelfJoin`
-  // analyzer rule (`spark.sql.analyzer.failAmbiguousSelfJoin`, default
-  // `true` since Spark 3.0) already blocks the most obvious trigger of
-  // this bug: referencing a specific side's non-join-key column
-  // (`right("value")`) via a Dataset-column handle after an unaliased
-  // self-join throws `AnalysisException` before this module ever sees
-  // the plan, for exactly this reason. That default guard is real
-  // protection, not a reason to consider this closed - Spark ships the
-  // config to disable it precisely because it has its own false
-  // positives on legitimate pre-existing self-join code, so real
-  // clusters (this one included, since the org may set Spark configs
-  // Invaract doesn't control) do turn it off. With it off, the collision
-  // is fully live: selecting the LEFT side's `value` column after such a
-  // join fingerprints byte-identically to selecting the RIGHT side's
-  // `value` column - a real difference (a future refactor accidentally
-  // reading the wrong side of a self-join) that this design cannot
-  // detect once that guard is off. A fix requires SparkPlanAdapter
-  // itself to notice the colliding default aliases and synthesize
-  // positionally-distinct ones (or otherwise correlate via exprId before
-  // translation drops it) - a core-translator change with its own
-  // mutation-testing/API-compatibility obligations under CLAUDE.md, out
-  // of scope for this fingerprint-focused pass. Tracked as a named
-  // limitation in docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §11. If this is
-  // ever fixed, this test's assertion must flip to `!=` - until then, it
-  // exists so the gap is visible and tested, not silent.
-  test(
-    "KNOWN LIMITATION (false negative): with Spark's ambiguous-self-join guard disabled, an unaliased " +
-      "self-join of the same catalog table cannot distinguish which side's column was selected"
-  ) {
-    val tableName = "self_join_collision_tbl"
+  // `.toDF(...)` (a purely positional rename over the join's own already-
+  // exprId-distinct output attributes - Spark's `Dataset.join` internally
+  // deduplicates the right side's exprIds specifically to make self-joins
+  // usable at all, confirmed via the analyzed plan below) is the concrete,
+  // always-reachable repro used here, deliberately *not* a `.select()`
+  // built from `left(...)`/`right(...)` Dataset-column handles: those
+  // handles are captured from each side's own *pre-join*, *pre-
+  // deduplication* resolution, so Spark's own column lookup collapses
+  // `right("value")` to the exact same exprId as `left("value")` once
+  // Spark's `DetectAmbiguousSelfJoin` guard is turned off to allow it -
+  // confirmed empirically (not assumed) by executing both "variants" and
+  // observing byte-identical output rows for what looks like two
+  // different queries. That is not a reachable false negative (there is
+  // no genuinely different query being conflated - Spark itself cannot
+  // tell the two apart via that API), so it is deliberately not asserted
+  // here. `.toDF(...)`'s positional rename needs no such handle and no
+  // Spark config change - it reproduces (and, after the fix, correctly
+  // resolves) the real, ordinary case: a self-join whose *own* output
+  // columns are read normally.
+  test("an unaliased self-join of the same catalog table translates the two physical occurrences distinctly") {
+    val tableName = "self_join_alias_fix_tbl"
     spark.sql(s"DROP TABLE IF EXISTS $tableName")
     spark.range(5).withColumn("value", col("id") * 10).write.saveAsTable(tableName)
+    val outputPath = scratchDir.resolve("self_join_alias_fix.parquet").toString
 
-    def fingerprintOfSelectedSide(pickRight: Boolean): com.invaract.fingerprint.TransformationFingerprint = {
-      val outputPath = scratchDir.resolve(s"self_join_collision_${if (pickRight) "right" else "left"}.parquet").toString
-      val yaml =
-        s"""id: enforcement_demo
-           |version: "1.0.0"
-           |outputs:
-           |  - name: out
-           |    location: $outputPath
-           |    schema:
-           |      fields:
-           |        - name: id
-           |          type: long
-           |          required: false
-           |""".stripMargin
-      val sink = new TestNotificationSink
-      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
-        val left = spark.table(tableName)
-        val right = spark.table(tableName)
-        val joined = left.join(right, left("id") === right("id"))
-        val projected =
-          if (pickRight) joined.select(right("id").as("id"), right("value").as("value"))
-          else joined.select(left("id").as("id"), left("value").as("value"))
-        projected.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
-      }
-      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
-        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: lid
+         |          type: long
+         |          required: false
+         |""".stripMargin
+    val sink = new TestNotificationSink
+    capturedPlans.clear()
+
+    withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+      val left = spark.table(tableName)
+      val right = spark.table(tableName)
+      val joined = left.join(right, left("id") === right("id"))
+      val renamed = joined.toDF("lid", "lvalue", "rid", "rvalue")
+      renamed.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
     }
 
-    val previousGuard = spark.conf.get("spark.sql.analyzer.failAmbiguousSelfJoin")
-    spark.conf.set("spark.sql.analyzer.failAmbiguousSelfJoin", "false")
-    try {
-      val fpLeft = fingerprintOfSelectedSide(pickRight = false)
-      val fpRight = fingerprintOfSelectedSide(pickRight = true)
-      assert(
-        fpLeft.outputs("value") == fpRight.outputs("value"),
-        "documents the known gap: selecting the other physical side of an unaliased self-join is currently " +
-          "indistinguishable from selecting the same side again - see this test's own comment"
-      )
-    } finally spark.conf.set("spark.sql.analyzer.failAmbiguousSelfJoin", previousGuard)
+    val translated = SparkPlanAdapter.translate(capturedPlans.last).plan
+    def findJoin(plan: com.invaract.ir.Plan): Option[com.invaract.ir.Join] = plan match {
+      case j: com.invaract.ir.Join => Some(j)
+      case other                     => other.children.flatMap(findJoin).headOption
+    }
+    val join = findJoin(translated).getOrElse(fail(s"no Join node found in $translated"))
+
+    val leftRead = join.left.asInstanceOf[com.invaract.ir.Read]
+    val rightRead = join.right.asInstanceOf[com.invaract.ir.Read]
+    assert(leftRead.alias.isDefined && rightRead.alias.isDefined, "both self-join occurrences must carry an alias")
+    assert(leftRead.alias != rightRead.alias, s"the two physical self-join occurrences must get distinct aliases, got ${leftRead.alias} for both")
+
+    val condition = join.condition.getOrElse(fail("expected a join condition"))
+    condition match {
+      case com.invaract.ir.Comparison(
+            "=",
+            com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef(_, leftQualifier, _)),
+            com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef(_, rightQualifier, _))
+          ) =>
+        assert(leftQualifier != rightQualifier, "the join condition's two sides must resolve to distinct qualifiers")
+        assert(leftQualifier == leftRead.alias)
+        assert(rightQualifier == rightRead.alias)
+      case other => fail(s"unexpected join condition shape: $other")
+    }
+
+    val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    assert(
+      fp.outputs("lvalue") != fp.outputs("rvalue"),
+      "lvalue and rvalue are genuinely different physical columns (left vs. right side of the self-join) - " +
+        "before the fix, both collapsed to the same colliding qualifier and fingerprinted identically"
+    )
   }
 
   // Found via the ClickHouse connector pass's Phase 8, but not

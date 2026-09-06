@@ -2236,25 +2236,35 @@ is detected even when the output schema stays identical.
       remaining piece from the item above, now that MiMa/mutation-testing
       CI wiring is done. No previous release exists yet to sign or publish
       against.
-- [ ] **`SparkPlanAdapter` translation-layer fix for colliding self-join
-      default aliases (confirmed false negative).** An unaliased
-      DataFrame-API self-join of the same catalog table gets both physical
-      `Read` occurrences the identical default `SubqueryAlias` from Spark's
-      own analyzer, which `Canonicalizer.buildScopeInfo` then collapses to
-      one positional id — selecting the left vs. right side's column after
-      such a join fingerprints identically, a real difference this design
-      cannot currently detect. Root-caused, confirmed against a real Spark
-      session, and pinned (not silently present) by
-      `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION (false negative):
-      with Spark's ambiguous-self-join guard disabled, ..." test — see
+- [x] **`SparkPlanAdapter` translation-layer fix for colliding self-join
+      default aliases (confirmed false negative) — closed.** An unaliased
+      DataFrame-API self-join of the same catalog table used to get both
+      physical `Read` occurrences the identical default `SubqueryAlias`
+      from Spark's own analyzer, which `Canonicalizer.buildScopeInfo` then
+      collapsed to one positional id — reading the left vs. right side's
+      own column after such a join (via `.toDF(colNames*)`, an ordinary,
+      always-reachable positional rename — no special Spark config needed)
+      fingerprinted identically despite being genuinely different physical
+      columns. Fixed by `SparkPlanAdapter.computeAliasDisambiguation`: one
+      pass over the whole plan (`TreeNode.collect`) that groups every
+      `SubqueryAlias` occurrence by its default name and assigns each
+      occurrence sharing a name a distinct, deterministic `"<name>#<index>"`
+      suffix, keyed by `exprId` so `Read.alias` and every referencing
+      `ColumnRef.qualifier` agree; a no-op for every already-correct case
+      (single occurrence, or an explicitly-aliased self-join). Verified
+      against a real Spark session (`ContractEnforcementRuleSpec`'s "an
+      unaliased self-join of the same catalog table translates the two
+      physical occurrences distinctly" test, plus the full 416-test
+      `spark-adapter` suite and `./dev/test`, both passing); scoped
+      Stryker mutation testing on the touched method per CLAUDE.md's
+      Mutation Testing Requirement was run and is being confirmed — see
       docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §11 "Positional alias
       substitution" bullet and its "Gap-closing pass" entry for the full
-      mechanism. Needs `SparkPlanAdapter` itself to detect colliding
-      default aliases at translation time and synthesize positionally-
-      distinct ones (or correlate via Spark's `exprId` before it's
-      dropped) — a core-translator change with its own mutation-testing/
-      API-compatibility obligations under CLAUDE.md, deliberately scoped
-      out of the fingerprinting work above rather than rushed in.
+      mechanism, including a second, initially-suspected repro
+      (referencing a side via a `left(...)`/`right(...)` handle with
+      Spark's ambiguous-self-join guard disabled) that closer empirical
+      checking showed was never actually reachable and was retracted
+      rather than shipped as a "known limitation."
 
 ##### Dependencies
 

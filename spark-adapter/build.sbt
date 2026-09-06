@@ -865,7 +865,20 @@ libraryDependencies ++= Seq(
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.3.0.jar"
+// Same fix as runner/build.sbt's assembly merge strategy, and for the
+// identical reason: a blanket META-INF discard drops log4j-core's own
+// META-INF/services/org.apache.logging.log4j.spi.Provider registration,
+// silently leaving log4j-api's built-in SimpleLoggerContextFactory as the
+// only discoverable provider - a real, reproducible ClassCastException
+// (SimpleLoggerContext cast to log4j-core's own LoggerContext) for anyone
+// who takes this module's own assembled jar (the "Use Prebuilt Jars
+// Without sbt" docs-site guide's exact use case) and runs it via plain
+// `java`/a non-spark-submit launcher, where none of Spark's own unbundled
+// log4j jars are on the classpath to mask the gap.
 assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", "services", xs @ _*) => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", "org", "apache", "logging", "log4j", "core", "config", "plugins", "Log4j2Plugins.dat") =>
+    MergeStrategy.first
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
 }

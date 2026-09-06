@@ -805,46 +805,57 @@ the same canonicalizer and hasher, just applied to different subtrees.
   type in the IR itself would close it, but that's an IR change outside
   this document's scope.
 - **Positional alias substitution (§2.3) assumes the IR's existing
-  guarantee that a self-join requires distinct scope strings — a real,
-  confirmed gap when that assumption is false.** This design does not add
-  new validation for that; it inherits whatever guarantee (or lack of
-  one) already exists in `ir`/`spark-adapter` for well-formed plans, the
-  same way `Lineage`'s own resolution does. That assumption is **known to
-  fail** for one concrete, reproduced case: an unaliased DataFrame-API
+  guarantee that a self-join requires distinct scope strings — a real gap
+  was found (and fixed) where that assumption used to be false.** This
+  design itself adds no new validation for that; it inherits whatever
+  guarantee already exists in `ir`/`spark-adapter` for well-formed plans,
+  the same way `Lineage`'s own resolution does. That guarantee used to
+  fail for one concrete, reproduced case: an unaliased DataFrame-API
   self-join of the same catalog table (`spark.table("t")` on both sides,
-  no `.as()` anywhere). Spark's analyzer wraps both physical `Read`
-  occurrences in a `SubqueryAlias` using the table's own name — the
-  identical string on both sides — and `SparkPlanAdapter` faithfully
-  carries that collision into both `ir.Read.alias` fields, with nothing
-  in `ColumnRef.qualifier` left to tell the two occurrences apart
-  (Spark's own disambiguation lives entirely in per-session `exprId`
-  values, which this design deliberately never hashes — see `ColumnRef`'s
-  own doc). `buildScopeInfo` then collapses both to the same positional
-  id, indistinguishable from a legitimate consistent-alias-rename. Spark's
-  own `DetectAmbiguousSelfJoin` analyzer rule
-  (`spark.sql.analyzer.failAmbiguousSelfJoin`, default `true` since Spark
-  3.0) blocks the most obvious trigger — referencing a specific side's
-  non-join-key column via a Dataset-column handle after such a join
-  throws `AnalysisException` before this module ever sees the plan — but
-  that guard is a Spark config real clusters do disable (it has its own
-  false positives against legitimate pre-existing self-join code), and
-  with it off the gap is fully live: selecting the left side's column
-  after such a join fingerprints byte-identically to selecting the right
-  side's column, a real difference (e.g. a refactor that accidentally
-  reads the wrong side of a self-join) this design cannot currently
-  detect. `canonicalizeLineage` (§3's `lineage` layer) resolves
+  no `.as()` anywhere) — Spark's analyzer wraps both physical `Read`
+  occurrences in a `SubqueryAlias` using the table's own name, the
+  identical string on both sides, and `SparkPlanAdapter` used to carry
+  that collision straight into both `ir.Read.alias` fields, with nothing
+  in `ColumnRef.qualifier` left to tell the two occurrences apart (Spark's
+  own disambiguation lives entirely in per-session `exprId` values, which
+  this design deliberately never hashes — see `ColumnRef`'s own doc);
+  `buildScopeInfo` then collapsed both to the same positional id,
+  indistinguishable from a legitimate consistent-alias-rename. Confirmed
+  concretely reachable via `.toDF(colNames*)` (a positional rename over
+  the join's own already-`exprId`-distinct output attributes — Spark's
+  `Dataset.join` deduplicates the right side's `exprId`s internally
+  specifically to make self-joins usable at all) — no special Spark config
+  needed, an ordinary, everyday pattern. (A tempting *broader*-looking
+  repro — referencing a specific side's column via a `left(...)`/
+  `right(...)` Dataset-column handle in a `.select()` after the join — is
+  *not* actually reachable: Spark's own `DetectAmbiguousSelfJoin` rule
+  blocks it by default, and confirmed empirically, even with that guard
+  turned off Spark's column-object resolution collapses `left("x")` and
+  `right("x")` to the identical `exprId` anyway, since those handles were
+  captured before the join-triggered deduplication — there is no
+  genuinely different query being conflated there, so this is not a
+  reachable false negative and isn't what the fix targets.)
+  `canonicalizeLineage` (§3's `lineage` layer) resolves
   `ColumnLineage.sources` through the exact same `scope` substitution
-  table via `canonicalizeColumnRef`, so this is not an `expression`-layer-
-  only gap — the `lineage` and `combined` hierarchy levels for that output
-  collapse identically too, for the same reason. Confirmed and pinned by
-  `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION (false negative):
-  with Spark's ambiguous-self-join guard disabled, ..." test. A real fix
-  requires `SparkPlanAdapter` itself to notice colliding default aliases
-  at translation time and synthesize positionally-distinct ones (or
-  otherwise correlate via `exprId` before it's dropped) — a core-
-  translator change with its own mutation-testing/API-compatibility
-  obligations under CLAUDE.md, deliberately left as scoped follow-up work
-  rather than rushed into this fingerprint-focused pass.
+  table via `canonicalizeColumnRef`, so this was not an `expression`-layer-
+  only gap — the `lineage` and `combined` hierarchy levels for an affected
+  output collapsed identically too, for the same reason. **Fixed** by
+  `SparkPlanAdapter.computeAliasDisambiguation`: one pass over the whole
+  plan (via Catalyst's own `TreeNode.collect`) that groups every
+  `SubqueryAlias` occurrence by its default name and, for any name shared
+  by more than one occurrence, assigns each a distinct, deterministic
+  `"<name>#<index>"` suffix (in encounter order — the same convention
+  `buildScopeInfo`'s own `ReadOccurrence` already uses), keyed by each
+  occurrence's output attributes' `exprId`s so both `ir.Read.alias` and
+  every `ColumnRef.qualifier` referencing it agree. A name with only one
+  occurrence (an ordinary read, or an explicitly-aliased self-join with
+  two different names) is left completely unchanged, so this is a
+  no-op — byte-for-byte identical translation output — for every
+  already-correct case. Verified against a real Spark session
+  (`SparkPlanAdapterSpec`'s/`ContractEnforcementRuleSpec`'s self-join
+  translation tests); scoped Stryker mutation testing on the touched
+  method per CLAUDE.md's Mutation Testing Requirement is tracked
+  separately below rather than asserted here with an unconfirmed number.
 
 ---
 
@@ -1686,34 +1697,52 @@ below):
   Spark session (`ContractEnforcementRuleSpec`'s "computeFingerprint = true:
   an unseeded rand() call fingerprints identically across separate
   analyses of the identical code").
-- **An unaliased DataFrame-API self-join of the same catalog table can
+- **An unaliased DataFrame-API self-join of the same catalog table could
   make two genuinely different queries fingerprint identically - a real,
-  confirmed false NEGATIVE, deliberately left open rather than rushed into
-  a partial fix.** See §11's expanded "Positional alias substitution"
-  bullet above for the full mechanism, root cause, and why a proper fix
-  needs a `SparkPlanAdapter` translation-layer change out of this pass's
-  scope. Pinned by `ContractEnforcementRuleSpec`'s "KNOWN LIMITATION
-  (false negative): with Spark's ambiguous-self-join guard disabled, ..."
-  test, which fails (by design, `assert(... == ...)` must flip to `!=`)
-  the moment a future fix changes this behavior - a deliberate tripwire,
-  not an oversight.
+  confirmed false NEGATIVE.** See §11's expanded "Positional alias
+  substitution" bullet above for the full mechanism, root cause, concrete
+  (`.toDF(...)`-based) repro, and the fix
+  (`SparkPlanAdapter.computeAliasDisambiguation`). Verified by
+  `ContractEnforcementRuleSpec`'s "an unaliased self-join of the same
+  catalog table translates the two physical occurrences distinctly" test
+  (real Spark session: distinct `Read.alias`/`ColumnRef.qualifier` for
+  both occurrences, and two genuinely different output columns —
+  `lvalue`/`rvalue`, the left vs. right side's own `value` column —
+  fingerprinting differently, where before the fix they collapsed to the
+  same qualifier and fingerprint). Scoped Stryker mutation testing on the
+  touched `SparkPlanAdapter.scala` method, per CLAUDE.md's Mutation
+  Testing Requirement, is tracked in ROADMAP.md rather than asserted here
+  with a number this repository's own toolchain hadn't yet confirmed at
+  commit time. An earlier draft of this
+  investigation also suspected a second repro (referencing a specific
+  side's column via a `left(...)`/`right(...)` Dataset-column handle
+  after the join, with Spark's `DetectAmbiguousSelfJoin` guard turned
+  off) — closer empirical checking showed that one isn't actually
+  reachable: Spark's own column-object resolution collapses both handles
+  to the identical `exprId` regardless (they were captured before the
+  join's own internal deduplication), so there is no genuinely different
+  query being conflated there. Worth recording as a reminder that "the
+  source code looks different" isn't sufficient evidence of a real
+  fingerprint gap — only "Spark itself treats them as different queries"
+  is.
 
-Each of the closed gaps above was found and fixed with the same discipline
-this document asks of the code itself: a clean/high mutation score does
-not, by itself, prove behavioral coverage of a code path with nothing for
+Each of the gaps above was found and fixed with the same discipline this
+document asks of the code itself: a clean/high mutation score does not,
+by itself, prove behavioral coverage of a code path with nothing for
 Stryker's own mutators to target (`case (Some(l), Some(_)) => Some(l)` has
 no comparison/boolean operator to flip) — the Union/Join gap above is
 exactly that shape, and was found by asking "what does this branch
 actually do" rather than by trusting an aggregate score. The
-binary-literal, exhaustiveness, and `rand()`-seed gaps were found the same
-way: not by running more tests against the existing code, but by asking
-what a real Spark session actually produces — for a literal runtime type,
-for an unseeded random-function call, for an unaliased self-join — that
-this module's tests hadn't yet exercised, and what the compiler or the
-canonicalizer would actually let slip through un-flagged. The self-join
-gap is the one place this same process found a real bug and, on balance,
-chose to document and pin rather than fix inline, given the scope of a
-correct fix — see its own bullet above for why.
+binary-literal, exhaustiveness, `rand()`-seed, and self-join-alias gaps
+were found the same way: not by running more tests against the existing
+code, but by asking what a real Spark session actually produces — for a
+literal runtime type, for an unseeded random-function call, for an
+unaliased self-join — that this module's tests hadn't yet exercised, and
+what the compiler or the canonicalizer would actually let slip through
+un-flagged. The self-join gap is also the one place this same discipline
+caught its own initial overreach: a first, plausible-looking repro turned
+out not to be real once checked against actual Spark execution, and was
+retracted rather than shipped as a documented "known limitation."
 
 **MiMa/mutation-testing CI wiring, closed.** `fingerprint/build.sbt` now
 sets `mimaPreviousArtifacts`/`versionScheme` (a new `fingerprint/project/
@@ -1805,16 +1834,18 @@ not a list of things currently broken:
   flagged here as the concrete, upgrade-relevant version of a risk that
   already exists today and only grows as multi-catalog usage increases.
 - **`SubqueryAlias`'s default-aliasing behavior for unaliased catalog
-  references (the root mechanism behind the self-join collision bug above)
-  is a Catalyst analyzer implementation detail, not a documented Spark
-  API contract.** `SparkPlanAdapter`'s translation of it, and this design's
-  reliance on `Read.alias` being distinct whenever two `Read`s are actually
-  different, both depend on that detail continuing to behave the way it
-  does today. A future Spark version could change *when* it inserts a
-  default `SubqueryAlias`, or use a different default name — Invaract
-  would inherit whatever new behavior results without any code change on
-  its side, for better or worse, and no current test would catch a
-  regression since only one Spark version is under test.
+  references (the root mechanism behind the self-join alias-collision
+  bug above, and the basis of `computeAliasDisambiguation`'s own fix for
+  it) is a Catalyst analyzer implementation detail, not a documented
+  Spark API contract.** `SparkPlanAdapter`'s translation of it, this
+  design's reliance on `Read.alias` being distinct whenever two `Read`s
+  are actually different, and the fix's own `plan.collect { case sa:
+  SubqueryAlias => sa }` pre-pass all depend on that detail continuing to
+  behave the way it does today. A future Spark version could change
+  *when* it inserts a default `SubqueryAlias`, or use a different default
+  name — Invaract would inherit whatever new behavior results without any
+  code change on its side, for better or worse, and no current test would
+  catch a regression since only one Spark version is under test.
 - **Spark's `DetectAmbiguousSelfJoin` safeguard (`spark.sql.analyzer.
   failAmbiguousSelfJoin`) is itself version-sensitive** — its rule set and
   default have evolved since its introduction in Spark 3.0, and a future
