@@ -2255,9 +2255,13 @@ is detected even when the output schema stays identical.
       against a real Spark session (`ContractEnforcementRuleSpec`'s "an
       unaliased self-join of the same catalog table translates the two
       physical occurrences distinctly" test, plus the full 416-test
-      `spark-adapter` suite and `./dev/test`, both passing); scoped
+      `spark-adapter` suite and `./dev/test`, both passing) and by scoped
       Stryker mutation testing on the touched method per CLAUDE.md's
-      Mutation Testing Requirement was run and is being confirmed — see
+      Mutation Testing Requirement (two apparent survivors on the
+      `countByName(name) > 1` boundary check, both verified by hand to be
+      false negatives of that single-file-scoped run's coverage
+      detection — manually applying each mutation failed real tests in
+      `SparkPlanAdapterSpec`/`ContractEnforcementRuleSpec`) — see
       docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §11 "Positional alias
       substitution" bullet and its "Gap-closing pass" entry for the full
       mechanism, including a second, initially-suspected repro

@@ -853,9 +853,22 @@ the same canonicalizer and hasher, just applied to different subtrees.
   no-op — byte-for-byte identical translation output — for every
   already-correct case. Verified against a real Spark session
   (`SparkPlanAdapterSpec`'s/`ContractEnforcementRuleSpec`'s self-join
-  translation tests); scoped Stryker mutation testing on the touched
-  method per CLAUDE.md's Mutation Testing Requirement is tracked
-  separately below rather than asserted here with an unconfirmed number.
+  translation tests), including a test asserting the exact
+  `"<name>#<index>"` value per occurrence (not merely that the two
+  differ), which pins the index arithmetic itself against an off-by-one
+  or sign-flip mutation. A whole-file-scoped `sbt stryker --mutate
+  "SparkPlanAdapter.scala"` run reported two apparent survivors on this
+  method's own boundary check (`countByName(name) > 1` mutated to `>= 1`
+  and to `== 1`) — both verified by hand to be false: manually applying
+  each mutation and rerunning `SparkPlanAdapterSpec`/
+  `ContractEnforcementRuleSpec` failed 2-3 tests each time, confirming
+  real test coverage that this particular run's coverage-based test
+  selection simply missed (a known limitation of scoping Stryker to one
+  file in isolation, not a gap in the tests themselves). Every other
+  survivor that run reported sits in pre-existing, untouched code
+  elsewhere in this large file (JDBC/HadoopFsRelation/HiveTableRelation/
+  StreamingRelation fallback branches, `JoinType` translation, UDF-name
+  filtering) — unrelated to this change and out of this fix's scope.
 
 ---
 
@@ -1709,11 +1722,12 @@ below):
   both occurrences, and two genuinely different output columns —
   `lvalue`/`rvalue`, the left vs. right side's own `value` column —
   fingerprinting differently, where before the fix they collapsed to the
-  same qualifier and fingerprint). Scoped Stryker mutation testing on the
-  touched `SparkPlanAdapter.scala` method, per CLAUDE.md's Mutation
-  Testing Requirement, is tracked in ROADMAP.md rather than asserted here
-  with a number this repository's own toolchain hadn't yet confirmed at
-  commit time. An earlier draft of this
+  same qualifier and fingerprint), and by scoped Stryker mutation testing
+  on the touched method per CLAUDE.md's Mutation Testing Requirement — see
+  §11's own bullet above for the two apparent survivors that run reported
+  and why both were verified (by hand, against the real test suite) to be
+  false negatives of that single-file-scoped run's coverage detection,
+  not real gaps. An earlier draft of this
   investigation also suspected a second repro (referencing a specific
   side's column via a `left(...)`/`right(...)` Dataset-column handle
   after the join, with Spark's `DetectAmbiguousSelfJoin` guard turned
