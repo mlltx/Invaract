@@ -350,6 +350,17 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # fingerprint's build.sbt resolves ir as a real libraryDependency
+      # against its own published coordinate (no aggregating root
+      # build.sbt, no unmanagedJars - see fingerprint/build.sbt's own
+      # comment), so it needs `publishLocal` before `sbt stryker` can even
+      # compile fingerprint's sources, let alone mutate them - the same
+      # fix mutation-testing-spark-adapter's own equivalent step already
+      # applies for contract/ir/fingerprint there.
+      - name: Publish ir locally (fingerprint's libraryDependency)
+        shell: bash
+        run: cd ir && sbt publishLocal
+
       - name: Mutation test fingerprint
         shell: bash
         run: cd fingerprint && sbt "stryker --concurrency 4"
@@ -1130,6 +1141,14 @@ jobs:
 
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
+
+      # fingerprint's own build.sbt resolves ir as a real libraryDependency
+      # against its own published coordinate, so it needs publishing before
+      # `sbt publishLocal` below can even compile fingerprint's sources -
+      # nothing has published PR head's (or base-ref's) ir yet at this point
+      # in the job, since the per-module loop below hasn't started.
+      - name: Publish PR head's ir locally (fingerprint's libraryDependency)
+        run: cd ir && sbt publishLocal
 
       # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) IS MiMa-gated
       # (mimaPreviousArtifacts set - see its own build.sbt) and IS one of the
