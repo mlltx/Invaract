@@ -1,10 +1,14 @@
 # Semantic Lineage Fingerprinting — Design
 
-**Status:** Design only. Nothing in this document is implemented. It
-specifies a canonicalisation and fingerprinting scheme over the existing
-transformation IR (`ir/`, see [docs/TRANSFORMATION_IR.md](TRANSFORMATION_IR.md))
-precise enough to be built from directly, but no `fingerprint` module,
-build wiring, or code exists yet.
+**Status:** Implemented. The `fingerprint/` sbt module (depending only on
+`ir`, per §1) implements the canonicalisation/encoding/hashing scheme this
+document specifies, and `spark-adapter` surfaces it per §14. See
+"Implementation notes" at the end of this document for exactly what
+shipped, its real measured mutation-testing score, and what's still
+outstanding (Maven Central publishing, MiMa, and CI wiring for
+`fingerprint` itself — tracked in ROADMAP.md). The design below is
+otherwise unchanged from the original proposal; treat it as the accurate
+description of what the code does, not a superseded plan.
 
 **Scope.** This document covers exactly two of the six stages in the
 architecture below — canonicalisation and fingerprinting — and nothing
@@ -603,11 +607,18 @@ Classification is **tri-state**, not boolean, to avoid the same
 "invented certainty" failure mode as everywhere else in this design:
 
 - `Function(name, _)` with `name` in the allowlist → `Some(true)`.
-- `Function(name, _)` with a recognized, known-deterministic name (this
-  design does not attempt to enumerate every deterministic built-in
-  exhaustively) or any other named node kind (`Arithmetic`, `Cast`, ...)
-  → `Some(false)`.
-- `Function(name, _)` with an unrecognized name, and any `UDF` → `None`
+- `Function(name, _)` with `name` **not** in the allowlist, and any other
+  named node kind (`Arithmetic`, `Cast`, ...) → `Some(false)`. This does
+  **not** claim to have verified every non-allowlisted name is truly
+  deterministic — it leans on `Function`'s own documented meaning in `ir`
+  ("a claim this IR understands what the named operation computes," i.e.
+  an ordinary per-row computation): absence from this allowlist is read
+  as "not flagged as non-deterministic," the practical, useful default,
+  rather than `None` for every unrecognized name — which would make this
+  classification collapse to "unknown" for nearly every real
+  transformation and defeat its purpose. Named explicitly as a judgement
+  call in §11, not a proven safety property.
+- Any `UDF`, regardless of its arguments' own classification → `None`
   ("unknown" — an opaque UDF body could do anything, including calling
   a non-deterministic primitive internally, and this IR has no way to
   know either way).
@@ -1357,3 +1368,118 @@ queried, or compared against history. Those remain real future work this
 design deliberately sets up for (versioned fingerprints, a hierarchy with
 locality, honest metadata alongside hashes) without attempting to solve
 here.
+
+---
+
+## Implementation notes
+
+What actually shipped, kept separate from the design sections above so
+those stay an accurate *specification* rather than a build log.
+
+**Module.** `fingerprint/` — pure Scala, one real dependency
+(`com.invaract:invaract-ir`), no Spark. `CanonicalNode.scala` (the
+`CTag`/`CLeaf` tree and the length-prefixed `Encoding`, including a
+test-only `decode` used for round-trip testing — §10's own note that
+decodability isn't required, only unambiguity, still holds; `decode`
+exists to *prove* that property, not because production code needs it),
+`LiteralEncoding.scala` (§5), `NonDeterminism.scala` (§9),
+`Canonicalizer.scala` (§2/§3's node canonicalisation, the alias
+scope-substitution table, and the deep passthrough-resolution described
+below), `Fingerprint.scala` (§10), `TransformationFingerprint.scala`
+(§3's hierarchy + `TransformationFingerprinter`).
+
+**One implementation detail this document underspecified.** §3 says an
+output's `expression` fingerprint is "`canonicalize(that NamedExpr.expr
+alone)`" — read literally, that's the *outermost* declared expression at
+whatever `Project`/`Aggregate`/`Window` boundary a `Write` sits on
+directly. For a realistic plan built from a chain of `.withColumn()`
+calls, Invaract translates Spark's *analyzed* (not optimized) plan, which
+nests a nested `Project` per call — so the outermost declaration for an
+untouched column is frequently just a bare passthrough reference to an
+inner `Project`'s real computation (`ir.Lineage`'s own "Derivation
+classification" section describes the identical shape). Canonicalizing
+only the outermost syntax would have missed exactly the `amount * 1.20 →
+1.25` change this document's own §13 Example A depends on detecting.
+`Canonicalizer.resolveExprDeep`/`resolveRefDeep` (and the
+`resolvedOutputs` entry point `TransformationFingerprinter` calls)
+resolve straight through any number of passthrough hops, structurally
+mirroring `ir.Lineage`'s own resolution walk but reconstructing an actual
+(passthrough-inlined) `Expr` rather than a summary — a descriptive move
+(finding what one column's one computation actually is), not an
+equivalence claim, so it doesn't compromise §6's conservatism. One
+narrower-than-`Lineage` limitation this introduces: where `ir.Lineage`
+merges every plausible candidate's *summary* for a genuinely ambiguous
+unqualified reference (both `Union` branches matching, or both `Join`
+sides), reconstructing a single concrete `Expr` means picking one
+candidate deterministically (the first `Union` branch in declared order;
+the `Join`'s left side) rather than representing the ambiguity itself.
+The `lineage` fingerprint layer is unaffected — it's built from
+`ir.Lineage.trace` directly and still unions every candidate's real
+sources — so this narrows only the `expression`/`combined` layers'
+precision on that one, real but narrow, edge case.
+
+**Encoding**, concretely: every node is `kind byte (Tag=0/Leaf=1) ++
+varint length ++ payload`, with a `CTag`'s tag string itself encoded as
+its own length-prefixed field rather than mapped through a compact
+numeric registry — a deliberate simplification of §10's "short, stable
+tag id" suggestion, chosen for implementation simplicity; it costs a few
+bytes per node and changes nothing about the unambiguity property the
+numeric-table version would also have provided.
+
+**Mutation testing.** A real `sbt stryker` run (whole-module scope, this
+being a brand-new module with no prior baseline to widen from) scored
+**96.52%** (111/115 non-static mutants killed) after writing the test
+suite with Stryker's own mutation categories in mind up front, per
+CLAUDE.md's "write mutation-resistant tests the first time" guidance —
+not as a first-draft score. All 4 survivors are the same two categories
+CLAUDE.md's Mutation Testing Requirement already names as legitimate to
+leave, not new ones invented for this module:
+
+- Three `StringLiteral` mutants on `require`/exception message text
+  (`CanonicalNode.scala`'s malformed-input diagnostics) — the exact
+  human-readable-prose category `spark-adapter`'s own mutation-testing
+  history documents as not worth chasing (asserting exact exception text
+  is brittle and doesn't verify real behavior); the *type* of exception
+  thrown for each malformed-input case is tested directly instead.
+- One `StringLiteral` mutant on `"NoExpression"`
+  (`TransformationFingerprint.scala`) — the tag for a defensive fallback
+  branch that is structurally unreachable for any real plan (see the code
+  comment at its call site): `resolvedOutputs` and `ir.Lineage.trace` are
+  two parallel top-level dispatches over the same plan shape, so every
+  name the latter produces already has a matching entry in the former by
+  construction. Kept as a fail-safe rather than a bare `.get`, not chased
+  for coverage, the same "genuinely unreachable given how it's called"
+  reasoning `ir.Lineage.scala`'s own documented `found.isEmpty` survivor
+  uses.
+
+Every genuinely load-bearing survivor category from the first,
+naive test pass — every canonical tag string (`"Read"`, `"Join"`,
+`"Arithmetic"`, ...) silently foldable to `""` with nothing detecting it —
+was real and is now fixed (`NodeStructureSpec.scala` pins the exact
+`CanonicalNode` structure, tag included, for every `Plan`/`Expr` case),
+not waved away: those tags are structural identity, not display prose,
+and are exactly what §12's "golden tests, with structural assertions, not
+exclusively string snapshots" guidance is for.
+
+**Verification against the real toolchain.** `sbt test` for `fingerprint`
+(128 tests) and `spark-adapter`'s full suite (413 tests, run after wiring
+§14's integration in) both pass against this repository's real sbt/Scala/
+Spark/Delta/Iceberg toolchain, not just a syntax check. `spark-adapter`'s
+own assembled fat jar was inspected directly (`unzip -l`) to confirm
+`com.invaract.fingerprint`'s compiled classes are bundled into it via
+`sbt-assembly`'s ordinary dependency-bundling — the same mechanism that
+already bundles `ir`/`contract` into that jar — so a consumer installing
+only `invaract-spark-adapter-*.jar` gets fingerprinting for free, with no
+separate jar or CI publishing step required for it to reach that
+artifact.
+
+**What's still outstanding**, tracked in ROADMAP.md's fingerprinting
+sub-phase rather than repeated here: Maven Central publishing, MiMa
+baseline, and CI wiring (`test.yml`'s whole-module and incremental
+mutation-testing jobs, `api-compatibility` job) for `fingerprint` itself
+— all deferred per `fingerprint/build.sbt`'s own "FOLLOW-UP" comment,
+since none of them can be meaningfully set up (or verified) without a
+real CI run and a first tagged release to compare against. Persistence,
+publication (beyond §14's channels), remote comparison, and Spark-plan-
+extraction integration remain out of this document's scope entirely, per
+"Non-goals" above.

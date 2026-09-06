@@ -839,7 +839,15 @@ excludeDependencies ++= Seq(
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.3.0",
-  "com.invaract" %% "invaract-contract" % "0.3.0"
+  "com.invaract" %% "invaract-contract" % "0.3.0",
+  // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+  // - surfaced through ContractEnforcementRule/ContractValidationEvent per
+  // that document's §14. Same real Maven-resolvable-dependency reasoning
+  // as invaract-ir/invaract-contract above - not unmanagedJars - even
+  // though, unlike those two, this module isn't (yet) one of the three
+  // published to Maven Central; keeping the dependency shape uniform now
+  // avoids a churn-y switch later once it is.
+  "com.invaract" %% "invaract-fingerprint" % "0.1.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"

@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractValidator}
+import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.notification.{ContractValidationEvent, NotificationSink}
 
@@ -288,7 +289,15 @@ object ContractEnforcementRule {
             if (declaredRules.exists(RuleVerifier.appliesTo(_, kind))) List(unverifiableDmlViolation(kind)) else Nil
           case None => Nil
         }
-        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
+        // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
+        // one branch with a real, complete ir.Plan already in hand
+        // (`translated.plan`, produced above for structural verification
+        // itself) - the state-changing-CALL and invalid-contract branches
+        // below have no equivalent real plan to fingerprint, so they never
+        // populate this field, flag on or not.
+        val fingerprints =
+          if (options.computeFingerprint) Some(TransformationFingerprinter.fingerprint(translated.plan)) else None
+        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations, fingerprints)
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
@@ -402,7 +411,8 @@ object ContractEnforcementRule {
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
-          applicationId = applicationId
+          applicationId = applicationId,
+          fingerprints = result.fingerprints
         )
       )
     }
@@ -439,7 +449,27 @@ object ContractEnforcementRule {
       sb.append(s"  ${i + 1}. ${v.remediation}\n")
     }
 
+    // Only present when VerificationOptions.computeFingerprint was true
+    // for this check and a real plan existed to fingerprint - see
+    // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.4. Only each output's
+    // combined hash is printed, not its separate expression/lineage
+    // components (still available on `result.fingerprints` directly) -
+    // and this never claims "changed"/"unchanged": there is no prior
+    // fingerprint here to compare against, only this check's own values.
+    result.fingerprints.foreach(appendFingerprints(sb, _))
+
     sb.toString()
+  }
+
+  private def appendFingerprints(sb: StringBuilder, fingerprints: TransformationFingerprint): Unit = {
+    sb.append(s"\nFingerprints (v${fingerprints.version}, ${fingerprints.overall.algorithm}):\n")
+    sb.append(s"  overall: ${fingerprints.overall.value}\n")
+    if (fingerprints.outputs.nonEmpty) {
+      sb.append("  outputs:\n")
+      fingerprints.outputs.toList.sortBy(_._1).foreach { case (name, output) =>
+        sb.append(s"    $name: ${output.combined.value}\n")
+      }
+    }
   }
 
   private def describeFields(fields: List[com.invaract.contract.Field]): String =

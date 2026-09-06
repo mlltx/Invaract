@@ -220,6 +220,78 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14 - the Spark contract
+  // extension surfacing a computed fingerprint through its two existing
+  // output channels, opt-in via VerificationOptions.computeFingerprint.
+  test("computeFingerprint defaults to false: no Fingerprints section printed, nothing attached to the result or a published event") {
+    val outputPath = scratchDir.resolve("fail_no_fingerprint.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    val ex = withContract(yaml, sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.fingerprints.isEmpty)
+    assert(!ex.getMessage.contains("Fingerprints"))
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.fingerprints.isEmpty)
+  }
+
+  test("computeFingerprint = true: a rejected write's message and published event carry the correct TransformationFingerprint") {
+    val outputPath = scratchDir.resolve("fail_with_fingerprint.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+    capturedPlans.clear()
+
+    val ex = withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    val expected = com.invaract.fingerprint.TransformationFingerprinter.fingerprint(SparkPlanAdapter.translate(capturedPlans.last).plan)
+
+    assert(ex.result.fingerprints.contains(expected), "the attached fingerprint must match the plan actually checked, not merely be present")
+    assert(ex.getMessage.contains("Fingerprints"))
+    assert(ex.getMessage.contains(expected.overall.value))
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.fingerprints.contains(expected))
+  }
+
   // Found via the ClickHouse connector pass's Phase 8, but not
   // ClickHouse-specific - reproduces with any connector, since it's a
   // contract/spark-adapter boundary issue, not a translation one. A

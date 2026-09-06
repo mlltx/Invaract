@@ -88,7 +88,7 @@ two separate mechanisms.
 Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000"}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null}
 ```
 
 ...and a `WriteEvent`, once the write completes:
@@ -105,6 +105,13 @@ metadata vocabulary to maintain.
 `applicationId` is the Spark application's own ID (`sparkContext.applicationId`) on
 both event types — useful for grouping events from the same job run when a sink
 aggregates events across many jobs.
+
+`fingerprints` on `ContractValidationEvent` is `null` unless you've opted into
+[semantic lineage fingerprinting](/guides/fingerprinting-transformations/) — a separate,
+opt-in feature that computes a deterministic hash of the transformation's actual business
+logic, published here alongside the PASS/FAIL verdict so a subscriber can track a
+transformation's fingerprint over time, not just whether it currently satisfies its
+contract's schema.
 
 `WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
 callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal

@@ -73,6 +73,26 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(NotificationJson.toJson(withAppId).contains("\"applicationId\": \"app-123\""))
   }
 
+  test("toJson for ContractValidationEvent renders fingerprints, None as null and Some via TransformationFingerprint.toMap") {
+    val withoutFingerprints = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(withoutFingerprints).contains("\"fingerprints\": null"))
+
+    val orders = com.invaract.ir.Read(com.invaract.ir.DatasetRef("raw.orders"))
+    val plan = com.invaract.ir.Write(
+      com.invaract.ir.DatasetRef("gold.out"),
+      com.invaract.ir.Project(
+        orders,
+        List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id", Some("raw.orders")))))
+      )
+    )
+    val fingerprints = com.invaract.fingerprint.TransformationFingerprinter.fingerprint(plan)
+    val withFingerprints = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty, fingerprints = Some(fingerprints))
+    val json = NotificationJson.toJson(withFingerprints)
+    assert(json.contains(s""""version": ${fingerprints.version}"""))
+    assert(json.contains(s""""value": "${fingerprints.overall.value}""""))
+    assert(json.contains("\"outputs\": {"))
+  }
+
   test("toJson for WriteEvent includes location/format/saveMode/schema/contract, with None fields as null") {
     val event = WriteEvent(
       contract = None,

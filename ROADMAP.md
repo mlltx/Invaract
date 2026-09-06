@@ -2133,16 +2133,46 @@ is detected even when the output schema stays identical.
       pass-through publishing via whatever `NotificationSink` is already
       configured — no new persistence, transport, or comparison logic,
       reusing the two output channels the check rule already has.
-- [ ] Implementation: a new `fingerprint` module (depends only on `ir`,
-      no Spark dependency) providing the canonicalizer and hasher the
-      design document specifies.
+- [x] **Implementation**: the `fingerprint` module (depends only on `ir`,
+      no Spark dependency), providing `Canonicalizer`/`Encoding`/
+      `FingerprintHasher`/`TransformationFingerprinter` exactly as
+      specified. 128 tests (hand-written + ScalaCheck property tests);
+      whole-module Stryker4s mutation score **96.52%**, every survivor a
+      documented, already-established-precedent exclusion (message-text
+      `StringLiteral`s, one structurally-unreachable defensive branch) —
+      see the design doc's new "Implementation notes" section for the
+      full accounting, including the one real underspecification found
+      and fixed while implementing (deep passthrough resolution for the
+      per-output `expression` fingerprint, needed for the `amount * 1.20
+      → 1.25` example to actually work against a realistic nested-Project
+      plan).
+- [x] **Wired into `spark-adapter` per the design's §14**:
+      `VerificationOptions.computeFingerprint`, `VerificationResult`/
+      `ContractValidationEvent.fingerprints`, `ContractEnforcementRule.
+      explain`'s printed section, `NotificationJson`'s field. Verified
+      against the real toolchain, not just compiled: `spark-adapter`'s
+      full suite (413 tests, including 2 new fingerprint-specific
+      `ContractEnforcementRuleSpec` cases and a `NotificationJsonSpec`
+      case) passes; `sbt-assembly`'s bundling confirmed by inspecting the
+      built `invaract-spark-adapter-*.jar` directly.
 - [ ] Per-output/per-column fingerprint hierarchy wired into a
       human-readable change report (out of scope for this sub-phase's
       design — see the design doc's explicit non-goals).
-- [ ] Persistence, publication, remote comparison, and CI/CD wiring
-      around comparing two fingerprints over time — explicitly out of
-      scope for both this sub-phase and its design document; a separate,
-      later sub-phase once the fingerprint itself exists.
+- [ ] Persistence, publication (beyond §14's channels, now shipped),
+      remote comparison, and CI/CD wiring around comparing two
+      fingerprints over time — explicitly out of scope for both this
+      sub-phase and its design document; a separate, later sub-phase once
+      the fingerprint itself exists.
+- [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
+      Central publishing, MiMa baseline, and CI mutation-testing/
+      api-compatibility job wiring — deferred per `fingerprint/build.sbt`'s
+      own "FOLLOW-UP" comment; the module's tests currently only run
+      manually (`cd fingerprint && sbt test`/`sbt stryker`), not yet as
+      part of `.github/workflows/test.yml` or `./dev/build`'s own build
+      order (which *was* updated to build/publishLocal `fingerprint`
+      before `spark-adapter`, so a local `./dev/build`/`./dev/test` run
+      does pick it up end to end — only the CI workflow file itself still
+      needs the equivalent jobs added).
 
 ##### Dependencies
 

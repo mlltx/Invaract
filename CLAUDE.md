@@ -6,12 +6,21 @@ development environment for exercising it against a real Spark job.
 
 ## What's the product, and what's the test harness
 
-**The product is the verification engine: `contract/`, `ir/`, and
-`spark-adapter/`.** Together they parse a data contract, translate a real
-Spark job's Catalyst logical plan into an engine-independent IR, verify it
-against the contract, and — via a `SparkSessionExtensions` check rule
-installed in the `SparkSession` — abort the write if it fails. This is
-what a real user of Invaract would depend on.
+**The product is the verification engine: `contract/`, `ir/`,
+`spark-adapter/`, and `fingerprint/`.** Together they parse a data
+contract, translate a real Spark job's Catalyst logical plan into an
+engine-independent IR, verify it against the contract, and — via a
+`SparkSessionExtensions` check rule installed in the `SparkSession` —
+abort the write if it fails. `fingerprint/` is the newest of the four
+(docs/SEMANTIC_LINEAGE_FINGERPRINTING.md): a pure, engine-independent
+canonicalisation/hashing layer over `ir.Plan`/`ir.Expr`/`ir.Lineage`,
+surfaced (opt-in, via `VerificationOptions.computeFingerprint`) through
+`spark-adapter`'s existing validation message and notification-publishing
+channels. It is not yet wired into the Maven Central publishing, MiMa, or
+mutation-testing CI jobs `contract`/`ir`/`spark-adapter` have (see
+`fingerprint/build.sbt`'s own "FOLLOW-UP" comment) — a real gap to close,
+not a signal it's harness code. This is what a real user of Invaract would
+depend on.
 
 **`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
 test harness, not the product.** `plugin/` is a small illustrative Spark
@@ -30,7 +39,9 @@ Full architecture, component breakdown, and data flow:
 [ROADMAP.md](ROADMAP.md). Module-level design docs:
 [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md),
 [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md),
-[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md). Adding support for a new
+[docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md),
+[docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md).
+Adding support for a new
 Spark data connector (Iceberg, ClickHouse, Avro, ...) has its own
 reusable process — full read/write investigation, fail-closed
 classification, verification — documented in
@@ -43,7 +54,7 @@ exactly how the Delta Lake gaps happened.
 Keep this distinction in mind before proposing a testing or tooling
 addition: something that protects the engine's real behavior (fuzzing,
 mutation testing, a compatibility matrix) belongs against `contract`/`ir`/
-`spark-adapter`. Something that only formalizes the *demo harness's own
+`spark-adapter`/`fingerprint`. Something that only formalizes the *demo harness's own
 output shape* (e.g. a schema for `report.json`) is protecting a
 CI-internal artifact, not a public API — right-size it accordingly, and
 don't present it as something external consumers would bind to.
@@ -52,7 +63,9 @@ don't present it as something external consumers would bind to.
 
 - **Verification engine**: `contract` (parser/validator/compatibility),
   `ir` (engine-independent transformation IR + lineage), `spark-adapter`
-  (Spark → IR translation, contract enforcement)
+  (Spark → IR translation, contract enforcement), `fingerprint`
+  (canonicalisation + hashing of `ir.Plan`/`ir.Expr` — see
+  docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -63,9 +76,9 @@ don't present it as something external consumers would bind to.
 - **Spark Version**: 3.5.1
 - **Scala Version**: 2.12.18
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
-  `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`, required by
-  Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (5 independent modules `./dev/build` builds, plus
+  `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
+  required by Stryker4s — see "Mutation Testing Requirement")
+- **Build System**: sbt (6 independent modules `./dev/build` builds, plus
   the standalone opt-in `notification-kafka` — no aggregating root
   `build.sbt` — see `dev/build`'s comments for the cross-module dependency
   graph)
@@ -106,9 +119,22 @@ that only catches an aggregate regression. It does not prove new code is
 well-tested — a large, well-tested module can absorb a weakly-tested new
 file and still clear its module's break threshold.
 
-So: when a feature adds or changes code in `ir/src/main/scala/...` or
-`spark-adapter/src/main/scala/...`, passing tests are **not** enough to
-call it done. Before considering such a feature complete, you MUST:
+`fingerprint` (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) carries the same
+Stryker4s settings in its own `build.sbt` (`strykerThresholdsBreak := 50`,
+matching `ir`'s), and its code is held to the same developer-responsibility
+bar this section describes below — but, unlike `ir`/`spark-adapter`, it is
+**not yet wired into CI** (`.github/workflows/test.yml`'s whole-module
+mutation-testing job and PR-scoped incremental job don't cover it yet, nor
+does `api-compatibility`). That is a real, open gap — tracked in
+ROADMAP.md's fingerprinting sub-phase — not a signal that this module is
+exempt from the requirement; it just means the "MUST run it yourself"
+half below is not yet backed by an automatic CI check the way `ir`/
+`spark-adapter`'s is.
+
+So: when a feature adds or changes code in `ir/src/main/scala/...`,
+`spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,
+passing tests are **not** enough to call it done. Before considering such
+a feature complete, you MUST:
 
 1. From inside the module directory, run mutation testing scoped to just
    the file(s) you touched, e.g. `sbt stryker --mutate "src/main/scala/com/invaract/ir/YourFile.scala"`.
@@ -152,8 +178,8 @@ docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 This bar — and every other regression-testing guardrail in this repo
 (property-based fuzzing, mutation testing, API-compatibility checking, and
 the still-outstanding compatibility matrix / coverage gating) — is scoped
-to `contract`/`ir`/`spark-adapter`. It does not apply to `plugin`/`runner`,
-which are example/test code, not the engine.
+to `contract`/`ir`/`spark-adapter`/`fingerprint`. It does not apply to
+`plugin`/`runner`, which are example/test code, not the engine.
 
 ## API Compatibility Requirement
 
@@ -342,6 +368,16 @@ would be.
 │   │       ├── NotificationConfig.scala     # .properties-based sink configuration
 │   │       └── NotificationSinkFactory.scala # reflective sink loading
 │   └── src/test/scala/com/invaract/sparkadapter/
+│
+├── fingerprint/                   # Verification engine: semantic lineage fingerprinting
+│   ├── src/main/scala/com/invaract/fingerprint/
+│   │   ├── CanonicalNode.scala         # CTag/CLeaf + Encoding (tagged, length-prefixed bytes)
+│   │   ├── LiteralEncoding.scala       # ir.Literal → canonical form, per runtime type
+│   │   ├── NonDeterminism.scala        # tri-state, metadata-only non-determinism classification
+│   │   ├── Canonicalizer.scala         # ir.Plan/ir.Expr/ir.Lineage → CanonicalNode
+│   │   ├── Fingerprint.scala           # Fingerprint + FingerprintHasher (SHA-256)
+│   │   └── TransformationFingerprint.scala # the full hierarchy + TransformationFingerprinter
+│   └── src/test/scala/com/invaract/fingerprint/
 │
 ├── plugin/                       # Example harness: demo transformation
 │   ├── src/
@@ -548,7 +584,15 @@ If `./dev/test` fails:
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
 - `contract/target/scala-2.12/invaract-contract-0.3.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.3.0.jar`
-- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar`
+- `fingerprint/target/scala-2.12/invaract-fingerprint-0.1.0.jar`
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar` — via
+  `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
+  same as `contract`/`ir`), this fat jar already contains
+  `com.invaract.fingerprint`'s compiled classes too (confirmed directly:
+  `unzip -l` on a real build shows `com/invaract/fingerprint/*.class`
+  alongside `com/invaract/ir/*.class`) — a consumer installing only this
+  one jar gets fingerprinting for free, with no separate `--jars` entry
+  needed for `invaract-fingerprint` itself.
 - `runner/target/scala-2.12/invaract-spark-runner.jar` — the demo job,
   bundling `DemoJobHarness` plus the engine jars via `unmanagedJars`
 
@@ -562,7 +606,9 @@ full `Test and Build` suite. This exists for a Spark job built with a non-sbt to
 (Maven, Gradle, ...) to install the engine without a Maven Central release — see the
 "Use Prebuilt Jars Without sbt" docs-site guide. It is a distribution convenience, not a
 new build artifact: the jars are the same `sbt assembly` output described above, just
-handed to CI to publish instead of a person copying them by hand.
+handed to CI to publish instead of a person copying them by hand. `fingerprint` needs no
+separate entry in that workflow's own build/publish steps — per the bundling note above,
+its classes already ride along inside the published `invaract-spark-adapter-*.jar`.
 
 - `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.2.0.jar`
   — not built by `./dev/build` (opt-in, like `plugin`/`runner`): a user who
