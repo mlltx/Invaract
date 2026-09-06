@@ -405,8 +405,14 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     val leftRead = join.left.asInstanceOf[com.invaract.ir.Read]
     val rightRead = join.right.asInstanceOf[com.invaract.ir.Read]
-    assert(leftRead.alias.isDefined && rightRead.alias.isDefined, "both self-join occurrences must carry an alias")
-    assert(leftRead.alias != rightRead.alias, s"the two physical self-join occurrences must get distinct aliases, got ${leftRead.alias} for both")
+    // Exact expected suffixes, not just "the two differ" - catches an
+    // off-by-one or sign-flipped index (e.g. `index + 1` mutated to
+    // `index - 1`) that would still produce two *distinct* strings
+    // ("tbl#0"/"tbl#-1") but the wrong ones; asserting the precise
+    // "<name>#<index>" value for each occurrence, in encounter order,
+    // pins the actual arithmetic, not merely that it varies.
+    assert(leftRead.alias == Some(s"$tableName#0"), s"expected the first occurrence's alias to be '$tableName#0', got ${leftRead.alias}")
+    assert(rightRead.alias == Some(s"$tableName#1"), s"expected the second occurrence's alias to be '$tableName#1', got ${rightRead.alias}")
 
     val condition = join.condition.getOrElse(fail("expected a join condition"))
     condition match {
