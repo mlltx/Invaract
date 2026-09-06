@@ -24,12 +24,29 @@ Compare with previous fingerprint     (future work, not designed here)
 Semantic Change Detection             (future work, not designed here)
 ```
 
-Persistence, publication, remote comparison services, CI/CD workflows,
-Spark plan extraction, and Virtual Data Environment functionality are all
-explicitly out of scope. Where a decision here has a consequence for one
-of those later stages (e.g. "the fingerprint must carry its own version
-number so a future comparator can refuse to compare across versions"),
-that consequence is noted, but the comparator itself is not designed.
+Persistence, remote comparison services, CI/CD workflows, Spark plan
+extraction, and Virtual Data Environment functionality are all explicitly
+out of scope. Where a decision here has a consequence for one of those
+later stages (e.g. "the fingerprint must carry its own version number so
+a future comparator can refuse to compare across versions"), that
+consequence is noted, but the comparator itself is not designed.
+
+**One narrow exception, added after initial review:** *emitting* a
+computed fingerprint through the Spark contract extension's two existing
+output channels — the human-readable validation message
+(`ContractEnforcementRule.explain`) and the already-existing
+`NotificationSink` publishing mechanism — is in scope, and specified in
+§14. This is not the "publication" this document otherwise excludes: it
+adds no new transport, no new sink, no storage of a fingerprint's
+history, and no comparison logic. It reuses two channels that already
+exist today for unrelated reasons (the violation-explanation text and
+`ContractValidationEvent`), and simply carries the already-computed
+fingerprint value through them, the same way those channels already
+carry other structured data (`Violation`s). Persisting a fingerprint
+somewhere queryable, and comparing it against a *prior* fingerprint, both
+remain out of scope, since they require design decisions (storage format,
+retention, what "prior" means across branches/environments) this
+document does not make.
 
 **Grounding.** Every design decision below is written against the actual
 types in `ir/src/main/scala/com/invaract/ir/` (`Expr.scala`, `Plan.scala`,
@@ -1093,13 +1110,250 @@ the tag.
 
 ---
 
+## 14. Integration: surfacing fingerprints in the Spark contract extension
+
+This section specifies how a computed `TransformationFingerprint` (§3)
+reaches the two places a user of the verification engine already looks —
+the exception text a rejected write raises, and whatever
+`NotificationSink` a deployment has configured — grounded in
+`spark-adapter`'s real `ContractEnforcementRule.scala`,
+`StructuralVerifier.scala`, and `notification/NotificationEvent.scala` as
+they exist today, the same way every other section of this document is
+grounded in `ir`.
+
+### 14.1 Enablement — one new opt-in flag, no new toggle for publishing
+
+`VerificationOptions` already carries two opt-in toggles
+(`rejectUndeclaredInputs`, `rejectUndeclaredFields`), documented as "off
+by default, matching how most contract/schema tooling treats an unlisted
+extra column: permitted unless a caller opts into strict mode." This
+design adds a third, following the same convention:
+
+```scala
+case class VerificationOptions(
+  rejectUndeclaredInputs: Boolean = false,
+  rejectUndeclaredFields: Boolean = false,
+  computeFingerprint: Boolean = false
+)
+```
+
+Off by default, for the same reason the existing two are: canonicalizing
+and hashing a whole plan on every check is real, non-trivial additional
+work this design should not impose on every existing caller the moment
+it ships. A caller opts in explicitly by constructing
+`VerificationOptions(computeFingerprint = true)`.
+
+There is deliberately **no separate "publishing enabled" flag.**
+"Publish if enabled" (the user-facing ask this section answers) is
+already exactly what `ContractEnforcementRule.publishValidation`
+does today — `sink.foreach { s => s.publish(...) }`, a no-op unless a
+`NotificationSink` was supplied to `forContract`. Once a fingerprint is
+computed at all (`computeFingerprint = true`), it rides along
+unconditionally on whichever of the two existing channels below are
+already active; there is nothing to separately "enable" for publishing
+that isn't already governed by "is a sink configured."
+
+### 14.2 Where the fingerprint is computed, and where it deliberately isn't
+
+`verifyOrThrow`'s `ir.Write` branch already produces `translated.plan`
+(via `SparkPlanAdapter.translate(plan)`) before calling
+`StructuralVerifier.verify`. This is the one place a real, complete
+`ir.Plan` for the write being checked already exists — fingerprinting
+reuses it directly, computing `TransformationFingerprinter.fingerprint
+(translated.plan)` immediately alongside `StructuralVerifier.verify`'s
+own call, only when `options.computeFingerprint` is true. No second
+Spark-plan translation, and no fingerprinting of anything
+`SparkPlanAdapter` hasn't already turned into IR.
+
+The state-changing-CALL branch and the invalid-contract branch
+(`requireValidContract`) do **not** get a computed fingerprint, even with
+the flag on. Both already fall back to a synthetic `describedPlan =
+UnknownPlan(...)` stand-in purely so `explain()` has something to render
+(see `verifyOrThrow`'s and `requireValidContract`'s own code) — it is not
+a real transformation plan, just a placeholder description. Fingerprinting
+it would canonicalize to "one `UnknownPlan` node holding a human-authored
+message string, with `description` itself excluded from the hash per
+§8" — a fingerprint that is technically well-defined but carries no real
+information, since there is no `ir.Plan` behind it to begin with. Rather
+than manufacture a misleadingly-present-looking `Some(fingerprint)` for a
+case with nothing genuine to fingerprint, `VerificationResult.fingerprints`
+(§14.3) stays `None` here, honestly reflecting "not applicable to this
+kind of check" — the same "unknowns must stay visible, never invented"
+discipline the rest of this document applies to the model itself, applied
+here to what counts as a fingerprintable transformation at all.
+
+### 14.3 Carrying the fingerprint on `VerificationResult`
+
+`VerificationResult(status, contract, violations)` gains one new,
+appended, defaulted field:
+
+```scala
+case class VerificationResult(
+  status: String,
+  contract: String,
+  violations: List[Violation],
+  fingerprints: Option[TransformationFingerprint] = None
+)
+```
+
+populated exactly once, in `verifyOrThrow`'s `ir.Write` branch, from the
+computation in §14.2, and left `None` everywhere else (`computeFingerprint
+= false`, or either of the branches in §14.2 that have no real plan).
+Both `explain()` (§14.4) and `publishValidation` (§14.5) read this one
+field rather than each recomputing or independently deciding whether to
+fingerprint — a single source of truth for "was this fingerprinted, and
+with what," so the printed message and the published event can never
+disagree about the value.
+
+This is the same reasoning `ContractViolationException`'s own doc already
+states about `result` generally: a caller inspecting `result` directly
+(not just reading `getMessage`) gets full, structured access to
+`fingerprints`, the same way it already gets full, structured access to
+`violations` rather than only their rendered text.
+
+### 14.4 The human-readable validation message
+
+`explain()` builds `ContractViolationException`'s message deterministically
+from `result.violations` and the plan's own rendering (see its own doc:
+"the same violation always produces the same message, byte for byte").
+A fingerprint section is appended on the same deterministic basis,
+**only when `result.fingerprints` is `Some`**, after the existing
+"How to correct it" section:
+
+```
+Fingerprints (v1, SHA-256):
+  overall: 9c3d1a...
+  outputs:
+    customer_id: 55ee0f... (unchanged shape n/a — no prior fingerprint available here)
+    value:       9a11b2...
+```
+
+Two things are deliberately restrained here, both to keep the exception
+text readable rather than dumping the entire hierarchy:
+
+- Only each output's **`combined`** hash (§3) is printed, not its
+  separate `expression`/`lineage` components — those remain available on
+  `result.fingerprints` for any caller that wants them, unprinted here.
+- `explain()` never attempts to say "changed" or "unchanged" for any
+  fingerprint — this document's own architecture diagram places
+  "compare with previous fingerprint" as a later, out-of-scope stage
+  (§ "Scope"/"Non-goals"). `explain()` only ever prints the current
+  check's own fingerprint values, exactly as it only ever prints the
+  current check's own violations — it has no access to, and this
+  section does not give it, any prior fingerprint to diff against.
+
+This section is appended only to `explain()`'s output, i.e. it appears in
+`ContractViolationException.getMessage` for a **failed** check. A
+passing check never raises an exception at all today, so there is no
+analogous "print" for a PASS — `result.fingerprints` remains available
+to a caller inspecting a passing `VerificationResult` directly (e.g. from
+`verifyOrThrow`'s callers, or a future harness surfacing it in a report),
+the same as any other field on that already-returned value; this document
+does not add a new printed side channel for the PASS case, since none
+exists today for anything else `VerificationResult` carries.
+
+### 14.5 Publishing through the existing `NotificationSink` mechanism
+
+`ContractValidationEvent` gains one new, appended, defaulted field,
+following the exact precedent `applicationId` already set on this same
+case class:
+
+```scala
+case class ContractValidationEvent(
+  contract: String,
+  status: String,
+  violations: List[Violation],
+  timestamp: Long,
+  metadata: Map[String, Any],
+  applicationId: Option[String] = None,
+  fingerprints: Option[TransformationFingerprint] = None
+) extends NotificationEvent { val eventType: String = "CONTRACT_VALIDATION" }
+```
+
+`publishValidation` passes `result.fingerprints` straight through
+unchanged:
+
+```scala
+ContractValidationEvent(
+  contract = result.contract,
+  status = result.status,
+  violations = result.violations,
+  timestamp = System.currentTimeMillis(),
+  metadata = contract.extensions,
+  applicationId = applicationId,
+  fingerprints = result.fingerprints
+)
+```
+
+exactly the "publish if enabled" the user-facing ask names: `sink` being
+configured is the existing, only gate (§14.1), and — following
+`publishValidation`'s existing behaviour — this reaches a subscriber for
+**every** check, PASS or FAIL, not only failures, since a PASS's
+fingerprint (the shape of an unchanged, passing transformation) is
+exactly the baseline a future comparison stage would need, and
+`publishValidation` already publishes both today for that reason.
+
+**`NotificationJson`.** `TransformationFingerprint`/`Fingerprint`/
+`OutputFingerprint` (§3, §10) each gain a `toMap: Map[String, Any]`
+method, following the exact precedent `Violation.toMap` already
+establishes for crossing this same JSON boundary. `NotificationJson.fields`'s
+`ContractValidationEvent` case gains exactly one new line —
+`"fingerprints" -> e.fingerprints.map(_.toMap)` — since `anyToJson`
+already recurses through `Map`/`Iterable`/`Option`/`String`/`Number`
+generically (see its own doc) and needs no changes at all to render
+whatever shape `toMap` produces. `invaract-notification-kafka`'s
+`KafkaNotificationSink`, and any other custom sink, gets this for free
+the same way it already gets `violations`, `applicationId`, and every
+other field for free — no per-sink change required.
+
+### 14.6 Binary compatibility
+
+Both changes in this section — a new field on `VerificationOptions`, and
+a new field on `ContractValidationEvent` — are real, deliberate MiMa
+breaks under CLAUDE.md's "API Compatibility Requirement," in exactly the
+same way `ContractValidationEvent.applicationId` and every one of
+`WriteEvent`'s later-appended `Option[...] = None` fields already were:
+appending a defaulted field to an existing case class changes its
+constructor's arity. This document's recommendation, consistent with
+that established precedent, is not to contort the API to avoid the break
+(e.g. a parallel overload class), but to take it as a normal, expected,
+documented break when implemented — the exact `mimaBinaryIssueFilters`
+entries `sbt mimaReportBinaryIssues` reports against a real
+`publishLocal` of the pre-change module, added with a comment pointing
+back to this section, per CLAUDE.md's "the break is deliberate" path.
+
+### 14.7 Testing consequences
+
+Two additions to §12's testing strategy follow directly from this
+section, both belonging to `spark-adapter`'s own test suite (not the new
+`fingerprint` module's) since they test integration, not
+canonicalization:
+
+- `computeFingerprint = false` (the default): `verifyOrThrow` produces a
+  `VerificationResult` with `fingerprints = None`, and `explain()`'s
+  output contains no `Fingerprints` section at all — a direct regression
+  test that this feature is genuinely opt-in, not merely defaulted-quiet.
+- `computeFingerprint = true`: a `ContractValidationEvent` published to a
+  test double `NotificationSink` (the existing pattern
+  `ContractEnforcementRuleSpec`-style tests already use for the sink
+  overload) carries a non-`None` `fingerprints` field whose `overall`
+  value matches `TransformationFingerprinter.fingerprint` computed
+  directly and independently over the same hand-built `ir.Plan` — proving
+  `ContractEnforcementRule` doesn't merely attach *some* fingerprint, but
+  the correct one for the plan it just checked.
+
 ## Non-goals (explicit)
 
 Restated from the top of this document, because they bound every
-decision above: no persistence format for a stored fingerprint, no
-publication or transport mechanism, no remote comparison service, no
-CI/CD integration, no Spark-plan-extraction changes, and no Virtual Data
-Environment functionality. Those are all real future work this design
-deliberately sets up for (versioned fingerprints, a hierarchy with
+decision above: no persistence format for a stored fingerprint, no new
+transport or sink mechanism, no remote comparison service, no CI/CD
+integration, no Spark-plan-extraction changes, and no Virtual Data
+Environment functionality. §14's addition does not change this — it
+carries an already-computed fingerprint through two channels the Spark
+contract extension already has for unrelated reasons (a thrown
+exception's message text, and whatever `NotificationSink` a deployment
+already configured); it does not add a place fingerprints are stored,
+queried, or compared against history. Those remain real future work this
+design deliberately sets up for (versioned fingerprints, a hierarchy with
 locality, honest metadata alongside hashes) without attempting to solve
 here.

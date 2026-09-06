@@ -2123,7 +2123,16 @@ is detected even when the output schema stays identical.
       `fingerprint_version`, and a full testing strategy (determinism,
       per-element meaningful-change coverage, locality, incidental-
       difference invariance, unknown-node and UDF handling,
-      property-based canonicalisation invariants).
+      property-based canonicalisation invariants). Also specifies (§14)
+      how a computed fingerprint surfaces through `spark-adapter`'s
+      existing channels once implemented: a new opt-in
+      `VerificationOptions.computeFingerprint` flag, a `fingerprints`
+      field appended to `VerificationResult` and to
+      `ContractValidationEvent`, a printed section in
+      `ContractEnforcementRule.explain`'s exception message, and
+      pass-through publishing via whatever `NotificationSink` is already
+      configured — no new persistence, transport, or comparison logic,
+      reusing the two output channels the check rule already has.
 - [ ] Implementation: a new `fingerprint` module (depends only on `ir`,
       no Spark dependency) providing the canonicalizer and hasher the
       design document specifies.
