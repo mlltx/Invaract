@@ -51,6 +51,25 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # spark-adapter and runner resolve contract/ir (and, for runner,
+      # spark-adapter too) as real libraryDependencies against their
+      # published coordinates, not unmanagedJars (see spark-adapter/
+      # build.sbt's and runner/build.sbt's own comments) - each matrix leg
+      # here is an independent job/checkout, so unlike dev/build's single
+      # ordered run, this needs its own publishLocal of every such
+      # dependency before the submission step can resolve them, the same
+      # fix already applied to every spark-adapter-building job in
+      # test.yml. No-op for contract/ir/plugin/notification-kafka, which
+      # have no such dependency to publish first.
+      - name: Publish local dependencies for ${{ matrix.module }}
+        if: matrix.module == 'spark-adapter' || matrix.module == 'runner'
+        run: |
+          cd contract && sbt -batch publishLocal && cd ..
+          cd ir && sbt -batch publishLocal && cd ..
+          if [ "${{ matrix.module }}" = "runner" ]; then
+            cd spark-adapter && sbt -batch publishLocal && cd ..
+          fi
+
       - name: Submit ${{ matrix.module }} dependencies
         uses: scalacenter/sbt-dependency-submission@v3
         with:
