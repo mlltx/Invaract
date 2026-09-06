@@ -387,6 +387,19 @@ private[sparkadapter] object SparkPlanAdapter {
   private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator(Map.empty).translateExpr(expr)
 
   private class Translator(aliasDisambiguation: Map[Long, String]) {
+    // A secondary, no-arg constructor kept purely for binary compatibility:
+    // MiMa flags the loss of the old `Translator()` constructor as a real
+    // break even though this class is Scala-`private` - `SparkPlanAdapter`'s
+    // own class doc already notes that `private[sparkadapter]` (and, it
+    // turns out, plain `private` on a nested class too) compiles to
+    // bytecode that MiMa still sees and compares. No production code calls
+    // this overload (both real call sites - `translate`/
+    // `translateExprStandalone` - now pass an explicit map), so it exists
+    // solely to keep `com.invaract:invaract-spark-adapter`'s previously-
+    // published jar binary-compatible with this one, per CLAUDE.md's API
+    // Compatibility Requirement's "restore the old signature" option.
+    def this() = this(Map.empty)
+
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList
 
