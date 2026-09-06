@@ -606,9 +606,12 @@ full `Test and Build` suite. This exists for a Spark job built with a non-sbt to
 (Maven, Gradle, ...) to install the engine without a Maven Central release — see the
 "Use Prebuilt Jars Without sbt" docs-site guide. It is a distribution convenience, not a
 new build artifact: the jars are the same `sbt assembly` output described above, just
-handed to CI to publish instead of a person copying them by hand. `fingerprint` needs no
-separate entry in that workflow's own build/publish steps — per the bundling note above,
-its classes already ride along inside the published `invaract-spark-adapter-*.jar`.
+handed to CI to publish instead of a person copying them by hand. `fingerprint` does have
+its own `compile test assembly publishLocal` step in that workflow now (`spark-adapter`'s
+own compile step needs it resolvable, same as `contract`/`ir`), and its standalone jar is
+published as a release asset alongside `contract`/`ir`/`spark-adapter`'s — but per the
+bundling note above, a consumer who only installs `invaract-spark-adapter-*.jar` already
+gets `fingerprint`'s classes for free too.
 
 - `notification-kafka/target/scala-2.12/invaract-notification-kafka-0.2.0.jar`
   — not built by `./dev/build` (opt-in, like `plugin`/`runner`): a user who

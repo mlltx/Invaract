@@ -2163,16 +2163,37 @@ is detected even when the output schema stays identical.
       fingerprints over time — explicitly out of scope for both this
       sub-phase and its design document; a separate, later sub-phase once
       the fingerprint itself exists.
+- [x] **Every existing CI job that builds `spark-adapter` updated to
+      publish `fingerprint` locally first**, since `spark-adapter`'s
+      `build.sbt` now resolves it as a real `libraryDependency`: the 5
+      mutation-testing/version-matrix jobs' shared "publish contract and
+      ir locally" step, `api-compatibility` (a standalone publish step,
+      since `fingerprint` isn't itself in that job's MiMa-checked module
+      list — see below), `notification-kafka`, and `sbom` (added to its
+      per-module `makeBom` loop and artifact-upload path, backed by a new
+      `fingerprint/project/sbom.sbt` — confirmed with a real
+      `sbt makeBom` run). `dependency-graph.yml` and
+      `publish-spark-jars.yml` (the latter had no `publishLocal` step for
+      *any* module before this change — a real, pre-existing gap found
+      while fixing this, not introduced by it) updated the same way, the
+      latter also publishing `fingerprint`'s own standalone jar as a
+      release asset. `./dev/build`'s own order was updated too (see
+      above), and both are now verified end to end: a real `./dev/build`
+      + `./dev/test` run passed, and every touched CI job's own shell
+      commands were run locally to confirm they resolve correctly (not
+      just read for plausibility).
 - [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
-      Central publishing, MiMa baseline, and CI mutation-testing/
-      api-compatibility job wiring — deferred per `fingerprint/build.sbt`'s
-      own "FOLLOW-UP" comment; the module's tests currently only run
-      manually (`cd fingerprint && sbt test`/`sbt stryker`), not yet as
-      part of `.github/workflows/test.yml` or `./dev/build`'s own build
-      order (which *was* updated to build/publishLocal `fingerprint`
-      before `spark-adapter`, so a local `./dev/build`/`./dev/test` run
-      does pick it up end to end — only the CI workflow file itself still
-      needs the equivalent jobs added).
+      Central publishing (Sonatype/PGP) and MiMa baseline — deferred per
+      `fingerprint/build.sbt`'s own "FOLLOW-UP" comment, since there is no
+      previous release to compare against or sign yet. Concretely still
+      missing: a `mutation-testing-fingerprint` CI job (whole-module,
+      like `mutation-testing-ir`) and a `fingerprint` entry in
+      `api-compatibility`'s own `for module in contract ir spark-adapter`
+      MiMa-checked list — both real, open gaps, not yet added, since
+      `fingerprint/build.sbt` carries no `mimaPreviousArtifacts` for the
+      latter to check against yet. Until then, `sbt stryker` for
+      `fingerprint` is a manual, not CI-enforced, step (see CLAUDE.md's
+      Mutation Testing Requirement).
 
 ##### Dependencies
 

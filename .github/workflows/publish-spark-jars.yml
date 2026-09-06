@@ -53,15 +53,28 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # contract and ir have no dependency on each other; spark-adapter
-      # needs both (see dev/build's comments for the full graph). No need
-      # to build plugin/runner here — they're the example harness, not
-      # something an external Spark job installs (CLAUDE.md).
+      # contract and ir have no dependency on each other; fingerprint needs
+      # ir; spark-adapter needs all three (see dev/build's comments for the
+      # full graph). No need to build plugin/runner here — they're the
+      # example harness, not something an external Spark job installs
+      # (CLAUDE.md).
+      #
+      # `publishLocal`, not just `assembly`, on every dependency before the
+      # next module needs it: contract/ir/fingerprint/spark-adapter all
+      # resolve each other as real libraryDependencies against their own
+      # published coordinate (no aggregating root build.sbt, no
+      # unmanagedJars between these four - see spark-adapter/build.sbt's own
+      # comment on this) - a fresh runner's local Ivy cache has nothing in
+      # it until this job puts it there itself, unlike dev/build's own
+      # ordering, which this mirrors.
       - name: Build contract
-        run: cd contract && sbt -batch clean compile test assembly
+        run: cd contract && sbt -batch clean compile test assembly publishLocal
 
       - name: Build ir
-        run: cd ir && sbt -batch clean compile test assembly
+        run: cd ir && sbt -batch clean compile test assembly publishLocal
+
+      - name: Build fingerprint
+        run: cd fingerprint && sbt -batch clean compile test assembly publishLocal
 
       - name: Build spark-adapter
         run: cd spark-adapter && sbt -batch clean compile test assembly
@@ -81,8 +94,12 @@ jobs:
           name: "Spark engine jars (latest)"
           body: |
             Prebuilt `sbt assembly` fat jars for Invaract's verification engine —
-            `contract`, `ir`, and `spark-adapter` (see CLAUDE.md's "What's the product,
-            and what's the test harness" for why those three and not `plugin`/`runner`).
+            `contract`, `ir`, `fingerprint`, and `spark-adapter` (see CLAUDE.md's "What's
+            the product, and what's the test harness" for why those four and not
+            `plugin`/`runner`). `spark-adapter`'s own jar already bundles
+            `fingerprint`/`ir`/`contract`'s compiled classes via `sbt-assembly` - the
+            standalone `fingerprint`/`ir`/`contract` jars below are for a consumer who
+            wants just one of those, without the rest of `spark-adapter`'s footprint.
 
             For a Spark job built with a toolchain other than sbt (Maven, Gradle, ...)
             that wants to install Invaract without a Maven Central release to depend on.
@@ -99,4 +116,5 @@ jobs:
           files: |
             contract/target/scala-2.12/invaract-contract-*.jar
             ir/target/scala-2.12/invaract-ir-*.jar
+            fingerprint/target/scala-2.12/invaract-fingerprint-*.jar
             spark-adapter/target/scala-2.12/invaract-spark-adapter-*.jar

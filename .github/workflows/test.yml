@@ -436,11 +436,12 @@ jobs:
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
+      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
           cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal
+          cd ir && sbt publishLocal && cd ..
+          cd fingerprint && sbt publishLocal
 
       # No --thresholds override here (unlike the incremental step below):
       # build.sbt's own strykerThresholdsHigh/Low/Break (90/80/70) already
@@ -518,11 +519,12 @@ jobs:
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
+      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
           cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal
+          cd ir && sbt publishLocal && cd ..
+          cd fingerprint && sbt publishLocal
 
       # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
       # specific file(s) a feature adds or changes to ir/spark-adapter -
@@ -737,11 +739,12 @@ jobs:
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
+      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
           cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal
+          cd ir && sbt publishLocal && cd ..
+          cd fingerprint && sbt publishLocal
 
       - name: Test spark-adapter against Spark ${{ matrix.spark-version }}
         shell: bash
@@ -806,11 +809,12 @@ jobs:
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
+      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
           cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal
+          cd ir && sbt publishLocal && cd ..
+          cd fingerprint && sbt publishLocal
 
       - name: Test spark-adapter's Delta specs against delta-spark ${{ matrix.delta-version }}
         shell: bash
@@ -874,11 +878,12 @@ jobs:
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
-      - name: Publish contract and ir locally (spark-adapter's libraryDependencies)
+      - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
         shell: bash
         run: |
           cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal
+          cd ir && sbt publishLocal && cd ..
+          cd fingerprint && sbt publishLocal
 
       - name: Test spark-adapter's Iceberg specs against iceberg-spark-runtime ${{ matrix.iceberg-version }}
         shell: bash
@@ -1056,6 +1061,18 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
+      # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) is not yet
+      # MiMa-gated itself (no mimaPreviousArtifacts set - see its own
+      # build.sbt's FOLLOW-UP comment), so it's deliberately not one of the
+      # `for module in ...` loop's entries below. But spark-adapter's own
+      # build.sbt now resolves it as a real libraryDependency, so the PR
+      # head's copy still needs publishing before spark-adapter's iteration
+      # of that loop can even compile for its own MiMa check - unconditionally,
+      # not per-module like contract/ir (this is a brand-new module for any
+      # PR predating it, so there's never a base-ref copy to compare against).
+      - name: Publish PR head's fingerprint locally (spark-adapter's libraryDependency)
+        run: cd fingerprint && sbt publishLocal
+
       # One module at a time, in dependency order (contract, ir, then
       # spark-adapter, which needs both of theirs): if a module doesn't
       # exist at the base commit, it has no prior public API to be
@@ -1175,7 +1192,7 @@ jobs:
           # See dependency-graph.yml for why this list is also spelled out
           # there - kept in sync by hand, not derived from a shared source.
           pids=()
-          for m in contract ir plugin spark-adapter runner notification-kafka; do
+          for m in contract ir fingerprint plugin spark-adapter runner notification-kafka; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -1203,6 +1220,7 @@ jobs:
           path: |
             contract/target/*.bom.json
             ir/target/*.bom.json
+            fingerprint/target/*.bom.json
             plugin/target/*.bom.json
             spark-adapter/target/*.bom.json
             runner/target/*.bom.json
@@ -1236,21 +1254,22 @@ jobs:
 
       # notification-kafka needs spark-adapter's assembly jar (for
       # NotificationSink/NotificationEvent) via unmanagedJars - unchanged.
-      # But spark-adapter's own build.sbt now resolves ir/contract as real
-      # libraryDependencies (see spark-adapter/build.sbt's comment), so
-      # those two need `publishLocal`, not `assembly`, before spark-adapter
-      # itself can even compile - the same chain dev/build establishes,
-      # reproduced minimally here since this job needs no Spark installation
-      # at all (spark-core/spark-sql are `provided`-scope *compile*
-      # dependencies of spark-adapter, resolved from Maven Central - no
-      # local Spark distribution or spark-submit required just to produce
+      # But spark-adapter's own build.sbt now resolves ir/contract/
+      # fingerprint as real libraryDependencies (see spark-adapter/build.sbt's
+      # comment), so those three need `publishLocal`, not `assembly`, before
+      # spark-adapter itself can even compile - the same chain dev/build
+      # establishes, reproduced minimally here since this job needs no Spark
+      # installation at all (spark-core/spark-sql are `provided`-scope
+      # *compile* dependencies of spark-adapter, resolved from Maven Central -
+      # no local Spark distribution or spark-submit required just to produce
       # its jar).
-      - name: Build contract, ir, and spark-adapter
+      - name: Build contract, ir, fingerprint, and spark-adapter
         shell: bash
         run: |
           set -e
           (cd contract && sbt publishLocal)
           (cd ir && sbt publishLocal)
+          (cd fingerprint && sbt publishLocal)
           (cd spark-adapter && sbt assembly)
 
       - name: Test notification-kafka
