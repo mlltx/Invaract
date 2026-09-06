@@ -79,4 +79,37 @@ class LiteralEncodingSpec extends AnyFunSuite {
     val stringBytes = bytes(Weird(1).toString)
     assert(weirdBytes != stringBytes, "the fallback must be visibly distinct from a real String literal")
   }
+
+  // A BinaryType Catalyst literal's value is a raw Array[Byte] (confirmed
+  // directly against a real Spark session: Literal.value.getClass.getName
+  // == "[B") - Array's own toString/equals/hashCode are reference-identity
+  // based, not content-based, so this is the one literal runtime type that
+  // would silently break "same model -> same fingerprint" if it fell
+  // through to the generic UnrecognizedLiteralValueType (toString-based)
+  // fallback. These tests exist specifically to pin that it doesn't.
+
+  test("the same Array[Byte] content always encodes identically, even across separate Array instances") {
+    val a = Array[Byte](1, 2, 3)
+    val b = Array[Byte](1, 2, 3)
+    assert(a ne b, "must be genuinely distinct Array instances, not the same reference")
+    assert(bytes(a, "binary") == bytes(b, "binary"), "byte content, not Array identity, must determine the encoding")
+  }
+
+  test("Array[Byte] encoding does not fall back to toString (which would be identity-hash-based and non-deterministic)") {
+    val a = Array[Byte](1, 2, 3)
+    assert(bytes(a, "binary") != bytes(a.toString, "binary"), "must never be hashed via Array's own reference-based toString")
+  }
+
+  test("different Array[Byte] content encodes differently") {
+    assert(bytes(Array[Byte](1, 2, 3), "binary") != bytes(Array[Byte](1, 2, 4), "binary"))
+  }
+
+  test("Array[Byte] length participates in the encoding (no truncation/padding ambiguity)") {
+    assert(bytes(Array[Byte](1, 2), "binary") != bytes(Array[Byte](1, 2, 0), "binary"))
+  }
+
+  test("an empty Array[Byte] encodes deterministically and distinctly from a non-empty one") {
+    assert(bytes(Array.emptyByteArray, "binary") == bytes(Array.emptyByteArray, "binary"))
+    assert(bytes(Array.emptyByteArray, "binary") != bytes(Array[Byte](0), "binary"))
+  }
 }

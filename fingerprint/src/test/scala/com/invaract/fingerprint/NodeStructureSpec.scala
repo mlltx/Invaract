@@ -297,6 +297,10 @@ class NodeStructureSpec extends AnyFunSuite {
     assert(literalValueNode(true) == CTag("Boolean", List(boolLeaf(true))))
   }
 
+  test("Array[Byte] (BinaryType)-valued literal encoding structure, hashed by content via CLeaf, never Array's own toString") {
+    assert(literalValueNode(Array[Byte](1, 2, 3)) == CTag("Binary", List(CLeaf(Vector[Byte](1, 2, 3)))))
+  }
+
   test("String-valued literal encoding structure") {
     assert(literalValueNode("hi") == CTag("String", List(stringLeaf("hi"))))
   }

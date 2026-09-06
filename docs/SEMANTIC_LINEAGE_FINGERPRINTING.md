@@ -423,6 +423,7 @@ something fingerprinting should paper over by treating the two as equal.
 | `Boolean` | A single canonical byte, `0x00`/`0x01` | Trivial, unambiguous |
 | `String` | UTF-8 bytes of the string after Unicode **NFC** normalisation, length-prefixed | NFC is the one endorsed string normalisation: two byte-different Unicode encodings of the identical rendered text (e.g. a precomposed vs. decomposed accented character) are the same string by any reasonable definition, and NFC is a standard, narrowly-scoped transform — not case-folding, not trimming, not locale-aware comparison, none of which this design applies |
 | `null` (typed SQL `NULL`, `literalType` still populated) | A canonical `NULL` tag, no value bytes, `literalType` still hashed | Distinct from `UnknownExpression` per the IR's own doc — "fully understood, just empty" — and the fingerprint reflects that: a typed-null literal has a real, stable canonical form, not an opaque one |
+| `Array[Byte]` (a `BinaryType` literal — confirmed directly against a real Spark session: `Literal.value.getClass.getName == "[B"`) | The raw byte content itself, length-prefixed — never `value.toString` | `Array`'s own `toString`/`equals`/`hashCode` are JVM-identity-based (`[B@1a2b3c4d`), not content-based, unlike every other literal runtime type this design falls through to the generic fallback for (e.g. Catalyst's `GenericArrayData` for an `ArrayType` literal has a stable, content-based `toString`, confirmed directly too) — the one literal runtime type that would silently break "same model → same fingerprint" (a different hash on every JVM run, for the exact same literal) if it were ever hashed via the generic fallback below instead of its own dedicated, content-based case |
 | Anything else (`value`'s runtime type isn't one of the above — `Literal.value: Any` is otherwise unconstrained) | A distinct `UNRECOGNIZED_LITERAL_VALUE_TYPE` tag, then `value.toString`'s UTF-8 bytes, length-prefixed | Best-effort and explicitly labeled as such — never silently reusing the `String` encoding, so a future reader of the canonical form can tell "this was genuinely a string literal" from "this was some other runtime value the fingerprinter didn't have a dedicated encoder for." Flagged as a real, open limitation in §11, not a design gap this document pretends to close |
 
 **Dates/timestamps.** The IR has no dedicated date/timestamp node; a
@@ -1580,6 +1581,38 @@ implementation above surfaced four real gaps, all since closed:
   published `TransformationFingerprint`s — `ContractEnforcementRuleSpec`'s
   "computeFingerprint = true: a MERGE's ON condition changing moves the
   published fingerprint" test.
+- **A `BinaryType` literal's fingerprint was silently non-deterministic
+  across JVM runs, for the exact same literal.** Confirmed directly, not
+  assumed: a real Spark `BinaryType` literal's `Literal.value` is a raw
+  `Array[Byte]` (`getClass.getName == "[B"`), which fell through
+  `LiteralEncoding`'s dispatch to the generic `UNRECOGNIZED_LITERAL_VALUE_
+  TYPE` fallback — hashed via `value.toString`, which for a raw JVM
+  `Array` is `[B@<identity-hash>`, not content-based, unlike every other
+  runtime type this fallback ever actually sees (`ArrayType`/`StructType`/
+  `MapType` literals are Catalyst-internal wrapper types — `GenericArrayData`
+  and friends — with a stable, content-based `toString`, confirmed
+  directly too, e.g. `[1,2,3]` for the identical array twice). This is
+  exactly the "same model → same fingerprint" guarantee this whole module
+  exists to provide, silently broken for any job with a fixed binary
+  literal (a masking key, a hash salt, a default byte-array value).
+  `LiteralEncoding.encodeValue` now has a dedicated `Array[Byte]` case
+  hashing the actual byte content via `CanonicalNode`'s own `CLeaf`
+  wrapper, never `toString`; `LiteralEncodingSpec`/`NodeStructureSpec`
+  pin both the content-based determinism and that it's never silently
+  routed through the `toString`-based fallback.
+- **Every `Expr`/`Plan` match in `Canonicalizer.scala` could silently
+  regress into a runtime `scala.MatchError`** the first time a future `ir`
+  case class was added without a corresponding case here — Scala compiles
+  a non-exhaustive match on a sealed trait with only a warning, not an
+  error, by default, so this module's own doc's claim to be "pure and
+  total over every node kind in `ir`" was true only by discipline.
+  Confirmed directly (not assumed): temporarily removing one real case
+  and recompiling reproduced exactly this — a clean compile with an
+  easy-to-miss warning, no test failure, until something actually hit
+  that node kind at runtime. `fingerprint/build.sbt` now compiles with
+  `-Xfatal-warnings`, turning that specific warning into a build failure
+  — re-verified with the same temporarily-removed-case test, which now
+  fails to compile instead of just warning.
 
 Each of these was found and fixed with the same discipline this document
 asks of the code itself: a clean/high mutation score does not, by itself,
@@ -1587,7 +1620,12 @@ prove behavioral coverage of a code path with nothing for Stryker's own
 mutators to target (`case (Some(l), Some(_)) => Some(l)` has no
 comparison/boolean operator to flip) — the Union/Join gap above is exactly
 that shape, and was found by asking "what does this branch actually do"
-rather than by trusting an aggregate score.
+rather than by trusting an aggregate score. The binary-literal and
+exhaustiveness gaps were found the same way: not by running more tests
+against the existing code, but by asking what a real Spark session
+actually produces for a literal runtime type this module hadn't
+considered, and what the compiler would actually let slip through
+un-flagged.
 
 **MiMa/mutation-testing CI wiring, closed.** `fingerprint/build.sbt` now
 sets `mimaPreviousArtifacts`/`versionScheme` (a new `fingerprint/project/

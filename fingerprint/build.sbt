@@ -41,7 +41,23 @@ libraryDependencies ++= Seq(
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
-  "-feature"
+  "-feature",
+  // Load-bearing, not just hygiene: Canonicalizer's own doc claims it is
+  // "pure and total over every node kind in ir" - true today only by
+  // discipline, since a plain `expr match { ... }`/`plan match { ... }`
+  // over a sealed trait compiles fine with an incomplete case list,
+  // failing only at runtime (a scala.MatchError) the first time a real
+  // Plan/Expr hits the missing case. Confirmed directly: removing one
+  // existing case from canonicalizeExprT and recompiling with this flag
+  // fails the build at that exact match with "match may not be
+  // exhaustive"; without it, the same removal compiles clean with only a
+  // warning easy to miss in normal build output. This is the only
+  // practical way to make "every ir.Expr/ir.Plan case is handled" a
+  // compile-time guarantee instead of a hand-checked one - genuinely
+  // important here (unlike a typical -Xfatal-warnings adoption) because
+  // this module's whole value proposition is never silently missing a
+  // node kind.
+  "-Xfatal-warnings"
 )
 
 assembly / assemblyJarName := "invaract-fingerprint-0.1.0.jar"

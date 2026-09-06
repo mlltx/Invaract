@@ -70,6 +70,25 @@ object LiteralEncoding {
     // trimming, not locale-aware comparison - none of those are applied.
     case s: String => CTag("String", List(stringLeaf(Normalizer.normalize(s, Normalizer.Form.NFC))))
 
+    // A Catalyst `BinaryType` literal's value is a raw `Array[Byte]` -
+    // confirmed directly (`Literal.value.getClass.getName == "[B"` for a
+    // real Spark binary literal), not a Catalyst-internal wrapper type the
+    // way `ArrayType`/`StructType`/`MapType` literals are (`GenericArrayData`
+    // et al., which do have a stable, content-based `toString` - confirmed
+    // directly too, e.g. `[1,2,3]` for the same array twice). `Array`'s own
+    // `toString`/`equals`/`hashCode` are reference-identity-based
+    // (`[B@1a2b3c4d`), so falling through to the generic
+    // `UnrecognizedLiteralValueType` case below - which hashes `toString`
+    // - would silently make the fingerprint of the exact same binary
+    // literal different on every JVM run: precisely the "same model ->
+    // same fingerprint" guarantee this whole module exists to provide,
+    // broken by the one literal runtime type whose default representation
+    // isn't content-based. Hashed by actual byte content instead, via the
+    // existing `CLeaf` wrapper (a `Vector[Byte]`, never a raw `Array` -
+    // see `CanonicalNode`'s own doc for why that distinction matters here
+    // too).
+    case bytes: Array[Byte] => CTag("Binary", List(CLeaf(bytes.toVector)))
+
     // `Literal.value: Any` is otherwise unconstrained by the IR - this is
     // the best-effort fallback for a runtime type this encoder has no
     // dedicated case for. Deliberately a distinct tag, never silently
