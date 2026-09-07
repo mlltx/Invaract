@@ -1830,6 +1830,83 @@ below):
   if it were correct; updated to assert the new, intentional qualifier
   value instead now that this fix means a bare leaf's `ColumnRef.qualifier`
   is populated even when there's only one occurrence to disambiguate.
+- **A systematic re-check of every `location = ...` construction site in
+  `SparkPlanAdapter.scala`/`WriteCommandSupport.scala` (prompted by the
+  three toString-embeds-exprId bugs above all sharing one root cause) found
+  two more real instances of the identical pattern, and two further sites
+  that share the same *risk class* but were not confirmed reachable.**
+  Confirmed and fixed:
+  - **`WriteCommandSupport.deltaRowLevelDml`'s fallback for a Delta MERGE/
+    UPDATE/DELETE whose target has no `catalogTable`** (a path-based, not
+    catalog-registered, Delta table — `MERGE INTO delta.`path`` or
+    `UPDATE delta.`path` SET ...`) **used `target.toString`, the same raw-
+    `LogicalPlan.toString` instability as `deleteFromTable`'s fallback.**
+    Unlike that fallback, this one's reachability needed no speculation:
+    `catalogTable` being `None` for a path-based Delta DML target was
+    confirmed directly, and so was the instability itself — two separate,
+    otherwise-identical path-based Delta tables (necessarily allocated
+    different `exprId`s, Spark's `exprId` counter being session-global and
+    monotonic) produced two different raw `target.toString` values (e.g. a
+    `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for
+    one, `Relation [id#1762L,v#1763L] parquet` for the other) while
+    `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its
+    own `EliminateSubqueryAliases` rule) rendered both identically as
+    `Relation [none#0L,none#1L] parquet`. Fixed by switching to
+    `target.canonicalized.toString`, mirroring `deleteFromTable`'s own fix.
+    Regression-tested by extending `ContractEnforcementRuleSpec`'s existing
+    "path-based DML op with no catalog table" test (previously only
+    checked that a diagnostic was reported, not location stability) to run
+    the identical `UPDATE delta.`path`` against two separate, equivalently-
+    shaped path tables and assert the resulting locations are equal —
+    confirmed to fail against the pre-fix code by temporarily reverting the
+    one-line change and rerunning.
+  - **`WriteCommandSupport.insertIntoHiveDir`'s fallback for `INSERT ...
+    DIRECTORY` with no resolved storage location used `plan.toString`, the
+    same instability class.** Its own reachability is, like
+    `deleteFromTable`'s original fallback, unconfirmed against a real
+    analyzed plan — Hive's `INSERT ... DIRECTORY` SQL syntax always
+    supplies a literal path, so `storage.locationUri` being `None` wasn't
+    reproduced end to end. Fixed on the same defensive, "fix on the same
+    principle regardless" basis `deleteFromTable`'s own fallback originally
+    was (before *that* one turned out to matter for a different write
+    shape) — the fix itself (switching to `plan.canonicalized.toString`)
+    carries no risk of its own, `LogicalPlan.canonicalized` being a
+    standard, already-used-elsewhere-in-this-file operation on any resolved
+    plan. Regression-tested by `HiveConnectorSpec`'s new
+    "insertIntoHiveDir fallback location is stable" test — a real
+    `org.apache.spark.sql.hive.execution.InsertIntoHiveDirCommand`
+    constructed directly (`spark-hive` is already a test-scope dependency
+    of this module) with `CatalogStorageFormat.empty`, confirmed to fail
+    against the pre-fix code the same way.
+
+  Investigated, same risk class, but **not** confirmed reachable by any
+  currently-supported connector — left unfixed rather than shipping a
+  speculative change with no repro to validate it against, the same
+  "retract rather than force it" discipline the self-join gap's own
+  `left(...)`/`right(...)` false alarm used:
+  - `WriteCommandSupport.v2CreateOrReplaceLocation`'s fallback for a
+    `ReplaceTableAsSelect`/`CreateTableAsSelect` whose `name` isn't a
+    `ResolvedIdentifier` uses `other.toString` on a plan that, by
+    definition, isn't fully resolved — meaning `.canonicalized` (which
+    generally assumes a resolved plan) might not even be safe to call
+    there without its own empirical check, and after analysis this `name`
+    field should always be a `ResolvedIdentifier` for a real V2 write
+    reaching this code at all. No construction was found that reaches the
+    `other` branch via genuine Spark analysis.
+  - `SparkPlanAdapter.locationOf`'s final fallback (`lr.relation.toString`,
+    reached for a `HadoopFsRelation` with empty `rootPaths`, or any other
+    `BaseRelation` that is neither Hadoop- nor JDBC-backed and has no
+    `catalogTable`) has the same theoretical instability
+    (`BaseRelation`'s default `toString` is JVM-identity-based unless the
+    concrete class overrides it) but no currently-supported connector in
+    this module (Delta/Iceberg/ClickHouse/Avro/CSV/JSON/Parquet/JDBC/Hive)
+    was found to route through it — every one of them resolves via
+    `HadoopFsRelation`, `JDBCRelation`, a populated `catalogTable`, or a
+    `DataSourceV2Relation`/`HiveTableRelation` (both handled by their own,
+    separate cases). Flagged here for the next connector investigation
+    (docs/ADDING_A_SPARK_CONNECTOR.md) to check directly, rather than fixed
+    speculatively against a `BaseRelation` shape this repository has no
+    real instance of to test against.
 
 Each of the gaps above was found and fixed with the same discipline this
 document asks of the code itself: a clean/high mutation score does not,

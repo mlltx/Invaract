@@ -2307,6 +2307,39 @@ is detected even when the output schema stays identical.
       docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's "Implementation notes" for
       the full mechanism and the resolved "Spark version upgrade risk"
       bullet this closes.
+- [x] **Connector-specific location-construction audit: two more
+      raw-`LogicalPlan.toString`-embeds-exprId fallbacks found and fixed,
+      two related sites investigated and left unfixed — closed.** Prompted
+      by the three toString-instability bugs already found on this branch
+      (`rand()` seed, self-join alias, `deleteFromTable`'s fallback) all
+      sharing one root cause, systematically re-checked every `location =
+      ...` construction site in `SparkPlanAdapter.scala`/
+      `WriteCommandSupport.scala`. Found and fixed two more real instances:
+      `WriteCommandSupport.deltaRowLevelDml`'s fallback for a path-based
+      (non-catalog-registered) Delta MERGE/UPDATE/DELETE's target (confirmed
+      reachable and unstable against a real Delta session — two separate
+      path-based tables produced two different raw `target.toString`
+      values purely from `exprId` allocation order) and
+      `WriteCommandSupport.insertIntoHiveDir`'s fallback for `INSERT ...
+      DIRECTORY` with no resolved storage location (reachability
+      unconfirmed — Hive's SQL syntax always supplies a path — but fixed
+      defensively on the same principle `deleteFromTable`'s own fallback
+      was). Both switched to `.canonicalized.toString`, mirroring
+      `deleteFromTable`'s precedent exactly. Regression-tested (real Delta/
+      Hive sessions, both confirmed to fail against the pre-fix code) and
+      verified against the full 424-test `spark-adapter` suite plus scoped
+      Stryker mutation testing on both touched files per CLAUDE.md's
+      Mutation Testing Requirement. Two further sites sharing the same risk
+      class (`WriteCommandSupport.v2CreateOrReplaceLocation`'s fallback for
+      an unresolved V2 write target name, `SparkPlanAdapter.locationOf`'s
+      final generic `BaseRelation.toString` fallback) were investigated and
+      left unfixed — no construction was found that reaches either via
+      genuine Spark analysis or any of this module's currently-supported
+      connectors, so neither was shipped as a speculative, unverified
+      change; both are flagged in docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's
+      "Gap-closing pass" for the next connector investigation to check
+      directly against a real instance, per this branch's own "retract
+      rather than force it" discipline for an unconfirmed hypothesis.
 
 ##### Dependencies
 

@@ -756,22 +756,21 @@ private[sparkadapter] object WriteCommandSupport {
               // .canonicalized, not target's plain LogicalPlan.toString this
               // used to call directly - the same fix, for the same reason,
               // as WriteCommandSupport.deleteFromTable's own "no
-              // NamedRelation found" fallback below (see that case's own
-              // comment for the full empirical confirmation of the general
-              // mechanism): TreeNode.toString renders attribute references
-              // as "name#<exprId>", a per-session counter, not a property of
-              // the query itself. Plausibly reachable here for real, unlike
-              // deleteFromTable's own fallback: a path-based (not
-              // catalog-registered) Delta table's MERGE/UPDATE/DELETE -
-              // `MERGE INTO delta.`path`` or a DeltaTable.forPath(...)
-              // handle - would have no `catalogTable` at all. Applied on the
-              // same "fix on the same principle regardless" basis
-              // deleteFromTable's own fallback was (see the empirical
-              // confirmation there); this specific call site's own
-              // reachability and instability are being independently
-              // verified against a real Delta session as a follow-up to
-              // this change, per this repo's own audit discipline of never
-              // asserting "confirmed" without a real repro backing it.
+              // NamedRelation found" fallback below. Unlike that fallback,
+              // this one is confirmed reachable for real, not just
+              // plausible: a path-based (not catalog-registered) Delta
+              // table's MERGE/UPDATE/DELETE - `MERGE INTO delta.`path`` -
+              // has no `catalogTable` at all, confirmed directly against a
+              // real Delta session. Two separate SparkSessions running the
+              // identical unchanged MERGE against equivalently-shaped
+              // path tables produced two different raw `target.toString`
+              // values purely from exprId allocation order (`SubqueryAlias
+              // t` recursing into `Relation [id#348L,v#349L] parquet` in one
+              // run vs. `Relation [id#1762L,v#1763L] parquet` in the other),
+              // while `.canonicalized` (which runs `EliminateSubqueryAliases`
+              // among its normalization rules, also stripping the
+              // `SubqueryAlias` wrapper) rendered both identically as
+              // `Relation [none#0L,none#1L] parquet`.
               val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.canonicalized.toString)
               val msg = s"No catalog storage location for ${plan.getClass.getSimpleName}'s target; " +
                 s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's canonicalized toString"} as a best-effort location"
