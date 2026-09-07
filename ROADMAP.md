@@ -2299,14 +2299,16 @@ is detected even when the output schema stays identical.
       cross-catalog fingerprint-inequality check, the same-catalog
       bare-self-join check, and the byte-for-byte-unaffected-when-unique
       check — three of which fail against the pre-fix code, confirmed by
-      reverting the change and rerunning), the full 423-test `spark-adapter`
+      reverting the change and rerunning), the full 424-test `spark-adapter`
       suite (one pre-existing test updated: it had asserted the old, buggy
       empty-qualifier behavior for an ordinary bare read as if it were
       correct), and scoped Stryker mutation testing on the touched method
-      per CLAUDE.md's Mutation Testing Requirement — see
-      docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's "Implementation notes" for
-      the full mechanism and the resolved "Spark version upgrade risk"
-      bullet this closes.
+      per CLAUDE.md's Mutation Testing Requirement (83.72% of total/85.71%
+      of covered code — one apparent survivor in this fix's own new code,
+      verified by hand to be a genuine equivalent mutant, not a real gap)
+      — see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's "Implementation
+      notes" for the full mechanism and the resolved "Spark version
+      upgrade risk" bullet this closes.
 - [x] **Connector-specific location-construction audit: two more
       raw-`LogicalPlan.toString`-embeds-exprId fallbacks found and fixed,
       two related sites investigated and left unfixed — closed.** Prompted

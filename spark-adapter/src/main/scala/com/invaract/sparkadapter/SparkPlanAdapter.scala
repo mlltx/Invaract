@@ -290,6 +290,16 @@ private[sparkadapter] object SparkPlanAdapter {
     // too would be redundant, not wrong, but this keeps each attribute
     // covered by exactly one of the two passes).
     val alreadyCovered: Set[Long] = fromSubqueryAlias.keySet
+    // `.forall`, not `.exists` - a documented equivalent mutant (confirmed
+    // by hand: manually applying `.exists` here and rerunning the full
+    // spark-adapter suite, including MultiCatalogQualifierSpec, found no
+    // failure), not a real gap Stryker's own scoped run reported as a
+    // survivor: `exprId` is unique per attribute instance, so a single
+    // relation leaf's own `.output` attributes are always either ALL
+    // present in `alreadyCovered` (if this leaf is itself wrapped, even
+    // transitively, by a `SubqueryAlias`) or ALL absent (if it never is) -
+    // never a mix - making `forall`/`exists` behaviorally identical for
+    // every attribute list this is ever called with.
     def isBare(attrs: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): Boolean =
       attrs.nonEmpty && attrs.forall(a => !alreadyCovered(a.exprId.id))
     val bareLeafOccurrences: Seq[(String, Seq[Long])] = plan.collect {

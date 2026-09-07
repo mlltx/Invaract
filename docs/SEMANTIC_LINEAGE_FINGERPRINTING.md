@@ -1829,7 +1829,23 @@ below):
   old, buggy `qualifier.isEmpty` behavior for an ordinary bare CSV read as
   if it were correct; updated to assert the new, intentional qualifier
   value instead now that this fix means a bare leaf's `ColumnRef.qualifier`
-  is populated even when there's only one occurrence to disambiguate.
+  is populated even when there's only one occurrence to disambiguate. A
+  whole-file-scoped `sbt stryker --mutate "SparkPlanAdapter.scala"` run
+  scored 83.72% (of total; 85.71% of covered code) — above CLAUDE.md's 70%
+  bar — with one apparent survivor inside this fix's own new code
+  (`isBare`'s `attrs.forall(...)` mutated to `.exists(...)`), verified by
+  hand to be a genuine equivalent mutant, not a real gap: manually applying
+  the mutation and rerunning the full 424-test `spark-adapter` suite
+  produced zero failures, because `exprId` is unique per attribute
+  instance, so a single relation leaf's own output attributes are always
+  either all covered or all uncovered by the `SubqueryAlias` pass, never a
+  mix — documented as such directly in `isBare`'s own code comment. Every
+  other survivor that run reported sits in pre-existing, untouched code
+  elsewhere in this large file (the generic `BaseRelation` fallback,
+  various format-detection diagnostics) — unrelated to this change and out
+  of this fix's scope, the same "single-file-scoped Stryker run surfaces
+  pre-existing gaps too" caveat the self-join fix's own mutation-testing
+  entry above already documents.
 - **A systematic re-check of every `location = ...` construction site in
   `SparkPlanAdapter.scala`/`WriteCommandSupport.scala` (prompted by the
   three toString-embeds-exprId bugs above all sharing one root cause) found
