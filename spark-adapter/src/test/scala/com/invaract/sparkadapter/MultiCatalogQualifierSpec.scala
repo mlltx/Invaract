@@ -72,8 +72,17 @@ class MultiCatalogQualifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   override def afterAll(): Unit = spark.stop()
 
+  // .replace('\\', '/') - the same convention already used everywhere else
+  // in this module a filesystem path is compared against a Spark/Iceberg-
+  // reported location (see HiveConnectorSpec's/ContractEnforcementRuleSpec's
+  // own comments on this): java.nio.file.Path.toString renders native
+  // backslash separators on Windows, but Iceberg's own Table.properties()
+  // "location" property (what SparkPlanAdapter.tableLocationAndFormat
+  // actually reads) is always forward-slash, Hadoop-URI-style, regardless
+  // of OS - confirmed directly by a real Windows CI failure comparing the
+  // two without this normalization.
   private def locationOfCatalog(catalog: String): String =
-    scratchDir.resolve(s"wh_$catalog").resolve("sales").resolve("orders").toString
+    scratchDir.resolve(s"wh_$catalog").resolve("sales").resolve("orders").toString.replace('\\', '/')
 
   test("a bare .load() read of a catalog table has NO Spark-assigned qualifier (refutes the original truncation hypothesis)") {
     val df = spark.read.format("iceberg").load("cat_a.sales.orders")
