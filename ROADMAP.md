@@ -2269,6 +2269,44 @@ is detected even when the output schema stays identical.
       Spark's ambiguous-self-join guard disabled) that closer empirical
       checking showed was never actually reachable and was retracted
       rather than shipped as a "known limitation."
+- [x] **`SparkPlanAdapter` translation-layer fix for a bare relation leaf's
+      empty `ColumnRef.qualifier` (confirmed false negative) — closed.** A
+      follow-up audit pass investigating a previously-flagged, unconfirmed
+      multi-catalog risk (`AttributeReference.qualifier.lastOption`
+      truncating a real multi-part qualifier) found that specific mechanism
+      wasn't reachable, but found a broader, real one instead: an
+      `AttributeReference` from a relation never wrapped in a
+      `SubqueryAlias` — reached via the ordinary
+      `spark.read.format(...).load(tableIdentifier)` access pattern, not
+      `spark.table(...)` — got a completely empty Spark-assigned
+      `.qualifier`, and `computeAliasDisambiguation` only ever covered
+      `SubqueryAlias` occurrences. Confirmed against a real dual-catalog
+      Iceberg session: joining two distinct physical tables via `.load()`
+      and selecting one side's column vs. the other's fingerprinted
+      byte-identically (`overall` and every per-output fingerprint) despite
+      being genuinely different transformations — and the same root cause
+      silently reopened the original self-join bug through this different
+      Spark API (two `.load()` calls against the identical table, joined
+      unaliased, collided the same way). Fixed by extending
+      `computeAliasDisambiguation` with a second pass covering every bare
+      relation leaf, grouped by its own physical location (the same
+      location its `ir.Read` will independently use) with the identical
+      `"<location>#<index>"` suffix-on-collision convention the
+      `SubqueryAlias` pass already uses — a no-op for every already-unique
+      occurrence. Verified against a real Spark session
+      (`MultiCatalogQualifierSpec`'s six tests: the refuted-hypothesis
+      check, the `SubqueryAlias`-coverage-shadows-it check, the decisive
+      cross-catalog fingerprint-inequality check, the same-catalog
+      bare-self-join check, and the byte-for-byte-unaffected-when-unique
+      check — three of which fail against the pre-fix code, confirmed by
+      reverting the change and rerunning), the full 423-test `spark-adapter`
+      suite (one pre-existing test updated: it had asserted the old, buggy
+      empty-qualifier behavior for an ordinary bare read as if it were
+      correct), and scoped Stryker mutation testing on the touched method
+      per CLAUDE.md's Mutation Testing Requirement — see
+      docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's "Implementation notes" for
+      the full mechanism and the resolved "Spark version upgrade risk"
+      bullet this closes.
 
 ##### Dependencies
 
