@@ -82,7 +82,7 @@ jobs:
       # replaces same-named assets (overwrite_files defaults to true), so
       # the download URLs below stay stable across every republish.
       - name: Publish/update the rolling release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: spark-jars-latest
           name: "Spark engine jars (latest)"
