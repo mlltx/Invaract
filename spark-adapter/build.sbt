@@ -1,5 +1,3 @@
-import com.typesafe.tools.mima.core._
-
 name := "invaract-spark-adapter"
 // 0.2.0 -> 0.3.0: docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §14 wiring
 // added `computeFingerprint` to `VerificationOptions` and `fingerprints`
@@ -207,9 +205,10 @@ val deltaVersion = sys.env.getOrElse("INVARACT_TEST_DELTA_VERSION", primaryVersi
 // Overridable via INVARACT_TEST_ICEBERG_VERSION for the
 // iceberg-version-matrix CI job (.github/workflows/test.yml), which runs
 // this module's Iceberg-touching specs (IcebergConnectorSpec,
-// SparkAdapterListenerIcebergSpec - the only two, per this file's own
-// JDK17+ exclusion-filter comment below, plus FailClosedCommands.scala
-// which references Iceberg only via string literals) against every
+// SparkAdapterListenerIcebergSpec, MultiCatalogQualifierSpec - the only
+// three, per this file's own JDK17+ exclusion-filter comment below, plus
+// FailClosedCommands.scala which references Iceberg only via string
+// literals) against every
 // iceberg-spark-runtime release this repo claims to support (currently
 // 1.10.2/1.11.0 - see docs/connectors/iceberg.md's "Version compatibility"
 // section: confirmed via this artifact's own maven-metadata.xml that
@@ -898,26 +897,27 @@ Test / parallelExecution := false
 // With the dependency gone, IcebergConnectorSpec.scala's own
 // org.apache.iceberg/org.apache.spark.sql.connector.iceberg imports
 // would fail to *compile* under JDK <17 - so its source file is excluded
-// from that build too. SparkAdapterListenerIcebergSpec.scala is excluded
-// for a related but distinct reason: it has no direct Iceberg import (so
-// it compiles fine under JDK <17) but configures
-// spark.sql.catalog.local = "org.apache.iceberg.spark.SparkCatalog" as a
-// plain string, which Spark's catalog-plugin lookup tries to
-// Class.forName at *runtime* - a real, confirmed CI failure
-// (ClassNotFoundException/"Cannot find catalog plugin class") once the
-// dependency is gone, not a compile-time one. Every other spark-adapter
-// source file is dependency-free of Iceberg (confirmed by grepping src/ -
-// only these two files and FailClosedCommands.scala reference it at all,
-// and that one only via string literals, never a real import or a
-// catalog-plugin config - see its own header comment), so nothing else
-// needs excluding. The module's own compiled bytecode target
-// (-target:jvm-1.8 below) is unaffected; this is purely a test-only
-// dependency's own runtime floor, not a product compatibility change.
+// from that build too. SparkAdapterListenerIcebergSpec.scala and
+// MultiCatalogQualifierSpec.scala are excluded for a related but distinct
+// reason: neither has a direct Iceberg import (so both compile fine under
+// JDK <17) but each configures spark.sql.catalog.* =
+// "org.apache.iceberg.spark.SparkCatalog" as a plain string, which
+// Spark's catalog-plugin lookup tries to Class.forName at *runtime* - a
+// real, confirmed CI failure (ClassNotFoundException/"Cannot find catalog
+// plugin class") once the dependency is gone, not a compile-time one.
+// Every other spark-adapter source file is dependency-free of Iceberg
+// (confirmed by grepping src/ - only these three files and
+// FailClosedCommands.scala reference it at all, and that one only via
+// string literals, never a real import or a catalog-plugin config - see
+// its own header comment), so nothing else needs excluding. The module's
+// own compiled bytecode target (-target:jvm-1.8 below) is unaffected;
+// this is purely a test-only dependency's own runtime floor, not a
+// product compatibility change.
 Test / unmanagedSources / excludeFilter := {
   val icebergExcluded =
     if (scala.util.Properties.isJavaAtLeast("17")) (Test / unmanagedSources / excludeFilter).value
     else
-      (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala" || "SparkAdapterListenerIcebergSpec.scala"
+      (Test / unmanagedSources / excludeFilter).value || "IcebergConnectorSpec.scala" || "SparkAdapterListenerIcebergSpec.scala" || "MultiCatalogQualifierSpec.scala"
   // ClickHouse has no supported native Windows server build (a hard
   // platform constraint, unlike Iceberg's JDK-version one above) -
   // ClickHouseTestServer/ClickHouseConnectorSpec.scala are excluded on
@@ -1006,41 +1006,26 @@ strykerThresholdsBreak := 70
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
 //
-// Points at the base branch's own current published coordinate
-// (com.invaract/0.2.0) - still 0.2.0, not this file's own current
-// `version` above, because base-ref (whatever commit predates this PR's
-// 0.2.0 -> 0.3.0 bump) still publishes under 0.2.0; CI's api-compatibility
-// job runs `sbt publishLocal` against base-ref's own build.sbt, then
-// resolves exactly this coordinate to diff PR head against - the same
-// "keep pointing at the old coordinate for the one PR that makes the
-// bump" pattern CLAUDE.md's own com.example -> com.invaract worked example
-// documents, and the same one contract/ir's own 0.2.0 -> 0.3.0 bumps used
-// (see ir/build.sbt's matching comment). FOLLOW-UP (once this PR lands on
-// the base branch): a later PR flips this to 0.3.0 and removes the
-// filters below, once there's nothing left between them to filter.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.2.0")
+// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
+// the base branch in its own PR, which left this pointing at the
+// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
+// lands" comment. That PR has now landed (base-ref itself publishes
+// 0.3.0, not 0.2.0, confirmed the hard way: CI's api-compatibility job
+// failed with a real "Not found" resolving 0.2.0), so this is that
+// follow-up flip - the same one contract/ir's own 0.2.0 -> 0.3.0 bumps
+// already went through (see ir/build.sbt's matching comment).
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.3.0")
 
-// Filters for the one deliberate break this 0.2.0 -> 0.3.0 bump covers
-// (see this file's own top-of-file comment): `computeFingerprint` added
-// to `VerificationOptions`, `fingerprints` added to `VerificationResult`
-// and `notification.ContractValidationEvent`. Every line below is exactly
-// what a real `sbt mimaReportBinaryIssues` run against the 0.2.0 baseline
-// printed as its own suggested filter (16 problems total: apply/copy/
-// constructor/companion-object-hierarchy for each of the three case
-// classes, plus VerificationResult's own `of` factory) - copied verbatim,
-// not hand-written, so there's no risk of a filter that's subtly broader
-// or narrower than the actual reported problem.
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.VerificationOptions$"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.of"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.this"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent$")
-)
+// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
+// that new version and add filters for whatever real break motivated the
+// bump, mirroring this section's own history - do not make that flip in
+// the PR doing the bump itself (base-ref won't have it yet).
+//
+// No filters needed right now: mimaPreviousArtifacts above already equals
+// this module's own current version, so there is nothing between them to
+// filter - the one break that motivated the 0.2.0 -> 0.3.0 bump
+// (`computeFingerprint` added to `VerificationOptions`, `fingerprints`
+// added to `VerificationResult`/`notification.ContractValidationEvent`)
+// is now baked into both sides of the comparison. The 12 filter lines
+// that documented it against the old 0.2.0 baseline were removed here
+// rather than left as dead entries with nothing left to match.
