@@ -753,9 +753,28 @@ private[sparkadapter] object WriteCommandSupport {
           val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString) match {
             case Some(loc) => (loc, None)
             case None =>
-              val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.toString)
+              // .canonicalized, not target's plain LogicalPlan.toString this
+              // used to call directly - the same fix, for the same reason,
+              // as WriteCommandSupport.deleteFromTable's own "no
+              // NamedRelation found" fallback below (see that case's own
+              // comment for the full empirical confirmation of the general
+              // mechanism): TreeNode.toString renders attribute references
+              // as "name#<exprId>", a per-session counter, not a property of
+              // the query itself. Plausibly reachable here for real, unlike
+              // deleteFromTable's own fallback: a path-based (not
+              // catalog-registered) Delta table's MERGE/UPDATE/DELETE -
+              // `MERGE INTO delta.`path`` or a DeltaTable.forPath(...)
+              // handle - would have no `catalogTable` at all. Applied on the
+              // same "fix on the same principle regardless" basis
+              // deleteFromTable's own fallback was (see the empirical
+              // confirmation there); this specific call site's own
+              // reachability and instability are being independently
+              // verified against a real Delta session as a follow-up to
+              // this change, per this repo's own audit discipline of never
+              // asserting "confirmed" without a real repro backing it.
+              val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.canonicalized.toString)
               val msg = s"No catalog storage location for ${plan.getClass.getSimpleName}'s target; " +
-                s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's toString"} as a best-effort location"
+                s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's canonicalized toString"} as a best-effort location"
               (fallback, Some(Diagnostic(plan.getClass.getSimpleName, msg)))
           }
           // Only MergeIntoCommand has a separate `source` - UPDATE/DELETE
@@ -1092,8 +1111,18 @@ private[sparkadapter] object WriteCommandSupport {
           val (location, diagnostic) = storage.locationUri match {
             case Some(uri) => (uri.toString, None)
             case None =>
-              val msg = "INSERT ... DIRECTORY has no resolved storage location; using its toString as a best-effort location"
-              (plan.toString, Some(Diagnostic("InsertIntoHiveDirCommand", msg)))
+              // .canonicalized, not plan's plain LogicalPlan.toString this
+              // used to call directly - the same instability class as
+              // deleteFromTable's/deltaRowLevelDml's own fallbacks above
+              // (TreeNode.toString embeds per-session exprIds). The SQL
+              // syntax for INSERT ... DIRECTORY always supplies a literal
+              // path, so storage.locationUri missing entirely wasn't
+              // reproduced against a real analyzed plan (the same
+              // "undocumented how, if ever, real Spark reaches it" position
+              // deleteFromTable's own fallback was in) - fixed on the same
+              // principle regardless, per that case's own precedent.
+              val msg = "INSERT ... DIRECTORY has no resolved storage location; using its canonicalized toString as a best-effort location"
+              (plan.canonicalized.toString, Some(Diagnostic("InsertIntoHiveDirCommand", msg)))
           }
           WriteCommandInfo(
             location = location,
