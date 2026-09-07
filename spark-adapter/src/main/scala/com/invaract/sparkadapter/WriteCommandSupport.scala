@@ -772,6 +772,16 @@ private[sparkadapter] object WriteCommandSupport {
               // `SubqueryAlias` wrapper) rendered both identically as
               // `Relation [none#0L,none#1L] parquet`.
               val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.canonicalized.toString)
+              // catalogTable.isDefined here only picks the diagnostic
+              // message's own wording (which tier of fallback fired), not
+              // `fallback`'s actual value - that's already fully determined
+              // above by the equivalent `catalogTable.map(...).getOrElse(...)`.
+              // A scoped Stryker run reports this condition as a survivor
+              // (forced to both `true` and `false`); confirmed by hand that
+              // forcing it doesn't fail any test, since none asserts the
+              // literal message text - the same "message-text mutant, not
+              // worth chasing" category CLAUDE.md's own Mutation Testing
+              // Requirement names, not a real behavioral gap.
               val msg = s"No catalog storage location for ${plan.getClass.getSimpleName}'s target; " +
                 s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's canonicalized toString"} as a best-effort location"
               (fallback, Some(Diagnostic(plan.getClass.getSimpleName, msg)))

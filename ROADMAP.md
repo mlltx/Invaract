@@ -2330,8 +2330,12 @@ is detected even when the output schema stays identical.
       `deleteFromTable`'s precedent exactly. Regression-tested (real Delta/
       Hive sessions, both confirmed to fail against the pre-fix code) and
       verified against the full 424-test `spark-adapter` suite plus scoped
-      Stryker mutation testing on both touched files per CLAUDE.md's
-      Mutation Testing Requirement. Two further sites sharing the same risk
+      Stryker mutation testing on `WriteCommandSupport.scala` per CLAUDE.md's
+      Mutation Testing Requirement (76.74% — above the 70% bar; all 10
+      survivors verified by hand to be either pre-existing untouched code
+      or, for the one survivor on a line this fix touched, a message-text-
+      only mutant with no effect on the actual computed location). Two
+      further sites sharing the same risk
       class (`WriteCommandSupport.v2CreateOrReplaceLocation`'s fallback for
       an unresolved V2 write target name, `SparkPlanAdapter.locationOf`'s
       final generic `BaseRelation.toString` fallback) were investigated and

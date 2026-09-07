@@ -1895,6 +1895,30 @@ below):
     of this module) with `CatalogStorageFormat.empty`, confirmed to fail
     against the pre-fix code the same way.
 
+  A whole-file-scoped `sbt stryker --mutate "WriteCommandSupport.scala"`
+  run scored 76.74% — above CLAUDE.md's 70% bar, though below Stryker4s's
+  own default informational "low threshold" of 80% (not a project-defined
+  gate; `strykerThresholdsBreak` for this module is unrelated to this
+  informational warning). Of its 10 survivors, none sit in genuinely new
+  logic from either fix above: most are pre-existing, untouched dispatch
+  guards elsewhere in this large file (class-name equality checks for
+  `createHiveTableAsSelect`/`insertIntoHiveTable`/`insertIntoHiveDir`/
+  `deltaRowLevelDml`'s own `Function.unlift` guards, `unwrapWriteWrapper`'s
+  condition, `streamSinkFormatOf`'s `FileStreamSink` check, an unrelated
+  `overwrite` flag) — the same "single-file-scoped Stryker run surfaces
+  pre-existing gaps too" pattern already documented above. One survivor
+  does sit on a line this fix touched: `deltaRowLevelDml`'s diagnostic
+  message text, `if (catalogTable.isDefined) "its table identifier" else
+  "the target plan's canonicalized toString"` — but the mutated condition
+  only selects which of two *message strings* is shown, never the actual
+  `fallback`/`location` value (already fully and independently determined
+  by the equivalent `catalogTable.map(...).getOrElse(...)` immediately
+  above); confirmed by hand (forcing the condition to both `true`/`false`
+  and rerunning) that no test fails, since none asserts the literal
+  message text — the same message-text-mutant category CLAUDE.md's own
+  Mutation Testing Requirement already names as not worth chasing.
+  Documented inline at the mutation's own location.
+
   Investigated, same risk class, but **not** confirmed reachable by any
   currently-supported connector — left unfixed rather than shipping a
   speculative change with no repro to validate it against, the same
