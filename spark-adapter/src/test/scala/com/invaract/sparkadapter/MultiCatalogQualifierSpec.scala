@@ -72,17 +72,21 @@ class MultiCatalogQualifierSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   override def afterAll(): Unit = spark.stop()
 
-  // .replace('\\', '/') - the same convention already used everywhere else
-  // in this module a filesystem path is compared against a Spark/Iceberg-
-  // reported location (see HiveConnectorSpec's/ContractEnforcementRuleSpec's
-  // own comments on this): java.nio.file.Path.toString renders native
-  // backslash separators on Windows, but Iceberg's own Table.properties()
-  // "location" property (what SparkPlanAdapter.tableLocationAndFormat
-  // actually reads) is always forward-slash, Hadoop-URI-style, regardless
-  // of OS - confirmed directly by a real Windows CI failure comparing the
-  // two without this normalization.
+  // Confirmed directly via a real Windows CI failure (not assumed): Iceberg's
+  // HadoopCatalog echoes the configured warehouse root back VERBATIM -
+  // whatever OS-native string this suite passed to
+  // `.config("spark.sql.catalog.cat_a.warehouse", ...)` below, backslashes
+  // and all on Windows - then appends the namespace/table path itself
+  // ("sales/orders") using forward slashes unconditionally, since that
+  // part is built by Hadoop's own `Path` joining, not by round-tripping
+  // through java.nio.file.Path again. So the correct expected value is the
+  // warehouse root exactly as configured (untouched, native separators)
+  // with a literal forward-slash-joined "sales/orders" appended - not a
+  // blanket backslash-to-forward-slash replace across the whole string,
+  // which incorrectly changes the warehouse-root portion too and was
+  // itself a real, since-reverted bug in this test (see git history).
   private def locationOfCatalog(catalog: String): String =
-    scratchDir.resolve(s"wh_$catalog").resolve("sales").resolve("orders").toString.replace('\\', '/')
+    scratchDir.resolve(s"wh_$catalog").toString + "/sales/orders"
 
   test("a bare .load() read of a catalog table has NO Spark-assigned qualifier (refutes the original truncation hypothesis)") {
     val df = spark.read.format("iceberg").load("cat_a.sales.orders")
