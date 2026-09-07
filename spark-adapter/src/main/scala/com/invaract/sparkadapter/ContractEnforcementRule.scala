@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractValidator}
+import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.notification.{ContractValidationEvent, NotificationSink}
 
@@ -280,7 +281,13 @@ object ContractEnforcementRule {
         // RuleVerifier.appliesTo decides that, so an UPDATE this module
         // can't fully verify doesn't spuriously fail a contract that only
         // declares forbid_unconditional_delete, say.
-        val ruleViolations = RowMutationSupport.classify(plan) match {
+        // Classified once and reused below by both ruleViolations and
+        // fingerprinting - RowMutationSupport.classify re-derives the same
+        // RowMutation from the same `plan` either way, so computing it
+        // twice would be pure waste (and, worse, a second place that could
+        // silently drift from the first).
+        val rowMutationClassification = RowMutationSupport.classify(plan)
+        val ruleViolations = rowMutationClassification match {
           case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
             RuleVerifier.verify(contract.rules, mutation)
           case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
@@ -288,7 +295,30 @@ object ContractEnforcementRule {
             if (declaredRules.exists(RuleVerifier.appliesTo(_, kind))) List(unverifiableDmlViolation(kind)) else Nil
           case None => Nil
         }
-        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations)
+        // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
+        // one branch with a real, complete ir.Plan already in hand
+        // (`translated.plan`, produced above for structural verification
+        // itself) - the state-changing-CALL and invalid-contract branches
+        // below have no equivalent real plan to fingerprint, so they never
+        // populate this field, flag on or not.
+        //
+        // The RowMutation (if any) feeds the fingerprint too - a MERGE's ON
+        // condition, or a conditional DELETE's predicate, is real
+        // transformation-defining behavior that ir.Plan alone never
+        // captures (see Canonicalizer.canonicalizeRowMutation's own doc);
+        // only the Extracted case has an actual RowMutation value to pass -
+        // Unverifiable/None both mean "no RowMutation to fold in," not
+        // "known to be absent," so the fingerprint in that case still just
+        // reflects translated.plan alone, exactly as before RowMutation
+        // support existed.
+        val fingerprints =
+          if (options.computeFingerprint) {
+            val mutation = rowMutationClassification.collect {
+              case RowMutationSupport.Classification.Extracted(_, m) => m
+            }
+            Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
+          } else None
+        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations, fingerprints)
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
@@ -402,7 +432,8 @@ object ContractEnforcementRule {
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
-          applicationId = applicationId
+          applicationId = applicationId,
+          fingerprints = result.fingerprints
         )
       )
     }
@@ -439,7 +470,27 @@ object ContractEnforcementRule {
       sb.append(s"  ${i + 1}. ${v.remediation}\n")
     }
 
+    // Only present when VerificationOptions.computeFingerprint was true
+    // for this check and a real plan existed to fingerprint - see
+    // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.4. Only each output's
+    // combined hash is printed, not its separate expression/lineage
+    // components (still available on `result.fingerprints` directly) -
+    // and this never claims "changed"/"unchanged": there is no prior
+    // fingerprint here to compare against, only this check's own values.
+    result.fingerprints.foreach(appendFingerprints(sb, _))
+
     sb.toString()
+  }
+
+  private def appendFingerprints(sb: StringBuilder, fingerprints: TransformationFingerprint): Unit = {
+    sb.append(s"\nFingerprints (v${fingerprints.version}, ${fingerprints.overall.algorithm}):\n")
+    sb.append(s"  overall: ${fingerprints.overall.value}\n")
+    if (fingerprints.outputs.nonEmpty) {
+      sb.append("  outputs:\n")
+      fingerprints.outputs.toList.sortBy(_._1).foreach { case (name, output) =>
+        sb.append(s"    $name: ${output.combined.value}\n")
+      }
+    }
   }
 
   private def describeFields(fields: List[com.invaract.contract.Field]): String =

@@ -2086,6 +2086,198 @@ contract-format change.
 
 ---
 
+#### Sub-phase: Semantic lineage fingerprinting (design complete, implementation not started)
+
+The transformation IR (Phase 1b) is precise enough to represent business
+logic independently of Spark's plan representation; this sub-phase designs
+— but does not yet implement — the next step the architecture always
+pointed toward: turning that IR into a deterministic fingerprint so a
+future revision of the same transformation can be compared against a prior
+one, and a business-logic change (e.g. `amount * 1.20` → `amount * 1.25`)
+is detected even when the output schema stays identical.
+
+- [x] **Design document**: [docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+      — canonicalisation strategy (tagged, length-prefixed node encoding,
+      never `toString`), a `TransformationFingerprint` hierarchy
+      (overall/input/output/expression/operator levels), which IR fields
+      are stable vs. must be excluded or normalised (`ColumnRef.id`
+      excluded outright; `Read.alias` replaced by a positional
+      scope-substitution table so relabelling a self-join's aliases is
+      alpha-renaming, not a semantic change; `Set`-valued `Lineage`
+      output canonically sorted since Scala `Set` iteration order isn't
+      guaranteed stable), explicit field-ordering rules (preserved where
+      order is semantically meaningful — `Join` sides, `Arithmetic`/
+      `BooleanExpr` operands, `Conditional` branches — canonically sorted
+      only where it provably isn't, e.g. `Aggregate.groupBy`/
+      `Window.partitionBy`), literal/type normalisation rules, a
+      conservative UDF strategy (identity/args/dependencies hashed;
+      `engineType` surfaced but excluded from the hash as
+      translator-quirk-prone metadata; never claims to detect an
+      implementation change the model doesn't represent), an unknown-node
+      strategy (`UnknownPlan`/`UnknownExpression` always visible in the
+      canonical form; free-text `description` surfaced but excluded from
+      the hash, `sourceType` included), a non-deterministic-expression
+      strategy (fingerprints the call's static definition, not a runtime
+      value; flags known-non-deterministic names as metadata without
+      perturbing the hash), SHA-256 hashing with an explicit
+      `fingerprint_version`, and a full testing strategy (determinism,
+      per-element meaningful-change coverage, locality, incidental-
+      difference invariance, unknown-node and UDF handling,
+      property-based canonicalisation invariants). Also specifies (§14)
+      how a computed fingerprint surfaces through `spark-adapter`'s
+      existing channels once implemented: a new opt-in
+      `VerificationOptions.computeFingerprint` flag, a `fingerprints`
+      field appended to `VerificationResult` and to
+      `ContractValidationEvent`, a printed section in
+      `ContractEnforcementRule.explain`'s exception message, and
+      pass-through publishing via whatever `NotificationSink` is already
+      configured — no new persistence, transport, or comparison logic,
+      reusing the two output channels the check rule already has.
+- [x] **Implementation**: the `fingerprint` module (depends only on `ir`,
+      no Spark dependency), providing `Canonicalizer`/`Encoding`/
+      `FingerprintHasher`/`TransformationFingerprinter` exactly as
+      specified. 128 tests initially (hand-written + ScalaCheck property
+      tests); whole-module Stryker4s mutation score **96.52%**, every
+      survivor a documented, already-established-precedent exclusion
+      (message-text `StringLiteral`s, one structurally-unreachable
+      defensive branch) — see the design doc's "Implementation notes"
+      section for the full accounting, including the one real
+      underspecification found and fixed while implementing (deep
+      passthrough resolution for the per-output `expression` fingerprint,
+      needed for the `amount * 1.20 → 1.25` example to actually work
+      against a realistic nested-Project plan).
+- [x] **Wired into `spark-adapter` per the design's §14**:
+      `VerificationOptions.computeFingerprint`, `VerificationResult`/
+      `ContractValidationEvent.fingerprints`, `ContractEnforcementRule.
+      explain`'s printed section, `NotificationJson`'s field. Verified
+      against the real toolchain, not just compiled: `spark-adapter`'s
+      full suite (413 tests initially, including 2 new fingerprint-specific
+      `ContractEnforcementRuleSpec` cases and a `NotificationJsonSpec`
+      case) passes; `sbt-assembly`'s bundling confirmed by inspecting the
+      built `invaract-spark-adapter-*.jar` directly.
+- [x] **Gap-closing pass on the initial implementation**, after an honest
+      self-assessment surfaced four real gaps: (1) zero test coverage of
+      `resolveRefDeepT`'s `Union`/ambiguous-`Join` resolution branches —
+      closed with dedicated `CanonicalizerSpec` cases; (2) no stack-safety
+      testing, a real risk confirmed directly (a plain-recursive
+      `Canonicalizer` stack-overflowed at ~700-1700 nested nodes, well
+      within a realistic chained-`.withColumn()` plan) — closed by
+      trampolining every recursive function in `Canonicalizer.scala` via
+      `scala.util.control.TailCalls`, rewriting `CanonicalNode.scala`'s
+      `Encoding.writeNode` as an explicit-stack iterative walk, and fixing
+      the same root cause in `ir.Lineage`'s own `outputsOf`/`resolveExpr`/
+      `resolveInScope` (which `TransformationFingerprinter.fingerprint`
+      calls into via `Lineage.trace`), regression-tested at 50,000 levels
+      of depth in a new `StackSafetySpec`; (3) narrow property-based test
+      generators (`genExpr`/`genPlan` covering only a handful of node
+      kinds) — expanded to cover every `Expr`/`Plan` kind; (4) `ir.
+      RowMutation` (MERGE/UPDATE/DELETE facts) invisible to fingerprinting
+      entirely, since `spark-adapter`'s `WriteCommandSupport` extracts a
+      MERGE's `ON` condition/DELETE predicate separately from `ir.Plan` —
+      closed via `Canonicalizer.canonicalizeRowMutation`, a new optional
+      `rowMutation` parameter on `TransformationFingerprinter.fingerprint`
+      (byte-identical `overall` when absent), and `ContractEnforcementRule`
+      reusing its existing `RowMutationSupport.classify(plan)` call for
+      both rule verification and fingerprinting, proven end to end with a
+      real Delta `MERGE INTO` whose `ON` condition alone changes the
+      published fingerprint. `fingerprint`'s suite grew to 153 tests (whole-
+      module Stryker **96.27%**, same accepted survivor categories plus one
+      new documented equivalent mutant in the stack-safety fix); `ir`'s 70
+      tests and `spark-adapter`'s full suite (414 tests) both still pass.
+- [ ] Per-output/per-column fingerprint hierarchy wired into a
+      human-readable change report (out of scope for this sub-phase's
+      design — see the design doc's explicit non-goals).
+- [ ] Persistence, publication (beyond §14's channels, now shipped),
+      remote comparison, and CI/CD wiring around comparing two
+      fingerprints over time — explicitly out of scope for both this
+      sub-phase and its design document; a separate, later sub-phase once
+      the fingerprint itself exists.
+- [x] **Every existing CI job that builds `spark-adapter` updated to
+      publish `fingerprint` locally first**, since `spark-adapter`'s
+      `build.sbt` now resolves it as a real `libraryDependency`: the 5
+      mutation-testing/version-matrix jobs' shared "publish contract and
+      ir locally" step, `api-compatibility` (a standalone publish step,
+      needed unconditionally even after `fingerprint` joined that job's
+      own MiMa-checked module list too — see below), `notification-kafka`, and `sbom` (added to its
+      per-module `makeBom` loop and artifact-upload path, backed by a new
+      `fingerprint/project/sbom.sbt` — confirmed with a real
+      `sbt makeBom` run). `dependency-graph.yml` and
+      `publish-spark-jars.yml` (the latter had no `publishLocal` step for
+      *any* module before this change — a real, pre-existing gap found
+      while fixing this, not introduced by it) updated the same way, the
+      latter also publishing `fingerprint`'s own standalone jar as a
+      release asset. `./dev/build`'s own order was updated too (see
+      above), and both are now verified end to end: a real `./dev/build`
+      + `./dev/test` run passed, and every touched CI job's own shell
+      commands were run locally to confirm they resolve correctly (not
+      just read for plausibility).
+- [x] **Close `fingerprint`'s CI gaps: whole-module mutation testing and
+      MiMa (api-compatibility) wiring.** A `mutation-testing-fingerprint`
+      job now runs `sbt stryker` (whole-module, plus the PR-scoped
+      incremental 70% check) for `fingerprint`, mirroring
+      `mutation-testing-ir` exactly (same zero-Spark-dependency reasoning),
+      and is added to `summary`'s `needs:`/failure-check. `fingerprint/
+      build.sbt` now sets `mimaPreviousArtifacts` (pointing at its own
+      current `0.1.0` coordinate) and `versionScheme`, with a new
+      `fingerprint/project/mima.sbt`; `fingerprint` joined
+      `api-compatibility`'s own `for module in contract ir spark-adapter`
+      MiMa-checked list (now `... spark-adapter fingerprint`). This PR is
+      the one that first adds `fingerprint/` to the repository, so — the
+      same position `contract`/`ir`/`spark-adapter`'s own introducing PR
+      was in — CI's api-compatibility job finds no `base-ref/fingerprint`
+      to compare against and skips it gracefully this one time; the check
+      runs for real starting with the next PR that touches this module.
+      `sbt stryker` for `fingerprint` was previously a manual, not
+      CI-enforced, step (see CLAUDE.md's Mutation Testing Requirement) —
+      it no longer is.
+- [ ] `fingerprint` joining `contract`/`ir`/`spark-adapter`'s own Maven
+      Central publishing (Sonatype/PGP) — still deferred per
+      `fingerprint/build.sbt`'s own "FOLLOW-UP" comment: this is the one
+      remaining piece from the item above, now that MiMa/mutation-testing
+      CI wiring is done. No previous release exists yet to sign or publish
+      against.
+- [x] **`SparkPlanAdapter` translation-layer fix for colliding self-join
+      default aliases (confirmed false negative) — closed.** An unaliased
+      DataFrame-API self-join of the same catalog table used to get both
+      physical `Read` occurrences the identical default `SubqueryAlias`
+      from Spark's own analyzer, which `Canonicalizer.buildScopeInfo` then
+      collapsed to one positional id — reading the left vs. right side's
+      own column after such a join (via `.toDF(colNames*)`, an ordinary,
+      always-reachable positional rename — no special Spark config needed)
+      fingerprinted identically despite being genuinely different physical
+      columns. Fixed by `SparkPlanAdapter.computeAliasDisambiguation`: one
+      pass over the whole plan (`TreeNode.collect`) that groups every
+      `SubqueryAlias` occurrence by its default name and assigns each
+      occurrence sharing a name a distinct, deterministic `"<name>#<index>"`
+      suffix, keyed by `exprId` so `Read.alias` and every referencing
+      `ColumnRef.qualifier` agree; a no-op for every already-correct case
+      (single occurrence, or an explicitly-aliased self-join). Verified
+      against a real Spark session (`ContractEnforcementRuleSpec`'s "an
+      unaliased self-join of the same catalog table translates the two
+      physical occurrences distinctly" test, plus the full 416-test
+      `spark-adapter` suite and `./dev/test`, both passing) and by scoped
+      Stryker mutation testing on the touched method per CLAUDE.md's
+      Mutation Testing Requirement (two apparent survivors on the
+      `countByName(name) > 1` boundary check, both verified by hand to be
+      false negatives of that single-file-scoped run's coverage
+      detection — manually applying each mutation failed real tests in
+      `SparkPlanAdapterSpec`/`ContractEnforcementRuleSpec`) — see
+      docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §11 "Positional alias
+      substitution" bullet and its "Gap-closing pass" entry for the full
+      mechanism, including a second, initially-suspected repro
+      (referencing a side via a `left(...)`/`right(...)` handle with
+      Spark's ambiguous-self-join guard disabled) that closer empirical
+      checking showed was never actually reachable and was retracted
+      rather than shipped as a "known limitation."
+
+##### Dependencies
+
+- Phase 1b completion (transformation IR) — the fingerprint's only input
+- Phase 1c's `Lineage.trace` (reused, not reimplemented, for the
+  per-output lineage-summary fingerprint layer)
+
+---
+
 ## Phase 2 — Multi-Engine Support
 
 ### Objective

@@ -7,13 +7,13 @@ machine-readable data contracts. This document describes the current
 architecture: what's actually built, how the pieces interact, and the
 design decisions behind them.
 
-**The product is the verification engine — `contract`, `ir`, and
-`spark-adapter`.** Everything else in this repository (`plugin`, `runner`,
-`demo`, `web`) is an example integration and test harness built to prove
-the engine works against a real Spark job, not something a real Invaract
-user would import. See "Two halves of this repository" below before
-reading further — conflating the two is the most common way to misjudge
-where a change belongs.
+**The product is the verification engine — `contract`, `ir`,
+`spark-adapter`, and `fingerprint`.** Everything else in this repository
+(`plugin`, `runner`, `demo`, `web`) is an example integration and test
+harness built to prove the engine works against a real Spark job, not
+something a real Invaract user would import. See "Two halves of this
+repository" below before reading further — conflating the two is the
+most common way to misjudge where a change belongs.
 
 ## System Architecture
 
@@ -44,6 +44,14 @@ where a change belongs.
    (SparkSessionExtensions check rule —
     aborts the write if verification fails)
               │
+              │ (opt-in: VerificationOptions.computeFingerprint)
+              ▼
+   fingerprint: TransformationFingerprinter
+   (canonicalizes the same IR Plan into a
+    deterministic SHA-256 hash — never itself
+    a pass/fail signal, see docs/
+    SEMANTIC_LINEAGE_FINGERPRINTING.md)
+              │
     ┌─────────┴─────────┐
     ▼                    ▼
  VERIFIED             REJECTED
@@ -57,7 +65,12 @@ installed, and a violation throws before Spark writes anything. See
 [docs/SPARK_ADAPTER.md](docs/SPARK_ADAPTER.md) for the mechanism, and
 [docs/CONTRACT_MODEL.md](docs/CONTRACT_MODEL.md) /
 [docs/TRANSFORMATION_IR.md](docs/TRANSFORMATION_IR.md) for the two things
-that feed it.
+that feed it. Fingerprinting is a separate concern layered on top, not a
+verification step itself — it runs (when enabled) regardless of whether
+the check passes or fails, since a rejected write's fingerprint is just as
+useful a diagnostic as a passing one's; see
+[docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+§14 for exactly where in `ContractEnforcementRule` this is computed.
 
 ## Two halves of this repository
 
@@ -68,13 +81,16 @@ that feed it.
 | `contract/` | `com.invaract.contract` | Parses and validates ODCS-shaped YAML contracts; classifies compatibility between two contract versions. No Spark dependency — a contract is a plain data structure. |
 | `ir/` | `com.invaract.ir` | An engine-independent `Plan`/`Expr` algebra (`Read`, `Write`, `Project`, `Join`, `Aggregate`, ...), plus `Lineage.trace` (structural column-level provenance) and `PlanPrinter` (human-readable rendering). No Spark dependency, no dependency on `contract` — this is meant to be the thing any engine's plan gets translated *into*. |
 | `spark-adapter/` | `com.invaract.sparkadapter` | Translates a real Spark Catalyst `LogicalPlan` into the IR (`SparkPlanAdapter`), verifies it against a contract (`StructuralVerifier`), and enforces that verification inside Spark's own execution lifecycle (`ContractEnforcementRule`, a `SparkSessionExtensions` check rule) or observes it after the fact (`SparkAdapterListener`, a `QueryExecutionListener`). Depends on `ir` and `contract`, and on Spark (`provided`). |
+| `fingerprint/` | `com.invaract.fingerprint` | Canonicalizes an `ir.Plan`/`ir.Expr`/`ir.Lineage` value into a deterministic, versioned SHA-256 hash (`Canonicalizer`, `FingerprintHasher`, `TransformationFingerprinter`) — see [docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md). Detects a business-logic change (`amount * 1.20` → `amount * 1.25`) that leaves the output schema identical, something schema verification alone cannot. Depends only on `ir`, no Spark dependency — surfaced through `spark-adapter` opt-in (`VerificationOptions.computeFingerprint`), not a required part of verification itself. |
 
 This is where a feature request almost always belongs, and where the
 regression-testing guardrails (property-based fuzzing, mutation testing —
 see CLAUDE.md's "Mutation Testing Requirement" — and the ones still
-outstanding: a multi-Spark-version compatibility matrix, coverage gating,
-API-compatibility checking) are scoped: against these three modules, not
-against `plugin`/`runner`.
+outstanding: a multi-Spark-version compatibility matrix, coverage gating)
+are scoped: against these four modules, not against `plugin`/`runner`.
+API-compatibility checking (MiMa) covers all four too, though only
+`contract`/`ir`/`spark-adapter` are (so far) published to Maven Central —
+see "Module Dependencies" below.
 
 ### The example integration & test harness
 
@@ -99,16 +115,21 @@ even though the harness itself is not the thing being changed.
 1. Build contract, ir, plugin (independent — built concurrently)
    └─> each module's target/scala-2.12/*.jar
 
-2. Build spark-adapter (needs contract + ir)
-   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.2.0.jar
+2. Build fingerprint (needs ir published locally — not contract/plugin)
+   └─> fingerprint/target/scala-2.12/invaract-fingerprint-0.1.0.jar
 
-3. Build runner (needs contract, ir, plugin, spark-adapter)
+3. Build spark-adapter (needs contract, ir, fingerprint published locally)
+   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar
+       (already bundles fingerprint's compiled classes via sbt-assembly —
+       a consumer installing only this jar gets fingerprinting for free)
+
+4. Build runner (needs contract, ir, plugin, spark-adapter)
    └─> runner/target/scala-2.12/invaract-spark-runner.jar
 
-4. Verify Spark environment
+5. Verify Spark environment
    └─> spark-submit --version (must succeed)
 
-5. Run the demo job (DemoJobHarness, via spark-submit)
+6. Run the demo job (DemoJobHarness, via spark-submit)
    ├─> ContractParser loads demo/contracts/invaract_output.yaml
    ├─> SparkSession built with ContractEnforcementRule installed
    │   (from the same contract) and SparkAdapterListener registered
@@ -123,7 +144,7 @@ even though the harness itself is not the thing being changed.
    └─> Capture schema, sample rows, duration, contract verification
        outcome, and Transformation IR into an ExecutionReport
 
-6. Validate the report
+7. Validate the report
    ├─> Check report.json exists
    ├─> Parse JSON, verify status == "PASS"
    └─> Return exit code 0 (success) or 1 (failure)
@@ -273,7 +294,11 @@ cluster later needs only a `.master(...)` change — see ROADMAP.md's
 ```
 contract/        no internal deps; org.scalatest (test)
 ir/               no internal deps; org.scalatest (test)
-spark-adapter/    depends on: contract, ir
+fingerprint/      depends on: ir
+                  org.scalatestplus:scalacheck (test, property-based fuzzing)
+                  no Spark dependency — usable by any future front end that
+                  produces ir.Plan, not just spark-adapter
+spark-adapter/    depends on: contract, ir, fingerprint
                   org.apache.spark:spark-sql (provided)
                   org.scalatestplus:scalacheck (test, property-based fuzzing)
 plugin/           org.apache.spark:spark-sql (provided)
@@ -284,15 +309,18 @@ web/              next, react, typescript — independent of every Scala module
 ```
 
 Cross-module references go through real `libraryDependencies` against each
-published module's own coordinate (`contract`/`ir`/`spark-adapter` — the
-three modules published to Maven Central, see "API Contracts" below and
-docs/RELEASING.md) resolved from the local Ivy cache via `publishLocal`,
+module's own coordinate, resolved from the local Ivy cache via
+`publishLocal` (`contract`/`ir`/`spark-adapter` are the three modules
+also published to Maven Central, see "API Contracts" below and
+docs/RELEASING.md; `fingerprint` resolves the same way but isn't published
+to Central yet — see `fingerprint/build.sbt`'s own FOLLOW-UP comment),
 except `plugin` (harness-only, never published), which stays on
-`unmanagedJars` pointing at its assembled jar directly. Either way, there
-is still no aggregating root `build.sbt` — each module remains an
-independent sbt project — so `dev/build`'s build order —
+`unmanagedJars` pointing at its assembled jar directly. Either way, there is still no aggregating root `build.sbt` —
+each module remains an independent sbt project — so `dev/build`'s build
+order —
 `contract`/`ir`/`plugin` concurrently (with `contract`/`ir` also
-`publishLocal`ed), then `spark-adapter` (also `publishLocal`ed), then
+`publishLocal`ed), then `fingerprint` (also `publishLocal`ed), then
+`spark-adapter` (also `publishLocal`ed), then
 `runner` — is load-bearing, not incidental. See `dev/build`'s own comments
 for the exact dependency graph.
 
@@ -441,6 +469,6 @@ this contract," "assess the blast radius of a contract change,"
 
 ---
 
-**Last Updated:** 2026-08-22
-**Architecture Version:** 0.2.0 — reflects Phase 1 (contract/ir/spark-adapter)
-as built, not as planned.
+**Last Updated:** 2026-09-06
+**Architecture Version:** 0.3.0 — reflects Phase 1 (contract/ir/spark-adapter/
+fingerprint) as built, not as planned.

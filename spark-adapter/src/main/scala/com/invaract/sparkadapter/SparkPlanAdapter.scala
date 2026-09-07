@@ -135,9 +135,95 @@ case class TranslationResult(plan: ir.Plan, diagnostics: List[Diagnostic])
 private[sparkadapter] object SparkPlanAdapter {
 
   def translate(plan: LogicalPlan): TranslationResult = {
-    val translator = new Translator
+    val translator = new Translator(computeAliasDisambiguation(plan))
     val irPlan = translator.translatePlan(plan)
     TranslationResult(irPlan, translator.diagnostics)
+  }
+
+  /** Computes a disambiguated alias for every `SubqueryAlias` occurrence in
+    * `plan`, keyed by each occurrence's own output attributes' `exprId`s.
+    *
+    * ## The bug this closes
+    *
+    * Spark's analyzer wraps *every* catalog-table reference in a
+    * `SubqueryAlias` — including one with no explicit `.as(...)`, using the
+    * table's own name as the default identifier. For an ordinary read this
+    * is harmless (one occurrence, one name). For an unaliased DataFrame-API
+    * self-join of the same catalog table (`val l = spark.table("t"); val r
+    * = spark.table("t"); l.join(r, l("id") === r("id"))`, with no `.as()`
+    * on either side), Spark assigns *both* physical occurrences the exact
+    * same default `SubqueryAlias` name — confirmed directly by printing the
+    * analyzed plan (`SubqueryAlias spark_catalog.default.t` appears twice,
+    * verbatim). Before this method existed, `translateNonWritePlan`'s
+    * `SubqueryAlias` case carried that identical string into both `ir.Read`
+    * nodes' `alias` field, and every `AttributeReference.qualifier` in the
+    * join condition or any downstream expression was *also* just that same
+    * repeated string - Spark itself never needs to disambiguate the two
+    * occurrences by name, since it resolves the real ambiguity internally
+    * via each attribute's own per-session `exprId` (which this IR carries
+    * as `ColumnRef.id` but deliberately never hashes - see that field's own
+    * doc). With no distinguishing qualifier surviving translation,
+    * `Canonicalizer.buildScopeInfo` (`fingerprint`'s own scope-substitution
+    * table) collapsed both occurrences to the same positional id, exactly
+    * as if the query had legitimately used one consistent alias for both
+    * sides - silently mis-rendering a genuine cross-occurrence join
+    * condition as a degenerate self-comparison, and making two genuinely
+    * different queries (e.g. selecting the left vs. right side's column
+    * after such a join) fingerprint identically. See
+    * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §11's "Positional alias
+    * substitution" bullet for the full history of this finding.
+    *
+    * ## The fix
+    *
+    * `exprId` is exactly the disambiguating signal Spark itself already
+    * uses - two structurally different physical occurrences of the same
+    * catalog table always produce different `exprId`s for their output
+    * attributes, confirmed directly (`id#6L` vs. `id#12L` for the two sides
+    * of an otherwise-identical self-join). This walks the *whole* plan once
+    * (via `TreeNode.collect`, Catalyst's own built-in traversal - so this
+    * reaches every `SubqueryAlias` anywhere in the tree, including inside a
+    * write command's `query`, without needing `WriteCommandSupport`'s own
+    * per-command unwrapping), groups every `SubqueryAlias` occurrence by
+    * its default `identifier.name`, and for any name shared by more than
+    * one occurrence, assigns each one a distinct, deterministic suffix
+    * (`"t#0"`, `"t#1"`, ... in encounter order - the exact same
+    * `"<name>#<index>"` convention `Canonicalizer.buildScopeInfo`'s own
+    * `ReadOccurrence` already uses for the same "same location, different
+    * physical occurrence" concept). A name with only one occurrence is left
+    * completely unchanged (mapped to itself), so this is a no-op for every
+    * already-correct case - an explicitly-aliased self-join (`.as("cur")`/
+    * `.as("arch")`, two different names, count 1 each) or an ordinary
+    * single read - byte-for-byte identical translation output to before
+    * this method existed.
+    *
+    * The result maps each occurrence's output attributes' `exprId.id` to
+    * its (possibly-suffixed) disambiguated name; both `translateNonWritePlan`'s
+    * `SubqueryAlias` case (for `ir.Read.alias`) and `translateExpr`'s
+    * `AttributeReference` case (for `ColumnRef.qualifier`) consult it,
+    * falling back to Spark's own name/qualifier for any attribute this map
+    * has no entry for (one that never passed through a `SubqueryAlias` at
+    * all - e.g. a plain unaliased file-based `Read`, or a column computed
+    * further up the plan). Because both sites resolve through the *same*
+    * map, a colliding occurrence's `Read.alias` and every `ColumnRef`
+    * referencing it always agree - `buildScopeInfo`'s ordinary
+    * scope-substitution machinery (built for the ordinary "distinct alias
+    * strings" case) then handles the now-disambiguated strings exactly as
+    * it always has, needing no change of its own.
+    */
+  private def computeAliasDisambiguation(plan: LogicalPlan): Map[Long, String] = {
+    val occurrences: Seq[SubqueryAlias] = plan.collect { case sa: SubqueryAlias => sa }
+    val countByName: Map[String, Int] = occurrences.groupBy(_.identifier.name).map { case (name, group) => name -> group.size }
+    val nextIndex = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+    occurrences.flatMap { sa =>
+      val name = sa.identifier.name
+      val disambiguated =
+        if (countByName(name) > 1) {
+          val index = nextIndex(name)
+          nextIndex(name) = index + 1
+          s"$name#$index"
+        } else name
+      sa.output.map(attr => attr.exprId.id -> disambiguated)
+    }.toMap
   }
 
   /** Convenience for translating a bare relational plan (one with no Spark
@@ -298,9 +384,22 @@ private[sparkadapter] object SparkPlanAdapter {
     * diagnostics buffer this caller doesn't consume (see `RowMutation`'s
     * own doc for why it carries no diagnostic channel of its own).
     */
-  private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator().translateExpr(expr)
+  private[sparkadapter] def translateExprStandalone(expr: Expression): ir.Expr = new Translator(Map.empty).translateExpr(expr)
 
-  private class Translator {
+  private class Translator(aliasDisambiguation: Map[Long, String]) {
+    // A secondary, no-arg constructor kept purely for binary compatibility:
+    // MiMa flags the loss of the old `Translator()` constructor as a real
+    // break even though this class is Scala-`private` - `SparkPlanAdapter`'s
+    // own class doc already notes that `private[sparkadapter]` (and, it
+    // turns out, plain `private` on a nested class too) compiles to
+    // bytecode that MiMa still sees and compares. No production code calls
+    // this overload (both real call sites - `translate`/
+    // `translateExprStandalone` - now pass an explicit map), so it exists
+    // solely to keep `com.invaract:invaract-spark-adapter`'s previously-
+    // published jar binary-compatible with this one, per CLAUDE.md's API
+    // Compatibility Requirement's "restore the old signature" option.
+    def this() = this(Map.empty)
+
     private val buffer = scala.collection.mutable.ListBuffer[Diagnostic]()
     def diagnostics: List[Diagnostic] = buffer.toList
 
@@ -325,7 +424,7 @@ private[sparkadapter] object SparkPlanAdapter {
     private def translateNonWritePlan(plan: LogicalPlan): ir.Plan = plan match {
       case sa: SubqueryAlias =>
         translatePlan(sa.child) match {
-          case r: ir.Read => r.copy(alias = Some(sa.identifier.name))
+          case r: ir.Read => r.copy(alias = Some(disambiguatedAliasOf(sa)))
           case other =>
             report(
               "SubqueryAlias",
@@ -523,9 +622,23 @@ private[sparkadapter] object SparkPlanAdapter {
       case other     => ir.NamedExpr(other.name, translateExpr(other))
     }
 
+    /** The alias `sa`'s own `ir.Read` occurrence should carry - looked up by
+      * any one of its output attributes' `exprId` (all of them map to the
+      * same disambiguated name; see `computeAliasDisambiguation`'s own
+      * doc), falling back to Spark's raw `identifier.name` when `sa` has no
+      * output at all (never happens for a real analyzed plan - a defensive
+      * fallback, not a case this module's tests can reach) or was never
+      * covered by that map (e.g. `translateExprStandalone`'s throwaway
+      * `Map.empty`, used for MERGE ON conditions translated without full
+      * plan context).
+      */
+    private def disambiguatedAliasOf(sa: SubqueryAlias): String =
+      sa.output.headOption.flatMap(attr => aliasDisambiguation.get(attr.exprId.id)).getOrElse(sa.identifier.name)
+
     def translateExpr(expr: Expression): ir.Expr = expr match {
       case a: AttributeReference =>
-        ir.ColumnReference(ir.ColumnRef(a.name, a.qualifier.lastOption, Some(a.exprId.id)))
+        val qualifier = aliasDisambiguation.get(a.exprId.id).orElse(a.qualifier.lastOption)
+        ir.ColumnReference(ir.ColumnRef(a.name, qualifier, Some(a.exprId.id)))
 
       // A nested Alias (not at the top of a Project/Aggregate/Window output
       // list, where translateNamed already unwraps it) — e.g. a struct

@@ -1,17 +1,20 @@
 #!/bin/bash
 # Builds every sbt module and assembles a fat jar for each. Each top-level
-# module (contract/, ir/, plugin/, spark-adapter/, runner/) is an
-# independent sbt project (no aggregating root build.sbt). Cross-module
+# module (contract/, ir/, fingerprint/, plugin/, spark-adapter/, runner/) is
+# an independent sbt project (no aggregating root build.sbt). Cross-module
 # references split two ways:
 #
 #   - contract, ir, spark-adapter (the three modules Maven Central
-#     publishing is set up for — see CLAUDE.md's "What's the product") are
-#     real `libraryDependencies` against each other's own published
-#     coordinate, resolved from the local Ivy cache. That means the
-#     dependency's `publishLocal` must have run — not just `compile`/
-#     `assembly` — *before* sbt resolves anything that depends on it, or
-#     resolution fails exactly the way a real Central lookup would if the
-#     artifact didn't exist yet.
+#     publishing is set up for — see CLAUDE.md's "What's the product"),
+#     plus fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md — not yet
+#     wired up for Central publishing itself, see fingerprint/build.sbt's
+#     own comment, but resolved the same way regardless), are real
+#     `libraryDependencies` against each other's own published coordinate,
+#     resolved from the local Ivy cache. That means the dependency's
+#     `publishLocal` must have run — not just `compile`/`assembly` —
+#     *before* sbt resolves anything that depends on it, or resolution
+#     fails exactly the way a real Central lookup would if the artifact
+#     didn't exist yet.
 #   - plugin, the demo harness's example transformation (never published to
 #     Central), is still referenced via `unmanagedJars` pointing at its
 #     assembled jar directly — runner's build.sbt keeps that one line for
@@ -22,16 +25,21 @@
 # lines that encode it:
 #
 #   contract, ir, plugin   (no cross-module deps — built concurrently)
-#   spark-adapter          (needs contract, ir published locally — not plugin)
+#   fingerprint            (needs ir published locally — not contract/plugin)
+#   spark-adapter          (needs contract, ir, fingerprint published locally
+#                            — not plugin)
 #   runner                 (needs contract, ir, spark-adapter published
 #                            locally, plus plugin's jar directly)
 #
 # contract/ir/plugin have no dependency on each other, so they build in
 # parallel (background jobs) rather than one after another on every OS
 # except Windows (see the OSTYPE check below — concurrent sbt/coursier
-# cache access hits hard file locks there); spark-adapter starts as soon
-# as contract+ir are ready (and locally published), without waiting on
-# plugin.
+# cache access hits hard file locks there). fingerprint only needs ir, but
+# is still sequenced after that whole first batch (not raced alongside it)
+# to keep this script's structure simple — the extra wait is negligible
+# next to spark-adapter's own build time. spark-adapter starts only once
+# fingerprint is ready too (a new dependency this module didn't have
+# before), without waiting on plugin.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -119,6 +127,10 @@ else
   wait_module ir
   wait_module plugin
 fi
+
+echo ""
+start_module fingerprint "compile test assembly publishLocal"
+wait_module fingerprint
 
 echo ""
 start_module spark-adapter "compile test assembly publishLocal"

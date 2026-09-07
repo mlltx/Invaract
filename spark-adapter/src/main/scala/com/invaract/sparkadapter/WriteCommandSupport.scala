@@ -914,9 +914,30 @@ private[sparkadapter] object WriteCommandSupport {
           )
         case None =>
           val msg = s"No NamedRelation found under DeleteFromTable's target; " +
-            "using its own toString as a best-effort location"
+            "using its own canonicalized toString as a best-effort location"
           WriteCommandInfo(
-            location = cmd.table.toString,
+            // .canonicalized, not the plain LogicalPlan.toString this used
+            // to call directly: TreeNode.toString renders attribute
+            // references as "name#<exprId>", and exprId is a per-session
+            // counter, not a property of the query itself - confirmed
+            // directly (not assumed) that analyzing the identical query in
+            // two separate SparkSessions produces two different raw
+            // strings (e.g. "id#4L" vs "id#13L") purely from exprId
+            // allocation order, while .canonicalized (Spark's own
+            // built-in normalization for structural/semantic plan
+            // comparison, exactly designed to ignore exprId) renders both
+            // as the identical "id#0L" in that same probe. Since this
+            // fallback's whole purpose is a *stable* best-effort location
+            // string (the location is later compared for contract-input
+            // matching, exactly the correctness property the rest of this
+            // module's location-construction cases already default to
+            // stable identifiers for), the un-canonicalized form was a
+            // real, if rare, instability - this branch is already the
+            // "no NamedRelation found" fallback (undocumented how, if
+            // ever, real Spark reaches it), so no test exercises it via a
+            // real analyzed plan; fixed on the same principle as every
+            // other location in this module regardless.
+            location = cmd.table.canonicalized.toString,
             query = cmd.table,
             format = None,
             saveMode = None,

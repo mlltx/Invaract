@@ -1,0 +1,136 @@
+---
+title: Fingerprint a Transformation's Business Logic
+description: Get a deterministic hash of what a transformation actually computes, so a future change to it — even one that keeps the same schema — is detectable.
+sidebar:
+  order: 9
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Two Spark jobs can produce byte-for-byte the same output schema while computing something
+completely different — `value = amount * 1.20` and `value = amount * 1.25` are both a
+`DOUBLE` column named `value`, but they're not the same business logic. Schema
+verification (everything else in this documentation) cannot tell them apart, because it
+only checks shape. Semantic lineage fingerprinting can: it turns a transformation's real,
+translated logic into a deterministic hash, so a later revision of the same job can be
+compared against it.
+
+<Aside type="note" title="This is a hash, not a diff">
+Enabling this gives you a fingerprint for *this* check — a value you can log, publish, and
+compare by hand or with your own tooling. Invaract does not yet store a history of
+fingerprints or diff two of them for you; see
+[the design document](https://github.com/mlltx/Invaract/blob/main/docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+for what's built today versus what's still future work.
+</Aside>
+
+## Enable it
+
+Fingerprinting is off by default — computing one does real work (translating and hashing
+the whole plan) on every check, so it's opt-in the same way
+[`rejectUndeclaredInputs`/`rejectUndeclaredFields`](/reference/violation-types/) are:
+
+```scala
+import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
+
+val options = VerificationOptions(computeFingerprint = true)
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract, options)))
+  .getOrCreate()
+```
+
+## Where the fingerprint shows up
+
+**In a rejected write's exception message.** When a check with `computeFingerprint = true`
+fails, `ContractViolationException`'s message gains a `Fingerprints` section after the
+usual "how to correct it" list — the same fingerprint that check computed, not a diff
+against anything prior:
+
+```
+Fingerprints (v1, SHA-256):
+  overall: 5fdedfe2991b779fb380ca8775f8db5e01d3d8f8539f22f82a8a23acba384661
+  outputs:
+    customer_id: 2ab5c6f75ad63625605011b796ffad66fa2c636d9573540884bfa4152965e843
+    value: 10b220dcfb75b8bafa6e7f355791315da10b7c8aeb9670652fec9b51d47be1d8
+```
+
+Only each output's combined hash is printed, to keep the message readable — see
+"Reading the hierarchy" below for the finer-grained values available programmatically.
+
+**On a published `ContractValidationEvent`**, if you've also set up
+[a notification sink](/guides/notification-sinks/) — for *every* check, PASS or FAIL, since
+a passing check's fingerprint is exactly the baseline a later comparison needs:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "status": "PASSED", "...": "...", "fingerprints": {"version": 1, "overall": {"version": 1, "algorithm": "SHA-256", "value": "a548a29e35d1cfda63f119c1b3d5a3f7e4c29ebd512ca7e3dbe7b641986b3fe9"}, "inputs": {"raw.orders#0": {"version": 1, "algorithm": "SHA-256", "value": "..."}}, "outputs": {"customer_id": {"expression": {"...": "..."}, "lineage": {"...": "..."}, "combined": {"...": "..."}, "nonDeterministic": false}, "value": {"...": "..."}}}}
+```
+
+**Programmatically**, on the `VerificationResult` itself — useful if you're calling
+`ContractEnforcementRule.verifyOrThrow` directly, or just want structured access instead of
+parsing either of the above:
+
+```scala
+val result: VerificationResult = ??? // from your own check
+result.fingerprints.foreach { fp =>
+  println(fp.overall.value)
+  fp.outputs.get("value").foreach(out => println(out.combined.value))
+}
+```
+
+## Reading the hierarchy
+
+A `TransformationFingerprint` is not one opaque hash — it's structured so a future change
+can be localized to a specific column, not just detected somewhere in the whole plan:
+
+| Level | What it answers |
+| --- | --- |
+| `overall` | Did *anything* about this transformation change — including things that don't belong to any single output, like the write's format or save mode? |
+| `inputs` | Which physical datasets does this transformation read, and how many times (keyed `"<location>#<occurrence>"`, so a self-join's two reads of the same table never collapse into one entry)? |
+| `outputs(name).expression` | Did this column's own computation change, syntactically? |
+| `outputs(name).lineage` | Did this column's *resolved* dependency shape change — which source columns it derives from, how directly, and through which aggregate function(s)? |
+| `outputs(name).combined` | The practical "did this column change" signal — moves whenever either of the two above does. |
+| `outputs(name).nonDeterministic` | `true`/`false`/absent (unknown) — does this column's definition contain a call Invaract recognizes as producing a different result every run (`rand()`, `current_timestamp()`, ...)? Metadata only; it never affects any hash above. |
+| `rowMutation` | Present only for a MERGE/UPDATE/DELETE: did the row-matching logic itself change — a MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an UPDATE assigns? Absent (and `overall` unaffected by its absence) for an ordinary INSERT/overwrite write. |
+
+Changing `amount * 1.20` to `amount * 1.25` moves `value`'s `expression`/`combined` but
+**not** its `lineage` (same source column, same kind of computation) or `customer_id`'s
+fingerprint at all — the real, complete output from the run this example's hex values were
+captured from is worked through in full in the design document's own §13.
+
+## What this can and cannot detect
+
+This hashes the transformation's *definition* as Invaract's translation layer represents
+it — never a runtime value, and never anything outside that representation:
+
+- A literal, operator, function, join type/condition, filter, grouping, or cast changing —
+  detected, reliably.
+- A `UDF`'s registered name or its declared arguments changing — detected. Its
+  **implementation** changing, with the same name and arguments — **not detected**: the
+  translated plan carries no version or hash of a UDF's actual body, so this is an honest
+  limitation, not a bug. `nonDeterministic` is `null`/absent for any output touching a UDF,
+  for the same reason — its body could do anything.
+- A pure relabeling — renaming a self-join's aliases consistently, for instance — does
+  **not** move the fingerprint. Reordering two genuinely different things (which side of a
+  join a table sits on, two arguments to a non-commutative operator) **does**, even in
+  cases where the reorder happens to be logically equivalent — Invaract does not attempt to
+  prove operand reordering safe, since getting that wrong would silently hide a real change.
+- An *unaliased* self-join of the same table (both sides read via `spark.table(...)` with
+  no `.as()` on either) is handled correctly: even though Spark's own analyzer assigns both
+  physical occurrences the same default name internally, Invaract disambiguates them at
+  translation time so each side's own columns are tracked, and fingerprint, distinctly —
+  reading the left side's column after such a join is never confused with reading the right
+  side's. Explicitly aliasing both sides (`.as("a")`/`.as("b")`) is still good practice for
+  readability, but isn't required for correct fingerprinting.
+- A MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an
+  UPDATE assigns — detected, via `rowMutation` (see the table above), and folded into
+  `overall` too. This is not part of the translated `Plan` itself (Invaract translates a
+  MERGE's `query` as its source side only, never the `ON` clause), so it only appears when
+  Invaract can extract it — the same extraction the `merge_condition`/
+  `forbid_unconditional_delete` [contract rules](/reference/violation-types/) already rely
+  on for enforcement.
+
+See the design document's "Key risks and design trade-offs" section for the complete,
+itemized account of both categories.

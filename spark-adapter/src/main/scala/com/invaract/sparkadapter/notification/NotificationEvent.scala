@@ -3,6 +3,7 @@
 
 package com.invaract.sparkadapter.notification
 
+import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.sparkadapter.Violation
 
 /** One thing worth telling an external system about, published through a
@@ -54,6 +55,13 @@ sealed trait NotificationEvent {
   * — always present for a real, running Spark session (`Option` here only
   * because `verifyOrThrow` is also exercised directly in tests without a
   * session in scope).
+  *
+  * `fingerprints` is `result.fingerprints` carried straight through from
+  * the `VerificationResult` this event is built from — `None` unless the
+  * check ran with `VerificationOptions.computeFingerprint = true` and had
+  * a real plan to fingerprint (see that field's own doc). Reaches every
+  * configured sink, PASS or FAILED alike, the same as every other field
+  * here — see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.5.
   */
 case class ContractValidationEvent(
   contract: String,
@@ -61,7 +69,8 @@ case class ContractValidationEvent(
   violations: List[Violation],
   timestamp: Long,
   metadata: Map[String, Any],
-  applicationId: Option[String] = None
+  applicationId: Option[String] = None,
+  fingerprints: Option[TransformationFingerprint] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }

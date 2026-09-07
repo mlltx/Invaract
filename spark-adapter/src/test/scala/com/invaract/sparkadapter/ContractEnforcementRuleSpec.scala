@@ -220,6 +220,222 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14 - the Spark contract
+  // extension surfacing a computed fingerprint through its two existing
+  // output channels, opt-in via VerificationOptions.computeFingerprint.
+  test("computeFingerprint defaults to false: no Fingerprints section printed, nothing attached to the result or a published event") {
+    val outputPath = scratchDir.resolve("fail_no_fingerprint.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    val ex = withContract(yaml, sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.fingerprints.isEmpty)
+    assert(!ex.getMessage.contains("Fingerprints"))
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.fingerprints.isEmpty)
+  }
+
+  test("computeFingerprint = true: a rejected write's message and published event carry the correct TransformationFingerprint") {
+    val outputPath = scratchDir.resolve("fail_with_fingerprint.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: customer_name
+         |          type: string
+         |          required: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+    capturedPlans.clear()
+
+    val ex = withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+      val df = spark.range(5).withColumn("doubled", col("id") * 2)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    val expected = com.invaract.fingerprint.TransformationFingerprinter.fingerprint(SparkPlanAdapter.translate(capturedPlans.last).plan)
+
+    assert(ex.result.fingerprints.contains(expected), "the attached fingerprint must match the plan actually checked, not merely be present")
+    assert(ex.getMessage.contains("Fingerprints"))
+    assert(ex.getMessage.contains(expected.overall.value))
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.fingerprints.contains(expected))
+  }
+
+  // A real, confirmed false positive: Spark's own analyzer
+  // (Catalyst's ResolveRandomSeed rule) bakes a fresh random Long into an
+  // unseeded rand()/random()/randn() call as a genuine child expression,
+  // confirmed directly by analyzing the identical .withColumn("r", rand())
+  // twice in one JVM and observing two different seed literals every time.
+  // Without Canonicalizer's seed exclusion (see its own SeedBearingFunctionNames
+  // doc), this would make the fingerprint of the exact same, unchanged code
+  // different on every single run - the "same model -> same fingerprint"
+  // guarantee this whole module exists to provide, broken for what is
+  // likely the single most common non-deterministic construct in practice.
+  test("computeFingerprint = true: an unseeded rand() call fingerprints identically across separate analyses of the identical code") {
+    val outputPath = scratchDir.resolve("rand_fp.parquet").toString
+    def fingerprintOfRandColumn(): com.invaract.fingerprint.TransformationFingerprint = {
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $outputPath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: true
+           |""".stripMargin
+      val sink = new TestNotificationSink
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val df = spark.range(5).withColumn("r", rand())
+        df.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
+      }
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    }
+
+    val fp1 = fingerprintOfRandColumn()
+    val fp2 = fingerprintOfRandColumn()
+    assert(fp1.overall == fp2.overall, "rand()'s analyzer-assigned seed must never leak into the fingerprint")
+    assert(fp1.outputs("r") == fp2.outputs("r"))
+  }
+
+  // A real, confirmed false NEGATIVE, now fixed by
+  // SparkPlanAdapter.computeAliasDisambiguation (see that method's own
+  // doc for the full mechanism): an unaliased DataFrame-API self-join of
+  // the same catalog table (`spark.table("t")` on both sides, no `.as()`
+  // anywhere) makes Spark's analyzer wrap BOTH physical Read occurrences
+  // in a `SubqueryAlias` using the table's own name - the identical
+  // string on both sides, confirmed directly by printing the analyzed
+  // plan (`SubqueryAlias spark_catalog.default.t` appears twice,
+  // verbatim). Before the fix, `translateNonWritePlan`'s SubqueryAlias
+  // case carried that identical string into both `ir.Read.alias` fields,
+  // and every `ColumnRef.qualifier` reaching a join condition or output
+  // expression was *also* just that same repeated string - collapsing a
+  // genuine two-occurrence join into what looked like a degenerate
+  // self-comparison (`t.id = t.id`) once `Canonicalizer.buildScopeInfo`
+  // ran over it.
+  //
+  // `.toDF(...)` (a purely positional rename over the join's own already-
+  // exprId-distinct output attributes - Spark's `Dataset.join` internally
+  // deduplicates the right side's exprIds specifically to make self-joins
+  // usable at all, confirmed via the analyzed plan below) is the concrete,
+  // always-reachable repro used here, deliberately *not* a `.select()`
+  // built from `left(...)`/`right(...)` Dataset-column handles: those
+  // handles are captured from each side's own *pre-join*, *pre-
+  // deduplication* resolution, so Spark's own column lookup collapses
+  // `right("value")` to the exact same exprId as `left("value")` once
+  // Spark's `DetectAmbiguousSelfJoin` guard is turned off to allow it -
+  // confirmed empirically (not assumed) by executing both "variants" and
+  // observing byte-identical output rows for what looks like two
+  // different queries. That is not a reachable false negative (there is
+  // no genuinely different query being conflated - Spark itself cannot
+  // tell the two apart via that API), so it is deliberately not asserted
+  // here. `.toDF(...)`'s positional rename needs no such handle and no
+  // Spark config change - it reproduces (and, after the fix, correctly
+  // resolves) the real, ordinary case: a self-join whose *own* output
+  // columns are read normally.
+  test("an unaliased self-join of the same catalog table translates the two physical occurrences distinctly") {
+    val tableName = "self_join_alias_fix_tbl"
+    spark.sql(s"DROP TABLE IF EXISTS $tableName")
+    spark.range(5).withColumn("value", col("id") * 10).write.saveAsTable(tableName)
+    val outputPath = scratchDir.resolve("self_join_alias_fix.parquet").toString
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: lid
+         |          type: long
+         |          required: false
+         |""".stripMargin
+    val sink = new TestNotificationSink
+    capturedPlans.clear()
+
+    withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+      val left = spark.table(tableName)
+      val right = spark.table(tableName)
+      val joined = left.join(right, left("id") === right("id"))
+      val renamed = joined.toDF("lid", "lvalue", "rid", "rvalue")
+      renamed.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
+    }
+
+    val translated = SparkPlanAdapter.translate(capturedPlans.last).plan
+    def findJoin(plan: com.invaract.ir.Plan): Option[com.invaract.ir.Join] = plan match {
+      case j: com.invaract.ir.Join => Some(j)
+      case other                     => other.children.flatMap(findJoin).headOption
+    }
+    val join = findJoin(translated).getOrElse(fail(s"no Join node found in $translated"))
+
+    val leftRead = join.left.asInstanceOf[com.invaract.ir.Read]
+    val rightRead = join.right.asInstanceOf[com.invaract.ir.Read]
+    // Exact expected suffixes, not just "the two differ" - catches an
+    // off-by-one or sign-flipped index (e.g. `index + 1` mutated to
+    // `index - 1`) that would still produce two *distinct* strings
+    // ("tbl#0"/"tbl#-1") but the wrong ones; asserting the precise
+    // "<name>#<index>" value for each occurrence, in encounter order,
+    // pins the actual arithmetic, not merely that it varies.
+    assert(leftRead.alias == Some(s"$tableName#0"), s"expected the first occurrence's alias to be '$tableName#0', got ${leftRead.alias}")
+    assert(rightRead.alias == Some(s"$tableName#1"), s"expected the second occurrence's alias to be '$tableName#1', got ${rightRead.alias}")
+
+    val condition = join.condition.getOrElse(fail("expected a join condition"))
+    condition match {
+      case com.invaract.ir.Comparison(
+            "=",
+            com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef(_, leftQualifier, _)),
+            com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef(_, rightQualifier, _))
+          ) =>
+        assert(leftQualifier != rightQualifier, "the join condition's two sides must resolve to distinct qualifiers")
+        assert(leftQualifier == leftRead.alias)
+        assert(rightQualifier == rightRead.alias)
+      case other => fail(s"unexpected join condition shape: $other")
+    }
+
+    val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    assert(
+      fp.outputs("lvalue") != fp.outputs("rvalue"),
+      "lvalue and rvalue are genuinely different physical columns (left vs. right side of the self-join) - " +
+        "before the fix, both collapsed to the same colliding qualifier and fingerprinted identically"
+    )
+  }
+
   // Found via the ClickHouse connector pass's Phase 8, but not
   // ClickHouse-specific - reproduces with any connector, since it's a
   // contract/spark-adapter boundary issue, not a translation one. A
@@ -1139,6 +1355,49 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
   }
 
+  // deleteFromTable's own "no NamedRelation found" fallback - reached only
+  // when DeleteFromTable.table's subtree contains no NamedRelation at all,
+  // a shape real Spark analysis apparently never produces (every DELETE
+  // FROM test above, catalog- or path-based, resolves to a NamedRelation),
+  // so this is exercised by constructing the real Catalyst node directly
+  // rather than a mock - LocalRelation is a genuine Spark LogicalPlan, not
+  // a NamedRelation, so wrapping one in DeleteFromTable hits exactly the
+  // branch under test.
+  //
+  // This is the regression test for a real, fixed instability: that
+  // fallback used to report `cmd.table.toString` (raw LogicalPlan.toString,
+  // which renders any attribute reference as "name#<exprId>", a per-JVM-
+  // session counter, not a property of the query) as the write's location.
+  // Confirmed directly: constructing the identical LocalRelation shape
+  // twice (each AttributeReference("id", LongType)() call mints its own
+  // fresh exprId) produces two different raw strings but the identical
+  // canonicalized one, since Spark's own `.canonicalized` (built for
+  // exactly this kind of structural/semantic plan comparison) normalizes
+  // exprIds away. Fixed by switching to `cmd.table.canonicalized.toString`.
+  test("WriteCommandSupport's deleteFromTable fallback location is stable across separate exprId allocations") {
+    def targetWithNoNamedRelation(): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan =
+      org.apache.spark.sql.catalyst.plans.logical.LocalRelation(
+        Seq(org.apache.spark.sql.catalyst.expressions.AttributeReference("id", org.apache.spark.sql.types.LongType)())
+      )
+
+    def deleteFromTableInfo(): WriteCommandInfo = {
+      val cmd = org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable(
+        targetWithNoNamedRelation(),
+        org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
+      )
+      WriteCommandSupport.combined.lift(cmd).getOrElse(fail("DeleteFromTable must always be recognized, even with no NamedRelation under its target"))
+    }
+
+    val info1 = deleteFromTableInfo()
+    val info2 = deleteFromTableInfo()
+    assert(info1.diagnostic.isDefined, "the no-NamedRelation fallback must report a diagnostic, not resolve a clean location silently")
+    assert(
+      info1.location == info2.location,
+      s"the fallback location must be stable across separate exprId allocations for the identical target shape, " +
+        s"got '${info1.location}' vs '${info2.location}'"
+    )
+  }
+
   // RuleVerifier: the three DML rule types (com.invaract.contract.RuleType)
   // checked against RowMutationSupport's extraction, per PASS/FAIL pair -
   // exercised against real Delta MERGE/UPDATE/DELETE, the same "must
@@ -1317,6 +1576,66 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
+  // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's RowMutation section: a MERGE's
+  // ON condition (or a conditional DELETE's predicate) is real
+  // transformation-defining behavior that ir.Plan alone never captures -
+  // WriteCommandSupport's own doc notes `query = source` for MERGE, never
+  // the ON condition. Proven here end to end through the real check rule,
+  // not just at the fingerprint module's own unit-test level: the SAME
+  // target/source shape, differing only in the MERGE's ON condition, must
+  // still produce different published fingerprints.
+  test("computeFingerprint = true: a MERGE's ON condition changing moves the published fingerprint, even though the plan shape is unchanged") {
+    def runMerge(onClause: String, tableSuffix: String): com.invaract.fingerprint.TransformationFingerprint = {
+      val tablePath = scratchDir.resolve(s"rule_merge_fingerprint_target_$tableSuffix").toString
+      val tableName = s"rule_merge_fingerprint_tbl_$tableSuffix"
+      spark.range(5).withColumn("doubled", col("id") * 2).withColumn("region", lit("us")).write.format("delta").mode("overwrite").save(tablePath)
+      spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $tablePath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: false
+           |        - name: doubled
+           |          type: long
+           |          required: false
+           |        - name: region
+           |          type: string
+           |          required: false
+           |""".stripMargin
+      val sink = new TestNotificationSink
+
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled, 'us' as region) s
+             |ON $onClause
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect() // must not throw - this contract declares no rule
+      }
+
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing MERGE too"))
+    }
+
+    val byId = runMerge("t.id = s.id", "by_id")
+    val byIdAndRegion = runMerge("t.id = s.id AND t.region = s.region", "by_id_and_region")
+
+    assert(byId.overall != byIdAndRegion.overall, "the ON condition is real behavior - it must move the fingerprint")
+    assert(byId.rowMutation.isDefined && byIdAndRegion.rowMutation.isDefined)
+    assert(byId.rowMutation != byIdAndRegion.rowMutation)
+    // Neither MERGE's target/source shape itself changed - only the ON
+    // condition - so the plan-only pieces must stay identical.
+    assert(byId.inputs.keySet == byIdAndRegion.inputs.keySet)
+    assert(byId.outputs == byIdAndRegion.outputs)
   }
 
   test("PASS: a DELETE with a filtering predicate satisfies its contract's forbid_unconditional_delete rule") {

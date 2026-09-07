@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, Field => ContractField}
+import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.ir.{Plan, Read, Write}
 
 import org.apache.spark.sql.types.StructType
@@ -111,16 +112,43 @@ object ViolationType {
 /** The two "unexpected X can be rejected" toggles from the check list —
   * off by default, matching how most contract/schema tooling treats an
   * unlisted extra column: permitted unless a caller opts into strict mode.
+  *
+  * `computeFingerprint` is a third, independent opt-in (see
+  * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.1): when true,
+  * `ContractEnforcementRule.verifyOrThrow` computes a
+  * `com.invaract.fingerprint.TransformationFingerprint` for the plan being
+  * checked and attaches it to `VerificationResult.fingerprints`. Off by
+  * default for the same reason as the other two — canonicalising and
+  * hashing a whole plan on every check is real additional work this
+  * module should not impose on every existing caller by default.
   */
-case class VerificationOptions(rejectUndeclaredInputs: Boolean = false, rejectUndeclaredFields: Boolean = false)
+case class VerificationOptions(
+  rejectUndeclaredInputs: Boolean = false,
+  rejectUndeclaredFields: Boolean = false,
+  computeFingerprint: Boolean = false
+)
 
-case class VerificationResult(status: String, contract: String, violations: List[Violation]) {
+/** `fingerprints` is `None` unless the check that produced this result ran
+  * with `VerificationOptions.computeFingerprint = true` *and* had a real
+  * `ir.Plan` to fingerprint — see `ContractEnforcementRule`'s own doc for
+  * exactly which branches populate it (only a real `ir.Write` check does;
+  * a state-changing CALL or an invalid-contract rejection has no real
+  * transformation plan behind the synthetic `UnknownPlan` `explain` renders
+  * for those, so fingerprinting it would carry no real information — see
+  * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2).
+  */
+case class VerificationResult(
+  status: String,
+  contract: String,
+  violations: List[Violation],
+  fingerprints: Option[TransformationFingerprint] = None
+) {
   def passed: Boolean = status == "PASSED"
 }
 
 object VerificationResult {
-  def of(contractRef: String, violations: List[Violation]): VerificationResult =
-    VerificationResult(if (violations.isEmpty) "PASSED" else "FAILED", contractRef, violations)
+  def of(contractRef: String, violations: List[Violation], fingerprints: Option[TransformationFingerprint] = None): VerificationResult =
+    VerificationResult(if (violations.isEmpty) "PASSED" else "FAILED", contractRef, violations, fingerprints)
 }
 
 /** Checks a transformation plan's actual inputs and output against a

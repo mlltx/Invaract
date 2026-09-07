@@ -68,6 +68,10 @@ export default defineConfig({
 							slug: 'guides/checking-contract-compatibility',
 						},
 						{ label: 'Configure a Notification Sink', slug: 'guides/notification-sinks' },
+						{
+							label: 'Fingerprint a Transformation',
+							slug: 'guides/fingerprinting-transformations',
+						},
 					],
 				},
 				{

@@ -1,9 +1,23 @@
+import com.typesafe.tools.mima.core._
+
 name := "invaract-spark-adapter"
+// 0.2.0 -> 0.3.0: docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's §14 wiring
+// added `computeFingerprint` to `VerificationOptions` and `fingerprints`
+// to `VerificationResult`/`notification.ContractValidationEvent` - a real
+// binary break against the 0.2.0 baseline (confirmed by a real `sbt
+// mimaReportBinaryIssues` run, not assumed: appending a field to a case
+// class still changes its generated `apply`/`copy`/constructor
+// signatures, even with a default value - Scala doesn't generate a
+// second, old-arity overload the way a hand-written method could). Same
+// MINOR-not-MAJOR (pre-1.0, docs/VERSIONING.md) convention contract/ir's
+// own 0.2.0 -> 0.3.0 bumps already used for their deliberate breaks - see
+// this file's own `mimaBinaryIssueFilters` below for the filters this
+// bump requires.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.2.0"
+ThisBuild / version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -839,11 +853,32 @@ excludeDependencies ++= Seq(
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.3.0",
-  "com.invaract" %% "invaract-contract" % "0.3.0"
+  "com.invaract" %% "invaract-contract" % "0.3.0",
+  // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+  // - surfaced through ContractEnforcementRule/ContractValidationEvent per
+  // that document's §14. Same real Maven-resolvable-dependency reasoning
+  // as invaract-ir/invaract-contract above - not unmanagedJars - even
+  // though, unlike those two, this module isn't (yet) one of the three
+  // published to Maven Central; keeping the dependency shape uniform now
+  // avoids a churn-y switch later once it is.
+  "com.invaract" %% "invaract-fingerprint" % "0.1.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.2.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.3.0.jar"
+// Same fix as runner/build.sbt's assembly merge strategy, and for the
+// identical reason: a blanket META-INF discard drops log4j-core's own
+// META-INF/services/org.apache.logging.log4j.spi.Provider registration,
+// silently leaving log4j-api's built-in SimpleLoggerContextFactory as the
+// only discoverable provider - a real, reproducible ClassCastException
+// (SimpleLoggerContext cast to log4j-core's own LoggerContext) for anyone
+// who takes this module's own assembled jar (the "Use Prebuilt Jars
+// Without sbt" docs-site guide's exact use case) and runs it via plain
+// `java`/a non-spark-submit launcher, where none of Spark's own unbundled
+// log4j jars are on the classpath to mask the gap.
 assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", "services", xs @ _*) => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", "org", "apache", "logging", "log4j", "core", "config", "plugins", "Log4j2Plugins.dat") =>
+    MergeStrategy.first
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
 }
@@ -972,15 +1007,40 @@ strykerThresholdsBreak := 70
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
 //
 // Points at the base branch's own current published coordinate
-// (com.invaract/0.2.0) - the com.example -> com.invaract rebrand that
-// produced that coordinate has already landed on the base branch, so this
-// is no longer the transitional "com.example/0.1.0" state a prior
-// revision of this file pointed at. Unlike contract/ir (both bumped to
-// 0.3.0 alongside this same flip, for real breaking changes), a real `sbt
-// mimaReportBinaryIssues` run against this 0.2.0 baseline found nothing
-// to filter - the new `SensitivityLineage`/`SensitiveColumnLineage` types
-// are purely additive, and widening `StructuralVerifier.locationsMatch`
-// from `private` to `private[sparkadapter]` doesn't remove or change any
-// existing public symbol - so this module needed no version bump and no
-// `mimaBinaryIssueFilters` entries this time.
+// (com.invaract/0.2.0) - still 0.2.0, not this file's own current
+// `version` above, because base-ref (whatever commit predates this PR's
+// 0.2.0 -> 0.3.0 bump) still publishes under 0.2.0; CI's api-compatibility
+// job runs `sbt publishLocal` against base-ref's own build.sbt, then
+// resolves exactly this coordinate to diff PR head against - the same
+// "keep pointing at the old coordinate for the one PR that makes the
+// bump" pattern CLAUDE.md's own com.example -> com.invaract worked example
+// documents, and the same one contract/ir's own 0.2.0 -> 0.3.0 bumps used
+// (see ir/build.sbt's matching comment). FOLLOW-UP (once this PR lands on
+// the base branch): a later PR flips this to 0.3.0 and removes the
+// filters below, once there's nothing left between them to filter.
 mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.2.0")
+
+// Filters for the one deliberate break this 0.2.0 -> 0.3.0 bump covers
+// (see this file's own top-of-file comment): `computeFingerprint` added
+// to `VerificationOptions`, `fingerprints` added to `VerificationResult`
+// and `notification.ContractValidationEvent`. Every line below is exactly
+// what a real `sbt mimaReportBinaryIssues` run against the 0.2.0 baseline
+// printed as its own suggested filter (16 problems total: apply/copy/
+// constructor/companion-object-hierarchy for each of the three case
+// classes, plus VerificationResult's own `of` factory) - copied verbatim,
+// not hand-written, so there's no risk of a filter that's subtly broader
+// or narrower than the actual reported problem.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.VerificationOptions$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.of"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent$")
+)

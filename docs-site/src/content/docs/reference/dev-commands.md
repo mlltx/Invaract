@@ -20,12 +20,13 @@ a cloned repository today — there's no published package yet (see
 
 ## Per-module commands
 
-Run from inside a module's directory (`contract`, `ir`, `spark-adapter`, or `plugin`):
+Run from inside a module's directory (`contract`, `ir`, `spark-adapter`, `fingerprint`, or
+`plugin`):
 
 | Command | Purpose |
 |---|---|
 | `sbt test` | Run that module's unit test suite in isolation. |
-| `sbt stryker` | Run mutation testing (`ir`/`spark-adapter` only) — a code-quality check for contributors, not something a user of the engine needs to run. |
+| `sbt stryker` | Run mutation testing (`ir`/`spark-adapter`/`fingerprint`) — a code-quality check for contributors, not something a user of the engine needs to run. |
 
 ## Direct `spark-submit` invocation
 
