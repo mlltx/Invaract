@@ -1355,6 +1355,49 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
   }
 
+  // deleteFromTable's own "no NamedRelation found" fallback - reached only
+  // when DeleteFromTable.table's subtree contains no NamedRelation at all,
+  // a shape real Spark analysis apparently never produces (every DELETE
+  // FROM test above, catalog- or path-based, resolves to a NamedRelation),
+  // so this is exercised by constructing the real Catalyst node directly
+  // rather than a mock - LocalRelation is a genuine Spark LogicalPlan, not
+  // a NamedRelation, so wrapping one in DeleteFromTable hits exactly the
+  // branch under test.
+  //
+  // This is the regression test for a real, fixed instability: that
+  // fallback used to report `cmd.table.toString` (raw LogicalPlan.toString,
+  // which renders any attribute reference as "name#<exprId>", a per-JVM-
+  // session counter, not a property of the query) as the write's location.
+  // Confirmed directly: constructing the identical LocalRelation shape
+  // twice (each AttributeReference("id", LongType)() call mints its own
+  // fresh exprId) produces two different raw strings but the identical
+  // canonicalized one, since Spark's own `.canonicalized` (built for
+  // exactly this kind of structural/semantic plan comparison) normalizes
+  // exprIds away. Fixed by switching to `cmd.table.canonicalized.toString`.
+  test("WriteCommandSupport's deleteFromTable fallback location is stable across separate exprId allocations") {
+    def targetWithNoNamedRelation(): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan =
+      org.apache.spark.sql.catalyst.plans.logical.LocalRelation(
+        Seq(org.apache.spark.sql.catalyst.expressions.AttributeReference("id", org.apache.spark.sql.types.LongType)())
+      )
+
+    def deleteFromTableInfo(): WriteCommandInfo = {
+      val cmd = org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable(
+        targetWithNoNamedRelation(),
+        org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
+      )
+      WriteCommandSupport.combined.lift(cmd).getOrElse(fail("DeleteFromTable must always be recognized, even with no NamedRelation under its target"))
+    }
+
+    val info1 = deleteFromTableInfo()
+    val info2 = deleteFromTableInfo()
+    assert(info1.diagnostic.isDefined, "the no-NamedRelation fallback must report a diagnostic, not resolve a clean location silently")
+    assert(
+      info1.location == info2.location,
+      s"the fallback location must be stable across separate exprId allocations for the identical target shape, " +
+        s"got '${info1.location}' vs '${info2.location}'"
+    )
+  }
+
   // RuleVerifier: the three DML rule types (com.invaract.contract.RuleType)
   // checked against RowMutationSupport's extraction, per PASS/FAIL pair -
   // exercised against real Delta MERGE/UPDATE/DELETE, the same "must

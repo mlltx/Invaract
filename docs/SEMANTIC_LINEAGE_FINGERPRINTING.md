@@ -1739,6 +1739,27 @@ below):
   source code looks different" isn't sufficient evidence of a real
   fingerprint gap — only "Spark itself treats them as different queries"
   is.
+- **`WriteCommandSupport`'s `deleteFromTable` "no `NamedRelation` found"
+  fallback reported a location built from raw `LogicalPlan.toString`,
+  which embeds per-JVM-session `exprId` values — a real, if narrow,
+  false-positive source for the `Write`/`Read` location this design
+  hashes.** This fallback only fires when a `DeleteFromTable`'s target
+  subtree contains no `NamedRelation` at all — a shape real Spark
+  analysis apparently never produces via ordinary catalog- or path-based
+  DELETEs (every existing DML test resolves to a `NamedRelation`), so it
+  had no test reaching it before. Confirmed directly: constructing the
+  identical target shape (a `LocalRelation` wrapping one
+  `AttributeReference`) twice produces two different raw `toString`s
+  purely from `exprId` allocation order (`id#0L` vs. `id#1L` in one
+  concrete run), while Spark's own `.canonicalized` — built specifically
+  for structural/semantic plan comparison that ignores `exprId` — renders
+  both identically. Fixed by switching to
+  `cmd.table.canonicalized.toString`; regression-tested by constructing
+  the real Catalyst `DeleteFromTable`/`LocalRelation` nodes directly
+  (not mocked - both are genuine Spark classes) and asserting the
+  fallback location is stable across two separate constructions, with the
+  test confirmed to fail against the pre-fix code by temporarily
+  reverting the one-line change and rerunning it.
 
 Each of the gaps above was found and fixed with the same discipline this
 document asks of the code itself: a clean/high mutation score does not,
