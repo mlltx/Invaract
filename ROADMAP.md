@@ -1980,26 +1980,55 @@ happened to be phrased.
       polarity — deliberately unchanged, since the equality it contains
       only holds on some rows, the same "not a required condition"
       problem the existing `OR` case already guarded against.
-- [x] 7 new `RuleVerifierSpec` cases: `NOT(!=)` (the double-negation
+- [x] 8 new `RuleVerifierSpec` cases: `NOT(!=)` (the double-negation
       form), `NOT(OR(!=, !=))` (De Morgan over `OR`, both columns paired),
       `NOT(AND(!=, !=))` (De Morgan over `AND` — correctly still fails,
       only one side guaranteed), a directly-negated equality (`NOT(=)`,
       correctly still fails), a triple-negated equality (odd negation
       count must not be mistaken for a match), a `CASE WHEN`-only
       equality (regression-locks the deliberately-unchanged `Set.empty`
-      behavior), and a De Morgan pairing combined with an ordinary
-      `AND`-ed equality.
+      behavior), a De Morgan pairing combined with an ordinary `AND`-ed
+      equality, and a bare, un-negated `!=` (the `Comparison("!=", ...)`
+      case's own positive-polarity path, added after scoped Stryker
+      found it genuinely uncovered — see below). 39 total tests in the
+      file, all passing (confirmed via a real `sbt test` run — see
+      Verification below).
 - [x] 1 new real end-to-end `ContractEnforcementRuleSpec` case, using
       genuine `spark.sql` parsing (not a hand-built IR node) to confirm
       Spark itself produces the doubly-negated shape this fix targets: a
       MERGE with `ON NOT (t.id != s.id)` against a real Delta table now
       executes normally under a `merge_condition: [id]` rule, where it
-      would previously have been wrongly aborted.
+      would previously have been wrongly aborted. Confirmed against a
+      real `local[*]` Spark session, not simulated.
 - [x] Doc comments in `RuleVerifier.scala` rewritten to describe the new
       capability; docs/SPARK_ADAPTER.md and
       docs-site/guides/enforcing-dml-rules.mdx updated to match — the
       remaining scope limits are now just `CASE WHEN` and target-/
       source-side qualifier distinction, not De Morgan/`NOT` generally.
+- [x] **Verification, per CLAUDE.md's Mutation Testing Requirement.**
+      Full `spark-adapter` suite: 433/433 passing (432 pre-existing + 1
+      new end-to-end case), zero regressions across every connector this
+      module covers. Scoped Stryker mutation testing on
+      `RuleVerifier.scala` (the only file this change touched): first run
+      scored 95.83% (23/24 non-excluded mutants killed) with one real
+      survivor — `Comparison("!=", ...)`'s `if (negated) ...` guard
+      mutated to an unconditional `true`, undetected because every
+      existing `!=`-using test reached that case already under an odd
+      number of `NOT`s (`negated = true`), never at the top level
+      (`negated = false`) where a bare `t.id != s.id` must correctly
+      establish *no* pairing. Closed by adding exactly that case (the
+      8th test above); a second scoped run confirmed **100.0%** (24/24).
+      `sbt` itself had to be installed in this session's sandbox (not
+      preinstalled), and the initial dependency-publish attempts hit a
+      sustained Maven Central rate-limit (429s persisting across many
+      minutes and every module, `spark-adapter`'s especially given its
+      much larger Spark/Hadoop/Hive/Delta/Iceberg/ClickHouse dependency
+      graph) before eventually clearing — the same category of
+      sandbox-specific access limitation this document's Docker-Hub note
+      (under "Contract regression pack") already establishes precedent
+      for; unlike that case, here the retry eventually succeeded and
+      produced a real, complete local verification rather than deferring
+      entirely to CI.
 
 Still open, per the sub-phase above: distinguishing target- from
 source-side qualifiers in an equality pair, which specific rows an

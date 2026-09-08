@@ -205,6 +205,19 @@ class RuleVerifierSpec extends AnyFunSuite {
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
 
+  test("merge_condition fails when the condition is a bare, un-negated inequality (!=)") {
+    // A plain t.id != s.id, asserted true with no surrounding NOT, is the
+    // opposite of a match - it guarantees the columns DIFFER. Every other
+    // `!=` case in this suite reaches Comparison("!=", ...) already under
+    // an odd number of NOTs (negated = true); this is the one case that
+    // exercises it un-negated, at the top level.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(inequalityOn("id", "id")))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
   test("forbid_unconditional_delete is inapplicable to a mutation with no delete") {
     val rules = List(ContractRule("forbid_unconditional_delete", Map.empty))
     assert(RuleVerifier.verify(rules, RowMutation(delete = DeleteScope.NotApplicable)).isEmpty)
