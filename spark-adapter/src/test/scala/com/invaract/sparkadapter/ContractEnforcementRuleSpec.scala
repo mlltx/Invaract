@@ -1660,6 +1660,59 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
   }
 
+  // Real regression test for the target-/source-side qualifier fix: before
+  // it, a same-side tautology like `ON t.id = t.id` (matching every row
+  // against itself, never actually comparing target to source) was wrongly
+  // accepted as satisfying merge_condition: [id], purely because the
+  // declared column name appeared in an equality. Uses real spark.sql
+  // parsing to confirm Spark genuinely preserves each side's own qualifier
+  // ("t" on both operands here) all the way through to the analyzed plan
+  // this module translates.
+  test("FAIL: a MERGE INTO whose ON condition compares a target column to ITSELF (same-side tautology) is aborted") {
+    val tablePath = scratchDir.resolve("rule_merge_same_side_target").toString
+    val tableName = "rule_merge_same_side_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+    val beforeRows = spark.read.format("delta").load(tablePath).collect().toSet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.sql(
+          s"""MERGE INTO $tableName t
+             |USING (SELECT 99L as id, 198L as doubled) s
+             |ON t.id = t.id
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin).collect()
+      }
+    }
+
+    assert(
+      ex.result.violations.exists(v => v.violationType == ViolationType.RuleMergeConditionViolation && v.message.contains("id")),
+      s"expected a RULE_MERGE_CONDITION_VIOLATION naming 'id', got ${ex.result.violations}"
+    )
+    val afterRows = spark.read.format("delta").load(tablePath).collect().toSet
+    assert(beforeRows == afterRows, "the MERGE must be aborted before touching the table, not merely reported as failed")
+  }
+
   // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's RowMutation section: a MERGE's
   // ON condition (or a conditional DELETE's predicate) is real
   // transformation-defining behavior that ir.Plan alone never captures -

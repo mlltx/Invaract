@@ -2035,6 +2035,80 @@ source-side qualifiers in an equality pair, which specific rows an
 `UPDATE` touches, and whether a `DELETE`'s predicate is trivially
 satisfiable — all still tracked below.
 
+#### Sub-phase: Target-/source-side qualifier distinction for `merge_condition` (done)
+
+Closes the second of the two "not attempted here" items the sub-phase
+above left open (`CASE WHEN` was investigated too — see below — and found
+to already be correct as-is, not a gap). Before this, `equalityPairedColumns`
+counted a comparison as establishing a pairing purely by column *name*,
+regardless of which side each operand came from — a same-side comparison
+like `ON t.customer_id = t.customer_id` (a real, severe copy-paste bug:
+this always holds, since it matches every row against itself rather than
+target against source) was wrongly accepted as satisfying
+`merge_condition: [customer_id]`.
+
+- [x] **`RuleVerifier.isCrossSideMatch(a, b)`.** A MERGE's `ON` clause
+      only ever involves exactly two relations — target and source — so
+      requiring the two operands' `ColumnRef.qualifier`s to be both known
+      and *different* is sufficient to prove they're genuinely on
+      opposite sides, without separately determining which qualifier is
+      target and which is source (no third relation exists for a third
+      distinct qualifier to belong to). Deliberately simpler than the
+      initially-considered alternative of reflectively extracting each
+      MERGE command's own `target`/`source` `LogicalPlan`s (confirmed via
+      `javap` that Delta's `MergeIntoCommand` exposes both as public
+      `target()`/`source()` methods, and that Spark's `RowLevelWrite`
+      trait — Iceberg's mechanism — only cleanly exposes the target side
+      via `originalTable()`) — the qualifier-inequality check needs no
+      `ir.RowMutation` field changes, no per-connector extraction code,
+      and no MiMa exposure, while covering exactly the same real bug.
+      When either operand's qualifier is unknown (a real but rare case —
+      MERGE syntax practically always requires target/source columns to
+      be qualified once resolved, since an unqualified same-named column
+      from either side would itself be an ambiguous reference Spark
+      rejects at analysis time), the check stays permissive rather than
+      introduce a new false negative for a condition this module can't be
+      sure about.
+- [x] **`CASE WHEN` investigated, found already correct — not a gap.**
+      Re-examined whether a `CASE WHEN` could ever legitimately establish
+      an unconditional equality (e.g. a tautological branch condition).
+      The existing `Set.empty` fallback for `ir.Conditional` under either
+      polarity was already the right behavior — the equality it contains
+      only holds on some rows, the same "not a required condition"
+      problem the `OR` case already guards against — so no code change
+      was needed here; a regression test locks in that this stays
+      correct as the surrounding logic evolves.
+- [x] 6 new `RuleVerifierSpec` cases: a same-side self-comparison
+      (`t.customer_id = t.customer_id`), a same-side comparison between
+      two *differently*-named target columns (`t.customer_id = t.region`),
+      a same-side comparison under `NOT`/De Morgan (proving the check
+      applies after polarity resolution, not before), a genuine
+      cross-side match with the existing "t"/"s" qualifiers (regression
+      guard against overcorrecting), and a comparison with one operand's
+      qualifier unknown (confirms the permissive fallback). 41 total tests
+      in the file, all passing.
+- [x] 1 new real end-to-end `ContractEnforcementRuleSpec` case, using
+      genuine `spark.sql` parsing against a real Delta table: `ON t.id =
+      t.id` is now correctly aborted with `RULE_MERGE_CONDITION_VIOLATION`
+      (target table rows confirmed byte-identical before/after), where it
+      previously would have wrongly executed.
+- [x] Doc comments in `RuleVerifier.scala` rewritten; docs/SPARK_ADAPTER.md
+      and docs-site/guides/enforcing-dml-rules.mdx updated to match — the
+      only remaining documented scope limit for `merge_condition` is now
+      `CASE WHEN`.
+- [x] **Verification, per CLAUDE.md's Mutation Testing Requirement and
+      Critical Requirement.** Full `spark-adapter` suite: 439/439 passing
+      (433 pre-existing + 6 new), zero regressions. Scoped Stryker
+      mutation testing on `RuleVerifier.scala` (the only file this change
+      touched): **100.0%** (28/28 non-excluded mutants killed) on the
+      first run — no survivors to chase, per CLAUDE.md's "write
+      mutation-resistant tests the first time" guidance. `./dev/build`
+      and `./dev/test` both passed against real `spark-submit` (Status:
+      PASS, contract verification PASSED) — this change doesn't touch the
+      demo harness or any `MERGE`, so, consistent with the sub-phase
+      above's own precedent, `./dev/regression` wasn't re-run (its two
+      cases don't exercise `merge_condition` either).
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -2069,16 +2143,18 @@ satisfiable — all still tracked below.
       the rule when this module recognizes an operation as DML but can't
       extract what a declared rule needs — are all done; see the "Delta
       Lake operation-surface coverage ledger", "Interpreting `rules`",
-      "Iceberg DML rule support", "Predicate-logic `merge_condition`", and
-      "De Morgan-/`NOT`-aware `merge_condition`" sub-phases above. What's
+      "Iceberg DML rule support", "Predicate-logic `merge_condition`",
+      "De Morgan-/`NOT`-aware `merge_condition`", and "Target-/source-side
+      qualifier distinction for `merge_condition`" sub-phases above. What's
       still unverified, deliberately:
-      - `equalityPairedColumns` recognizes `AND`/`OR`/`NOT` and De Morgan
-        equivalences (see the "De Morgan-/`NOT`-aware `merge_condition`"
-        sub-phase above), but a match expressed inside a `CASE WHEN` is
-        never recognized — that equality only holds conditionally, on
-        some rows — and it still doesn't distinguish target- from
-        source-side qualifiers (two same-side columns compared to each
-        other would still count as a pairing).
+      - `equalityPairedColumns` recognizes `AND`/`OR`/`NOT`, De Morgan
+        equivalences, and target-vs-source-side qualifiers (see the two
+        `merge_condition` sub-phases above), but a match expressed inside
+        a `CASE WHEN` is never recognized — that equality only holds
+        conditionally, on some rows, not as a required part of the match
+        (investigated directly — see the "Target-/source-side qualifier
+        distinction" sub-phase's own `CASE WHEN` bullet — and confirmed
+        this is already correct, not a gap).
       - Which specific rows an `UPDATE` touches, and whether a `DELETE`'s
         predicate (when present) is trivially satisfiable.
       - `allowed_update_columns` against an Iceberg merge-on-read

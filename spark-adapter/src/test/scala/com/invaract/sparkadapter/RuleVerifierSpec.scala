@@ -218,6 +218,81 @@ class RuleVerifierSpec extends AnyFunSuite {
     assert(violations.head.message.contains("id"))
   }
 
+  // --- Target-vs-source qualifier distinction: a genuine cross-side
+  // match requires the two operands' qualifiers to actually differ, not
+  // merely that a comparison mentions the declared column name. ---
+
+  test("merge_condition fails on a same-side comparison: ON t.customer_id = t.customer_id") {
+    // A real, severe copy-paste bug: this condition is a tautology (always
+    // true, matching every row against itself) rather than a genuine
+    // target-to-source match. The old name-only check wrongly accepted
+    // this as satisfying merge_condition: [customer_id].
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id"))))
+    val sameSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("customer_id", Some("t"))),
+      ColumnReference(ColumnRef("customer_id", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(sameSide))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+  }
+
+  test("merge_condition fails on a same-side comparison between two DIFFERENTLY-named target columns") {
+    // t.customer_id = t.region: both declared columns are "referenced",
+    // but neither is genuinely matched against source - both sit on the
+    // target side of a same-side comparison.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id", "region"))))
+    val sameSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("customer_id", Some("t"))),
+      ColumnReference(ColumnRef("region", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(sameSide))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+    assert(violations.head.message.contains("region"))
+  }
+
+  test("merge_condition fails on a same-side comparison even when NOT/De Morgan-wrapped") {
+    // NOT (t.id != t.id) is a tautology under De Morgan too - the same-side
+    // check must apply after polarity resolution, not bypass it.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val sameSideInequality = Comparison(
+      "!=",
+      ColumnReference(ColumnRef("id", Some("t"))),
+      ColumnReference(ColumnRef("id", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(not(sameSideInequality)))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
+  test("merge_condition still passes on a genuine cross-side match with the SAME alias-derived qualifier names") {
+    // Sanity check that the fix doesn't overcorrect: t.id = s.id (distinct
+    // qualifiers "t"/"s") must still pass, exactly as before.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition remains lenient when a comparison operand's qualifier is unknown") {
+    // An unqualified column reference (qualifier = None) can't be proven
+    // same-side or cross-side - stays permissive rather than introduce a
+    // new false negative for a condition this module can't be sure about.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val unqualifiedOnOneSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("id", None)),
+      ColumnReference(ColumnRef("id", Some("s")))
+    )
+    val mutation = RowMutation(matchCondition = Some(unqualifiedOnOneSide))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
   test("forbid_unconditional_delete is inapplicable to a mutation with no delete") {
     val rules = List(ContractRule("forbid_unconditional_delete", Map.empty))
     assert(RuleVerifier.verify(rules, RowMutation(delete = DeleteScope.NotApplicable)).isEmpty)
