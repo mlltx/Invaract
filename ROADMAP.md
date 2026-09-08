@@ -1952,6 +1952,60 @@ Deliberately still open, not attempted here: De Morgan-aware handling of
 an equality pair, which specific rows an UPDATE touches, and whether a
 DELETE's predicate is trivially satisfiable — all still tracked below.
 
+#### Sub-phase: De Morgan-/`NOT`-aware `merge_condition` (done)
+
+Closes the first of the two "not attempted here" items the sub-phase
+above left open: `equalityPairedColumns` only ever descended into
+top-level `AND`, so a condition expressed with `NOT` — including the
+double-negated form Spark's own parser always produces for `!=` (Catalyst
+has no native "not equal" comparison node; `a != b` arrives as
+`Not(EqualTo(a, b))`) — was wrongly treated as establishing no pairing at
+all, a real false-positive risk: a `merge_condition` rule could reject a
+MERGE that genuinely satisfies it, purely because of how its `ON` clause
+happened to be phrased.
+
+- [x] **`RuleVerifier.equalityPairedColumns` rewritten around a
+      polarity-carrying `requiredEqualities(expr, negated)`.** `NOT(x)`
+      flips polarity and recurses — one rule that resolves any depth of
+      nested negation (including Spark's own double-negated `!=`
+      representation) back to its un-negated reading, with no separate
+      double-negation special case. `AND`/`OR` swap which one "wins"
+      under negation, per De Morgan's laws: an asserted-false `AND`
+      behaves like an asserted-true `OR` (one side failed, not which, so
+      nothing is guaranteed — `Set.empty`), and vice versa. A bare
+      `Comparison("!=", ...)` is handled as the mirror image of `"="`/
+      `"<=>"` (kept for IR built directly rather than translated from
+      Spark, consistent with the IR's engine-independence). `CASE WHEN`
+      (`ir.Conditional`) still never establishes a pairing under either
+      polarity — deliberately unchanged, since the equality it contains
+      only holds on some rows, the same "not a required condition"
+      problem the existing `OR` case already guarded against.
+- [x] 7 new `RuleVerifierSpec` cases: `NOT(!=)` (the double-negation
+      form), `NOT(OR(!=, !=))` (De Morgan over `OR`, both columns paired),
+      `NOT(AND(!=, !=))` (De Morgan over `AND` — correctly still fails,
+      only one side guaranteed), a directly-negated equality (`NOT(=)`,
+      correctly still fails), a triple-negated equality (odd negation
+      count must not be mistaken for a match), a `CASE WHEN`-only
+      equality (regression-locks the deliberately-unchanged `Set.empty`
+      behavior), and a De Morgan pairing combined with an ordinary
+      `AND`-ed equality.
+- [x] 1 new real end-to-end `ContractEnforcementRuleSpec` case, using
+      genuine `spark.sql` parsing (not a hand-built IR node) to confirm
+      Spark itself produces the doubly-negated shape this fix targets: a
+      MERGE with `ON NOT (t.id != s.id)` against a real Delta table now
+      executes normally under a `merge_condition: [id]` rule, where it
+      would previously have been wrongly aborted.
+- [x] Doc comments in `RuleVerifier.scala` rewritten to describe the new
+      capability; docs/SPARK_ADAPTER.md and
+      docs-site/guides/enforcing-dml-rules.mdx updated to match — the
+      remaining scope limits are now just `CASE WHEN` and target-/
+      source-side qualifier distinction, not De Morgan/`NOT` generally.
+
+Still open, per the sub-phase above: distinguishing target- from
+source-side qualifiers in an equality pair, which specific rows an
+`UPDATE` touches, and whether a `DELETE`'s predicate is trivially
+satisfiable — all still tracked below.
+
 #### Scope (Future)
 
 - [ ] Dependency checks beyond dataset-level existence — `StructuralVerifier`
@@ -1986,11 +2040,14 @@ DELETE's predicate is trivially satisfiable — all still tracked below.
       the rule when this module recognizes an operation as DML but can't
       extract what a declared rule needs — are all done; see the "Delta
       Lake operation-surface coverage ledger", "Interpreting `rules`",
-      "Iceberg DML rule support", and "Predicate-logic `merge_condition`"
-      sub-phases above. What's still unverified, deliberately:
-      - `equalityPairedColumns` doesn't reason about De Morgan
-        equivalences, `NOT`, or `CASE WHEN` — only a flat top-level `AND`
-        of equalities is recognized — and doesn't distinguish target- from
+      "Iceberg DML rule support", "Predicate-logic `merge_condition`", and
+      "De Morgan-/`NOT`-aware `merge_condition`" sub-phases above. What's
+      still unverified, deliberately:
+      - `equalityPairedColumns` recognizes `AND`/`OR`/`NOT` and De Morgan
+        equivalences (see the "De Morgan-/`NOT`-aware `merge_condition`"
+        sub-phase above), but a match expressed inside a `CASE WHEN` is
+        never recognized — that equality only holds conditionally, on
+        some rows — and it still doesn't distinguish target- from
         source-side qualifiers (two same-side columns compared to each
         other would still count as a pairing).
       - Which specific rows an `UPDATE` touches, and whether a `DELETE`'s
@@ -2002,8 +2059,8 @@ DELETE's predicate is trivially satisfiable — all still tracked below.
         but isn't verified.
       A richer rule vocabulary (row-level conditions expressed as actual
       boolean logic against contract-declared fields, not just "which
-      columns does it touch") would be needed for the De Morgan/`NOT`/
-      `CASE WHEN` piece specifically — not started.
+      columns does it touch") would be needed for the `CASE WHEN` piece
+      specifically — not started.
 
 #### Sub-phase: Expression-algebra rework — a small, named vocabulary
 for semantic lineage, not one `FunctionCall` bucket (done)

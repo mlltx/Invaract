@@ -1614,6 +1614,52 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
   }
 
+  // Real regression test for the De Morgan/NOT upgrade to
+  // RuleVerifier.equalityPairedColumns: before it, an ON condition
+  // written as `NOT (t.id != s.id)` - logically identical to `t.id =
+  // s.id`, and genuinely how Spark's own SQL parser represents `!=`
+  // (always `Not(EqualTo(...))`, never a native "not equal" comparison
+  // node) - would have been wrongly rejected, since the old
+  // equalityPairedColumns didn't descend into NOT at all. Uses real
+  // `spark.sql` parsing, not a hand-built IR node, so this proves Spark
+  // genuinely produces the doubly-negated shape this fix targets.
+  test("PASS: a MERGE INTO whose ON condition is written as NOT(!=) satisfies merge_condition") {
+    val tablePath = scratchDir.resolve("rule_merge_not_ne_target").toString
+    val tableName = "rule_merge_not_ne_tbl"
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $tableName USING delta LOCATION '${tablePath.replace('\\', '/')}'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $tablePath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: doubled
+         |          type: long
+         |          required: false
+         |rules:
+         |  - type: merge_condition
+         |    columns: [id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql(
+        s"""MERGE INTO $tableName t
+           |USING (SELECT 99L as id, 198L as doubled) s
+           |ON NOT (t.id != s.id)
+           |WHEN NOT MATCHED THEN INSERT *
+           |""".stripMargin).collect() // must not throw
+    }
+
+    assert(spark.table(tableName).count() == 6, "the MERGE must actually have run: 5 original rows + 1 inserted")
+  }
+
   // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's RowMutation section: a MERGE's
   // ON condition (or a conditional DELETE's predicate) is real
   // transformation-defining behavior that ir.Plan alone never captures -

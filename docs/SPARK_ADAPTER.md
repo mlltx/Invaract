@@ -1469,13 +1469,29 @@ naming). An extra, non-equality conjunct beyond the declared columns
 flagged — checking more than required was never the failure this rule
 guards against.
 
-Still a structural approximation, not full predicate logic:
-`equalityPairedColumns` doesn't descend into `||`, `NOT`, or `CASE WHEN`
-(no De Morgan-equivalence reasoning), and doesn't distinguish target- from
-source-side qualifiers — two columns on the *same* side compared to each
-other would still count as a pairing. Both are documented, deliberate
-scope limits (see ROADMAP.md's "Full semantic DML verification" item),
-not oversights.
+**`equalityPairedColumns` is De Morgan-/`NOT`-aware, not limited to a flat
+`AND` of bare equalities.** The original version only descended into
+top-level `AND`s — a condition written as `NOT (t.id != s.id)`, logically
+identical to `t.id = s.id`, was wrongly rejected as not establishing a
+pairing at all. This matters in practice, not just in theory: SQL's `!=`
+itself always arrives at this layer as `Not(EqualTo(...))` — Catalyst has
+no native "not equal" comparison node (confirmed via
+`SparkPlanAdapter.translateExpr`'s `Not`/`BinaryComparison` cases) — so a
+`NOT` wrapping one is ordinary territory, not an exotic edge case.
+`RuleVerifier.requiredEqualities(expr, negated)` replaces the old flat
+walk with a polarity-carrying one: `NOT(x)` flips polarity and recurses
+(so a doubly-negated condition resolves back to its un-negated reading
+with no separate special case needed), and `AND`/`OR` swap which one
+"wins" depending on polarity, per De Morgan's laws (asserted-false `AND`
+behaves like asserted-true `OR` — "one side failed, not which, so nothing
+is guaranteed" — and vice versa). `CASE WHEN` still never establishes a
+pairing under either polarity, since the equality it contains only holds
+conditionally, on some rows — the same "not a required condition"
+problem the plain-`OR` case already guarded against, not a gap this
+change needed to close. Doesn't distinguish target- from source-side
+qualifiers — two columns on the *same* side compared to each other would
+still count as a pairing; a documented, deliberate scope limit (see
+ROADMAP.md's "Full semantic DML verification" item), not an oversight.
 
 ## Testing
 
