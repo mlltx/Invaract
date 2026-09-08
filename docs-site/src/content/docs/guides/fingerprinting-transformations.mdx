@@ -117,13 +117,18 @@ it — never a runtime value, and never anything outside that representation:
   join a table sits on, two arguments to a non-commutative operator) **does**, even in
   cases where the reorder happens to be logically equivalent — Invaract does not attempt to
   prove operand reordering safe, since getting that wrong would silently hide a real change.
-- An *unaliased* self-join of the same table (both sides read via `spark.table(...)` with
-  no `.as()` on either) is handled correctly: even though Spark's own analyzer assigns both
-  physical occurrences the same default name internally, Invaract disambiguates them at
-  translation time so each side's own columns are tracked, and fingerprint, distinctly —
-  reading the left side's column after such a join is never confused with reading the right
-  side's. Explicitly aliasing both sides (`.as("a")`/`.as("b")`) is still good practice for
-  readability, but isn't required for correct fingerprinting.
+- An *unaliased* self-join of the same table — whether both sides are read via
+  `spark.table(...)`/SQL, or via a bare `spark.read.format(...).load(...)` — is handled
+  correctly: even though Spark itself either assigns both physical occurrences the same
+  default name internally, or (for a bare `.load()` read) no distinguishing label at all,
+  Invaract disambiguates them at translation time so each side's own columns are tracked,
+  and fingerprint, distinctly — reading the left side's column after such a join is never
+  confused with reading the right side's. This also covers joining two genuinely different
+  tables (from the same catalog, or different ones) that were both read via a bare
+  `.load(...)`: each retains its own physical identity, so selecting one side's column
+  never fingerprints the same as selecting the other's. Explicitly aliasing both sides
+  (`.as("a")`/`.as("b")`) is still good practice for readability, but isn't required for
+  correct fingerprinting.
 - A MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an
   UPDATE assigns — detected, via `rowMutation` (see the table above), and folded into
   `overall` too. This is not part of the translated `Plan` itself (Invaract translates a

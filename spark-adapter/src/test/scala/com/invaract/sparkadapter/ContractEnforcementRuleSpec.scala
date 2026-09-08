@@ -1341,7 +1341,22 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // missing a location), exercising deltaRowLevelDml's fallback branch -
   // no active contract needed, direct inspection instead, the same
   // pattern as the streaming format-detection test above.
-  test("WriteCommandSupport falls back to the target plan's toString for a path-based DML op with no catalog table") {
+  //
+  // This is also the regression test for a real, fixed instability in that
+  // fallback: it used to report `target.toString` (raw LogicalPlan.toString,
+  // which renders any attribute reference as "name#<exprId>", a per-session
+  // counter, not a property of the query) as the write's location. Confirmed
+  // directly: running the identical MERGE against two separately-created,
+  // equivalently-shaped path tables produces two different raw
+  // `target.toString` values purely from exprId allocation order (a
+  // `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for
+  // one table, `Relation [id#1762L,v#1763L] parquet` for the other), while
+  // `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its
+  // own `EliminateSubqueryAliases` rule) renders both as the identical
+  // `Relation [none#0L,none#1L] parquet`. Fixed by switching to
+  // `target.canonicalized.toString`, mirroring deleteFromTable's own fix
+  // below for the same underlying reason.
+  test("WriteCommandSupport falls back to the target plan's canonicalized toString for a path-based DML op with no catalog table, stable across separate tables") {
     val tablePath = scratchDir.resolve("path_dml_target").toString
     spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath)
     capturedPlans.clear()
@@ -1353,6 +1368,27 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val info = WriteCommandSupport.combined.lift(upd).getOrElse(fail("path-based UpdateCommand should still be recognized"))
     assert(info.format.contains("delta"))
     assert(info.diagnostic.isDefined, "no catalog table at all should report a fallback diagnostic, not resolve a clean location silently")
+
+    // A second, entirely separate path-based Delta table of the identical
+    // shape - different physical path, and (since Spark's exprId counter is
+    // session-global and monotonic) necessarily different exprIds for its
+    // own "id"/"doubled" columns - must still resolve to the exact same
+    // fallback location string, since the fallback's whole purpose is a
+    // location Invaract can compare across runs of the "same" job, not one
+    // that happens to differ only because Spark allocated different exprIds
+    // this time.
+    val tablePath2 = scratchDir.resolve("path_dml_target_2").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.format("delta").mode("overwrite").save(tablePath2)
+    capturedPlans.clear()
+    spark.sql(s"UPDATE delta.`${tablePath2.replace('\\', '/')}` SET doubled = doubled + 1 WHERE id > 2").collect()
+    val upd2 = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "UpdateCommand" => p }
+      .getOrElse(fail("no UpdateCommand plan observed for the second table"))
+    val info2 = WriteCommandSupport.combined.lift(upd2).getOrElse(fail("path-based UpdateCommand should still be recognized"))
+    assert(
+      info.location == info2.location,
+      s"the fallback location must be stable across two structurally-identical path tables with necessarily " +
+        s"different exprIds, got '${info.location}' vs '${info2.location}'"
+    )
   }
 
   // deleteFromTable's own "no NamedRelation found" fallback - reached only

@@ -753,9 +753,37 @@ private[sparkadapter] object WriteCommandSupport {
           val (location, diagnostic) = catalogTable.flatMap(_.storage.locationUri).map(_.toString) match {
             case Some(loc) => (loc, None)
             case None =>
-              val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.toString)
+              // .canonicalized, not target's plain LogicalPlan.toString this
+              // used to call directly - the same fix, for the same reason,
+              // as WriteCommandSupport.deleteFromTable's own "no
+              // NamedRelation found" fallback below. Unlike that fallback,
+              // this one is confirmed reachable for real, not just
+              // plausible: a path-based (not catalog-registered) Delta
+              // table's MERGE/UPDATE/DELETE - `MERGE INTO delta.`path`` -
+              // has no `catalogTable` at all, confirmed directly against a
+              // real Delta session. Two separate SparkSessions running the
+              // identical unchanged MERGE against equivalently-shaped
+              // path tables produced two different raw `target.toString`
+              // values purely from exprId allocation order (`SubqueryAlias
+              // t` recursing into `Relation [id#348L,v#349L] parquet` in one
+              // run vs. `Relation [id#1762L,v#1763L] parquet` in the other),
+              // while `.canonicalized` (which runs `EliminateSubqueryAliases`
+              // among its normalization rules, also stripping the
+              // `SubqueryAlias` wrapper) rendered both identically as
+              // `Relation [none#0L,none#1L] parquet`.
+              val fallback = catalogTable.map(_.identifier.unquotedString).getOrElse(target.canonicalized.toString)
+              // catalogTable.isDefined here only picks the diagnostic
+              // message's own wording (which tier of fallback fired), not
+              // `fallback`'s actual value - that's already fully determined
+              // above by the equivalent `catalogTable.map(...).getOrElse(...)`.
+              // A scoped Stryker run reports this condition as a survivor
+              // (forced to both `true` and `false`); confirmed by hand that
+              // forcing it doesn't fail any test, since none asserts the
+              // literal message text - the same "message-text mutant, not
+              // worth chasing" category CLAUDE.md's own Mutation Testing
+              // Requirement names, not a real behavioral gap.
               val msg = s"No catalog storage location for ${plan.getClass.getSimpleName}'s target; " +
-                s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's toString"} as a best-effort location"
+                s"using ${if (catalogTable.isDefined) "its table identifier" else "the target plan's canonicalized toString"} as a best-effort location"
               (fallback, Some(Diagnostic(plan.getClass.getSimpleName, msg)))
           }
           // Only MergeIntoCommand has a separate `source` - UPDATE/DELETE
@@ -1092,8 +1120,18 @@ private[sparkadapter] object WriteCommandSupport {
           val (location, diagnostic) = storage.locationUri match {
             case Some(uri) => (uri.toString, None)
             case None =>
-              val msg = "INSERT ... DIRECTORY has no resolved storage location; using its toString as a best-effort location"
-              (plan.toString, Some(Diagnostic("InsertIntoHiveDirCommand", msg)))
+              // .canonicalized, not plan's plain LogicalPlan.toString this
+              // used to call directly - the same instability class as
+              // deleteFromTable's/deltaRowLevelDml's own fallbacks above
+              // (TreeNode.toString embeds per-session exprIds). The SQL
+              // syntax for INSERT ... DIRECTORY always supplies a literal
+              // path, so storage.locationUri missing entirely wasn't
+              // reproduced against a real analyzed plan (the same
+              // "undocumented how, if ever, real Spark reaches it" position
+              // deleteFromTable's own fallback was in) - fixed on the same
+              // principle regardless, per that case's own precedent.
+              val msg = "INSERT ... DIRECTORY has no resolved storage location; using its canonicalized toString as a best-effort location"
+              (plan.canonicalized.toString, Some(Diagnostic("InsertIntoHiveDirCommand", msg)))
           }
           WriteCommandInfo(
             location = location,

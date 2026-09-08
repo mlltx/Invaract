@@ -202,28 +202,121 @@ private[sparkadapter] object SparkPlanAdapter {
     * `AttributeReference` case (for `ColumnRef.qualifier`) consult it,
     * falling back to Spark's own name/qualifier for any attribute this map
     * has no entry for (one that never passed through a `SubqueryAlias` at
-    * all - e.g. a plain unaliased file-based `Read`, or a column computed
-    * further up the plan). Because both sites resolve through the *same*
-    * map, a colliding occurrence's `Read.alias` and every `ColumnRef`
-    * referencing it always agree - `buildScopeInfo`'s ordinary
-    * scope-substitution machinery (built for the ordinary "distinct alias
-    * strings" case) then handles the now-disambiguated strings exactly as
-    * it always has, needing no change of its own.
+    * all, and isn't a bare relation leaf either — see "Bare relation leaves"
+    * below — e.g. a column computed further up the plan). Because both
+    * sites resolve through the *same* map, a colliding occurrence's
+    * `Read.alias` and every `ColumnRef` referencing it always agree -
+    * `buildScopeInfo`'s ordinary scope-substitution machinery (built for
+    * the ordinary "distinct alias strings" case) then handles the
+    * now-disambiguated strings exactly as it always has, needing no change
+    * of its own.
+    *
+    * ## Bare relation leaves (no `SubqueryAlias` at all)
+    *
+    * Not every relation reference is wrapped in a `SubqueryAlias`. Confirmed
+    * directly (not assumed): `spark.read.format(...).load(tableIdentifier)`
+    * — a real, ordinary access pattern already used elsewhere in this
+    * module's own connector specs (see `ClickHouseConnectorSpec`'s own
+    * comment: "a bare `.load(...)` ... analyzes directly to a
+    * `DataSourceV2Relation` with no `SubqueryAlias` wrapper") — resolves
+    * straight to a bare `LogicalRelation`/`HiveTableRelation`/
+    * `DataSourceV2Relation`/`StreamingRelation`/`StreamingRelationV2`, and
+    * Spark leaves such an attribute's own `.qualifier` field completely
+    * empty (`Seq()`, confirmed directly against a real Iceberg-backed
+    * multi-catalog session — not merely truncated to one segment, as an
+    * earlier, unconfirmed hypothesis in
+    * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §11 speculated for
+    * `AttributeReference.qualifier.lastOption`; that specific truncation
+    * mechanism turned out not to be reachable in practice, since every
+    * attribute that *does* carry a real multi-part `.qualifier` - i.e.
+    * every `spark.table(...)`/SQL `FROM`-clause reference - is already
+    * wrapped in a `SubqueryAlias` and therefore already covered by the
+    * pass above, which takes priority). Before this second pass existed,
+    * such an attribute fell through `translateExpr`'s
+    * `.orElse(a.qualifier.lastOption)` fallback to `None` — genuinely
+    * unqualified, not merely truncated — and two *different* bare relation
+    * leaves referenced in the same plan (a join or union of two
+    * `.load()`-based reads, whether from different catalogs or the exact
+    * same table read twice unaliased) produced `ColumnRef`s that were
+    * indistinguishable from each other, since neither carried any
+    * qualifier for `Canonicalizer.buildScopeInfo` to substitute against.
+    * Confirmed directly to be a real, severe false negative (not merely a
+    * theoretical risk): joining two distinctly-catalogued, same-shaped
+    * tables via `.load()` and selecting one side's column versus the
+    * other's produced byte-identical `overall` and per-output fingerprints
+    * for two genuinely different transformations. This second pass closes
+    * that gap the same way the first pass closes the `SubqueryAlias` one -
+    * grouping every bare leaf *not already covered by the first pass* by
+    * its own physical location (reusing `locationOf`/
+    * `hiveTableRelationLocationOf`/`tableLocationAndFormat`/
+    * `streamingRelationLocationOf`/`streamingRelationV2LocationOf`, the
+    * exact same functions `translateNonWritePlan`'s own `ir.Read`
+    * construction for each of these shapes already uses, so the map's key
+    * always matches what that `Read`'s own `dataset.location` will be) and
+    * suffixing only a location shared by more than one occurrence (a bare
+    * self-join via `.load()`, the same underlying hazard as the
+    * `SubqueryAlias` case above, reached through a different Spark API).
+    * A location with only one occurrence maps to itself, unsuffixed - the
+    * same value `Canonicalizer.buildScopeInfo` will independently compute
+    * as that `Read`'s own scope string (`alias.getOrElse(location)`, with
+    * `alias` staying `None` since no suffix was needed), so the two agree
+    * and the substitution succeeds exactly as it does for a `SubqueryAlias`-
+    * covered read - this is what actually fixes the false negative above,
+    * not merely relabels it.
     */
   private def computeAliasDisambiguation(plan: LogicalPlan): Map[Long, String] = {
-    val occurrences: Seq[SubqueryAlias] = plan.collect { case sa: SubqueryAlias => sa }
-    val countByName: Map[String, Int] = occurrences.groupBy(_.identifier.name).map { case (name, group) => name -> group.size }
-    val nextIndex = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
-    occurrences.flatMap { sa =>
-      val name = sa.identifier.name
-      val disambiguated =
-        if (countByName(name) > 1) {
-          val index = nextIndex(name)
-          nextIndex(name) = index + 1
-          s"$name#$index"
-        } else name
-      sa.output.map(attr => attr.exprId.id -> disambiguated)
-    }.toMap
+    def disambiguateByKey(occurrences: Seq[(String, Seq[Long])]): Map[Long, String] = {
+      val countByKey: Map[String, Int] = occurrences.groupBy(_._1).map { case (key, group) => key -> group.size }
+      val nextIndex = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+      occurrences.flatMap { case (key, exprIds) =>
+        val disambiguated =
+          if (countByKey(key) > 1) {
+            val index = nextIndex(key)
+            nextIndex(key) = index + 1
+            s"$key#$index"
+          } else key
+        exprIds.map(_ -> disambiguated)
+      }.toMap
+    }
+
+    val subqueryAliases: Seq[SubqueryAlias] = plan.collect { case sa: SubqueryAlias => sa }
+    val fromSubqueryAlias: Map[Long, String] =
+      disambiguateByKey(subqueryAliases.map(sa => sa.identifier.name -> sa.output.map(_.exprId.id)))
+
+    // Bare relation leaves - see "Bare relation leaves" above. Only a leaf
+    // none of whose output attributes were already covered by a
+    // SubqueryAlias is considered here (an aliased leaf's attributes are
+    // already correctly disambiguated above; re-keying them by location
+    // too would be redundant, not wrong, but this keeps each attribute
+    // covered by exactly one of the two passes).
+    val alreadyCovered: Set[Long] = fromSubqueryAlias.keySet
+    // `.forall`, not `.exists` - a documented equivalent mutant (confirmed
+    // by hand: manually applying `.exists` here and rerunning the full
+    // spark-adapter suite, including MultiCatalogQualifierSpec, found no
+    // failure), not a real gap Stryker's own scoped run reported as a
+    // survivor: `exprId` is unique per attribute instance, so a single
+    // relation leaf's own `.output` attributes are always either ALL
+    // present in `alreadyCovered` (if this leaf is itself wrapped, even
+    // transitively, by a `SubqueryAlias`) or ALL absent (if it never is) -
+    // never a mix - making `forall`/`exists` behaviorally identical for
+    // every attribute list this is ever called with.
+    def isBare(attrs: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): Boolean =
+      attrs.nonEmpty && attrs.forall(a => !alreadyCovered(a.exprId.id))
+    val bareLeafOccurrences: Seq[(String, Seq[Long])] = plan.collect {
+      case lr: LogicalRelation if isBare(lr.output) =>
+        SparkPlanAdapter.locationOf(lr) -> lr.output.map(_.exprId.id)
+      case htr: HiveTableRelation if isBare(htr.output) =>
+        SparkPlanAdapter.hiveTableRelationLocationOf(htr) -> htr.output.map(_.exprId.id)
+      case dsv2: DataSourceV2Relation if isBare(dsv2.output) =>
+        SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name) -> dsv2.output.map(_.exprId.id)
+      case sr: StreamingRelation if isBare(sr.output) =>
+        SparkPlanAdapter.streamingRelationLocationOf(sr) -> sr.output.map(_.exprId.id)
+      case sr2: StreamingRelationV2 if isBare(sr2.output) =>
+        SparkPlanAdapter.streamingRelationV2LocationOf(sr2) -> sr2.output.map(_.exprId.id)
+    }
+    val fromBareLeaves: Map[Long, String] = disambiguateByKey(bareLeafOccurrences)
+
+    fromSubqueryAlias ++ fromBareLeaves
   }
 
   /** Convenience for translating a bare relational plan (one with no Spark
@@ -445,7 +538,8 @@ private[sparkadapter] object SparkPlanAdapter {
             "LogicalRelation",
             s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
           )
-        ir.Read(ir.DatasetRef(SparkPlanAdapter.locationOf(lr)))
+        val lrLocation = SparkPlanAdapter.locationOf(lr)
+        ir.Read(ir.DatasetRef(lrLocation), bareLeafAliasOf(lrLocation, lr.output))
 
       // A real Hive-format catalog table read - confirmed empirically (a
       // real embedded-Derby Hive session, not assumed) to be a genuine,
@@ -470,7 +564,8 @@ private[sparkadapter] object SparkPlanAdapter {
             "HiveTableRelation",
             s"No storage location on Hive table '${htr.tableMeta.identifier}'; using its table identifier as a best-effort location"
           )
-        ir.Read(ir.DatasetRef(SparkPlanAdapter.hiveTableRelationLocationOf(htr)))
+        val htrLocation = SparkPlanAdapter.hiveTableRelationLocationOf(htr)
+        ir.Read(ir.DatasetRef(htrLocation), bareLeafAliasOf(htrLocation, htr.output))
 
       // A streaming source's top-level plan - confirmed empirically (not
       // assumed) to be one of two shapes depending on whether the
@@ -493,7 +588,8 @@ private[sparkadapter] object SparkPlanAdapter {
             "StreamingRelation",
             s"No 'path' option on a '${sr.sourceName}' streaming source; using its source name as a best-effort location"
           )
-        ir.Read(ir.DatasetRef(SparkPlanAdapter.streamingRelationLocationOf(sr)))
+        val srLocation = SparkPlanAdapter.streamingRelationLocationOf(sr)
+        ir.Read(ir.DatasetRef(srLocation), bareLeafAliasOf(srLocation, sr.output))
 
       case sr2: StreamingRelationV2 =>
         if (SparkPlanAdapter.tableLocationAndFormat(sr2.table)._1.isEmpty)
@@ -501,7 +597,8 @@ private[sparkadapter] object SparkPlanAdapter {
             "StreamingRelationV2",
             s"No 'location' property on a '${sr2.sourceName}' streaming source's table; using its source name as a best-effort location"
           )
-        ir.Read(ir.DatasetRef(SparkPlanAdapter.streamingRelationV2LocationOf(sr2)))
+        val sr2Location = SparkPlanAdapter.streamingRelationV2LocationOf(sr2)
+        ir.Read(ir.DatasetRef(sr2Location), bareLeafAliasOf(sr2Location, sr2.output))
 
       // A batch DataSourceV2 catalog read - confirmed empirically (a real
       // Iceberg-enabled session, not assumed) to be the read-side shape
@@ -524,7 +621,8 @@ private[sparkadapter] object SparkPlanAdapter {
             "DataSourceV2Relation",
             s"No 'location' property on read target '${dsv2.name}'; using its name() as a best-effort location"
           )
-        ir.Read(ir.DatasetRef(SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name)))
+        val dsv2Location = SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name)
+        ir.Read(ir.DatasetRef(dsv2Location), bareLeafAliasOf(dsv2Location, dsv2.output))
 
       case p: Project =>
         ir.Project(translatePlan(p.child), p.projectList.map(translateNamed).toList)
@@ -634,6 +732,25 @@ private[sparkadapter] object SparkPlanAdapter {
       */
     private def disambiguatedAliasOf(sa: SubqueryAlias): String =
       sa.output.headOption.flatMap(attr => aliasDisambiguation.get(attr.exprId.id)).getOrElse(sa.identifier.name)
+
+    /** The `alias` a bare (no-`SubqueryAlias`) relation leaf's `ir.Read`
+      * should carry — `Some(...)` only when `computeAliasDisambiguation`'s
+      * second pass actually suffixed this leaf's location (i.e. the same
+      * physical location occurs more than once in this plan — a self-join
+      * reached via `.load()` rather than `spark.table()`), `None` otherwise.
+      * Leaving `alias` as `None` for the ordinary, non-colliding case is
+      * deliberate, not merely the default: `Canonicalizer.buildScopeInfo`
+      * already falls back to `dataset.location` as the scope string when
+      * `alias` is `None`, which is exactly `rawLocation` here too — so the
+      * `ColumnRef.qualifier` this same map produces for this leaf's
+      * attributes (see the `AttributeReference` case below) matches without
+      * needing `Read.alias` set at all, keeping translation byte-for-byte
+      * unchanged for every plan with no such collision (the overwhelming
+      * majority) — see `computeAliasDisambiguation`'s own "Bare relation
+      * leaves" doc for the full reasoning.
+      */
+    private def bareLeafAliasOf(rawLocation: String, attrs: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]): Option[String] =
+      attrs.headOption.flatMap(attr => aliasDisambiguation.get(attr.exprId.id)).filter(_ != rawLocation)
 
     def translateExpr(expr: Expression): ir.Expr = expr match {
       case a: AttributeReference =>

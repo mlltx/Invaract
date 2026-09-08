@@ -360,7 +360,11 @@ class ExpressionTranslationSpec extends AnyFunSuite with BeforeAndAfterAll {
       (col("amount") + 1).as("plus_one"),
       (col("amount") * 2).as("doubled")
     )
-    val columns = projectColumns(df)
+    val translated = translate(df).plan
+    val (readLocation, columns) = translated match {
+      case Project(read: Read, cols) => (read.dataset.location, cols)
+      case other                       => fail(s"expected a Project over a bare Read, got ${PlanPrinter.render(other)}")
+    }
 
     val bareRef = columns.find(_.name == "amount").get.expr.asInstanceOf[ColumnReference].ref
     val refInPlusOne = columns.find(_.name == "plus_one").get.expr match {
@@ -374,7 +378,15 @@ class ExpressionTranslationSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(bareRef == refInPlusOne)
     assert(bareRef == refInDoubled)
-    assert(bareRef.name == "amount" && bareRef.qualifier.isEmpty)
+    // The qualifier is the Read's own physical location, not empty - a
+    // bare (SubqueryAlias-free) relation leaf like this CSV-backed read
+    // gets a qualifier from SparkPlanAdapter.computeAliasDisambiguation's
+    // "bare relation leaves" pass (see that method's own doc) precisely so
+    // this ColumnRef can be matched back to its originating Read by
+    // Canonicalizer.buildScopeInfo's scope-substitution table - the same
+    // fix that closes the multi-catalog/bare-leaf fingerprint collision
+    // documented in docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §11.
+    assert(bareRef.name == "amount" && bareRef.qualifier == Some(readLocation))
   }
 
   // ---- Multiple aggregates and grouping columns in one Aggregate node ------

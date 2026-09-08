@@ -596,6 +596,49 @@ class HiveConnectorSpec extends ConnectorSpecBase {
       "a rejected INSERT DIRECTORY must never have committed any data")
   }
 
+  // insertIntoHiveDir's own "no resolved storage location" fallback -
+  // reached only when storage.locationUri is None, a shape real Spark SQL
+  // can't produce (INSERT ... DIRECTORY '<path>' always supplies a literal
+  // path), so - like deleteFromTable's own "no NamedRelation found"
+  // fallback in ContractEnforcementRuleSpec - this is exercised by
+  // constructing the real Catalyst node directly (spark-hive is already a
+  // test-scope dependency of this module, so InsertIntoHiveDirCommand is
+  // directly importable here, unlike WriteCommandSupport's own reflective,
+  // no-compile-time-dependency access to it).
+  //
+  // This is the regression test for the same instability class already
+  // fixed for deltaRowLevelDml/deleteFromTable: this fallback used to
+  // report `plan.toString` (raw LogicalPlan.toString, which renders any
+  // attribute reference as "name#<exprId>", a per-session counter) as the
+  // write's location. Fixed by switching to `plan.canonicalized.toString`.
+  test("WriteCommandSupport's insertIntoHiveDir fallback location is stable across separate exprId allocations") {
+    def commandWithNoStorageLocation(): LogicalPlan = {
+      val query = org.apache.spark.sql.catalyst.plans.logical.LocalRelation(
+        Seq(org.apache.spark.sql.catalyst.expressions.AttributeReference("id", org.apache.spark.sql.types.LongType)())
+      )
+      org.apache.spark.sql.hive.execution.InsertIntoHiveDirCommand(
+        isLocal = false,
+        storage = org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat.empty,
+        query = query,
+        overwrite = true,
+        outputColumnNames = Seq("id")
+      )
+    }
+
+    def insertIntoHiveDirInfo(): WriteCommandInfo =
+      WriteCommandSupport.combined.lift(commandWithNoStorageLocation())
+        .getOrElse(fail("InsertIntoHiveDirCommand must always be recognized, even with no resolved storage location"))
+
+    val info1 = insertIntoHiveDirInfo()
+    val info2 = insertIntoHiveDirInfo()
+    assert(info1.diagnostic.isDefined, "the no-storage-location fallback must report a diagnostic, not resolve a clean location silently")
+    assert(
+      info1.location == info2.location,
+      s"the fallback location must be stable across separate exprId allocations for the identical command shape, " +
+        s"got '${info1.location}' vs '${info2.location}'"
+    )
+  }
+
   // --- Fail-closed: LOAD DATA INPATH - a genuinely data-mutating Hive
   // operation Invaract deliberately doesn't translate (already documented
   // generically in FailClosedCommands' exclusion list; this is the first

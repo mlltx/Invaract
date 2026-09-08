@@ -2269,6 +2269,83 @@ is detected even when the output schema stays identical.
       Spark's ambiguous-self-join guard disabled) that closer empirical
       checking showed was never actually reachable and was retracted
       rather than shipped as a "known limitation."
+- [x] **`SparkPlanAdapter` translation-layer fix for a bare relation leaf's
+      empty `ColumnRef.qualifier` (confirmed false negative) — closed.** A
+      follow-up audit pass investigating a previously-flagged, unconfirmed
+      multi-catalog risk (`AttributeReference.qualifier.lastOption`
+      truncating a real multi-part qualifier) found that specific mechanism
+      wasn't reachable, but found a broader, real one instead: an
+      `AttributeReference` from a relation never wrapped in a
+      `SubqueryAlias` — reached via the ordinary
+      `spark.read.format(...).load(tableIdentifier)` access pattern, not
+      `spark.table(...)` — got a completely empty Spark-assigned
+      `.qualifier`, and `computeAliasDisambiguation` only ever covered
+      `SubqueryAlias` occurrences. Confirmed against a real dual-catalog
+      Iceberg session: joining two distinct physical tables via `.load()`
+      and selecting one side's column vs. the other's fingerprinted
+      byte-identically (`overall` and every per-output fingerprint) despite
+      being genuinely different transformations — and the same root cause
+      silently reopened the original self-join bug through this different
+      Spark API (two `.load()` calls against the identical table, joined
+      unaliased, collided the same way). Fixed by extending
+      `computeAliasDisambiguation` with a second pass covering every bare
+      relation leaf, grouped by its own physical location (the same
+      location its `ir.Read` will independently use) with the identical
+      `"<location>#<index>"` suffix-on-collision convention the
+      `SubqueryAlias` pass already uses — a no-op for every already-unique
+      occurrence. Verified against a real Spark session
+      (`MultiCatalogQualifierSpec`'s six tests: the refuted-hypothesis
+      check, the `SubqueryAlias`-coverage-shadows-it check, the decisive
+      cross-catalog fingerprint-inequality check, the same-catalog
+      bare-self-join check, and the byte-for-byte-unaffected-when-unique
+      check — three of which fail against the pre-fix code, confirmed by
+      reverting the change and rerunning), the full 424-test `spark-adapter`
+      suite (one pre-existing test updated: it had asserted the old, buggy
+      empty-qualifier behavior for an ordinary bare read as if it were
+      correct), and scoped Stryker mutation testing on the touched method
+      per CLAUDE.md's Mutation Testing Requirement (83.72% of total/85.71%
+      of covered code — one apparent survivor in this fix's own new code,
+      verified by hand to be a genuine equivalent mutant, not a real gap)
+      — see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's "Implementation
+      notes" for the full mechanism and the resolved "Spark version
+      upgrade risk" bullet this closes.
+- [x] **Connector-specific location-construction audit: two more
+      raw-`LogicalPlan.toString`-embeds-exprId fallbacks found and fixed,
+      two related sites investigated and left unfixed — closed.** Prompted
+      by the three toString-instability bugs already found on this branch
+      (`rand()` seed, self-join alias, `deleteFromTable`'s fallback) all
+      sharing one root cause, systematically re-checked every `location =
+      ...` construction site in `SparkPlanAdapter.scala`/
+      `WriteCommandSupport.scala`. Found and fixed two more real instances:
+      `WriteCommandSupport.deltaRowLevelDml`'s fallback for a path-based
+      (non-catalog-registered) Delta MERGE/UPDATE/DELETE's target (confirmed
+      reachable and unstable against a real Delta session — two separate
+      path-based tables produced two different raw `target.toString`
+      values purely from `exprId` allocation order) and
+      `WriteCommandSupport.insertIntoHiveDir`'s fallback for `INSERT ...
+      DIRECTORY` with no resolved storage location (reachability
+      unconfirmed — Hive's SQL syntax always supplies a path — but fixed
+      defensively on the same principle `deleteFromTable`'s own fallback
+      was). Both switched to `.canonicalized.toString`, mirroring
+      `deleteFromTable`'s precedent exactly. Regression-tested (real Delta/
+      Hive sessions, both confirmed to fail against the pre-fix code) and
+      verified against the full 424-test `spark-adapter` suite plus scoped
+      Stryker mutation testing on `WriteCommandSupport.scala` per CLAUDE.md's
+      Mutation Testing Requirement (76.74% — above the 70% bar; all 10
+      survivors verified by hand to be either pre-existing untouched code
+      or, for the one survivor on a line this fix touched, a message-text-
+      only mutant with no effect on the actual computed location). Two
+      further sites sharing the same risk
+      class (`WriteCommandSupport.v2CreateOrReplaceLocation`'s fallback for
+      an unresolved V2 write target name, `SparkPlanAdapter.locationOf`'s
+      final generic `BaseRelation.toString` fallback) were investigated and
+      left unfixed — no construction was found that reaches either via
+      genuine Spark analysis or any of this module's currently-supported
+      connectors, so neither was shipped as a speculative, unverified
+      change; both are flagged in docs/SEMANTIC_LINEAGE_FINGERPRINTING.md's
+      "Gap-closing pass" for the next connector investigation to check
+      directly against a real instance, per this branch's own "retract
+      rather than force it" discipline for an unconfirmed hypothesis.
 
 ##### Dependencies
 

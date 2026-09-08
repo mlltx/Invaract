@@ -918,12 +918,13 @@ jobs:
     # (iceberg-spark-runtime-3.5_2.12's own maven-metadata.xml confirms
     # 1.11.0 is already the latest published release).
     #
-    # Scoped to `testOnly` against the two specs that actually reference
-    # Iceberg (IcebergConnectorSpec, SparkAdapterListenerIcebergSpec) -
-    # spark-adapter/build.sbt's own JDK17+ exclusion-filter comment already
-    # confirms these are the only two Iceberg-dependent test sources.
-    # Runs on JDK 21 (set up below), satisfying Iceberg's own JDK17+
-    # class-file-version requirement with no extra gating needed.
+    # Scoped to `testOnly` against the three specs that actually reference
+    # Iceberg (IcebergConnectorSpec, SparkAdapterListenerIcebergSpec,
+    # MultiCatalogQualifierSpec) - spark-adapter/build.sbt's own JDK17+
+    # exclusion-filter comment already confirms these are the only
+    # Iceberg-dependent test sources. Runs on JDK 21 (set up below),
+    # satisfying Iceberg's own JDK17+ class-file-version requirement with
+    # no extra gating needed.
     #
     # 1.9.2 (latest patch of the prior 1.9.x minor line) was tried as a
     # candidate leg to push the verified floor down one step below 1.10.2,
@@ -972,7 +973,7 @@ jobs:
           INVARACT_TEST_ICEBERG_VERSION: ${{ matrix.iceberg-version }}
         run: |
           cd spark-adapter
-          sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec"
+          sbt "testOnly *IcebergConnectorSpec *SparkAdapterListenerIcebergSpec *MultiCatalogQualifierSpec"
 
   version-matrix-drift-check:
     name: Version matrix drift check

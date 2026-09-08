@@ -1760,6 +1760,193 @@ below):
   fallback location is stable across two separate constructions, with the
   test confirmed to fail against the pre-fix code by temporarily
   reverting the one-line change and rerunning it.
+- **A bare (`SubqueryAlias`-free) relation leaf — reached via
+  `spark.read.format(...).load(tableIdentifier)`, not `spark.table(...)` —
+  got an entirely empty `ColumnRef.qualifier`, silently erasing the exact
+  physical-source distinction §2.3's self-join fix depends on; a real,
+  confirmed false NEGATIVE, broader than the multi-catalog scenario that
+  led to finding it.** Raised as an open, unconfirmed risk in a prior audit
+  pass (this document's "Implementation notes" used to carry it under
+  "Spark version upgrade risk," speculating that
+  `AttributeReference.qualifier.lastOption`'s truncation to the final
+  namespace segment could collide two differently-qualified multi-catalog
+  tables sharing a final segment name, e.g. `catalog_a.sales.orders` vs.
+  `catalog_b.sales.orders`). Investigated against a real dual-catalog
+  Iceberg session (two independent `hadoop`-type catalogs, each holding a
+  `sales.orders` table) and the *specific* hypothesized mechanism was
+  refuted, the same way the self-join fix's own `left(...)`/`right(...)`
+  suspicion was: `spark.table("catalog_a.sales.orders")` does carry a real
+  multi-part qualifier (`Seq(catalog_a, sales, orders)`, confirmed
+  directly), but every such reference is already wrapped in a
+  `SubqueryAlias` and therefore already fully covered by
+  `computeAliasDisambiguation`'s existing `SubqueryAlias`-keyed pass — two
+  same-final-segment-name tables joined this way are already correctly
+  disambiguated by encounter order, exactly as a same-table self-join
+  already was, so `.qualifier.lastOption` never actually gets consulted for
+  this access pattern. Closer checking found the real mechanism instead:
+  `spark.read.format(...).load(tableIdentifier)` (an ordinary, already-used
+  access pattern — see `ClickHouseConnectorSpec`'s own comment that a bare
+  `.load(...)` "analyzes directly to a `DataSourceV2Relation` with no
+  `SubqueryAlias` wrapper") produces an `AttributeReference` whose
+  `.qualifier` is confirmed directly to be completely empty
+  (`Seq()`), not merely truncated — and every such attribute falls straight
+  through to `None`, since `computeAliasDisambiguation` only ever walked
+  `SubqueryAlias` occurrences. Confirmed as a real, severe false negative,
+  not a narrow multi-catalog corner case: joining *any* two distinct
+  physical tables via `.load()` (different catalogs, or even the same
+  catalog) and selecting one side's column vs. the other's produced
+  byte-identical `overall` and per-output (`expression`/`lineage`/
+  `combined`) fingerprints for two genuinely different transformations —
+  confirmed via `TransformationFingerprinter.fingerprint` on the real
+  translated plans, not just inspecting `ir.ColumnRef` values by eye. The
+  same root cause also silently reopened the original self-join bug
+  through this different Spark API: two `.load()` calls against the
+  *identical* physical table, joined without aliasing, collapsed the same
+  way the pre-fix `spark.table()`-based self-join used to. Fixed by
+  extending `SparkPlanAdapter.computeAliasDisambiguation` with a second
+  pass (see that method's own "Bare relation leaves" doc) that groups every
+  bare relation leaf *not already covered by the `SubqueryAlias` pass* by
+  its own physical location (reusing the exact same `locationOf`/
+  `hiveTableRelationLocationOf`/`tableLocationAndFormat`/
+  `streamingRelationLocationOf`/`streamingRelationV2LocationOf` functions
+  `translateNonWritePlan`'s own `ir.Read` construction already uses, so the
+  map's key always matches that `Read`'s own `dataset.location`), suffixing
+  only a location shared by more than one occurrence (mirroring the
+  `SubqueryAlias` pass's own `"<name>#<index>"` convention) and leaving a
+  unique occurrence's `Read.alias` unset — `Canonicalizer.buildScopeInfo`'s
+  existing `alias.getOrElse(location)` fallback then agrees with the new
+  `ColumnRef.qualifier` by construction, so this is byte-for-byte
+  unaffected for every plan with no such collision (confirmed by a
+  dedicated regression test asserting exactly this). Regression-tested by
+  `MultiCatalogQualifierSpec.scala` (real dual-catalog Iceberg session):
+  exact-value assertions on the resulting qualifiers/aliases (not merely
+  inequality), the decisive fingerprint-level test for the cross-catalog
+  case, the analogous same-catalog bare-self-join case, and the
+  no-collision byte-for-byte-unaffected case — all confirmed to fail
+  against the pre-fix code by temporarily reverting the change and
+  rerunning. One existing test (`ExpressionTranslationSpec`'s "multiple
+  independent references to the same input column..." test) asserted the
+  old, buggy `qualifier.isEmpty` behavior for an ordinary bare CSV read as
+  if it were correct; updated to assert the new, intentional qualifier
+  value instead now that this fix means a bare leaf's `ColumnRef.qualifier`
+  is populated even when there's only one occurrence to disambiguate. A
+  whole-file-scoped `sbt stryker --mutate "SparkPlanAdapter.scala"` run
+  scored 83.72% (of total; 85.71% of covered code) — above CLAUDE.md's 70%
+  bar — with one apparent survivor inside this fix's own new code
+  (`isBare`'s `attrs.forall(...)` mutated to `.exists(...)`), verified by
+  hand to be a genuine equivalent mutant, not a real gap: manually applying
+  the mutation and rerunning the full 424-test `spark-adapter` suite
+  produced zero failures, because `exprId` is unique per attribute
+  instance, so a single relation leaf's own output attributes are always
+  either all covered or all uncovered by the `SubqueryAlias` pass, never a
+  mix — documented as such directly in `isBare`'s own code comment. Every
+  other survivor that run reported sits in pre-existing, untouched code
+  elsewhere in this large file (the generic `BaseRelation` fallback,
+  various format-detection diagnostics) — unrelated to this change and out
+  of this fix's scope, the same "single-file-scoped Stryker run surfaces
+  pre-existing gaps too" caveat the self-join fix's own mutation-testing
+  entry above already documents.
+- **A systematic re-check of every `location = ...` construction site in
+  `SparkPlanAdapter.scala`/`WriteCommandSupport.scala` (prompted by the
+  three toString-embeds-exprId bugs above all sharing one root cause) found
+  two more real instances of the identical pattern, and two further sites
+  that share the same *risk class* but were not confirmed reachable.**
+  Confirmed and fixed:
+  - **`WriteCommandSupport.deltaRowLevelDml`'s fallback for a Delta MERGE/
+    UPDATE/DELETE whose target has no `catalogTable`** (a path-based, not
+    catalog-registered, Delta table — `MERGE INTO delta.`path`` or
+    `UPDATE delta.`path` SET ...`) **used `target.toString`, the same raw-
+    `LogicalPlan.toString` instability as `deleteFromTable`'s fallback.**
+    Unlike that fallback, this one's reachability needed no speculation:
+    `catalogTable` being `None` for a path-based Delta DML target was
+    confirmed directly, and so was the instability itself — two separate,
+    otherwise-identical path-based Delta tables (necessarily allocated
+    different `exprId`s, Spark's `exprId` counter being session-global and
+    monotonic) produced two different raw `target.toString` values (e.g. a
+    `SubqueryAlias` recursing into `Relation [id#348L,v#349L] parquet` for
+    one, `Relation [id#1762L,v#1763L] parquet` for the other) while
+    `.canonicalized` (which also strips the `SubqueryAlias` wrapper via its
+    own `EliminateSubqueryAliases` rule) rendered both identically as
+    `Relation [none#0L,none#1L] parquet`. Fixed by switching to
+    `target.canonicalized.toString`, mirroring `deleteFromTable`'s own fix.
+    Regression-tested by extending `ContractEnforcementRuleSpec`'s existing
+    "path-based DML op with no catalog table" test (previously only
+    checked that a diagnostic was reported, not location stability) to run
+    the identical `UPDATE delta.`path`` against two separate, equivalently-
+    shaped path tables and assert the resulting locations are equal —
+    confirmed to fail against the pre-fix code by temporarily reverting the
+    one-line change and rerunning.
+  - **`WriteCommandSupport.insertIntoHiveDir`'s fallback for `INSERT ...
+    DIRECTORY` with no resolved storage location used `plan.toString`, the
+    same instability class.** Its own reachability is, like
+    `deleteFromTable`'s original fallback, unconfirmed against a real
+    analyzed plan — Hive's `INSERT ... DIRECTORY` SQL syntax always
+    supplies a literal path, so `storage.locationUri` being `None` wasn't
+    reproduced end to end. Fixed on the same defensive, "fix on the same
+    principle regardless" basis `deleteFromTable`'s own fallback originally
+    was (before *that* one turned out to matter for a different write
+    shape) — the fix itself (switching to `plan.canonicalized.toString`)
+    carries no risk of its own, `LogicalPlan.canonicalized` being a
+    standard, already-used-elsewhere-in-this-file operation on any resolved
+    plan. Regression-tested by `HiveConnectorSpec`'s new
+    "insertIntoHiveDir fallback location is stable" test — a real
+    `org.apache.spark.sql.hive.execution.InsertIntoHiveDirCommand`
+    constructed directly (`spark-hive` is already a test-scope dependency
+    of this module) with `CatalogStorageFormat.empty`, confirmed to fail
+    against the pre-fix code the same way.
+
+  A whole-file-scoped `sbt stryker --mutate "WriteCommandSupport.scala"`
+  run scored 76.74% — above CLAUDE.md's 70% bar, though below Stryker4s's
+  own default informational "low threshold" of 80% (not a project-defined
+  gate; `strykerThresholdsBreak` for this module is unrelated to this
+  informational warning). Of its 10 survivors, none sit in genuinely new
+  logic from either fix above: most are pre-existing, untouched dispatch
+  guards elsewhere in this large file (class-name equality checks for
+  `createHiveTableAsSelect`/`insertIntoHiveTable`/`insertIntoHiveDir`/
+  `deltaRowLevelDml`'s own `Function.unlift` guards, `unwrapWriteWrapper`'s
+  condition, `streamSinkFormatOf`'s `FileStreamSink` check, an unrelated
+  `overwrite` flag) — the same "single-file-scoped Stryker run surfaces
+  pre-existing gaps too" pattern already documented above. One survivor
+  does sit on a line this fix touched: `deltaRowLevelDml`'s diagnostic
+  message text, `if (catalogTable.isDefined) "its table identifier" else
+  "the target plan's canonicalized toString"` — but the mutated condition
+  only selects which of two *message strings* is shown, never the actual
+  `fallback`/`location` value (already fully and independently determined
+  by the equivalent `catalogTable.map(...).getOrElse(...)` immediately
+  above); confirmed by hand (forcing the condition to both `true`/`false`
+  and rerunning) that no test fails, since none asserts the literal
+  message text — the same message-text-mutant category CLAUDE.md's own
+  Mutation Testing Requirement already names as not worth chasing.
+  Documented inline at the mutation's own location.
+
+  Investigated, same risk class, but **not** confirmed reachable by any
+  currently-supported connector — left unfixed rather than shipping a
+  speculative change with no repro to validate it against, the same
+  "retract rather than force it" discipline the self-join gap's own
+  `left(...)`/`right(...)` false alarm used:
+  - `WriteCommandSupport.v2CreateOrReplaceLocation`'s fallback for a
+    `ReplaceTableAsSelect`/`CreateTableAsSelect` whose `name` isn't a
+    `ResolvedIdentifier` uses `other.toString` on a plan that, by
+    definition, isn't fully resolved — meaning `.canonicalized` (which
+    generally assumes a resolved plan) might not even be safe to call
+    there without its own empirical check, and after analysis this `name`
+    field should always be a `ResolvedIdentifier` for a real V2 write
+    reaching this code at all. No construction was found that reaches the
+    `other` branch via genuine Spark analysis.
+  - `SparkPlanAdapter.locationOf`'s final fallback (`lr.relation.toString`,
+    reached for a `HadoopFsRelation` with empty `rootPaths`, or any other
+    `BaseRelation` that is neither Hadoop- nor JDBC-backed and has no
+    `catalogTable`) has the same theoretical instability
+    (`BaseRelation`'s default `toString` is JVM-identity-based unless the
+    concrete class overrides it) but no currently-supported connector in
+    this module (Delta/Iceberg/ClickHouse/Avro/CSV/JSON/Parquet/JDBC/Hive)
+    was found to route through it — every one of them resolves via
+    `HadoopFsRelation`, `JDBCRelation`, a populated `catalogTable`, or a
+    `DataSourceV2Relation`/`HiveTableRelation` (both handled by their own,
+    separate cases). Flagged here for the next connector investigation
+    (docs/ADDING_A_SPARK_CONNECTOR.md) to check directly, rather than fixed
+    speculatively against a `BaseRelation` shape this repository has no
+    real instance of to test against.
 
 Each of the gaps above was found and fixed with the same discipline this
 document asks of the code itself: a clean/high mutation score does not,
@@ -1768,13 +1955,14 @@ Stryker's own mutators to target (`case (Some(l), Some(_)) => Some(l)` has
 no comparison/boolean operator to flip) — the Union/Join gap above is
 exactly that shape, and was found by asking "what does this branch
 actually do" rather than by trusting an aggregate score. The
-binary-literal, exhaustiveness, `rand()`-seed, and self-join-alias gaps
-were found the same way: not by running more tests against the existing
-code, but by asking what a real Spark session actually produces — for a
-literal runtime type, for an unseeded random-function call, for an
-unaliased self-join — that this module's tests hadn't yet exercised, and
-what the compiler or the canonicalizer would actually let slip through
-un-flagged. The self-join gap is also the one place this same discipline
+binary-literal, exhaustiveness, `rand()`-seed, self-join-alias, and
+bare-relation-leaf-qualifier gaps were found the same way: not by running
+more tests against the existing code, but by asking what a real Spark
+session actually produces — for a literal runtime type, for an unseeded
+random-function call, for an unaliased self-join, for a bare `.load()`
+read — that this module's tests hadn't yet exercised, and what the
+compiler or the canonicalizer would actually let slip through un-flagged.
+The self-join gap is also the one place this same discipline
 caught its own initial overreach: a first, plausible-looking repro turned
 out not to be real once checked against actual Spark execution, and was
 retracted rather than shipped as a documented "known limitation."
@@ -1855,19 +2043,27 @@ not a list of things currently broken:
   to the job. This is inherent to the fallback's design (documented in §8
   as intentionally conservative) and is flagged here as the version-drift
   angle on that same, already-accepted trade-off.
-- **`AttributeReference.qualifier.lastOption`'s truncation to the final
-  namespace segment (see `SparkPlanAdapter`'s `AttributeReference` case)
-  is a latent collision risk that gets more likely, not less, as Spark's
-  own multi-catalog support matures.** Spark 3.x's catalog-plugin API
-  (introduced as a preview in 3.0, matured across the 3.x line) makes
-  three-and-more-part qualified names (`catalog.schema.table`) increasingly
-  common in real deployments; `ColumnRef.qualifier` only ever keeps the
-  last segment, so two distinctly-qualified tables that happen to share a
-  final segment name (`catalog_a.sales.orders` vs. `catalog_b.sales.orders`)
-  would collide the same way the unaliased-self-join case above does. This
-  was raised during this audit but not empirically confirmed or fixed —
-  flagged here as the concrete, upgrade-relevant version of a risk that
-  already exists today and only grows as multi-catalog usage increases.
+- **Resolved.** A prior pass of this audit flagged
+  `AttributeReference.qualifier.lastOption`'s truncation to the final
+  namespace segment as a latent multi-catalog collision risk
+  (`catalog_a.sales.orders` vs. `catalog_b.sales.orders` sharing a final
+  segment name) that would only grow as Spark's multi-catalog support
+  matures. Investigated to ground truth against a real dual-catalog
+  Iceberg session: that *specific* mechanism turned out not to be
+  reachable (every reference with a real multi-part `.qualifier` is
+  already wrapped in a `SubqueryAlias` and already disambiguated by
+  `computeAliasDisambiguation`'s existing pass), but a broader, more
+  severe, and confirmed-real false negative was found by the same
+  investigation and fixed — see the "Gap-closing pass" bullet above
+  ("bare relation leaf ... got an entirely empty `ColumnRef.qualifier`")
+  for the full mechanism, fix, and regression tests. Kept here, marked
+  resolved rather than deleted, so this section's own history stays
+  legible: the version-upgrade angle that motivated flagging it in the
+  first place is now moot for this specific risk (the fix is
+  Spark-version-independent, not contingent on multi-catalog adoption
+  levels), but the general lesson — a hand-rolled `AttributeReference`
+  disambiguation mechanism can have coverage gaps for relation shapes
+  nobody thought to check — remains relevant to the next audit pass.
 - **`SubqueryAlias`'s default-aliasing behavior for unaliased catalog
   references (the root mechanism behind the self-join alias-collision
   bug above, and the basis of `computeAliasDisambiguation`'s own fix for
