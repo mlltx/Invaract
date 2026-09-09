@@ -127,12 +127,21 @@ warm_module() {
 }
 
 if command -v sbt &> /dev/null; then
-  warm_module "contract" "publishLocal"
-  warm_module "ir" "publishLocal"
-  warm_module "plugin" "compile"
-  warm_module "fingerprint" "publishLocal"
-  warm_module "spark-adapter" "compile"
-  warm_module "runner" "compile"
+  # Exactly dev/build's own recipe per module (see that script's comment
+  # for why: contract/ir/fingerprint/spark-adapter's publishLocal is a real
+  # Maven-coordinate publish other modules resolve against, not just a
+  # compile - confirmed the hard way, a real `sbt compile` in runner/
+  # failed with "Error downloading com.invaract:invaract-spark-adapter_2.12:
+  # 0.3.0" until spark-adapter was warmed with publishLocal instead of only
+  # compile; and runner/'s own compile failed separately on "object plugin
+  # is not a member of package com.invaract" until plugin was warmed with
+  # assembly, which is what runner's unmanagedJars actually points at).
+  warm_module "contract" "compile test assembly publishLocal"
+  warm_module "ir" "compile test assembly publishLocal"
+  warm_module "plugin" "compile test assembly"
+  warm_module "fingerprint" "compile test assembly publishLocal"
+  warm_module "spark-adapter" "compile test assembly publishLocal"
+  warm_module "runner" "compile assembly"
 fi
 
 echo "=== Invaract session-start: done ==="
