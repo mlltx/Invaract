@@ -458,13 +458,13 @@ jobs:
       matrix:
         include:
           - name: shard-1
-            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala"
           - name: shard-2
             files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala"
           - name: shard-3
             files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala"
           - name: shard-4
-            files: "src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala,src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala,src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala,src/main/scala/com/invaract/sparkadapter/location/LocationResolver.scala,src/main/scala/com/invaract/sparkadapter/location/ContractLocationResolution.scala"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
