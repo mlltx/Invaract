@@ -30,10 +30,15 @@ null-safe `t.col <=> s.col`) on every listed column — not merely mention it. T
 several common, costly bugs: a `MERGE` silently missing a match key (for example, matching
 only on `customer_id` in a table that should also match on `region`, quietly overwriting
 the wrong rows), matching on a range check instead of an equality, pinning a column to a
-literal instead of joining target to source on it, or only matching inside an `OR` branch
-instead of a required condition. A declared column may be paired against a
-differently-named column on the other side (`t.customer_id = s.cust_id`) — the contract
-can be authored against either side's naming.
+literal instead of joining target to source on it, only matching inside an `OR` branch
+instead of a required condition, or comparing a target column to *itself* — `ON
+t.id = t.id`, a copy-paste bug that always holds since it matches every row against itself,
+rather than genuinely matching target against source. A declared column may be paired
+against a differently-named column on the other side (`t.customer_id = s.cust_id`) — the
+contract can be authored against either side's naming. An equality written with `NOT`,
+including via De Morgan's laws (`NOT (t.id != s.id)`, or `NOT (t.id != s.id OR t.region !=
+s.region)` as an alternate way of writing a required double match), is recognized the same
+as its plain `AND`-of-equalities form — both are genuinely the same requirement.
 
 <Aside type="note">
 The YAML key is `columns`, not `on`. YAML 1.1's resolver treats a bare `on` key as the
@@ -71,10 +76,10 @@ under a contract with no such rule executes normally.
 
 Set expectations correctly rather than assuming full coverage:
 
-- **Full predicate logic for `merge_condition`.** It recognizes only a flat top-level
-  `AND` of equalities — it doesn't reason about `NOT`, `CASE WHEN`, or De Morgan
-  equivalences, and doesn't distinguish target- from source-side qualifiers (two columns
-  on the *same* side compared to each other would still count as a pairing).
+- **Full predicate logic for `merge_condition`.** It reasons about `AND`/`OR`/`NOT`, De
+  Morgan equivalences, and target-vs-source-side qualifiers, but a match expressed inside a
+  `CASE WHEN` is never recognized — that equality only holds conditionally, on some rows,
+  not as a required part of the match.
 - **Which rows an `UPDATE` touches**, or whether a non-empty `DELETE` predicate is
   trivially satisfiable (e.g. `WHERE 1=1`).
 - **Connectors without row-level DML support.** Parquet, CSV, JDBC, and similar don't

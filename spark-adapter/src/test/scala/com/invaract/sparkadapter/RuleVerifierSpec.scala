@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{ContractRule, InterpretedRule}
-import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, DeleteScope, Literal, RowMutation}
+import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, Conditional, DeleteScope, Literal, RowMutation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -21,6 +21,20 @@ class RuleVerifierSpec extends AnyFunSuite {
       ColumnReference(ColumnRef(leftCol, Some("t"))),
       ColumnReference(ColumnRef(rightCol, Some("s")))
     )
+
+  // `!=` never actually arrives from Spark as a `Comparison("!=", ...)` —
+  // Catalyst always represents it as `Not(EqualTo(...))` (see
+  // SparkPlanAdapter.translateExpr) — but RuleVerifier still understands
+  // it directly, both because the IR is meant to be engine-independent
+  // and to keep these tests reading the way the source SQL would.
+  private def inequalityOn(leftCol: String, rightCol: String) =
+    Comparison(
+      "!=",
+      ColumnReference(ColumnRef(leftCol, Some("t"))),
+      ColumnReference(ColumnRef(rightCol, Some("s")))
+    )
+
+  private def not(expr: com.invaract.ir.Expr) = BooleanExpr("NOT", List(expr))
 
   test("verify returns no violations when no rule is declared") {
     val mutation = RowMutation(updatedColumns = List("id"), delete = DeleteScope.Unconditional)
@@ -116,6 +130,166 @@ class RuleVerifierSpec extends AnyFunSuite {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("a", "b", "c"))))
     val nested = BooleanExpr("AND", List(BooleanExpr("AND", List(equalityOn("a", "a"), equalityOn("b", "b"))), equalityOn("c", "c")))
     val mutation = RowMutation(matchCondition = Some(nested))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition passes via NOT(!=), the double-negation form of an equality") {
+    // NOT (t.id != s.id) is logically identical to t.id = s.id - and since
+    // Spark itself always represents `!=` as Not(EqualTo(...)), this is
+    // literally what Spark's own translated IR looks like for source SQL
+    // written as `ON NOT (t.id != s.id)`.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(not(inequalityOn("id", "id"))))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition passes via NOT(OR(!=, !=)), the De Morgan form of an AND of equalities") {
+    // NOT (t.id != s.id OR t.region != s.region) is De Morgan-equivalent
+    // to t.id = s.id AND t.region = s.region - a genuine double match.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
+    val condition = not(BooleanExpr("OR", List(inequalityOn("id", "id"), inequalityOn("region", "region"))))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition fails via NOT(AND(!=, !=)) - De Morgan only guarantees one side, not both") {
+    // NOT (t.id != s.id AND t.region != s.region) is De Morgan-equivalent
+    // to t.id = s.id OR t.region = s.region - only one side is guaranteed,
+    // the same weaker-guarantee problem a bare OR already fails on.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
+    val condition = not(BooleanExpr("AND", List(inequalityOn("id", "id"), inequalityOn("region", "region"))))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+    assert(violations.head.message.contains("region"))
+  }
+
+  test("merge_condition fails when the equality itself is negated (NOT of an equality is not a match)") {
+    // NOT (t.id = s.id) genuinely means the columns must differ - the
+    // opposite of what merge_condition requires.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(not(equalityOn("id", "id"))))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
+  test("merge_condition handles a triple-negated equality (NOT(NOT(NOT(=))) is still NOT(=))") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(not(not(not(equalityOn("id", "id"))))))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1, "an odd number of NOTs must not be mistaken for a match")
+  }
+
+  test("merge_condition fails when the only equality is inside a CASE WHEN - never an unconditional match") {
+    // t.id = s.id only holds when s.is_active is true - a strictly weaker
+    // guarantee than an unconditional equality, the same problem OR
+    // guards against. Confirms the Set.empty fallback for Conditional
+    // stays that way as this method grows more cases around it.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val caseWhen = Conditional(
+      branches = List((ColumnReference(ColumnRef("is_active", Some("s"))), equalityOn("id", "id"))),
+      elseValue = None
+    )
+    val mutation = RowMutation(matchCondition = Some(caseWhen))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
+  test("merge_condition combines a De Morgan pairing with an ordinary AND-ed equality") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id", "region"))))
+    val condition = BooleanExpr("AND", List(not(inequalityOn("id", "id")), equalityOn("region", "region")))
+    val mutation = RowMutation(matchCondition = Some(condition))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition fails when the condition is a bare, un-negated inequality (!=)") {
+    // A plain t.id != s.id, asserted true with no surrounding NOT, is the
+    // opposite of a match - it guarantees the columns DIFFER. Every other
+    // `!=` case in this suite reaches Comparison("!=", ...) already under
+    // an odd number of NOTs (negated = true); this is the one case that
+    // exercises it un-negated, at the top level.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(inequalityOn("id", "id")))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
+  // --- Target-vs-source qualifier distinction: a genuine cross-side
+  // match requires the two operands' qualifiers to actually differ, not
+  // merely that a comparison mentions the declared column name. ---
+
+  test("merge_condition fails on a same-side comparison: ON t.customer_id = t.customer_id") {
+    // A real, severe copy-paste bug: this condition is a tautology (always
+    // true, matching every row against itself) rather than a genuine
+    // target-to-source match. The old name-only check wrongly accepted
+    // this as satisfying merge_condition: [customer_id].
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id"))))
+    val sameSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("customer_id", Some("t"))),
+      ColumnReference(ColumnRef("customer_id", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(sameSide))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+  }
+
+  test("merge_condition fails on a same-side comparison between two DIFFERENTLY-named target columns") {
+    // t.customer_id = t.region: both declared columns are "referenced",
+    // but neither is genuinely matched against source - both sit on the
+    // target side of a same-side comparison.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("customer_id", "region"))))
+    val sameSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("customer_id", Some("t"))),
+      ColumnReference(ColumnRef("region", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(sameSide))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("customer_id"))
+    assert(violations.head.message.contains("region"))
+  }
+
+  test("merge_condition fails on a same-side comparison even when NOT/De Morgan-wrapped") {
+    // NOT (t.id != t.id) is a tautology under De Morgan too - the same-side
+    // check must apply after polarity resolution, not bypass it.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val sameSideInequality = Comparison(
+      "!=",
+      ColumnReference(ColumnRef("id", Some("t"))),
+      ColumnReference(ColumnRef("id", Some("t")))
+    )
+    val mutation = RowMutation(matchCondition = Some(not(sameSideInequality)))
+    val violations = RuleVerifier.verify(rules, mutation)
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("id"))
+  }
+
+  test("merge_condition still passes on a genuine cross-side match with the SAME alias-derived qualifier names") {
+    // Sanity check that the fix doesn't overcorrect: t.id = s.id (distinct
+    // qualifiers "t"/"s") must still pass, exactly as before.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("merge_condition remains lenient when a comparison operand's qualifier is unknown") {
+    // An unqualified column reference (qualifier = None) can't be proven
+    // same-side or cross-side - stays permissive rather than introduce a
+    // new false negative for a condition this module can't be sure about.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val unqualifiedOnOneSide = Comparison(
+      "=",
+      ColumnReference(ColumnRef("id", None)),
+      ColumnReference(ColumnRef("id", Some("s")))
+    )
+    val mutation = RowMutation(matchCondition = Some(unqualifiedOnOneSide))
     assert(RuleVerifier.verify(rules, mutation).isEmpty)
   }
 

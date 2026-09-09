@@ -1469,13 +1469,48 @@ naming). An extra, non-equality conjunct beyond the declared columns
 flagged — checking more than required was never the failure this rule
 guards against.
 
-Still a structural approximation, not full predicate logic:
-`equalityPairedColumns` doesn't descend into `||`, `NOT`, or `CASE WHEN`
-(no De Morgan-equivalence reasoning), and doesn't distinguish target- from
-source-side qualifiers — two columns on the *same* side compared to each
-other would still count as a pairing. Both are documented, deliberate
-scope limits (see ROADMAP.md's "Full semantic DML verification" item),
-not oversights.
+**`equalityPairedColumns` is De Morgan-/`NOT`-aware, not limited to a flat
+`AND` of bare equalities.** The original version only descended into
+top-level `AND`s — a condition written as `NOT (t.id != s.id)`, logically
+identical to `t.id = s.id`, was wrongly rejected as not establishing a
+pairing at all. This matters in practice, not just in theory: SQL's `!=`
+itself always arrives at this layer as `Not(EqualTo(...))` — Catalyst has
+no native "not equal" comparison node (confirmed via
+`SparkPlanAdapter.translateExpr`'s `Not`/`BinaryComparison` cases) — so a
+`NOT` wrapping one is ordinary territory, not an exotic edge case.
+`RuleVerifier.requiredEqualities(expr, negated)` replaces the old flat
+walk with a polarity-carrying one: `NOT(x)` flips polarity and recurses
+(so a doubly-negated condition resolves back to its un-negated reading
+with no separate special case needed), and `AND`/`OR` swap which one
+"wins" depending on polarity, per De Morgan's laws (asserted-false `AND`
+behaves like asserted-true `OR` — "one side failed, not which, so nothing
+is guaranteed" — and vice versa). `CASE WHEN` still never establishes a
+pairing under either polarity, since the equality it contains only holds
+conditionally, on some rows — the same "not a required condition"
+problem the plain-`OR` case already guarded against, not a gap this
+change needed to close.
+
+**`requiredEqualities` distinguishes target- from source-side
+qualifiers.** The original version counted `t.customer_id = t.region` (a
+same-side comparison — a copy-paste bug like `ON t.customer_id =
+t.customer_id`, which always holds since it matches every row against
+itself) as establishing a pairing, purely because it looked at column
+*names*, not which side each operand came from. `RuleVerifier.
+isCrossSideMatch(a, b)` closes this: a MERGE's `ON` clause only ever
+involves exactly two relations — target and source — so requiring the two
+operands' `ColumnRef.qualifier`s to be both known and *different* is
+sufficient to prove they're genuinely on opposite sides, without needing
+to separately determine which qualifier is target and which is source
+(there's no third relation a third distinct qualifier could belong to).
+When either qualifier is unknown — a real but rare case, since MERGE
+syntax practically always requires resolved target/source columns to be
+qualified (an unqualified same-named column from either side would itself
+be an ambiguous reference Spark rejects at analysis time) — the check
+stays permissive rather than introduce a new false negative for a
+condition this module can't be sure about. Confirmed against a real Delta
+session (`ContractEnforcementRuleSpec`'s "a MERGE INTO whose ON condition
+compares a target column to ITSELF" test): `ON t.id = t.id` is now
+correctly aborted where it previously wrongly executed.
 
 ## Testing
 
