@@ -234,6 +234,22 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     finally spark.conf.unset(ContractEnforcementRule.LocationMapConfKey)
   }
 
+  // java.util.Properties.load treats a bare backslash as the start of an
+  // escape sequence, so writing a raw path via string interpolation (as
+  // opposed to Properties.store, which escapes it) corrupts any Windows
+  // path containing one - e.g. "C:\Users\..." silently loses every
+  // backslash. Building the fixture through a real Properties instance,
+  // the same way a well-behaved config-management tool would, keeps these
+  // tests correct on every OS instead of only the ones whose paths happen
+  // not to contain backslashes.
+  private def writePropertiesFile(path: Path, entries: (String, String)*): Unit = {
+    val props = new java.util.Properties()
+    entries.foreach { case (k, v) => props.setProperty(k, v) }
+    val out = new java.io.FileOutputStream(path.toFile)
+    try props.store(out, null)
+    finally out.close()
+  }
+
   test("resolveContractLocations: a contract with no ref:// locations is unchanged, conf unset") {
     val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "literal/path.parquet"))
     val resolved = ContractEnforcementRule.resolveContractLocations(contract, spark)
@@ -254,7 +270,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("resolveContractLocations: resolves a ref:// output location from spark.invaract.locationMap") {
     val outputPath = scratchDir.resolve("conf_resolved.parquet").toString
     val propsFile = Files.createTempFile(scratchDir, "location-map", ".properties")
-    Files.write(propsFile, s"result-output=$outputPath".getBytes("UTF-8"))
+    writePropertiesFile(propsFile, "result-output" -> outputPath)
 
     val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://result-output"))
     val resolved = withLocationMapConf(propsFile.toString) {
@@ -364,7 +380,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     // resolveContractLocations in isolation.
     val outputPath = scratchDir.resolve("conf_end_to_end.parquet").toString
     val propsFile = Files.createTempFile(scratchDir, "e2e-location-map", ".properties")
-    Files.write(propsFile, s"e2e-output=$outputPath".getBytes("UTF-8"))
+    writePropertiesFile(propsFile, "e2e-output" -> outputPath)
     val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://e2e-output"))
 
     // A plain, unchecked write (activeContract is None outside withContract)

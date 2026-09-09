@@ -34,6 +34,11 @@ object StaticMapLocationResolver {
     * doesn't exist or isn't readable — the same "fail loudly, at setup
     * time" treatment `NotificationConfig.load` and `ContractParser.parseFile`
     * already give their own inputs.
+    *
+    * `java.util.Properties`' own format treats `\` as an escape character,
+    * so a raw Windows path (`C:\data\orders`) needs its backslashes doubled
+    * (`C:\\data\\orders`) or replaced with forward slashes (`C:/data/orders`)
+    * to survive `load` intact.
     */
   def fromPropertiesFile(path: String): StaticMapLocationResolver = {
     val props = new JProperties()

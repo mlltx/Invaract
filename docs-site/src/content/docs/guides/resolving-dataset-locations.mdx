@@ -33,6 +33,13 @@ alongside a contract describing data shape.
 orders-input=s3://prod-bucket/orders/2026-09-09/
 ```
 
+<Aside type="caution" title="Windows paths need escaping in a .properties file">
+`java.util.Properties` treats a backslash as the start of an escape sequence, so a raw
+Windows path like `orders-input=C:\data\orders` silently loses its backslashes when
+loaded. Either double them (`C:\\data\\orders`) or use forward slashes
+(`C:/data/orders`), which Java accepts on Windows just as readily.
+</Aside>
+
 ## Reference it in your contract
 
 ```yaml
