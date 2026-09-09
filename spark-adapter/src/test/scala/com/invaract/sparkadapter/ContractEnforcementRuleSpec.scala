@@ -271,6 +271,86 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("ref://result-output"))
   }
 
+  // resolveVerificationOptions - the same "attachable via spark-submit
+  // --conf, not only a Scala constructor argument" mechanism as
+  // resolveContractLocations above, applied to VerificationOptions's three
+  // Boolean flags. A generic conf helper (unlike withLocationMapConf,
+  // reusable for any key) since these tests set/unset three different keys.
+  private def withConf[T](key: String, value: String)(body: => T): T = {
+    spark.conf.set(key, value)
+    try body
+    finally spark.conf.unset(key)
+  }
+
+  test("resolveVerificationOptions: no conf set leaves options exactly as the caller passed them") {
+    val options = VerificationOptions(rejectUndeclaredInputs = true)
+    assert(ContractEnforcementRule.resolveVerificationOptions(options, spark) == options)
+    assert(ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark) == VerificationOptions())
+  }
+
+  test("resolveVerificationOptions: a conf key of 'false' does not turn its flag on") {
+    val resolved = withConf(ContractEnforcementRule.RejectUndeclaredInputsConfKey, "false") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(!resolved.rejectUndeclaredInputs)
+  }
+
+  test("resolveVerificationOptions: spark.invaract.rejectUndeclaredInputs=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.RejectUndeclaredInputsConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.rejectUndeclaredInputs)
+    // Only this one flag moves - the other two stay at their defaults.
+    assert(!resolved.rejectUndeclaredFields)
+    assert(!resolved.computeFingerprint)
+  }
+
+  test("resolveVerificationOptions: spark.invaract.rejectUndeclaredFields=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.RejectUndeclaredFieldsConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.rejectUndeclaredFields)
+  }
+
+  test("resolveVerificationOptions: spark.invaract.computeFingerprint=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.ComputeFingerprintConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.computeFingerprint)
+  }
+
+  test("resolveVerificationOptions: a flag the caller already set true stays true even if its conf key is unset") {
+    val resolved = ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(computeFingerprint = true), spark)
+    assert(resolved.computeFingerprint)
+  }
+
+  test("forContract end-to-end: rejectUndeclaredFields attached purely via conf rejects a write that would otherwise pass") {
+    // Mirrors the ref:// end-to-end test above: calling rule(spark) directly
+    // rather than standing up a second SparkSession, for the same
+    // documented reason (getOrCreate() mid-suite reuses this suite's
+    // already-active session/extensions).
+    val outputPath = scratchDir.resolve("conf_reject_undeclared.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val contract = parseContract(yaml)
+
+    // A plain, unchecked write with an extra, undeclared column - permitted
+    // by the contract's own default (rejectUndeclaredFields = false), which
+    // is exactly what this test needs to distinguish "conf turned the
+    // stricter check on" from "the write would have failed anyway".
+    val df = spark.range(5).withColumn("doubled", col("id") * 2).withColumn("extra", col("id") + 1)
+    df.write.mode("overwrite").parquet(outputPath)
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    val rule = ContractEnforcementRule.forContract(contract) // options left at every default
+    withConf(ContractEnforcementRule.RejectUndeclaredFieldsConfKey, "true") {
+      intercept[ContractViolationException] {
+        rule(spark)(writePlan)
+      }
+    }
+  }
+
   test("forContract end-to-end: a real write against a ref:// output is resolved via spark.invaract.locationMap") {
     // Same "call the returned function directly, rather than a second
     // SparkSession" approach the "forContract builds a usable check-rule

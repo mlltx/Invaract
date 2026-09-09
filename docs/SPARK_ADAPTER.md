@@ -1360,6 +1360,25 @@ dry-run mode. `DemoJobHarness` itself does no resolution of its own — it
 installs `forContract` exactly the way a real user's job would, which is the
 whole point of the automatic path above.
 
+## VerificationOptions via Spark configuration
+
+The same mechanism above (`forContract`'s own outer closure, run once before
+the first plan is checked) also covers `VerificationOptions`'s three
+`Boolean` flags — `rejectUndeclaredInputs`, `rejectUndeclaredFields`,
+`computeFingerprint` (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14) — the
+first capabilities added under CLAUDE.md's "External Attachability
+Requirement" after location resolution itself. `resolveVerificationOptions`
+overlays three conf keys (`ContractEnforcementRule.RejectUndeclaredInputsConfKey`
+= `spark.invaract.rejectUndeclaredInputs`, `...FieldsConfKey`, and
+`ComputeFingerprintConfKey` = `spark.invaract.computeFingerprint`) onto the
+`options` a caller already passed, via `||` rather than replacement — a
+flag ends up on if either side turns it on, so a platform attaching a
+stricter check via `--conf` can never be silently weakened by code that left
+a flag at its default, and code that deliberately opted in can never be
+silently turned off by a missing conf key. See docs-site's "Fingerprint a
+Transformation's Business Logic" guide's "Enable it" section for the
+user-facing walkthrough of both mechanisms.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s

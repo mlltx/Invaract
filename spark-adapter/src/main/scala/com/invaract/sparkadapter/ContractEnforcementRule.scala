@@ -89,7 +89,8 @@ object ContractEnforcementRule {
     session => {
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
-      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, options, None)
+      val resolvedOptions = resolveVerificationOptions(options, session)
+      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, None)
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -113,7 +114,8 @@ object ContractEnforcementRule {
     session => {
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
-      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
+      val resolvedOptions = resolveVerificationOptions(options, session)
+      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, Some(sink), Some(session.sparkContext.applicationId))
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -150,6 +152,35 @@ object ContractEnforcementRule {
       case None       => NoOpLocationResolver
     }
     ContractLocationResolution.resolve(contract, resolver)
+  }
+
+  /** Spark configuration keys mirroring `VerificationOptions`'s three
+    * `Boolean` flags — the same "attachable via spark-submit --conf, not
+    * only via a Scala constructor argument" reasoning `LocationMapConfKey`
+    * documents applies here too (see CLAUDE.md's "External Attachability
+    * Requirement"). A platform can turn any of these on for a job it
+    * doesn't own the source of with, e.g., `--conf
+    * spark.invaract.rejectUndeclaredFields=true` — no code change needed.
+    */
+  val RejectUndeclaredInputsConfKey = "spark.invaract.rejectUndeclaredInputs"
+  val RejectUndeclaredFieldsConfKey = "spark.invaract.rejectUndeclaredFields"
+  val ComputeFingerprintConfKey = "spark.invaract.computeFingerprint"
+
+  /** Overlays the three conf keys above onto `options` — `||`, not a
+    * replacement: a flag ends up `true` if *either* the caller's own
+    * `VerificationOptions` already set it, or the matching conf key is
+    * `"true"`, so a platform attaching a stricter check via `--conf` can
+    * never be silently weakened by code that left a flag at its default,
+    * and code that deliberately opted in can never be silently turned off
+    * by a conf key's mere absence.
+    */
+  private[sparkadapter] def resolveVerificationOptions(options: VerificationOptions, session: SparkSession): VerificationOptions = {
+    def confFlag(key: String): Boolean = session.conf.getOption(key).exists(_.toBoolean)
+    options.copy(
+      rejectUndeclaredInputs = options.rejectUndeclaredInputs || confFlag(RejectUndeclaredInputsConfKey),
+      rejectUndeclaredFields = options.rejectUndeclaredFields || confFlag(RejectUndeclaredFieldsConfKey),
+      computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey)
+    )
   }
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed

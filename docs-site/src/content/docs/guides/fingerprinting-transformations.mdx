@@ -27,7 +27,37 @@ for what's built today versus what's still future work.
 
 Fingerprinting is off by default — computing one does real work (translating and hashing
 the whole plan) on every check, so it's opt-in the same way
-[`rejectUndeclaredInputs`/`rejectUndeclaredFields`](/reference/violation-types/) are:
+[`rejectUndeclaredInputs`/`rejectUndeclaredFields`](/reference/violation-types/) are. Two
+ways to turn it on, and both work together with everything else already installed:
+
+### Attached externally, via `spark-submit --conf` — no job code changes
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.invaract.computeFingerprint=true \
+  my-real-job.jar
+```
+
+As long as the job already installs Invaract the ordinary way —
+
+```scala
+import com.invaract.sparkadapter.ContractEnforcementRule
+
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+  .getOrCreate()
+```
+
+— that `--conf` is enough: `forContract` reads `spark.invaract.computeFingerprint` off the
+real `SparkSession` at the same moment it reads everything else Spark configuration can
+drive (see [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/) for
+the mechanism in full). A platform team can turn fingerprinting on for a job whose source
+they don't control, the same way they can attach a location map.
+
+### Set explicitly in code
 
 ```scala
 import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
@@ -41,6 +71,14 @@ val spark = SparkSession
   .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract, options)))
   .getOrCreate()
 ```
+
+The two compose: a flag ends up on if *either* side turns it on, so a platform attaching
+`--conf spark.invaract.computeFingerprint=true` can never be silently overridden by code
+that left it at its default, and code that deliberately opted in can never be silently
+turned off by a missing conf key. `rejectUndeclaredInputs`/`rejectUndeclaredFields` follow
+the identical pattern, via `spark.invaract.rejectUndeclaredInputs`/
+`spark.invaract.rejectUndeclaredFields` — see
+[Reference → Violation Types](/reference/violation-types/) for what each one changes.
 
 ## Where the fingerprint shows up
 
