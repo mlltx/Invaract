@@ -101,7 +101,36 @@ intend before treating it as a finished document.
 ## Using it in your own job
 
 Dry-run mode installs the same way as real enforcement — a `SparkSessionExtensions` check
-rule, at session construction time — just with no contract to enforce:
+rule, at session construction time — just with no contract to enforce. Two ways, same as
+[installing the enforcement rule itself](/guides/installing-the-enforcement-rule/):
+
+### Attached externally, via `spark-submit --conf` — no job code changes
+
+```bash
+spark-submit \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.dryRun=true \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  my-job.jar
+```
+
+`spark.invaract.contract` is ignored entirely in this mode — there's no job code here to
+hand an inferred `Contract` to, so `InvaractSparkSessionExtension` logs it at `WARN`
+instead, the same information printed below:
+
+```
+WARN InvaractSparkSessionExtension: Invaract dry-run mode (spark.invaract.dryRun=true):
+inferred contract from this session's real inputs/outputs - copy it into a file, review
+it, and set spark.invaract.contract to it to switch to enforced mode:
+id: inferred_contract
+...
+```
+
+### Called explicitly in code — for a custom callback
+
+Call `ContractEnforcementRule.dryRun` yourself when you want to do something with the
+inferred contract besides logging it — write it to a specific file, publish it somewhere,
+merge it with an existing draft:
 
 ```scala
 import com.invaract.contract.{Contract, ContractParser}
@@ -124,12 +153,13 @@ val spark = SparkSession
 inferredContract.foreach(c => println(ContractParser.write(c)))
 ```
 
-`ContractEnforcementRule.dryRun` never throws and never blocks a write — there's no
-contract to violate. It only calls its callback when the analyzed plan is a write Invaract
-recognizes (see [Connector Support](/reference/connector-support/)); a `.count()`, a plain
-read, or an unrecognized write shape produces nothing. If your job performs more than one
-write, the callback fires once per recognized write — capture the one you want the same
-way the example above does, by overwriting a mutable cell.
+`ContractEnforcementRule.dryRun` never throws and never blocks a write, under either
+mechanism — there's no contract to violate. It only calls its callback (or, in the
+conf-driven path, logs) when the analyzed plan is a write Invaract recognizes (see
+[Connector Support](/reference/connector-support/)); a `.count()`, a plain read, or an
+unrecognized write shape produces nothing. If your job performs more than one write, the
+callback fires once per recognized write — capture the one you want the same way the
+example above does, by overwriting a mutable cell.
 
 ## What it doesn't do
 

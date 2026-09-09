@@ -281,18 +281,26 @@ freely, and neither substitutes for the other: a feature needs the
 conf-driven path to satisfy this requirement at all; the code path is a
 bonus for cases the conf key can't reach, not an alternative way to meet it.
 
-**The one standing exception:** installing Invaract at all still requires
-the one line every job writes —
-`SparkSession.builder().withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))`.
-There is currently no `spark.sql.extensions`-based, fully code-free way to
-install the check rule itself (the way, say, Delta Lake's own
-`spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension` needs no
-caller code at all) — that's a separate, larger architectural question this
-requirement doesn't by itself resolve. This requirement governs every
-capability layered *on top of* that one baseline line, not the baseline
-installation step itself: once a job installs `forContract`, every optional
-capability built on it — this one included, and every one after it — must
-be attachable from outside without touching that job's source again.
+**The baseline installation itself is covered too, not just capabilities
+layered on it.** `InvaractSparkSessionExtension`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)
+installs Invaract with no code at all in the job it's attached to — named
+via `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`,
+the same mechanism Delta Lake's own
+`spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension` uses, reading
+`spark.invaract.contract=<path>` (or `spark.invaract.dryRun=true`, with no
+contract at all) to build the real check rule. See ADR-008 (as amended) in
+ARCHITECTURE.md for how a no-arg-constructor extension class reads
+per-session configuration it isn't handed directly — via the check-rule
+*builder* function it registers, the exact same `SparkSession =>
+LogicalPlan => Unit` shape `forContract` itself already returns, invoked by
+Spark once the real session exists. Every `spark.invaract.*` key documented
+elsewhere in this file composes with it for free, since it calls the same
+`forContract`. `ContractEnforcementRule.forContract`/`.dryRun`, called
+directly in code, remain available for anything the conf-driven path can't
+express — a contract loaded from somewhere `spark.invaract.contract` can't
+name, a resolver `spark.invaract.locationMap` can't express, a custom
+dry-run callback.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only

@@ -320,15 +320,15 @@ example.
   configured entirely through `--conf`) already expect to be attached —
   not a novel pattern invented for this engine.
 
-**What this does not cover:** installing `ContractEnforcementRule.forContract`
-itself is still one line of code every job writes — there is no
-`spark.sql.extensions`-based, fully code-free way to install the check rule
-the way Delta's own extension is installed. That would require Invaract to
-ship its own `SparkSessionExtensions`-provider class nameable via
-`--conf spark.sql.extensions=...`, a materially larger change than any
-single optional capability, and is not something this ADR resolves — only
-every capability built *on top of* that one baseline line is required to be
-externally attachable this way.
+**What this ADR alone does not cover:** installing `ContractEnforcementRule.forContract`
+itself was, at the time this ADR was written, still one line of code every
+job wrote — there was no `spark.sql.extensions`-based, fully code-free way
+to install the check rule the way Delta's own extension is installed. **This
+is now resolved, by ADR-009 below** (`InvaractSparkSessionExtension`) — a
+materially larger change than any single optional capability, which is why
+it's its own ADR rather than folded into this one, but everything this ADR
+describes (optional capabilities reading `SparkConf`) composes with it for
+free, since ADR-009's extension class calls the very same `forContract`.
 
 **Alternative considered:** Configuration only via explicit method
 arguments (`ContractLocationResolution.resolve(contract, resolver)`,
@@ -339,6 +339,63 @@ built at runtime, a future `HttpLocationResolver`'s endpoint/auth), and
 composes freely with the conf-driven path — a location already resolved
 to a literal is simply left alone by the conf-driven pass. But it cannot
 be the *only* mechanism a capability offers, per this ADR.
+
+### ADR-009: A `spark.sql.extensions`-based, fully code-free install path
+
+**Decision:** `InvaractSparkSessionExtension`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)
+installs Invaract with no code at all in the job it's attached to — named
+via `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`,
+the exact mechanism Delta Lake's own
+`spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension` uses.
+`ContractEnforcementRule.forContract`/`.dryRun`, called directly in code,
+remain available for anything the conf-driven path can't express. See
+CLAUDE.md's "External Attachability Requirement" for the rule this
+codifies at the baseline-installation level, closing the one gap ADR-008
+above left open when it was written.
+
+**Rationale:**
+- Spark's `spark.sql.extensions` loader (`SparkSession$.applyExtensions`)
+  instantiates each named class via `getConstructor().newInstance()` — a
+  **public no-arg constructor**, never one taking `SparkSession`. That
+  means `InvaractSparkSessionExtension.apply(extensions: SparkSessionExtensions)`
+  itself never has a `SparkSession` to read `spark.invaract.contract` (or
+  any other conf key) from directly, confirmed against Spark's own source
+  before assuming otherwise.
+- `SparkSessionExtensions.injectCheckRule` is the escape hatch, not a new
+  mechanism: it registers a `SparkSession => LogicalPlan => Unit` builder
+  that Spark itself invokes once a real session using these extensions is
+  being built — the exact same shape, and the exact same "session
+  materializes here" moment, `ContractEnforcementRule.forContract` already
+  returns and relies on (ADR-002, ADR-008). `apply` just calls
+  `extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)`;
+  `checkRuleFor` is where `spark.invaract.contract`/`.dryRun`/
+  `.notifyConfig` are actually read, receiving the real session Spark hands
+  it, needing no mechanism beyond what ADR-002 already established.
+- Auto-wiring a notification sink needed one further step beyond what
+  ADR-008's conf keys do: `SparkAdapterListener` (for `WriteEvent`s) is
+  registered via `session.listenerManager.register(...)`, a call
+  independent of `injectCheckRule` entirely. Since `checkRuleFor` already
+  has the real `session` in hand at the same moment, it registers the
+  listener itself when `spark.invaract.notifyConfig` names a sink that
+  builds successfully — no second Spark extension point (e.g. Spark's own
+  `spark.sql.queryExecutionListeners` conf key, a plausible alternative)
+  needed for this.
+- Dry-run mode's `onInferred: Contract => Unit` callback has no code to
+  call in the conf-driven path — `spark.invaract.dryRun=true` logs the
+  inferred contract at `WARN` instead of invoking a caller-supplied
+  callback, a real (if less rich) default rather than declaring dry-run
+  mode conf-inexpressible. The callback-based `ContractEnforcementRule.dryRun`
+  stays available in code for anything wanting to do more than log.
+
+**Alternative considered:** A `SparkSession`-arg constructor (e.g.
+`class InvaractSparkSessionExtension(session: SparkSession)`), reading conf
+directly in `apply`. **Rejected**: not merely a style choice — Spark's
+loader only ever calls `getConstructor()` (no-arg), so a class requiring a
+`SparkSession` argument fails to instantiate via `spark.sql.extensions` at
+all, throwing at session-construction time. Confirmed against Spark's own
+`applyExtensions` source, not assumed from the constructor signature Delta
+happens to use.
 
 ## Module Dependencies
 

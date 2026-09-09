@@ -7,8 +7,7 @@ sidebar:
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-This guide wires Invaract into a Spark job of your own, the same way the example job in
-this repository (`runner/DemoJobHarness`) does it. `ContractEnforcementRule` is a
+This guide wires Invaract into a Spark job of your own. `ContractEnforcementRule` is a
 `SparkSessionExtensions` check rule: it runs on the analyzed logical plan of every query
 your session executes, and throws before Spark runs a query that violates the active
 contract.
@@ -17,6 +16,64 @@ contract.
 `SparkSessionExtensions` are configured when a `SparkSession` is built and can't be
 changed afterward. Load your contract *before* building the session.
 </Aside>
+
+## Two ways to install it, depending on who's in control
+
+### 1. Attached externally, via `spark-submit --conf` — no job code changes
+
+`InvaractSparkSessionExtension` installs Invaract with **no code at all** in the job it's
+attached to — the same way Delta Lake's own
+`io.delta.sql.DeltaSparkSessionExtension` is attached, purely via `spark.sql.extensions`:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  my-real-job.jar
+```
+
+`MyRealJob`'s source never imports anything from `com.invaract.contract`/
+`com.invaract.sparkadapter` — a platform team, an orchestration framework, or a CI
+pipeline can attach contract enforcement to a job whose source they don't own at all.
+This is what closes CLAUDE.md's "External Attachability Requirement" for the one
+capability every other one sits on top of: installing Invaract itself.
+
+Every other `spark.invaract.*` conf key documented elsewhere in these docs — the location
+resolver, `computeFingerprint`/`rejectUndeclaredInputs`/`rejectUndeclaredFields`, a
+notification sink — composes with this for free, since `InvaractSparkSessionExtension`
+just calls the same `forContract` those are built into.
+
+<Steps>
+
+1. ### Dry-run mode, without a contract at all
+
+   Set `spark.invaract.dryRun=true` instead of `spark.invaract.contract` to run
+   [dry-run mode](/guides/dry-run-mode/) — no contract needed, nothing ever blocked. With
+   no job code to hand an inferred contract to, it's logged at `WARN` instead:
+
+   ```bash
+   spark-submit \
+     --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+     --conf spark.invaract.dryRun=true \
+     ...
+   ```
+
+2. ### Publishing notification events too
+
+   Add `spark.invaract.notifyConfig=<path>` — see
+   [Configure a Notification Sink](/guides/notification-sinks/#1-attached-externally-via-spark-submit-conf--no-job-code-changes)
+   for the full mechanism.
+
+</Steps>
+
+### 2. Called explicitly in code
+
+Call `ContractEnforcementRule.forContract` yourself when you need something the
+conf-driven path can't express — a contract loaded from somewhere `spark.invaract.contract`
+can't name, a custom `LocationResolver`, or any other programmatic control:
 
 <Steps>
 
@@ -56,6 +113,11 @@ changed afterward. Load your contract *before* building the session.
    installed.
 
 </Steps>
+
+`runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — uses
+this explicit-code path, since it exists to demonstrate `ContractEnforcementRule` and
+`SparkAdapterListener` directly; see CLAUDE.md's "What's the product, and what's the test
+harness."
 
 ## Handling a rejection
 

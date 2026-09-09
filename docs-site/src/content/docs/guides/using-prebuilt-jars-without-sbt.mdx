@@ -14,12 +14,22 @@ dependency coordinate. This guide covers the alternative: prebuilt jars, publish
 GitHub Release assets, that you download and register into your own build instead of
 building Invaract from source yourself.
 
-<Aside type="note" title="You still need these at compile time">
-[Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) is installed by
-calling `ContractEnforcementRule.forContract(...)` when you build your `SparkSession` —
-there's no config-only, code-free way to enable it. That means your own job's code
-compiles against `com.invaract.contract`/`com.invaract.sparkadapter` classes, so you need
-these jars available to your build at compile time, not only on Spark's runtime classpath.
+<Aside type="tip" title="Using InvaractSparkSessionExtension? You can skip most of this guide">
+If you're installing Invaract [purely via `spark-submit --conf`](/guides/installing-the-enforcement-rule/#1-attached-externally-via-spark-submit-conf--no-job-code-changes)
+(`spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`), your
+job's own source never imports anything from `com.invaract.contract`/
+`com.invaract.sparkadapter` at all — there's nothing for a Maven/Gradle/whatever build to
+compile against. Download the `invaract-spark-adapter` jar (below), pass it to
+`spark-submit --jars` alongside `--conf spark.sql.extensions=...` and
+`--conf spark.invaract.contract=...`, and you're done — skip straight to
+[Run with `spark-submit`](#4-run-with-spark-submit-passing-all-four-jars), no
+`install:install-file`/`pom.xml` changes needed at all.
+
+The rest of this guide is for the
+[explicit-code path](/guides/installing-the-enforcement-rule/#2-called-explicitly-in-code):
+calling `ContractEnforcementRule.forContract(...)` yourself means your job's code compiles
+against `com.invaract.contract`/`com.invaract.sparkadapter` classes, so you need these
+jars available to your build at compile time too, not only on Spark's runtime classpath.
 </Aside>
 
 ## Where the jars come from

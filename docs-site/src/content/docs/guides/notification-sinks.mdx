@@ -21,28 +21,58 @@ later, only once Spark reports a write actually completed. See
 two separate mechanisms.
 </Aside>
 
+## Write a sink configuration file
+
+Sink configuration lives in a plain `.properties` file, separate from your contract — it's
+a deployment concern (an endpoint, a file path, possibly credentials), not something that
+belongs alongside a contract describing data shape.
+
+```properties
+# notify.properties
+sink.enabled=true
+sink.class=com.invaract.sparkadapter.notification.FileNotificationSink
+sink.property.path=/var/log/invaract/events.jsonl
+```
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `sink.enabled` | No (default `false`) | Master switch. Every other key is ignored when this is `false`. |
+| `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
+| `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
+
+## Two ways to wire it up, depending on who's in control
+
+### 1. Attached externally, via `spark-submit --conf` — no job code changes
+
+If your job is installed with [`InvaractSparkSessionExtension`](/guides/installing-the-enforcement-rule/#1-attached-externally-via-spark-submit-conf--no-job-code-changes)
+(the zero-code path), a sink attaches the same way:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  --conf spark.invaract.notifyConfig=/path/to/notify.properties \
+  my-real-job.jar
+```
+
+`InvaractSparkSessionExtension` builds the sink from `notify.properties` itself, passes it
+to `forContract` for `ContractValidationEvent`s, **and** registers a `SparkAdapterListener`
+on the same session for `WriteEvent`s — the two-call wiring Step 2/3 below do by hand,
+done automatically. Nothing in `MyRealJob`'s source needs to import
+`com.invaract.sparkadapter.notification` at all.
+
+### 2. Called explicitly in code
+
+If your job installs Invaract by calling `ContractEnforcementRule.forContract` directly
+(the [explicit-code path](/guides/installing-the-enforcement-rule/#2-called-explicitly-in-code)),
+wire the sink up the same way:
+
 <Steps>
 
-1. ### Write a sink configuration file
-
-   Sink configuration lives in a plain `.properties` file, separate from your contract —
-   it's a deployment concern (an endpoint, a file path, possibly credentials), not
-   something that belongs alongside a contract describing data shape.
-
-   ```properties
-   # notify.properties
-   sink.enabled=true
-   sink.class=com.invaract.sparkadapter.notification.FileNotificationSink
-   sink.property.path=/var/log/invaract/events.jsonl
-   ```
-
-   | Key | Required | Meaning |
-   | --- | --- | --- |
-   | `sink.enabled` | No (default `false`) | Master switch. Every other key is ignored when this is `false`. |
-   | `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
-   | `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
-
-2. ### Load it and build the sink before constructing your session
+1. ### Load it and build the sink before constructing your session
 
    ```scala
    import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
@@ -56,7 +86,7 @@ two separate mechanisms.
    at setup time" treatment a malformed contract gets, so a typo doesn't silently produce
    zero events forever.
 
-3. ### Pass it to the enforcement rule and the listener
+2. ### Pass it to the enforcement rule and the listener
 
    ```scala
    import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
@@ -82,6 +112,11 @@ two separate mechanisms.
    completes publishes a `WriteEvent` once `SparkAdapterListener` observes it.
 
 </Steps>
+
+Use this path when you need something `spark.invaract.notifyConfig` can't express on its
+own — building the sink from something other than a `.properties` file, or wrapping it in
+[`SummarizingNotificationSink`/`RetryingNotificationSink`](#summaries-and-failure-only-filtering)
+before it's ever registered.
 
 ## What an event looks like
 

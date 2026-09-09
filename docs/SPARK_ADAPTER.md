@@ -1379,6 +1379,55 @@ silently turned off by a missing conf key. See docs-site's "Fingerprint a
 Transformation's Business Logic" guide's "Enable it" section for the
 user-facing walkthrough of both mechanisms.
 
+## Fully code-free installation: `InvaractSparkSessionExtension`
+
+Everything above still assumed a job's own code calls
+`ContractEnforcementRule.forContract`/`.dryRun` at least once, to install
+the check rule at all. `InvaractSparkSessionExtension`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)
+removes even that: named via `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`,
+the same mechanism Delta Lake's own `spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension`
+uses, Spark instantiates it (via a public no-arg constructor — see
+ARCHITECTURE.md's ADR-009 for why the class *cannot* take a `SparkSession`
+constructor argument, confirmed against Spark's own `applyExtensions`
+source) and applies it while a session is being built.
+
+A no-arg constructor means `apply(extensions: SparkSessionExtensions)`
+itself never has a `SparkSession` to read configuration from — it just
+calls `extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)`,
+registering the exact `SparkSession => LogicalPlan => Unit` shape
+`forContract` itself already returns. Spark invokes `checkRuleFor` once the
+real session materializes, and that's where every `spark.invaract.*` key
+is actually read:
+
+- `spark.invaract.contract` (required, unless `spark.invaract.dryRun=true`)
+  — parsed via `ContractParser.parseFile`, then passed straight to
+  `forContract`, which performs its own conf-driven resolution
+  (`spark.invaract.locationMap`, `.rejectUndeclaredInputs`, etc.) exactly
+  as it would for a caller invoking it directly — `checkRuleFor` adds no
+  duplicate handling for any of those.
+- `spark.invaract.dryRun=true` — installs `ContractEnforcementRule.dryRun`
+  instead, ignoring `spark.invaract.contract` entirely (not merely leaving
+  it unvalidated). With no job code to hand the inferred `Contract` to,
+  the default callback logs it at `WARN` via SLF4J.
+- `spark.invaract.notifyConfig=<path>` — builds a sink the same way
+  `NotificationSinkFactory.create(NotificationConfig.load(path))` already
+  does, uses it for `forContract`'s sink-overload (`ContractValidationEvent`s),
+  **and** registers a `SparkAdapterListener` on the same session (for
+  `WriteEvent`s) — the two-call wiring a job's own code would otherwise
+  perform by hand (docs-site's "Configure a Notification Sink" guide),
+  done here since `checkRuleFor` already has the real session in hand at
+  the same moment.
+
+See `InvaractSparkSessionExtensionSpec` for the real proof: a
+`SparkSession` built with only `.config("spark.sql.extensions", ...)` +
+`.config("spark.invaract.contract", ...)` — no `ContractEnforcementRule`
+import anywhere in the test's own session-construction code — genuinely
+enforces a PASS and a FAIL, runs dry-run mode, fails closed with a clear
+message when neither conf key is set, and (with `spark.invaract.notifyConfig`
+also set) publishes both `ContractValidationEvent` and `WriteEvent` to a
+real `FileNotificationSink`.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s
