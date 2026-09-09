@@ -1320,25 +1320,45 @@ inspects it.
 - `ContractLocationResolution.resolve(contract, resolver)` is a pure
   `Contract => Contract` transform — no changes to `contract`'s object model,
   since it's just `Dataset.copy(location = ...)` wherever `LocationRef.id`
-  finds a reference. Call it unconditionally, right after
-  `ContractParser.parseFile`/`.parse` and before the `SparkSession` is built —
-  the same "before session construction" constraint `ContractEnforcementRule`
-  itself is under, since a `ref://` has to already be a literal by the time
-  the check rule (or `StructuralVerifier`, `ContractInference`,
-  `SensitivityLineage` — every one of which already assumes a literal) is
-  installed or consulted. `NoOpLocationResolver`, the default when no real
-  resolver is configured, exists so calling `resolve` is always safe: a
+  finds a reference. `NoOpLocationResolver`, the resolver used whenever no
+  real one is configured, exists so calling `resolve` is always safe: a
   contract with no `ref://` locations passes through unchanged either way, and
   one that does declare a reference fails immediately with a clear message
   naming the reference — before Spark starts — rather than a confusing
   `MissingInput`/`OutputLocationMismatch` downstream against the literal
   string `"ref://..."`.
 
+Two ways to trigger that resolution, both ending at the same
+`ContractLocationResolution.resolve` call:
+
+- **Automatic, via Spark configuration** — `ContractEnforcementRule.forContract`
+  (both overloads) calls `resolveContractLocations` internally, reading a
+  `spark.invaract.locationMap` key (`ContractEnforcementRule.LocationMapConfKey`)
+  off the `SparkSession` its outer closure already receives, before the first
+  plan is ever checked — see that method's own doc for exactly why that
+  moment is available and correct (`VersionCompatibilityGuard.check(session)`
+  already runs there, once, for the same reason). This is deliberate: it's
+  what makes location resolution something a platform or orchestration
+  framework can attach via `spark-submit --conf
+  spark.invaract.locationMap=<path>` to *any* job that already installs
+  `forContract` — no change to that job's own source at all. Unset, it
+  behaves exactly as `NoOpLocationResolver` above describes.
+- **Explicit, in code** — call `ContractLocationResolution.resolve` yourself,
+  with any `LocationResolver`, before passing the contract to `forContract`.
+  Needed for a resolver the conf key can't express (a mapping assembled at
+  runtime, a future `HttpLocationResolver`'s endpoint/auth configuration).
+  The two compose freely: a location already resolved to a literal has
+  nothing left for `forContract`'s own conf-driven pass to find.
+
 See docs-site's "Resolve Dataset Locations at Runtime" guide for the
-user-facing walkthrough, and `dev/location-provider-demo` for this proven
-against a real Spark job (`demo/contracts/invaract_output_location_ref.yaml`
-+ `demo/location-map.properties`), the same way `dev/dry-run` proves dry-run
-mode.
+user-facing walkthrough of both, and `dev/location-provider-demo` for the
+conf-driven path proven against a real Spark job
+(`demo/contracts/invaract_output_location_ref.yaml` +
+`demo/location-map.properties`, via `SPARK_SUBMIT_EXTRA_CONF` — see
+`dev/lib.sh`'s `run_demo_job_harness`), the same way `dev/dry-run` proves
+dry-run mode. `DemoJobHarness` itself does no resolution of its own — it
+installs `forContract` exactly the way a real user's job would, which is the
+whole point of the automatic path above.
 
 ## DML rule verification
 

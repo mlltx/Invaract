@@ -53,9 +53,10 @@ demo data, or just the fifth to turn on notification without changing anything e
 `--dry-run` anywhere in the argument list (before or after the positional ones) to run
 with no contract at all — see
 [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). Add
-`--location-map=<path>` to resolve any `ref://` locations in the contract from that
-`.properties` file before verification runs — see
-[Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/).
+`--conf spark.invaract.locationMap=<path>` (a Spark configuration flag, positioned before
+the jar like `--jars` above — not an argument to `DemoJobHarness` itself) to resolve any
+`ref://` locations the contract declares from that `.properties` file before verification
+runs — see [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/).
 
 ## Exit codes
 
