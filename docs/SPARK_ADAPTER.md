@@ -1289,6 +1289,57 @@ dependency at all, so it's fully and directly testable with a real
 without needing a Spark job to prove anything a Spark job wouldn't
 actually exercise differently.
 
+## Location resolution
+
+`com.invaract.sparkadapter.location`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/location/`) answers a
+different question again: where does a contract's declared `location` actually
+come from? Every check above assumes `Dataset.location` is already a real,
+literal path or table name — but a contract author sometimes wants to avoid
+hardcoding one (a location that varies per environment, or moves over time),
+without the contract itself needing to change. `ref://<id>` is that
+indirection: an ordinary, valid `location` string as far as `contract`'s own
+`ContractParser`/`ContractValidator`/JSON Schema are concerned (parsing and
+validation see a non-empty string either way — this package adds no changes
+to `contract` at all), resolved to a literal location by
+`ContractLocationResolution.resolve` before anything in this module ever
+inspects it.
+
+- `LocationRef.id(location)` recognizes the `ref://<id>` shape — `None` for a
+  literal, `Some(id)` for a reference. `ref://` was chosen specifically to
+  avoid colliding with any real storage scheme a `location` might otherwise
+  hold (`s3://`, `hdfs://`, `abfss://`, `gs://`, `dbfs://`, `jdbc:...`), so a
+  resolved literal can never be mistaken for an unresolved reference.
+- `LocationResolver` is the one-method extension point (`resolve(id): String`,
+  throwing `LocationResolutionException` on failure) a real id-to-location
+  mapping implements. `StaticMapLocationResolver` — built `fromPropertiesFile`
+  (the same `.properties` convention `NotificationConfig` already uses) or
+  `fromArgs` (`"id=location"` strings) — is the resolver shipped today; an
+  `HttpLocationResolver` calling out to a path registry is a planned follow-up
+  behind the same trait.
+- `ContractLocationResolution.resolve(contract, resolver)` is a pure
+  `Contract => Contract` transform — no changes to `contract`'s object model,
+  since it's just `Dataset.copy(location = ...)` wherever `LocationRef.id`
+  finds a reference. Call it unconditionally, right after
+  `ContractParser.parseFile`/`.parse` and before the `SparkSession` is built —
+  the same "before session construction" constraint `ContractEnforcementRule`
+  itself is under, since a `ref://` has to already be a literal by the time
+  the check rule (or `StructuralVerifier`, `ContractInference`,
+  `SensitivityLineage` — every one of which already assumes a literal) is
+  installed or consulted. `NoOpLocationResolver`, the default when no real
+  resolver is configured, exists so calling `resolve` is always safe: a
+  contract with no `ref://` locations passes through unchanged either way, and
+  one that does declare a reference fails immediately with a clear message
+  naming the reference — before Spark starts — rather than a confusing
+  `MissingInput`/`OutputLocationMismatch` downstream against the literal
+  string `"ref://..."`.
+
+See docs-site's "Resolve Dataset Locations at Runtime" guide for the
+user-facing walkthrough, and `dev/location-provider-demo` for this proven
+against a real Spark job (`demo/contracts/invaract_output_location_ref.yaml`
++ `demo/location-map.properties`), the same way `dev/dry-run` proves dry-run
+mode.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s

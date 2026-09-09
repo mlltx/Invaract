@@ -1,0 +1,131 @@
+---
+title: Resolve Dataset Locations at Runtime
+description: Reference an external id instead of hardcoding a dataset's location, resolved before verification runs.
+sidebar:
+  order: 10
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A contract's `location:` is normally a literal path or table name — but a literal is
+fragile if the real location changes between environments, or moves over time (a
+partition scheme change, a table rename) and every contract that references it has to be
+edited by hand. `ref://<id>` lets a dataset's location be resolved at job startup instead
+— from a fixed mapping you supply, or (in the future) an HTTP call to a path registry —
+so the contract itself never needs to change when the underlying location does.
+
+<Aside type="note" title="No changes to contract or ContractParser">
+`ref://<id>` is just an ordinary, valid `location` string as far as `ContractParser` and
+the JSON Schema are concerned — parsing and validation are unaffected. Resolution happens
+afterward, in `spark-adapter`, and replaces it with a real literal location before
+anything downstream (`ContractEnforcementRule`, `StructuralVerifier`, ...) ever sees it.
+</Aside>
+
+<Steps>
+
+1. ### Write a location map
+
+   A plain `.properties` file, `id=location` per line — the same convention
+   [notification sink configuration](/guides/notification-sinks/) already uses, since an
+   id-to-location mapping is a deployment-environment concern, not something that
+   belongs alongside a contract describing data shape.
+
+   ```properties
+   # location-map.properties
+   orders-input=s3://prod-bucket/orders/2026-09-09/
+   ```
+
+2. ### Reference it in your contract
+
+   ```yaml
+   inputs:
+     - name: orders
+       location: ref://orders-input
+       format: parquet
+       schema:
+         fields:
+           - name: order_id
+             type: string
+             required: true
+             nullable: false
+   ```
+
+   `ref://` was chosen deliberately: no real storage scheme a `location` might otherwise
+   hold (`s3://`, `hdfs://`, `abfss://`, `gs://`, `dbfs://`, `jdbc:...`) starts with it, so
+   a resolved literal can never be mistaken for an unresolved reference.
+
+3. ### Resolve before building your SparkSession
+
+   ```scala
+   import com.invaract.contract.ContractParser
+   import com.invaract.sparkadapter.location.{ContractLocationResolution, StaticMapLocationResolver}
+
+   val resolver = StaticMapLocationResolver.fromPropertiesFile("location-map.properties")
+   val contract = ContractLocationResolution.resolve(
+     ContractParser.parseFile("contract.yaml"),
+     resolver
+   )
+   ```
+
+   This has to happen before the `SparkSession` is built, the same as loading the
+   contract itself — `ContractEnforcementRule` is installed at session-construction time
+   and can't be changed afterward (see
+   [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/)), so any
+   `ref://` in the contract must already be resolved to a literal location by then.
+
+</Steps>
+
+## A contract with no `ref://` locations is unaffected
+
+`ContractLocationResolution.resolve` is safe to call unconditionally, whether or not your
+contract uses this feature at all — a literal `location` passes through untouched. This
+is also why calling it is worth doing even in a job that never expects to use `ref://`:
+without it, a contract that accidentally does contain one fails later, downstream, as a
+confusing `MissingInput`/`OutputLocationMismatch` violation against the literal string
+`"ref://..."` instead of a clear error naming the reference.
+
+## Unresolvable references fail closed, before Spark starts
+
+If an id has no entry in your location map — or you never configured a resolver at all —
+resolution throws `LocationResolutionException` immediately, before the `SparkSession` is
+built:
+
+```scala
+// no resolver configured, but the contract declares one
+ContractLocationResolution.resolve(contract, NoOpLocationResolver)
+// throws: Contract declares 'ref://orders-input' but no LocationResolver was configured for this job.
+```
+
+There's no silent fallback to a stale or placeholder location — a misconfigured job
+never gets far enough to write anything.
+
+## Passing a location map as an argument, not a file
+
+`StaticMapLocationResolver.fromArgs` builds the same resolver from `"id=location"`
+strings directly, useful when a job already receives its configuration as arguments
+rather than a file it has to read:
+
+```scala
+val resolver = StaticMapLocationResolver.fromArgs(Seq("orders-input=s3://prod-bucket/orders/2026-09-09/"))
+```
+
+## Trying it against the demo job
+
+```bash
+./dev/location-provider-demo
+```
+
+Runs `DemoJobHarness` against `demo/contracts/invaract_output_location_ref.yaml` (whose
+input is `location: ref://demo-input`) and `demo/location-map.properties`
+(`demo-input=demo/input/sample.csv`), via the `--location-map=<path>` argument
+`DemoJobHarness` recognizes anywhere in its argument list — the same way `--dry-run`
+already does (see [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/)).
+See [Direct `spark-submit` invocation](/reference/dev-commands/#direct-spark-submit-invocation)
+for the equivalent raw command.
+
+## What's next
+
+`HttpLocationResolver` — resolving an id via an outbound call to a path registry, rather
+than a fixed local mapping — is a planned follow-up behind the same `LocationResolver`
+trait; nothing above changes once it lands. See [Contract Format](/reference/contract-format/)
+for the full `location`/`ref://` field reference.

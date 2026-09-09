@@ -362,6 +362,11 @@ would be.
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
 │   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
+│   │   ├── location/                  # Resolves a contract's ref://<id> locations
+│   │   │   ├── LocationRef.scala            # recognizes the ref://<id> shape
+│   │   │   ├── LocationResolver.scala       # trait + NoOpLocationResolver
+│   │   │   ├── StaticMapLocationResolver.scala # .properties/args-backed resolver
+│   │   │   └── ContractLocationResolution.scala # Contract => Contract, pre-SparkSession
 │   │   └── notification/              # Notification sinks (opt-in event publishing)
 │   │       ├── NotificationEvent.scala      # ContractValidationEvent / WriteEvent
 │   │       ├── NotificationSink.scala       # trait + Logging/File/Http/HadoopFs built-ins

@@ -7,6 +7,7 @@ import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
+import com.invaract.sparkadapter.location.{ContractLocationResolution, NoOpLocationResolver, StaticMapLocationResolver}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -52,7 +53,14 @@ object DemoJobHarness {
     // before positional parsing, so `--dry-run` can precede or follow the
     // other arguments equally.
     val dryRun = args.contains("--dry-run")
-    val positional = args.filterNot(_ == "--dry-run")
+    // Optional and off by default, the same shape as --dry-run: recognized
+    // anywhere in `args`, carrying a value rather than being a bare flag
+    // (see com.invaract.sparkadapter.location's package for the mechanism
+    // it configures - StaticMapLocationResolver.fromPropertiesFile). Omitting
+    // this flag changes nothing about a contract with no `ref://` locations;
+    // it only matters for one that declares them.
+    val locationMapArg = args.find(_.startsWith("--location-map="))
+    val positional = args.filterNot(a => a == "--dry-run" || a.startsWith("--location-map="))
 
     val inputPath = positional.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = positional.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
@@ -80,7 +88,21 @@ object DemoJobHarness {
       // configuration can't be changed on an already-built session). In
       // dry-run mode there is no contract to load at all — contractPath is
       // ignored entirely, not just left unvalidated.
-      val contract = if (dryRun) None else Some(ContractParser.parseFile(contractPath))
+      //
+      // ContractLocationResolution.resolve runs unconditionally (not only
+      // when --location-map is given): a contract with no ref:// locations
+      // is unaffected either way, and NoOpLocationResolver (the default
+      // when no location map was configured) turns one that does declare a
+      // reference into a clear, actionable failure right here — before the
+      // SparkSession exists — rather than a confusing MissingInput/
+      // OutputLocationMismatch downstream against the literal string
+      // "ref://...". See com.invaract.sparkadapter.location's package.
+      val locationResolver = locationMapArg
+        .map(arg => StaticMapLocationResolver.fromPropertiesFile(arg.stripPrefix("--location-map=")))
+        .getOrElse(NoOpLocationResolver)
+      val contract =
+        if (dryRun) None
+        else Some(ContractLocationResolution.resolve(ContractParser.parseFile(contractPath), locationResolver))
 
       // Off by default (empty path -> NotificationConfig.disabled ->
       // NotificationSinkFactory.create returns None): see

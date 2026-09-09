@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    Same contract as invaract_output.yaml, except the input dataset's
+    location is a ref://<id> reference instead of a literal path - resolved
+    at job startup via com.invaract.sparkadapter.location.ContractLocationResolution
+    before verification runs, using the id -> location mapping in
+    demo/location-map.properties (demo-input=demo/input/sample.csv). See
+    dev/location-provider-demo and docs-site's "Resolve Dataset Locations at
+    Runtime" guide.
+
+inputs:
+  - name: orders
+    location: ref://demo-input
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+          sensitivityTags: [internal]
+
+outputs:
+  - name: result
+    location: demo/output/result.parquet
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo
