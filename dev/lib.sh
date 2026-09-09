@@ -63,12 +63,29 @@ run_demo_job_harness() {
   # assumption already.
   local extra="${*:5}"
 
+  # Optional space-separated spark.<key>=<value> pairs (set via the
+  # SPARK_SUBMIT_EXTRA_CONF env var before calling this function - see
+  # dev/location-provider-demo for the one caller that uses it), applied
+  # as spark-submit --conf entries, or -D<key>=<value> JVM system
+  # properties under the plain `java -cp` fallback below - SparkConf's
+  # default constructor reads spark.*-prefixed system properties the
+  # exact same way spark-submit's own --conf sets them, so both paths
+  # configure the resulting SparkSession identically. Empty by default:
+  # dev/test, dev/regression, and dev/dry-run never set this, so it
+  # changes nothing for them.
+  local conf_args="" java_props=""
+  for kv in ${SPARK_SUBMIT_EXTRA_CONF:-}; do
+    conf_args="$conf_args --conf $kv"
+    java_props="$java_props -D$kv"
+  done
+
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
       spark-submit.cmd \
         --class com.invaract.runner.DemoJobHarness \
         --master local[*] \
         --jars "$PLUGIN_JAR" \
+        $conf_args \
         "$RUNNER_JAR" \
         "$input" "$output" "$report" $contract $extra
   elif command -v spark-submit &> /dev/null; then
@@ -76,6 +93,7 @@ run_demo_job_harness() {
       --class com.invaract.runner.DemoJobHarness \
       --master local[*] \
       --jars "$PLUGIN_JAR" \
+      $conf_args \
       "$RUNNER_JAR" \
       "$input" "$output" "$report" $contract $extra
   else
@@ -87,6 +105,7 @@ run_demo_job_harness() {
     local cp_sep=":"
     [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && cp_sep=";"
     java \
+      $java_props \
       --add-opens=java.base/java.lang=ALL-UNNAMED \
       --add-opens=java.base/java.lang.invoke=ALL-UNNAMED \
       --add-opens=java.base/java.lang.reflect=ALL-UNNAMED \

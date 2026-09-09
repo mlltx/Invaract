@@ -220,6 +220,93 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // com.invaract.sparkadapter.location - resolving a contract's ref://<id>
+  // locations from Spark configuration (spark.invaract.locationMap), so a
+  // platform invoking spark-submit can attach this without the job's own
+  // code calling ContractLocationResolution.resolve itself. resolveContractLocations
+  // is exercised directly (widened to private[sparkadapter] for exactly this,
+  // matching verifyOrThrow's own doc) against the suite's real SparkSession,
+  // setting/unsetting the conf key around each case so it can't leak into
+  // any other test sharing this session.
+  private def withLocationMapConf[T](path: String)(body: => T): T = {
+    spark.conf.set(ContractEnforcementRule.LocationMapConfKey, path)
+    try body
+    finally spark.conf.unset(ContractEnforcementRule.LocationMapConfKey)
+  }
+
+  test("resolveContractLocations: a contract with no ref:// locations is unchanged, conf unset") {
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "literal/path.parquet"))
+    val resolved = ContractEnforcementRule.resolveContractLocations(contract, spark)
+    assert(resolved == contract)
+  }
+
+  test("resolveContractLocations: a contract with no ref:// locations is unchanged even with a conf set") {
+    val propsFile = Files.createTempFile(scratchDir, "unused-location-map", ".properties")
+    Files.write(propsFile, "some-id=some/path".getBytes("UTF-8"))
+
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "literal/path.parquet"))
+    val resolved = withLocationMapConf(propsFile.toString) {
+      ContractEnforcementRule.resolveContractLocations(contract, spark)
+    }
+    assert(resolved == contract)
+  }
+
+  test("resolveContractLocations: resolves a ref:// output location from spark.invaract.locationMap") {
+    val outputPath = scratchDir.resolve("conf_resolved.parquet").toString
+    val propsFile = Files.createTempFile(scratchDir, "location-map", ".properties")
+    Files.write(propsFile, s"result-output=$outputPath".getBytes("UTF-8"))
+
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://result-output"))
+    val resolved = withLocationMapConf(propsFile.toString) {
+      ContractEnforcementRule.resolveContractLocations(contract, spark)
+    }
+    assert(resolved.outputs.map(_.location) == List(outputPath))
+  }
+
+  test("resolveContractLocations: a ref:// location with the conf unset fails closed with a clear message") {
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://result-output"))
+    val ex = intercept[com.invaract.sparkadapter.location.LocationResolutionException] {
+      ContractEnforcementRule.resolveContractLocations(contract, spark)
+    }
+    assert(ex.getMessage.contains("ref://result-output"))
+  }
+
+  test("forContract end-to-end: a real write against a ref:// output is resolved via spark.invaract.locationMap") {
+    // Same "call the returned function directly, rather than a second
+    // SparkSession" approach the "forContract builds a usable check-rule
+    // function directly" test below uses, and for the same documented
+    // reason: getOrCreate() mid-suite would just reuse this suite's
+    // already-active session/extensions, silently never installing a
+    // different check rule. forContract's own outer `session => {...}`
+    // closure is exactly where resolveContractLocations runs (see its
+    // doc) - calling `rule(spark)` with the conf key set on the real
+    // shared session genuinely exercises that read, not just
+    // resolveContractLocations in isolation.
+    val outputPath = scratchDir.resolve("conf_end_to_end.parquet").toString
+    val propsFile = Files.createTempFile(scratchDir, "e2e-location-map", ".properties")
+    Files.write(propsFile, s"e2e-output=$outputPath".getBytes("UTF-8"))
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://e2e-output"))
+
+    // A plain, unchecked write (activeContract is None outside withContract)
+    // - only to capture a real analyzed write plan at outputPath, the same
+    // off-the-shelf-plan technique the sink-overload test above uses.
+    val df = spark.range(5).withColumn("doubled", col("id") * 2)
+    df.write.mode("overwrite").parquet(outputPath)
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    // The conf has to be set around invoking `rule(spark)` specifically,
+    // not around building `rule` itself: forContract(contract) merely
+    // returns the SparkSession => LogicalPlan => Unit function value -
+    // its body (where resolveContractLocations actually reads
+    // session.conf) only runs once that function is applied to a session.
+    val rule = ContractEnforcementRule.forContract(contract)
+    withLocationMapConf(propsFile.toString) {
+      rule(spark)(writePlan) // must not throw: ref://e2e-output resolved to outputPath, matching the real write's actual location
+    }
+  }
+
   // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14 - the Spark contract
   // extension surfacing a computed fingerprint through its two existing
   // output channels, opt-in via VerificationOptions.computeFingerprint.

@@ -10,9 +10,10 @@ echo "Invaract Location Provider Demo"
 echo "======================================"
 echo ""
 echo "Runs the demo job against a contract whose input location is a"
-echo "ref://<id> reference (demo/contracts/invaract_output_location_ref.yaml)"
-echo "instead of a literal path, resolved at startup via"
-echo "StaticMapLocationResolver against demo/location-map.properties - see"
+echo "ref://<id> reference (demo/contracts/invaract_output_location_ref.yaml),"
+echo "resolved purely via spark-submit --conf spark.invaract.locationMap=..."
+echo "- no change to DemoJobHarness's own code, the same way a platform or"
+echo "orchestration framework would attach this to any real job. See"
 echo "com.invaract.sparkadapter.location's package and docs-site's 'Resolve"
 echo "Dataset Locations at Runtime' guide."
 echo ""
@@ -40,8 +41,9 @@ echo "  Location map: demo/location-map.properties"
 echo "  Report: $REPORT_FILE"
 echo ""
 
-run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
-  "demo/contracts/invaract_output_location_ref.yaml" "--location-map=demo/location-map.properties"
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.locationMap=demo/location-map.properties" \
+  run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
+  "demo/contracts/invaract_output_location_ref.yaml"
 
 if [ ! -f "$REPORT_FILE" ]; then
   echo -e "${RED}✗ Report file not generated${NC}"
