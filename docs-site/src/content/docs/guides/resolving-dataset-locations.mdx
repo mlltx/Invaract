@@ -120,8 +120,50 @@ input is `location: ref://demo-input`) and `demo/location-map.properties`
 (`demo-input=demo/input/sample.csv`), via the `--location-map=<path>` argument
 `DemoJobHarness` recognizes anywhere in its argument list — the same way `--dry-run`
 already does (see [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/)).
+
+The script wraps this real `spark-submit` invocation — copy it directly to run the same
+thing by hand (confirmed against a real run, not just described):
+
+```bash
+spark-submit \
+  --class com.invaract.runner.DemoJobHarness \
+  --master local[*] \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
+  runner/target/scala-2.12/invaract-spark-runner.jar \
+  demo/input/sample.csv \
+  demo/output/result.parquet \
+  demo/output/report.json \
+  demo/contracts/invaract_output_location_ref.yaml \
+  --location-map=demo/location-map.properties
+```
+
+<Aside type="note" title="No extra --jars entry, and no --conf">
+`--location-map=<path>` is a plain **application argument** — parsed by `DemoJobHarness`'s
+own `main(args)`, positioned after the runner jar like every other argument here, not a
+Spark `--conf` property. Spark itself never sees or interprets it; only your own `main`
+method does.
+
+The `location` package's classes need no separate `--jars` entry either: they compile
+straight into `spark-adapter`'s own jar, and — since `runner`'s assembly bundles
+`spark-adapter` via `unmanagedJars` — into `runner`'s jar above too, via `sbt-assembly`'s
+ordinary dependency bundling, the same way `com.invaract.fingerprint`'s classes already
+ride along for free (see CLAUDE.md's "Build Artifacts and Outputs"). Confirmed directly:
+`unzip -l` on a real build shows `com/invaract/sparkadapter/location/*.class` inside both
+jars.
+</Aside>
+
+<Aside type="caution" title="--location-map is DemoJobHarness's own convenience, not an Invaract convention">
+Invaract itself has no opinion on how *your* job's `main` decides which `LocationResolver`
+to build, or where the location-map path comes from — a CLI argument, a `--conf`, an
+environment variable, something hardcoded. `--location-map` only exists because
+`DemoJobHarness` (the example harness, not the engine — see CLAUDE.md's "What's the
+product, and what's the test harness") chose to parse it that way. Your own job calls
+`StaticMapLocationResolver`/`ContractLocationResolution` directly in code (see the Steps
+above) — wire the path in however fits your job's own argument-parsing.
+</Aside>
+
 See [Direct `spark-submit` invocation](/reference/dev-commands/#direct-spark-submit-invocation)
-for the equivalent raw command.
+for the equivalent command without `--location-map` (a literal-only contract).
 
 ## What's next
 
