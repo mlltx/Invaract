@@ -149,13 +149,21 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
 
     val eventsFile = scratchDir.resolve("events.jsonl")
     val notifyPropsFile = Files.createTempFile(scratchDir, "notify", ".properties")
-    Files.write(
-      notifyPropsFile,
-      s"""sink.enabled=true
-         |sink.class=com.invaract.sparkadapter.notification.FileNotificationSink
-         |sink.property.path=$eventsFile
-         |""".stripMargin.getBytes("UTF-8")
-    )
+    // java.util.Properties.load treats a bare backslash as the start of an
+    // escape sequence, so interpolating eventsFile's raw path into the file
+    // bytes corrupts it on Windows (a Windows temp path is full of them) -
+    // the sink then silently writes somewhere other than eventsFile, and
+    // this test's own read of eventsFile never finds it. Properties.store
+    // escapes it correctly, the same fix applied to
+    // ContractEnforcementRuleSpec's location-map fixtures for the same
+    // reason.
+    val notifyProps = new java.util.Properties()
+    notifyProps.setProperty("sink.enabled", "true")
+    notifyProps.setProperty("sink.class", "com.invaract.sparkadapter.notification.FileNotificationSink")
+    notifyProps.setProperty("sink.property.path", eventsFile.toString)
+    val notifyPropsOut = new java.io.FileOutputStream(notifyPropsFile.toFile)
+    try notifyProps.store(notifyPropsOut, null)
+    finally notifyPropsOut.close()
 
     val spark = buildSession(
       InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
