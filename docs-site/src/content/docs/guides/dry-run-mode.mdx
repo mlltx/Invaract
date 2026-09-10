@@ -101,10 +101,8 @@ intend before treating it as a finished document.
 ## Using it in your own job
 
 Dry-run mode installs the same way as real enforcement — a `SparkSessionExtensions` check
-rule, at session construction time — just with no contract to enforce. Two ways, same as
-[installing the enforcement rule itself](/guides/installing-the-enforcement-rule/):
-
-### Attached externally, via `spark-submit --conf` — no job code changes
+rule, at session construction time — just with no contract to enforce. Attach it the same
+way [installing the enforcement rule itself](/guides/installing-the-enforcement-rule/) does:
 
 ```bash
 spark-submit \
@@ -126,40 +124,21 @@ id: inferred_contract
 ...
 ```
 
-### Called explicitly in code — for a custom callback
+## Need a custom callback?
 
 Call `ContractEnforcementRule.dryRun` yourself when you want to do something with the
 inferred contract besides logging it — write it to a specific file, publish it somewhere,
-merge it with an existing draft:
-
-```scala
-import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.sparkadapter.ContractEnforcementRule
-import org.apache.spark.sql.SparkSession
-
-var inferredContract: Option[Contract] = None
-
-val spark = SparkSession
-  .builder()
-  .appName("MyJob")
-  .master("local[*]")
-  .withExtensions(_.injectCheckRule(
-    ContractEnforcementRule.dryRun(contract => inferredContract = Some(contract))
-  ))
-  .getOrCreate()
-
-// ... your job's write happens here, exactly as it would without Invaract installed ...
-
-inferredContract.foreach(c => println(ContractParser.write(c)))
-```
+merge it with an existing draft. See [Install and Configure Invaract Explicitly in
+Code](/guides/calling-invaract-explicitly/#infer-a-contract-with-a-custom-callback).
 
 `ContractEnforcementRule.dryRun` never throws and never blocks a write, under either
 mechanism — there's no contract to violate. It only calls its callback (or, in the
 conf-driven path, logs) when the analyzed plan is a write Invaract recognizes (see
 [Connector Support](/reference/connector-support/)); a `.count()`, a plain read, or an
 unrecognized write shape produces nothing. If your job performs more than one write, the
-callback fires once per recognized write — capture the one you want the same way the
-example above does, by overwriting a mutable cell.
+callback fires once per recognized write — capture the one you want by overwriting a
+mutable cell, the same way [the explicit-code example](/guides/calling-invaract-explicitly/#infer-a-contract-with-a-custom-callback)
+does.
 
 ## What it doesn't do
 

@@ -59,9 +59,7 @@ inputs:
 hold (`s3://`, `hdfs://`, `abfss://`, `gs://`, `dbfs://`, `jdbc:...`) starts with it, so a
 resolved literal can never be mistaken for an unresolved reference.
 
-## Two ways to resolve it, depending on who's in control
-
-### 1. Attached externally, via `spark-submit --conf` — no job code changes
+## Attach it via `spark-submit --conf`
 
 `ContractEnforcementRule.forContract` resolves `ref://` locations **automatically**,
 reading a `spark.invaract.locationMap` Spark configuration key at the moment it's
@@ -106,32 +104,15 @@ way `com.invaract.fingerprint`'s classes already ride along for free (see CLAUDE
 `com/invaract/sparkadapter/location/*.class` inside `spark-adapter`'s jar.
 </Aside>
 
-### 2. Called explicitly in code — for a resolver `--conf` can't express
+## Need a resolver `--conf` can't express?
 
 Call `ContractLocationResolution.resolve` yourself before passing the contract to
 `forContract` when you need something the built-in `spark.invaract.locationMap` mechanism
 doesn't cover — a mapping assembled at runtime, or a resolver reading from somewhere other
-than a `.properties` file:
-
-```scala
-import com.invaract.contract.ContractParser
-import com.invaract.sparkadapter.ContractEnforcementRule
-import com.invaract.sparkadapter.location.{ContractLocationResolution, StaticMapLocationResolver}
-
-val resolver = StaticMapLocationResolver.fromPropertiesFile("location-map.properties")
-// or: StaticMapLocationResolver.fromArgs(Seq("orders-input=s3://prod-bucket/orders/2026-09-09/"))
-val contract = ContractLocationResolution.resolve(
-  ContractParser.parseFile("contract.yaml"),
-  resolver
-)
-val spark = SparkSession.builder()
-  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
-  .getOrCreate()
-```
-
-The two mechanisms compose freely — a location this call already resolved to a literal is
-simply left alone by `forContract`'s own conf-driven pass, since there's no `ref://` left
-in it to find.
+than a `.properties` file. See [Install and Configure Invaract Explicitly in
+Code](/guides/calling-invaract-explicitly/#resolve-dataset-locations). The two mechanisms
+compose freely — a location that call already resolved to a literal is simply left alone by
+`forContract`'s own conf-driven pass, since there's no `ref://` left in it to find.
 
 ## A contract with no `ref://` locations is unaffected
 

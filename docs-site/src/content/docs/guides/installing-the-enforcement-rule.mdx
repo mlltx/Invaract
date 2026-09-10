@@ -17,9 +17,7 @@ contract.
 changed afterward. Load your contract *before* building the session.
 </Aside>
 
-## Two ways to install it, depending on who's in control
-
-### 1. Attached externally, via `spark-submit --conf` — no job code changes
+## Attach it via `spark-submit --conf`
 
 `InvaractSparkSessionExtension` installs Invaract with **no code at all** in the job it's
 attached to — the same way Delta Lake's own
@@ -64,67 +62,28 @@ just calls the same `forContract` those are built into.
 2. ### Publishing notification events too
 
    Add `spark.invaract.notifyConfig=<path>` — see
-   [Configure a Notification Sink](/guides/notification-sinks/#1-attached-externally-via-spark-submit-conf--no-job-code-changes)
+   [Configure a Notification Sink](/guides/notification-sinks/#attach-it-via-spark-submit---conf)
    for the full mechanism.
 
 </Steps>
 
-### 2. Called explicitly in code
+## Need more control?
 
-Call `ContractEnforcementRule.forContract` yourself when you need something the
-conf-driven path can't express — a contract loaded from somewhere `spark.invaract.contract`
-can't name, a custom `LocationResolver`, or any other programmatic control:
-
-<Steps>
-
-1. ### Parse your contract
-
-   ```scala
-   import com.invaract.contract.ContractParser
-
-   val contract = ContractParser.parseFile("contracts/my_contract.yaml")
-   ```
-
-2. ### Install the check rule when you build the session
-
-   ```scala
-   import com.invaract.sparkadapter.ContractEnforcementRule
-   import org.apache.spark.sql.SparkSession
-
-   val spark = SparkSession
-     .builder()
-     .appName("MyJob")
-     .master("local[*]")
-     .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
-     .getOrCreate()
-   ```
-
-   From this point on, every write your job attempts is checked against `contract` before
-   it executes. A violation throws `ContractViolationException` — before any output is
-   created — with a human-readable explanation of what the contract expected, what the
-   plan contained, and how to fix it (see
-   [Your First Contract](/getting-started/first-contract/) for a real example of
-   that message).
-
-3. ### Run your job as usual
-
-   Nothing else about how you write your transformation changes. If your job's actual
-   write matches the contract, it proceeds exactly as it would without Invaract
-   installed.
-
-</Steps>
+Call `ContractEnforcementRule.forContract` yourself when you need something the conf-driven
+path can't express — a contract loaded from somewhere `spark.invaract.contract` can't name,
+a custom `LocationResolver`, or any other programmatic control. See [Install and Configure
+Invaract Explicitly in Code](/guides/calling-invaract-explicitly/#install-the-enforcement-rule).
 
 `runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — installs
-a plain contract the same way `MyRealJob` above does: purely via the conf-driven path (option
-1), the same one ["Your First Contract"](/getting-started/first-contract/) walks through. It
-falls back to this explicit-code path only for the two cases the conf-driven mechanism
-structurally can't express: dry-run mode, where it needs a custom callback to put the
-inferred contract into its own report (not just log it), and a configured notification sink,
-where it needs the same sink instance shared between the check rule and its own
-`SparkAdapterListener` to tally one `JobSummaryEvent` — see [Configure a Notification
-Sink](/guides/notification-sinks/) and [Infer a Starting Contract with Dry-Run
-Mode](/guides/dry-run-mode/). See CLAUDE.md's "What's the product, and what's the test
-harness."
+a plain contract the same way `MyRealJob` above does: purely via `spark-submit --conf`, the
+same path ["Your First Contract"](/getting-started/first-contract/) walks through. It falls
+back to explicit code only for the two cases the conf-driven mechanism structurally can't
+express: dry-run mode, where it needs a custom callback to put the inferred contract into
+its own report (not just log it), and a configured notification sink, where it needs the
+same sink instance shared between the check rule and its own `SparkAdapterListener` to tally
+one `JobSummaryEvent` — see [Configure a Notification Sink](/guides/notification-sinks/) and
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). See CLAUDE.md's "What's
+the product, and what's the test harness."
 
 ## Handling a rejection
 

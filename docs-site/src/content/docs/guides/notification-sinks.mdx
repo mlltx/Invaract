@@ -40,11 +40,9 @@ sink.property.path=/var/log/invaract/events.jsonl
 | `sink.class` | Yes, when enabled | Fully-qualified class name of a `NotificationSink` implementation with a public no-arg constructor. |
 | `sink.property.<name>` | Depends on the sink | Passed to that sink's `configure` as `<name> -> value`, prefix stripped. `FileNotificationSink` requires `sink.property.path`. |
 
-## Two ways to wire it up, depending on who's in control
+## Attach it via `spark-submit --conf`
 
-### 1. Attached externally, via `spark-submit --conf` — no job code changes
-
-If your job is installed with [`InvaractSparkSessionExtension`](/guides/installing-the-enforcement-rule/#1-attached-externally-via-spark-submit-conf--no-job-code-changes)
+If your job is installed with [`InvaractSparkSessionExtension`](/guides/installing-the-enforcement-rule/#attach-it-via-spark-submit---conf)
 (the zero-code path), a sink attaches the same way:
 
 ```bash
@@ -64,59 +62,14 @@ on the same session for `WriteEvent`s — the two-call wiring Step 2/3 below do 
 done automatically. Nothing in `MyRealJob`'s source needs to import
 `com.invaract.sparkadapter.notification` at all.
 
-### 2. Called explicitly in code
+## Need something `spark.invaract.notifyConfig` can't express?
 
-If your job installs Invaract by calling `ContractEnforcementRule.forContract` directly
-(the [explicit-code path](/guides/installing-the-enforcement-rule/#2-called-explicitly-in-code)),
-wire the sink up the same way:
-
-<Steps>
-
-1. ### Load it and build the sink before constructing your session
-
-   ```scala
-   import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
-
-   val notifyConfig = NotificationConfig.load("notify.properties")
-   val sink = NotificationSinkFactory.create(notifyConfig) // None if sink.enabled=false
-   ```
-
-   A misconfigured sink (an unresolvable class, a class with no no-arg constructor, a
-   sink that rejects its own properties) throws immediately here — the same "fail loudly,
-   at setup time" treatment a malformed contract gets, so a typo doesn't silently produce
-   zero events forever.
-
-2. ### Pass it to the enforcement rule and the listener
-
-   ```scala
-   import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
-   import org.apache.spark.sql.SparkSession
-
-   val irListener = new SparkAdapterListener(sink, Some(contract))
-
-   val spark = SparkSession
-     .builder()
-     .appName("MyJob")
-     .master("local[*]")
-     .withExtensions(_.injectCheckRule(sink match {
-       case Some(s) => ContractEnforcementRule.forContract(contract, VerificationOptions(), s)
-       case None    => ContractEnforcementRule.forContract(contract)
-     }))
-     .getOrCreate()
-
-   spark.listenerManager.register(irListener)
-   ```
-
-   From this point on, every check `ContractEnforcementRule` performs publishes a
-   `ContractValidationEvent` to your sink — PASS or FAIL — and every write Spark actually
-   completes publishes a `WriteEvent` once `SparkAdapterListener` observes it.
-
-</Steps>
-
-Use this path when you need something `spark.invaract.notifyConfig` can't express on its
-own — building the sink from something other than a `.properties` file, or wrapping it in
+If your job installs Invaract by calling `ContractEnforcementRule.forContract` directly,
+wire the sink up the same way — building it from something other than a `.properties` file,
+or wrapping it in
 [`SummarizingNotificationSink`/`RetryingNotificationSink`](#summaries-and-failure-only-filtering)
-before it's ever registered.
+before it's ever registered. See [Install and Configure Invaract Explicitly in
+Code](/guides/calling-invaract-explicitly/#wire-a-notification-sink).
 
 ## What an event looks like
 

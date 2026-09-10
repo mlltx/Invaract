@@ -27,10 +27,8 @@ for what's built today versus what's still future work.
 
 Fingerprinting is off by default — computing one does real work (translating and hashing
 the whole plan) on every check, so it's opt-in the same way
-[`rejectUndeclaredInputs`/`rejectUndeclaredFields`](/reference/violation-types/) are. Two
-ways to turn it on, and both work together with everything else already installed:
-
-### Attached externally, via `spark-submit --conf` — no job code changes
+[`rejectUndeclaredInputs`/`rejectUndeclaredFields`](/reference/violation-types/) are. Turn
+it on via `spark-submit --conf`, the same as everything else already installed:
 
 ```bash
 spark-submit \
@@ -57,21 +55,10 @@ drive (see [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-loca
 the mechanism in full). A platform team can turn fingerprinting on for a job whose source
 they don't control, the same way they can attach a location map.
 
-### Set explicitly in code
+## Need to set it explicitly in code?
 
-```scala
-import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
-
-val options = VerificationOptions(computeFingerprint = true)
-
-val spark = SparkSession
-  .builder()
-  .appName("MyJob")
-  .master("local[*]")
-  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract, options)))
-  .getOrCreate()
-```
-
+Pass a `VerificationOptions(computeFingerprint = true)` to `ContractEnforcementRule.forContract`
+yourself — see [Install and Configure Invaract Explicitly in Code](/guides/calling-invaract-explicitly/#set-verification-options--fingerprinting-and-undeclared-inputfield-checks).
 The two compose: a flag ends up on if *either* side turns it on, so a platform attaching
 `--conf spark.invaract.computeFingerprint=true` can never be silently overridden by code
 that left it at its default, and code that deliberately opted in can never be silently
