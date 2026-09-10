@@ -7,8 +7,7 @@ sidebar:
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-This guide wires Invaract into a Spark job of your own, the same way the example job in
-this repository (`runner/DemoJobHarness`) does it. `ContractEnforcementRule` is a
+This guide wires Invaract into a Spark job of your own. `ContractEnforcementRule` is a
 `SparkSessionExtensions` check rule: it runs on the analyzed logical plan of every query
 your session executes, and throws before Spark runs a query that violates the active
 contract.
@@ -18,44 +17,73 @@ contract.
 changed afterward. Load your contract *before* building the session.
 </Aside>
 
+## Attach it via `spark-submit --conf`
+
+`InvaractSparkSessionExtension` installs Invaract with **no code at all** in the job it's
+attached to — the same way Delta Lake's own
+`io.delta.sql.DeltaSparkSessionExtension` is attached, purely via `spark.sql.extensions`:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  my-real-job.jar
+```
+
+`MyRealJob`'s source never imports anything from `com.invaract.contract`/
+`com.invaract.sparkadapter` — a platform team, an orchestration framework, or a CI
+pipeline can attach contract enforcement to a job whose source they don't own at all.
+This is what closes CLAUDE.md's "External Attachability Requirement" for the one
+capability every other one sits on top of: installing Invaract itself.
+
+Every other `spark.invaract.*` conf key documented elsewhere in these docs — the location
+resolver, `computeFingerprint`/`rejectUndeclaredInputs`/`rejectUndeclaredFields`, a
+notification sink — composes with this for free, since `InvaractSparkSessionExtension`
+just calls the same `forContract` those are built into.
+
 <Steps>
 
-1. ### Parse your contract
+1. ### Dry-run mode, without a contract at all
 
-   ```scala
-   import com.invaract.contract.ContractParser
+   Set `spark.invaract.dryRun=true` instead of `spark.invaract.contract` to run
+   [dry-run mode](/guides/dry-run-mode/) — no contract needed, nothing ever blocked. With
+   no job code to hand an inferred contract to, it's logged at `WARN` instead:
 
-   val contract = ContractParser.parseFile("contracts/my_contract.yaml")
+   ```bash
+   spark-submit \
+     --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+     --conf spark.invaract.dryRun=true \
+     ...
    ```
 
-2. ### Install the check rule when you build the session
+2. ### Publishing notification events too
 
-   ```scala
-   import com.invaract.sparkadapter.ContractEnforcementRule
-   import org.apache.spark.sql.SparkSession
-
-   val spark = SparkSession
-     .builder()
-     .appName("MyJob")
-     .master("local[*]")
-     .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
-     .getOrCreate()
-   ```
-
-   From this point on, every write your job attempts is checked against `contract` before
-   it executes. A violation throws `ContractViolationException` — before any output is
-   created — with a human-readable explanation of what the contract expected, what the
-   plan contained, and how to fix it (see
-   [Your First Contract](/getting-started/first-contract/) for a real example of
-   that message).
-
-3. ### Run your job as usual
-
-   Nothing else about how you write your transformation changes. If your job's actual
-   write matches the contract, it proceeds exactly as it would without Invaract
-   installed.
+   Add `spark.invaract.notifyConfig=<path>` — see
+   [Configure a Notification Sink](/guides/notification-sinks/#attach-it-via-spark-submit---conf)
+   for the full mechanism.
 
 </Steps>
+
+## Need more control?
+
+Call `ContractEnforcementRule.forContract` yourself when you need something the conf-driven
+path can't express — a contract loaded from somewhere `spark.invaract.contract` can't name,
+a custom `LocationResolver`, or any other programmatic control. See [Install and Configure
+Invaract Explicitly in Code](/guides/calling-invaract-explicitly/#install-the-enforcement-rule).
+
+`runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — installs
+a plain contract the same way `MyRealJob` above does: purely via `spark-submit --conf`, the
+same path ["Your First Contract"](/getting-started/first-contract/) walks through. It falls
+back to explicit code only for the two cases the conf-driven mechanism structurally can't
+express: dry-run mode, where it needs a custom callback to put the inferred contract into
+its own report (not just log it), and a configured notification sink, where it needs the
+same sink instance shared between the check rule and its own `SparkAdapterListener` to tally
+one `JobSummaryEvent` — see [Configure a Notification Sink](/guides/notification-sinks/) and
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/). See CLAUDE.md's "What's
+the product, and what's the test harness."
 
 ## Handling a rejection
 

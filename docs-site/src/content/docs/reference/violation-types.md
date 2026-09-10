@@ -12,6 +12,14 @@ next step, not just a restatement of the problem), and — where relevant — th
 [View Verification Results](/guides/viewing-results/)) and in the four-part
 explanation `ContractEnforcementRule` prints when it aborts a write.
 
+`rejectUndeclaredInputs`/`rejectUndeclaredFields` below are `VerificationOptions` flags,
+off by default — set explicitly in code or, to attach either one to a job without changing
+its source, via `spark-submit --conf spark.invaract.rejectUndeclaredInputs=true`/
+`spark.invaract.rejectUndeclaredFields=true`. See
+[Fingerprint a Transformation's Business Logic](/guides/fingerprinting-transformations/#enable-it)
+for both mechanisms worked through in full (it documents `computeFingerprint`, the third
+flag in the same case class, the identical way).
+
 ## Structural violations — inputs
 
 | Type | Meaning |

@@ -1,0 +1,174 @@
+---
+title: Resolve Dataset Locations at Runtime
+description: Reference an external id instead of hardcoding a dataset's location, resolved before verification runs.
+sidebar:
+  order: 10
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A contract's `location:` is normally a literal path or table name — but a literal is
+fragile if the real location changes between environments, or moves over time (a
+partition scheme change, a table rename) and every contract that references it has to be
+edited by hand. `ref://<id>` lets a dataset's location be resolved at job startup instead
+— from a fixed mapping, or (in the future) an HTTP call to a path registry — so the
+contract itself never needs to change when the underlying location does.
+
+<Aside type="note" title="No changes to contract or ContractParser">
+`ref://<id>` is just an ordinary, valid `location` string as far as `ContractParser` and
+the JSON Schema are concerned — parsing and validation are unaffected. Resolution happens
+afterward, in `spark-adapter`, and replaces it with a real literal location before
+anything downstream (`StructuralVerifier` and everything else) ever sees it.
+</Aside>
+
+## Write a location map
+
+A plain `.properties` file, `id=location` per line — the same convention
+[notification sink configuration](/guides/notification-sinks/) already uses, since an
+id-to-location mapping is a deployment-environment concern, not something that belongs
+alongside a contract describing data shape.
+
+```properties
+# location-map.properties
+orders-input=s3://prod-bucket/orders/2026-09-09/
+```
+
+<Aside type="caution" title="Windows paths need escaping in a .properties file">
+`java.util.Properties` treats a backslash as the start of an escape sequence, so a raw
+Windows path like `orders-input=C:\data\orders` silently loses its backslashes when
+loaded. Either double them (`C:\\data\\orders`) or use forward slashes
+(`C:/data/orders`), which Java accepts on Windows just as readily.
+</Aside>
+
+## Reference it in your contract
+
+```yaml
+inputs:
+  - name: orders
+    location: ref://orders-input
+    format: parquet
+    schema:
+      fields:
+        - name: order_id
+          type: string
+          required: true
+          nullable: false
+```
+
+`ref://` was chosen deliberately: no real storage scheme a `location` might otherwise
+hold (`s3://`, `hdfs://`, `abfss://`, `gs://`, `dbfs://`, `jdbc:...`) starts with it, so a
+resolved literal can never be mistaken for an unresolved reference.
+
+## Attach it via `spark-submit --conf`
+
+`ContractEnforcementRule.forContract` resolves `ref://` locations **automatically**,
+reading a `spark.invaract.locationMap` Spark configuration key at the moment it's
+installed. This is deliberate: it's what lets a platform team, orchestration framework,
+or CI pipeline attach location resolution to *any* job that already installs Invaract —
+without touching that job's source at all:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.invaract.locationMap=/path/to/location-map.properties \
+  my-real-job.jar
+```
+
+Nothing in `com.example.MyRealJob` needs to know this flag exists. As long as it installs
+Invaract the ordinary way —
+
+```scala
+import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.ContractEnforcementRule
+
+val contract = ContractParser.parseFile("contract.yaml") // location: ref://orders-input, unresolved
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+  .getOrCreate()
+```
+
+— the `--conf` above is enough on its own. `forContract`'s own outer closure runs once,
+with the real `SparkSession` already in hand, before any plan is checked; that's exactly
+where it reads `spark.invaract.locationMap` and resolves `ref://orders-input` to a literal
+before the first check ever runs. See
+[Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) for the rest of
+that one-time setup.
+
+<Aside type="tip" title="No extra --jars entry either">
+The `location` package's classes need no separate `--jars` entry: they compile straight
+into `spark-adapter`'s own jar via `sbt-assembly`'s ordinary dependency bundling, the same
+way `com.invaract.fingerprint`'s classes already ride along for free (see CLAUDE.md's
+"Build Artifacts and Outputs"). Confirmed directly: `unzip -l` on a real build shows
+`com/invaract/sparkadapter/location/*.class` inside `spark-adapter`'s jar.
+</Aside>
+
+## Need a resolver `--conf` can't express?
+
+Call `ContractLocationResolution.resolve` yourself before passing the contract to
+`forContract` when you need something the built-in `spark.invaract.locationMap` mechanism
+doesn't cover — a mapping assembled at runtime, or a resolver reading from somewhere other
+than a `.properties` file. See [Install and Configure Invaract Explicitly in
+Code](/guides/calling-invaract-explicitly/#resolve-dataset-locations). The two mechanisms
+compose freely — a location that call already resolved to a literal is simply left alone by
+`forContract`'s own conf-driven pass, since there's no `ref://` left in it to find.
+
+## A contract with no `ref://` locations is unaffected
+
+Both mechanisms are safe unconditionally, whether or not your contract uses this feature
+at all — a literal `location` passes through untouched either way. This is also why
+`forContract` always attempts resolution, not only when `spark.invaract.locationMap` is
+set: without it, a contract that accidentally does contain a `ref://` would fail later,
+downstream, as a confusing `MissingInput`/`OutputLocationMismatch` violation against the
+literal string `"ref://..."`, instead of a clear error naming the reference.
+
+## Unresolvable references fail closed, before the first check runs
+
+If an id has no entry in the location map — or `spark.invaract.locationMap` was never set
+and no explicit resolver was called either — resolution throws
+`LocationResolutionException` immediately:
+
+```
+Contract declares 'ref://orders-input' but no LocationResolver was configured for this job.
+```
+
+There's no silent fallback to a stale or placeholder location — a misconfigured job never
+gets far enough to write anything.
+
+## Trying it against the demo job
+
+```bash
+./dev/location-provider-demo
+```
+
+Runs `DemoJobHarness` — installed exactly like `MyRealJob` above, with no
+resolution code of its own — against `demo/contracts/invaract_output_location_ref.yaml`
+(whose input is `location: ref://demo-input`), resolved purely via
+`spark-submit --conf spark.invaract.locationMap=demo/location-map.properties`
+(`demo-input=demo/input/sample.csv`). The script wraps this real command — confirmed
+against a real run, not just described:
+
+```bash
+spark-submit \
+  --class com.invaract.runner.DemoJobHarness \
+  --master local[*] \
+  --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar \
+  --conf spark.invaract.locationMap=demo/location-map.properties \
+  runner/target/scala-2.12/invaract-spark-runner.jar \
+  demo/input/sample.csv \
+  demo/output/result.parquet \
+  demo/output/report.json \
+  demo/contracts/invaract_output_location_ref.yaml
+```
+
+See [Direct `spark-submit` invocation](/reference/dev-commands/#direct-spark-submit-invocation)
+for the equivalent command against a literal-only contract, with no `--conf` needed at all.
+
+## What's next
+
+`HttpLocationResolver` — resolving an id via an outbound call to a path registry, rather
+than a fixed local mapping — is a planned follow-up behind the same `LocationResolver`
+trait; nothing above changes once it lands, for either mechanism. See
+[Contract Format](/reference/contract-format/) for the full `location`/`ref://` field
+reference.

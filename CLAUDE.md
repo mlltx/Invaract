@@ -247,6 +247,68 @@ later PR flips `mimaPreviousArtifacts` to the new `com.invaract` coordinate and 
 transitional filter, so future comparisons run against the new namespace's own baseline
 instead of the pre-rename one forever.
 
+## External Attachability Requirement
+
+Any new opt-in engine capability — a new verification knob, a new resolution
+mechanism, anything a job can turn on or configure — **MUST** be attachable
+by something that isn't the job's own source code, not only by an explicit
+Scala API call a developer writes into their job.
+
+Concretely: a platform team, an orchestration framework, or a CI pipeline
+has to be able to turn the capability on — or point it at a real value, a
+path, a mapping, an endpoint — purely through `spark-submit`'s own
+configuration surface (`--conf key=value`), against a job whose source code
+they don't own and won't be changing. A feature that only works via a Scala
+method call a developer must add to their own `main` fails this requirement,
+even if it's well-designed and well-tested: it's real, but it isn't
+something anyone but the job's own author can turn on, and a real deployment
+is exactly the case where the platform operating a job and the team that
+wrote it are different people.
+
+**Worked example:** `ContractEnforcementRule.forContract`'s `ref://`
+location resolution (docs/SPARK_ADAPTER.md's "Location resolution"
+section). It reads a `spark.invaract.locationMap` key off the real
+`SparkSession` its own outer closure already receives, at the one moment —
+session construction, before any plan is checked — that's both correct and
+available; see that method's own doc, and ADR-008 in ARCHITECTURE.md for why
+that moment exists at all. A platform attaches this with
+`spark-submit --conf spark.invaract.locationMap=<path>` against *any* job
+that already installs `forContract`, with no change to that job's source.
+An explicit `ContractLocationResolution.resolve(...)` call in code remains
+available too, for a resolver the conf key can't express (a mapping built at
+runtime, a future `HttpLocationResolver`'s endpoint/auth) — the two compose
+freely, and neither substitutes for the other: a feature needs the
+conf-driven path to satisfy this requirement at all; the code path is a
+bonus for cases the conf key can't reach, not an alternative way to meet it.
+
+**The baseline installation itself is covered too, not just capabilities
+layered on it.** `InvaractSparkSessionExtension`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)
+installs Invaract with no code at all in the job it's attached to — named
+via `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`,
+the same mechanism Delta Lake's own
+`spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension` uses, reading
+`spark.invaract.contract=<path>` (or `spark.invaract.dryRun=true`, with no
+contract at all) to build the real check rule. See ADR-008 (as amended) in
+ARCHITECTURE.md for how a no-arg-constructor extension class reads
+per-session configuration it isn't handed directly — via the check-rule
+*builder* function it registers, the exact same `SparkSession =>
+LogicalPlan => Unit` shape `forContract` itself already returns, invoked by
+Spark once the real session exists. Every `spark.invaract.*` key documented
+elsewhere in this file composes with it for free, since it calls the same
+`forContract`. `ContractEnforcementRule.forContract`/`.dryRun`, called
+directly in code, remain available for anything the conf-driven path can't
+express — a contract loaded from somewhere `spark.invaract.contract` can't
+name, a resolver `spark.invaract.locationMap` can't express, a custom
+dry-run callback.
+
+When designing a new feature: could a platform team enable or configure it
+against a job whose source they don't control, using only
+`spark-submit --conf`? If the honest answer is no, the feature isn't done —
+add the `SparkConf`-reading path the same way `resolveContractLocations`
+does (docs/SPARK_ADAPTER.md's "Location resolution" section), not only the
+programmatic one.
+
 ## Documentation Policy
 
 **Documentation is a first-class part of the product, not an afterthought bolted on
@@ -362,6 +424,11 @@ would be.
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
 │   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
+│   │   ├── location/                  # Resolves a contract's ref://<id> locations
+│   │   │   ├── LocationRef.scala            # recognizes the ref://<id> shape
+│   │   │   ├── LocationResolver.scala       # trait + NoOpLocationResolver
+│   │   │   ├── StaticMapLocationResolver.scala # .properties/args-backed resolver
+│   │   │   └── ContractLocationResolution.scala # Contract => Contract, pre-SparkSession
 │   │   └── notification/              # Notification sinks (opt-in event publishing)
 │   │       ├── NotificationEvent.scala      # ContractValidationEvent / WriteEvent
 │   │       ├── NotificationSink.scala       # trait + Logging/File/Http/HadoopFs built-ins

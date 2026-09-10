@@ -111,6 +111,14 @@ This is the same guarantee `./dev/regression` checks automatically on every push
 [Prove Enforcement with the Regression Pack](/guides/running-the-regression-pack/).
 </Aside>
 
+<Aside type="note" title="Same install mechanism as your own job would use">
+`DemoJobHarness` installs Invaract the same way [Install the Enforcement
+Rule](/guides/installing-the-enforcement-rule/) recommends for a real job — purely via
+`spark.sql.extensions` and `spark.invaract.contract`, no `ContractEnforcementRule` call of
+its own. The command above doesn't show those as `--conf` flags because `DemoJobHarness`
+sets them itself, from the contract path you already passed as its fourth argument.
+</Aside>
+
 ## What's next
 
 Now that you've seen a contract reject a real write, learn the full format so you can

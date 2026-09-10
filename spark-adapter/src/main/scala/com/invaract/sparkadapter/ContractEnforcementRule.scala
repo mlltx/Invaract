@@ -6,6 +6,7 @@ package com.invaract.sparkadapter
 import com.invaract.contract.{Contract, ContractValidator}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
+import com.invaract.sparkadapter.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
 import com.invaract.sparkadapter.notification.{ContractValidationEvent, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
@@ -77,11 +78,19 @@ object ContractEnforcementRule {
     * `SparkSession.Builder.withExtensions(_.injectCheckRule(...))`) that
     * verifies any write this session performs against `contract`, throwing
     * `ContractViolationException` to abort it if verification fails.
+    *
+    * Resolves any `ref://<id>` location `contract` declares (see
+    * `com.invaract.sparkadapter.location`) before the first check runs -
+    * see `resolveContractLocations`'s doc for why this is what makes the
+    * feature attachable purely via `spark-submit --conf`, with no change
+    * to the caller's own code.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     session => {
       VersionCompatibilityGuard.check(session)
-      (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, None)
+      val resolvedContract = resolveContractLocations(contract, session)
+      val resolvedOptions = resolveVerificationOptions(options, session)
+      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, None)
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -104,8 +113,75 @@ object ContractEnforcementRule {
   def forContract(contract: Contract, options: VerificationOptions, sink: NotificationSink): SparkSession => LogicalPlan => Unit =
     session => {
       VersionCompatibilityGuard.check(session)
-      (plan: LogicalPlan) => verifyOrThrow(contract, plan, options, Some(sink), Some(session.sparkContext.applicationId))
+      val resolvedContract = resolveContractLocations(contract, session)
+      val resolvedOptions = resolveVerificationOptions(options, session)
+      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, Some(sink), Some(session.sparkContext.applicationId))
     }
+
+  /** Spark configuration key naming an `id=location` `.properties` file
+    * (the same shape `StaticMapLocationResolver.fromPropertiesFile` reads)
+    * to resolve `contract`'s `ref://<id>` locations against - see
+    * `com.invaract.sparkadapter.location`'s package for the syntax.
+    *
+    * Reading this from Spark's own configuration, rather than requiring a
+    * caller to build a `LocationResolver` and call
+    * `ContractLocationResolution.resolve` themselves, is what makes
+    * location resolution something a platform or orchestration framework
+    * can attach purely via `spark-submit --conf` - no change to the job's
+    * own source at all, beyond the one line every Invaract user already
+    * writes to install `forContract` in the first place. A job that wants
+    * a resolver this key can't express (an `HttpLocationResolver`, a
+    * mapping built at runtime) still calls `ContractLocationResolution.resolve`
+    * explicitly before passing its contract to `forContract` - this
+    * mechanism and that one compose freely, since a location already
+    * resolved to a literal is simply left alone here (`LocationRef.id`
+    * finds nothing left to resolve).
+    */
+  val LocationMapConfKey = "spark.invaract.locationMap"
+
+  /** The resolver `resolveContractLocations` builds when
+    * `LocationMapConfKey` isn't set on `session` - `NoOpLocationResolver`,
+    * so a contract with no `ref://` locations is completely unaffected
+    * (this whole mechanism is invisible to it) and one that does declare a
+    * reference fails immediately with a clear, actionable message instead
+    * of a confusing downstream `MissingInput`/`OutputLocationMismatch`.
+    */
+  private[sparkadapter] def resolveContractLocations(contract: Contract, session: SparkSession): Contract = {
+    val resolver: LocationResolver = session.conf.getOption(LocationMapConfKey) match {
+      case Some(path) => StaticMapLocationResolver.fromPropertiesFile(path)
+      case None       => NoOpLocationResolver
+    }
+    ContractLocationResolution.resolve(contract, resolver)
+  }
+
+  /** Spark configuration keys mirroring `VerificationOptions`'s three
+    * `Boolean` flags — the same "attachable via spark-submit --conf, not
+    * only via a Scala constructor argument" reasoning `LocationMapConfKey`
+    * documents applies here too (see CLAUDE.md's "External Attachability
+    * Requirement"). A platform can turn any of these on for a job it
+    * doesn't own the source of with, e.g., `--conf
+    * spark.invaract.rejectUndeclaredFields=true` — no code change needed.
+    */
+  val RejectUndeclaredInputsConfKey = "spark.invaract.rejectUndeclaredInputs"
+  val RejectUndeclaredFieldsConfKey = "spark.invaract.rejectUndeclaredFields"
+  val ComputeFingerprintConfKey = "spark.invaract.computeFingerprint"
+
+  /** Overlays the three conf keys above onto `options` — `||`, not a
+    * replacement: a flag ends up `true` if *either* the caller's own
+    * `VerificationOptions` already set it, or the matching conf key is
+    * `"true"`, so a platform attaching a stricter check via `--conf` can
+    * never be silently weakened by code that left a flag at its default,
+    * and code that deliberately opted in can never be silently turned off
+    * by a conf key's mere absence.
+    */
+  private[sparkadapter] def resolveVerificationOptions(options: VerificationOptions, session: SparkSession): VerificationOptions = {
+    def confFlag(key: String): Boolean = session.conf.getOption(key).exists(_.toBoolean)
+    options.copy(
+      rejectUndeclaredInputs = options.rejectUndeclaredInputs || confFlag(RejectUndeclaredInputsConfKey),
+      rejectUndeclaredFields = options.rejectUndeclaredFields || confFlag(RejectUndeclaredFieldsConfKey),
+      computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey)
+    )
+  }
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via

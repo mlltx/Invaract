@@ -14,14 +14,6 @@ dependency coordinate. This guide covers the alternative: prebuilt jars, publish
 GitHub Release assets, that you download and register into your own build instead of
 building Invaract from source yourself.
 
-<Aside type="note" title="You still need these at compile time">
-[Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) is installed by
-calling `ContractEnforcementRule.forContract(...)` when you build your `SparkSession` —
-there's no config-only, code-free way to enable it. That means your own job's code
-compiles against `com.invaract.contract`/`com.invaract.sparkadapter` classes, so you need
-these jars available to your build at compile time, not only on Spark's runtime classpath.
-</Aside>
-
 ## Where the jars come from
 
 Every push to `main` that passes Invaract's full CI suite (`Test and Build`, including
@@ -49,7 +41,38 @@ curl -fLO "$RELEASE/invaract-spark-adapter-0.3.0.jar"
 Check the release page for the current filenames if these version numbers have moved —
 they follow each module's own `version` in its `build.sbt`, not the release tag.
 
-## Register them with Maven
+## Run with `spark-submit` — no Maven registration needed
+
+Installing Invaract [purely via `spark-submit --conf`](/guides/installing-the-enforcement-rule/#attach-it-via-spark-submit---conf)
+(`spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`) is the
+default this whole documentation site leads with, and it's the simplest path here too: your
+job's own source never imports anything from `com.invaract.contract`/
+`com.invaract.sparkadapter` at all, so there's nothing for a Maven/Gradle/whatever build to
+compile against.
+
+```bash
+spark-submit \
+  --class com.example.MySparkJob \
+  --master local[*] \
+  --jars invaract-spark-adapter-0.3.0.jar \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  target/my-job.jar \
+  ...
+```
+
+Just the one jar downloaded above, passed straight to `--jars` — no `install:install-file`,
+no `pom.xml` changes, nothing to add to your build at all. This mirrors exactly how this
+repository's own example job runs (see `runner/DemoJobHarness` and `dev/test`).
+
+## Calling Invaract's APIs directly in code
+
+If you're instead following [Install and Configure Invaract Explicitly in
+Code](/guides/calling-invaract-explicitly/) — calling `ContractEnforcementRule.forContract(...)`
+yourself, because you need something the conf-driven path can't express — your job's code
+compiles against `com.invaract.contract`/`com.invaract.sparkadapter` classes, so you need
+these jars available to your build at compile time too, not only on Spark's runtime
+classpath. Register them with Maven:
 
 <Steps>
 
@@ -106,8 +129,9 @@ they follow each module's own `version` in its `build.sbt`, not the release tag.
 
 3. ### Write your job
 
-   Follow [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) —
-   nothing about that guide's code changes based on which build tool produced the jars.
+   Follow [Install and Configure Invaract Explicitly in
+   Code](/guides/calling-invaract-explicitly/) — nothing about that page's code changes
+   based on which build tool produced the jars.
 
 4. ### Run with `spark-submit`, passing all four jars
 
@@ -120,9 +144,8 @@ they follow each module's own `version` in its `build.sbt`, not the release tag.
      ...
    ```
 
-   This mirrors exactly how this repository's own example job runs (see
-   `runner/DemoJobHarness` and `dev/test`) — Invaract's classes come from `--jars`, your
-   Maven build never needs to bundle them into `my-job.jar`.
+   Your Maven build never needs to bundle Invaract's classes into `my-job.jar` — they come
+   from `--jars`, the same as `runner/DemoJobHarness` and `dev/test` already run.
 
 </Steps>
 

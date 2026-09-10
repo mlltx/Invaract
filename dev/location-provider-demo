@@ -1,0 +1,65 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+source dev/lib.sh
+
+echo "======================================"
+echo "Invaract Location Provider Demo"
+echo "======================================"
+echo ""
+echo "Runs the demo job against a contract whose input location is a"
+echo "ref://<id> reference (demo/contracts/invaract_output_location_ref.yaml),"
+echo "resolved purely via spark-submit --conf spark.invaract.locationMap=..."
+echo "- no change to DemoJobHarness's own code, the same way a platform or"
+echo "orchestration framework would attach this to any real job. See"
+echo "com.invaract.sparkadapter.location's package and docs-site's 'Resolve"
+echo "Dataset Locations at Runtime' guide."
+echo ""
+
+REPORT_DIR="demo/output"
+REPORT_FILE="$REPORT_DIR/location_provider_report.json"
+
+install_failure_trap "Location provider demo failed"
+
+echo -e "${YELLOW}Building all modules...${NC}"
+./dev/build
+
+if [ ! -f "$PLUGIN_JAR" ] || [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Required JAR(s) not found - see ./dev/build output above${NC}"
+  exit 1
+fi
+
+mkdir -p "$REPORT_DIR"
+rm -f "$REPORT_FILE"
+
+echo ""
+echo -e "${YELLOW}Running the demo job with a ref:// input location...${NC}"
+echo "  Contract: demo/contracts/invaract_output_location_ref.yaml"
+echo "  Location map: demo/location-map.properties"
+echo "  Report: $REPORT_FILE"
+echo ""
+
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.locationMap=demo/location-map.properties" \
+  run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
+  "demo/contracts/invaract_output_location_ref.yaml"
+
+if [ ! -f "$REPORT_FILE" ]; then
+  echo -e "${RED}✗ Report file not generated${NC}"
+  exit 1
+fi
+
+STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | head -1 | cut -d'"' -f4)
+echo ""
+echo "  Status: $STATUS"
+
+if [ "$STATUS" != "PASS" ]; then
+  echo -e "${RED}✗ Location provider demo failed - the resolved location didn't satisfy the contract${NC}"
+  cat "$REPORT_FILE"
+  exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✓ ref://demo-input resolved to demo/input/sample.csv and verification passed${NC}"
+echo -e "${GREEN}✓ Full report: $REPORT_FILE${NC}"

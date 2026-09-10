@@ -145,6 +145,15 @@ reports an absolute `file:` URI at runtime
 suffix, not exact equality: the `file:` scheme is stripped, and a declared location
 matches if it equals, or is a path-boundary suffix of, the actual one.
 
+### Resolving a location at runtime
+
+`location` can also be `ref://<id>` — a reference resolved to a real literal location at
+job startup, instead of a value hardcoded in the contract. This is a `spark-adapter`-level
+convention, not something `ContractParser`/the JSON Schema interpret specially: parsing
+and validation see it as an ordinary non-empty string either way. See
+[Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/) for the full
+mechanism.
+
 ## Interpreted rules
 
 ```yaml

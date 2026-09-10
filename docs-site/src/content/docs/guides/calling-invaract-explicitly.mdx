@@ -1,0 +1,180 @@
+---
+title: Install and Configure Invaract Explicitly in Code
+description: Every spark-submit --conf mechanism has an explicit-code equivalent — call it directly when you need control the conf-driven path can't express.
+sidebar:
+  order: 3.5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every other guide in this section leads with attaching Invaract purely via
+`spark-submit --conf` — [`InvaractSparkSessionExtension`](/guides/installing-the-enforcement-rule/)
+plus `spark.invaract.*` keys, no code of your own. That's the right default: it works for
+any job, whether or not you own its source, and every mechanism documented elsewhere
+composes with it for free.
+
+This page collects the explicit-code alternative to each of those mechanisms — call
+`ContractEnforcementRule`'s own API directly, from your job's `main`, when you need
+something a conf key structurally can't express: a contract loaded from somewhere
+`spark.invaract.contract` can't name, a custom callback, a resolver built at runtime, or
+sharing one object between two of Invaract's own hooks. Nothing here replaces the
+conf-driven path — it's what to reach for, on top of it or instead of it, for the one part
+of your job that needs more control.
+
+<Aside type="caution" title="Install it at session construction">
+Every mechanism below shares the same constraint the conf-driven path does:
+`SparkSessionExtensions` are configured when a `SparkSession` is built and can't be changed
+afterward. Load whatever a check rule needs *before* building the session.
+</Aside>
+
+## Install the enforcement rule
+
+```scala
+import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.ContractEnforcementRule
+import org.apache.spark.sql.SparkSession
+
+val contract = ContractParser.parseFile("contracts/my_contract.yaml")
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+  .getOrCreate()
+```
+
+From this point on, every write your job attempts is checked against `contract` before it
+executes. A violation throws `ContractViolationException` — before any output is created —
+with a human-readable explanation of what the contract expected, what the plan contained,
+and how to fix it (see [Your First Contract](/getting-started/first-contract/) for a real
+example of that message). Reach for this over `spark.invaract.contract` when your contract
+comes from somewhere a plain file path can't name — built at runtime, fetched from a
+registry, assembled from more than one document.
+
+See [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/) for handling a
+rejection, reporting on a write with `SparkAdapterListener`, and version compatibility
+warnings — none of that changes based on which path installed the rule.
+
+## Resolve dataset locations
+
+```scala
+import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.ContractEnforcementRule
+import com.invaract.sparkadapter.location.{ContractLocationResolution, StaticMapLocationResolver}
+
+val resolver = StaticMapLocationResolver.fromPropertiesFile("location-map.properties")
+// or: StaticMapLocationResolver.fromArgs(Seq("orders-input=s3://prod-bucket/orders/2026-09-09/"))
+val contract = ContractLocationResolution.resolve(
+  ContractParser.parseFile("contract.yaml"),
+  resolver
+)
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+  .getOrCreate()
+```
+
+Reach for this over `spark.invaract.locationMap` when you need a resolver the conf key
+can't express — a mapping assembled at runtime, or a resolver reading from somewhere other
+than a `.properties` file. The two compose freely: a location this call already resolved to
+a literal is simply left alone by `forContract`'s own conf-driven pass, since there's no
+`ref://` left in it to find.
+
+See [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/) for the
+`ref://` syntax itself and how resolution fails closed.
+
+## Wire a notification sink
+
+```scala
+import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
+import org.apache.spark.sql.SparkSession
+
+val notifyConfig = NotificationConfig.load("notify.properties")
+val sink = NotificationSinkFactory.create(notifyConfig) // None if sink.enabled=false
+
+val irListener = new SparkAdapterListener(sink, Some(contract))
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(sink match {
+    case Some(s) => ContractEnforcementRule.forContract(contract, VerificationOptions(), s)
+    case None    => ContractEnforcementRule.forContract(contract)
+  }))
+  .getOrCreate()
+
+spark.listenerManager.register(irListener)
+```
+
+A misconfigured sink (an unresolvable class, a class with no no-arg constructor, a sink
+that rejects its own properties) throws immediately at `NotificationSinkFactory.create` —
+the same "fail loudly, at setup time" treatment a malformed contract gets. Reach for this
+over `spark.invaract.notifyConfig` when you need to build the sink from something other
+than a `.properties` file, or wrap it in
+[`SummarizingNotificationSink`/`RetryingNotificationSink`](/guides/notification-sinks/#summaries-and-failure-only-filtering)
+before it's ever registered — the conf-driven path always builds a bare sink, with no
+wrapping.
+
+See [Configure a Notification Sink](/guides/notification-sinks/) for the event shapes,
+built-in sinks, and how to write your own.
+
+## Infer a contract with a custom callback
+
+```scala
+import com.invaract.contract.{Contract, ContractParser}
+import com.invaract.sparkadapter.ContractEnforcementRule
+import org.apache.spark.sql.SparkSession
+
+var inferredContract: Option[Contract] = None
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(
+    ContractEnforcementRule.dryRun(contract => inferredContract = Some(contract))
+  ))
+  .getOrCreate()
+
+// ... your job's write happens here, exactly as it would without Invaract installed ...
+
+inferredContract.foreach(c => println(ContractParser.write(c)))
+```
+
+Reach for this over `spark.invaract.dryRun=true` when you want to do something with the
+inferred contract besides logging it — write it to a specific file, publish it somewhere,
+merge it with an existing draft. The conf-driven path only logs it at `WARN`, since there's
+no job code there to hand it to.
+
+See [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/) for what gets
+inferred and what it deliberately can't.
+
+## Set verification options — fingerprinting and undeclared-input/field checks
+
+```scala
+import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
+
+val options = VerificationOptions(
+  computeFingerprint = true,
+  rejectUndeclaredInputs = true,
+  rejectUndeclaredFields = true
+)
+
+val spark = SparkSession
+  .builder()
+  .appName("MyJob")
+  .master("local[*]")
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract, options)))
+  .getOrCreate()
+```
+
+Each flag composes with its `spark.invaract.*` conf-key equivalent
+(`computeFingerprint`/`rejectUndeclaredInputs`/`rejectUndeclaredFields`) rather than
+overriding it: a flag ends up on if *either* side turns it on, so a platform attaching a
+`--conf` can never be silently overridden by code that left it at its default, and code
+that deliberately opted in can never be silently turned off by a missing conf key.
+
+See [Fingerprint a Transformation's Business Logic](/guides/fingerprinting-transformations/)
+and [Reference → Violation Types](/reference/violation-types/) for what each flag changes.

@@ -1289,6 +1289,145 @@ dependency at all, so it's fully and directly testable with a real
 without needing a Spark job to prove anything a Spark job wouldn't
 actually exercise differently.
 
+## Location resolution
+
+`com.invaract.sparkadapter.location`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/location/`) answers a
+different question again: where does a contract's declared `location` actually
+come from? Every check above assumes `Dataset.location` is already a real,
+literal path or table name — but a contract author sometimes wants to avoid
+hardcoding one (a location that varies per environment, or moves over time),
+without the contract itself needing to change. `ref://<id>` is that
+indirection: an ordinary, valid `location` string as far as `contract`'s own
+`ContractParser`/`ContractValidator`/JSON Schema are concerned (parsing and
+validation see a non-empty string either way — this package adds no changes
+to `contract` at all), resolved to a literal location by
+`ContractLocationResolution.resolve` before anything in this module ever
+inspects it.
+
+- `LocationRef.id(location)` recognizes the `ref://<id>` shape — `None` for a
+  literal, `Some(id)` for a reference. `ref://` was chosen specifically to
+  avoid colliding with any real storage scheme a `location` might otherwise
+  hold (`s3://`, `hdfs://`, `abfss://`, `gs://`, `dbfs://`, `jdbc:...`), so a
+  resolved literal can never be mistaken for an unresolved reference.
+- `LocationResolver` is the one-method extension point (`resolve(id): String`,
+  throwing `LocationResolutionException` on failure) a real id-to-location
+  mapping implements. `StaticMapLocationResolver` — built `fromPropertiesFile`
+  (the same `.properties` convention `NotificationConfig` already uses) or
+  `fromArgs` (`"id=location"` strings) — is the resolver shipped today; an
+  `HttpLocationResolver` calling out to a path registry is a planned follow-up
+  behind the same trait.
+- `ContractLocationResolution.resolve(contract, resolver)` is a pure
+  `Contract => Contract` transform — no changes to `contract`'s object model,
+  since it's just `Dataset.copy(location = ...)` wherever `LocationRef.id`
+  finds a reference. `NoOpLocationResolver`, the resolver used whenever no
+  real one is configured, exists so calling `resolve` is always safe: a
+  contract with no `ref://` locations passes through unchanged either way, and
+  one that does declare a reference fails immediately with a clear message
+  naming the reference — before Spark starts — rather than a confusing
+  `MissingInput`/`OutputLocationMismatch` downstream against the literal
+  string `"ref://..."`.
+
+Two ways to trigger that resolution, both ending at the same
+`ContractLocationResolution.resolve` call:
+
+- **Automatic, via Spark configuration** — `ContractEnforcementRule.forContract`
+  (both overloads) calls `resolveContractLocations` internally, reading a
+  `spark.invaract.locationMap` key (`ContractEnforcementRule.LocationMapConfKey`)
+  off the `SparkSession` its outer closure already receives, before the first
+  plan is ever checked — see that method's own doc for exactly why that
+  moment is available and correct (`VersionCompatibilityGuard.check(session)`
+  already runs there, once, for the same reason). This is deliberate: it's
+  what makes location resolution something a platform or orchestration
+  framework can attach via `spark-submit --conf
+  spark.invaract.locationMap=<path>` to *any* job that already installs
+  `forContract` — no change to that job's own source at all. Unset, it
+  behaves exactly as `NoOpLocationResolver` above describes.
+- **Explicit, in code** — call `ContractLocationResolution.resolve` yourself,
+  with any `LocationResolver`, before passing the contract to `forContract`.
+  Needed for a resolver the conf key can't express (a mapping assembled at
+  runtime, a future `HttpLocationResolver`'s endpoint/auth configuration).
+  The two compose freely: a location already resolved to a literal has
+  nothing left for `forContract`'s own conf-driven pass to find.
+
+See docs-site's "Resolve Dataset Locations at Runtime" guide for the
+user-facing walkthrough of both, and `dev/location-provider-demo` for the
+conf-driven path proven against a real Spark job
+(`demo/contracts/invaract_output_location_ref.yaml` +
+`demo/location-map.properties`, via `SPARK_SUBMIT_EXTRA_CONF` — see
+`dev/lib.sh`'s `run_demo_job_harness`), the same way `dev/dry-run` proves
+dry-run mode. `DemoJobHarness` itself does no resolution of its own — it
+installs `forContract` exactly the way a real user's job would, which is the
+whole point of the automatic path above.
+
+## VerificationOptions via Spark configuration
+
+The same mechanism above (`forContract`'s own outer closure, run once before
+the first plan is checked) also covers `VerificationOptions`'s three
+`Boolean` flags — `rejectUndeclaredInputs`, `rejectUndeclaredFields`,
+`computeFingerprint` (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14) — the
+first capabilities added under CLAUDE.md's "External Attachability
+Requirement" after location resolution itself. `resolveVerificationOptions`
+overlays three conf keys (`ContractEnforcementRule.RejectUndeclaredInputsConfKey`
+= `spark.invaract.rejectUndeclaredInputs`, `...FieldsConfKey`, and
+`ComputeFingerprintConfKey` = `spark.invaract.computeFingerprint`) onto the
+`options` a caller already passed, via `||` rather than replacement — a
+flag ends up on if either side turns it on, so a platform attaching a
+stricter check via `--conf` can never be silently weakened by code that left
+a flag at its default, and code that deliberately opted in can never be
+silently turned off by a missing conf key. See docs-site's "Fingerprint a
+Transformation's Business Logic" guide's "Enable it" section for the
+user-facing walkthrough of both mechanisms.
+
+## Fully code-free installation: `InvaractSparkSessionExtension`
+
+Everything above still assumed a job's own code calls
+`ContractEnforcementRule.forContract`/`.dryRun` at least once, to install
+the check rule at all. `InvaractSparkSessionExtension`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)
+removes even that: named via `--conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension`,
+the same mechanism Delta Lake's own `spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension`
+uses, Spark instantiates it (via a public no-arg constructor — see
+ARCHITECTURE.md's ADR-009 for why the class *cannot* take a `SparkSession`
+constructor argument, confirmed against Spark's own `applyExtensions`
+source) and applies it while a session is being built.
+
+A no-arg constructor means `apply(extensions: SparkSessionExtensions)`
+itself never has a `SparkSession` to read configuration from — it just
+calls `extensions.injectCheckRule(InvaractSparkSessionExtension.checkRuleFor)`,
+registering the exact `SparkSession => LogicalPlan => Unit` shape
+`forContract` itself already returns. Spark invokes `checkRuleFor` once the
+real session materializes, and that's where every `spark.invaract.*` key
+is actually read:
+
+- `spark.invaract.contract` (required, unless `spark.invaract.dryRun=true`)
+  — parsed via `ContractParser.parseFile`, then passed straight to
+  `forContract`, which performs its own conf-driven resolution
+  (`spark.invaract.locationMap`, `.rejectUndeclaredInputs`, etc.) exactly
+  as it would for a caller invoking it directly — `checkRuleFor` adds no
+  duplicate handling for any of those.
+- `spark.invaract.dryRun=true` — installs `ContractEnforcementRule.dryRun`
+  instead, ignoring `spark.invaract.contract` entirely (not merely leaving
+  it unvalidated). With no job code to hand the inferred `Contract` to,
+  the default callback logs it at `WARN` via SLF4J.
+- `spark.invaract.notifyConfig=<path>` — builds a sink the same way
+  `NotificationSinkFactory.create(NotificationConfig.load(path))` already
+  does, uses it for `forContract`'s sink-overload (`ContractValidationEvent`s),
+  **and** registers a `SparkAdapterListener` on the same session (for
+  `WriteEvent`s) — the two-call wiring a job's own code would otherwise
+  perform by hand (docs-site's "Configure a Notification Sink" guide),
+  done here since `checkRuleFor` already has the real session in hand at
+  the same moment.
+
+See `InvaractSparkSessionExtensionSpec` for the real proof: a
+`SparkSession` built with only `.config("spark.sql.extensions", ...)` +
+`.config("spark.invaract.contract", ...)` — no `ContractEnforcementRule`
+import anywhere in the test's own session-construction code — genuinely
+enforces a PASS and a FAIL, runs dry-run mode, fails closed with a clear
+message when neither conf key is set, and (with `spark.invaract.notifyConfig`
+also set) publishes both `ContractValidationEvent` and `WriteEvent` to a
+real `FileNotificationSink`.
+
 ## DML rule verification
 
 Every check above (`StructuralVerifier`, and `ContractEnforcementRule`'s
