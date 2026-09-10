@@ -6,7 +6,7 @@ package com.invaract.runner
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
-import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
+import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, InvaractSparkSessionExtension, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -132,29 +132,53 @@ object DemoJobHarness {
       // for why more than one callback per write is possible).
       @volatile var inferredContract: Option[com.invaract.contract.Contract] = None
 
-      val spark = SparkSession
+      val sessionBuilder = SparkSession
         .builder()
         .appName("InvaractDemoJobHarness")
         .master("local[*]")
         .config("spark.sql.shuffle.partitions", "1")
-        // Moves verification into the Spark execution lifecycle (ROADMAP.md
-        // Phase 5): this check rule runs on the analyzed plan of every
-        // query the session executes, before Spark runs any of them. A
-        // write that violates `contract` throws ContractViolationException
-        // here, aborting before any data is written — see
-        // ContractEnforcementRule's class doc for why a check rule, not the
-        // listener above, is the correct mechanism for this. Dry-run mode
-        // installs the analogous observe-only rule instead — see
-        // ContractEnforcementRule.dryRun's class doc.
-        .withExtensions(_.injectCheckRule(contract match {
-          case Some(c) =>
-            notifySink match {
-              case Some(sink) => ContractEnforcementRule.forContract(c, VerificationOptions(), sink)
-              case None       => ContractEnforcementRule.forContract(c)
-            }
-          case None => ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
-        }))
-        .getOrCreate()
+
+      // Three ways to install the check rule, picked by what this run
+      // actually needs — not an arbitrary choice per case:
+      //
+      //   - A real contract, no notification config: the common case (this
+      //     is what "Your First Contract" walks through). Installed purely
+      //     via spark.sql.extensions + spark.invaract.contract, the same
+      //     conf-driven mechanism "Install the Enforcement Rule" leads
+      //     with for any real job — see InvaractSparkSessionExtension's
+      //     class doc. No forContract call of this file's own.
+      //   - Dry-run mode needs a custom onInferred callback (populating
+      //     this report's inferredContractYaml field below) that the
+      //     conf-driven path can't express — it only logs at WARN, see
+      //     ContractEnforcementRule.dryRun's class doc and docs-site's
+      //     "Infer a Starting Contract with Dry-Run Mode" guide.
+      //   - A configured notification sink needs the *same* NotificationSink
+      //     instance shared between the check rule (ContractValidationEvent)
+      //     and irListener above (WriteEvent), so summarizingSink can tally
+      //     both into one JobSummaryEvent below (see its own publishSummary()
+      //     call) — plus this file needs irListener's own handle for the
+      //     transformationIR report section. Neither is expressible purely
+      //     via conf; see "Install the Enforcement Rule"'s "called
+      //     explicitly in code" section for this exact case.
+      val spark = (contract, notifySink) match {
+        case (Some(_), None) =>
+          sessionBuilder
+            .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
+            .config(InvaractSparkSessionExtension.ContractConfKey, contractPath)
+            .getOrCreate()
+        case (None, _) =>
+          sessionBuilder
+            .withExtensions(_.injectCheckRule(
+              ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
+            ))
+            .getOrCreate()
+        case (Some(c), Some(sink)) =>
+          sessionBuilder
+            .withExtensions(_.injectCheckRule(
+              ContractEnforcementRule.forContract(c, VerificationOptions(), sink)
+            ))
+            .getOrCreate()
+      }
 
       spark.sparkContext.setLogLevel("WARN")
       spark.listenerManager.register(irListener)

@@ -114,9 +114,16 @@ can't name, a custom `LocationResolver`, or any other programmatic control:
 
 </Steps>
 
-`runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — uses
-this explicit-code path, since it exists to demonstrate `ContractEnforcementRule` and
-`SparkAdapterListener` directly; see CLAUDE.md's "What's the product, and what's the test
+`runner/DemoJobHarness` — the example job this repository's own `./dev/test` runs — installs
+a plain contract the same way `MyRealJob` above does: purely via the conf-driven path (option
+1), the same one ["Your First Contract"](/getting-started/first-contract/) walks through. It
+falls back to this explicit-code path only for the two cases the conf-driven mechanism
+structurally can't express: dry-run mode, where it needs a custom callback to put the
+inferred contract into its own report (not just log it), and a configured notification sink,
+where it needs the same sink instance shared between the check rule and its own
+`SparkAdapterListener` to tally one `JobSummaryEvent` — see [Configure a Notification
+Sink](/guides/notification-sinks/) and [Infer a Starting Contract with Dry-Run
+Mode](/guides/dry-run-mode/). See CLAUDE.md's "What's the product, and what's the test
 harness."
 
 ## Handling a rejection
