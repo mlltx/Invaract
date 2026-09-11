@@ -178,3 +178,43 @@ that deliberately opted in can never be silently turned off by a missing conf ke
 
 See [Fingerprint a Transformation's Business Logic](/guides/fingerprinting-transformations/)
 and [Reference → Violation Types](/reference/violation-types/) for what each flag changes.
+
+## Derive a Spark schema from the contract
+
+```scala
+import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.ContractSchemas
+
+val contract = ContractParser.parseFile("contracts/my_contract.yaml")
+val ordersSchema = ContractSchemas.toStructType(contract.input("orders").get)
+
+val orders = spark.read
+  .option("header", "true")
+  .schema(ordersSchema)
+  .csv("data/orders.csv")
+```
+
+`ContractSchemas.toStructType` converts a contract-declared `Dataset`/`Schema` into the
+Spark `StructType` it describes — the same conversion `spark-adapter` already performs in
+reverse for dry-run mode (a real write's actual schema → a `Schema`, see
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/)), run forward instead.
+Reach for this whenever your job would otherwise write out the same field names/types the
+contract already declares a second time — a `StructType` literal, a case class, or a
+required-columns check — so there's exactly one place that shape is written down instead of
+two that can silently drift apart. `StructuralVerifier` still checks the two agree at
+enforcement time regardless (see [Reference → Violation Types](/reference/violation-types/)'s
+`INPUT_FIELD_TYPE_MISMATCH`/`MISSING_INPUT_FIELD`, and the equivalent output checks) —
+deriving the schema this way just means there's nothing left for your job to independently
+get wrong in the first place.
+
+<Aside type="caution" title="Not every contract type is derivable">
+`array`, `map`, and `decimal` are recognized contract types (see
+[Reference → Contract Format](/reference/contract-format/#known-types)), but the contract
+model doesn't carry an array's element type, a map's key/value types, or a decimal's
+precision/scale the way it fully specifies a `struct` via nested `properties`. A field
+declared with one of these three throws `UnsupportedFieldTypeException` rather than
+guessing — silently picking the wrong decimal precision, for example, could truncate real
+data. Declare that one field's Spark type yourself and derive the rest from the contract as
+usual; everything else (every scalar type, and nested `struct` via `properties`) converts in
+full.
+</Aside>
