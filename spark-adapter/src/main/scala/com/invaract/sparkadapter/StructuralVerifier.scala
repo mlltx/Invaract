@@ -3,9 +3,9 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, Field => ContractField}
+import com.invaract.contract.{CatalogRequirement, Contract, Field => ContractField}
 import com.invaract.fingerprint.TransformationFingerprint
-import com.invaract.ir.{Plan, Read, Write}
+import com.invaract.ir.{CatalogIdentity, Plan, Read, Write}
 
 import org.apache.spark.sql.types.StructType
 
@@ -56,6 +56,25 @@ object ViolationType {
   val UndeclaredOutputColumn = "UNDECLARED_OUTPUT_COLUMN"
   val OutputFieldTypeMismatch = "OUTPUT_FIELD_TYPE_MISMATCH"
   val OutputFieldNullabilityMismatch = "OUTPUT_FIELD_NULLABILITY_MISMATCH"
+
+  /** Only produced when a dataset's contract entry declares
+    * `catalog: { required: true }` — see `Dataset.catalog`/
+    * `CatalogRequirement`, docs/CONTRACT_MODEL.md. A dataset with no
+    * `catalog` declared, or `required: false`, is never checked at all
+    * (opt-in, per dataset). "Missing" here means the write/read has no
+    * catalog registration at all (e.g. a bare `.parquet(path)`/`.save(path)`
+    * with no `CatalogTable`) — distinct from `OutputCatalogMismatch` below,
+    * which means a registration exists but disagrees with the contract's
+    * declared technology/catalogName/location/namespace/table.
+    */
+  val MissingOutputCatalogRegistration = "MISSING_OUTPUT_CATALOG_REGISTRATION"
+  val OutputCatalogMismatch = "OUTPUT_CATALOG_MISMATCH"
+
+  /** Input-side mirrors of the two above — same opt-in-per-dataset
+    * semantics, checked against `contract.inputs`' `catalog` field instead.
+    */
+  val MissingInputCatalogRegistration = "MISSING_INPUT_CATALOG_REGISTRATION"
+  val InputCatalogMismatch = "INPUT_CATALOG_MISMATCH"
 
   /** Not produced by `StructuralVerifier` itself — this is
     * `ContractEnforcementRule`'s fail-closed response when a Spark command
@@ -231,7 +250,8 @@ private[sparkadapter] object StructuralVerifier {
     outputSchema: StructType,
     options: VerificationOptions = VerificationOptions()
   ): VerificationResult = {
-    val actualReadLocations = collectReads(plan).map(_.dataset.location).distinct
+    val actualReads = collectReads(plan)
+    val actualReadLocations = actualReads.map(_.dataset.location).distinct
 
     val missingInputs = contract.inputs
       .filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
@@ -268,9 +288,29 @@ private[sparkadapter] object StructuralVerifier {
       }
     }
 
+    // Read side: matched by declared/actual location, the same
+    // `locationsMatch` rule every other input check in this method already
+    // uses. Each `ir.Read` node already carries its own resolved
+    // `CatalogIdentity` (populated by `SparkPlanAdapter`/`WriteCommandSupport`
+    // at translation time), so no extra plumbing is needed beyond what
+    // `collectReads` already gathers - unlike schema, which the IR
+    // deliberately doesn't carry and callers must supply separately.
+    val inputCatalogViolations = contract.inputs.flatMap { input =>
+      input.catalog match {
+        case None => Nil
+        case Some(req) =>
+          actualReads.find(r => locationsMatch(input.location, r.dataset.location)) match {
+            case Some(read) => catalogViolations(req, read.catalog, input.location, "INPUT")
+            // No matching read at all: already reported as MissingInput
+            // above: nothing more useful to say about its catalog identity.
+            case None => Nil
+          }
+      }
+    }
+
     val expectedOutput = contract.outputs.head
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
-      case Write(dataset, _, actualFormat, actualSaveMode, _) =>
+      case Write(dataset, _, actualFormat, actualSaveMode, actualCatalog) =>
         val locationViolation =
           if (locationsMatch(expectedOutput.location, dataset.location)) Nil
           else
@@ -319,7 +359,16 @@ private[sparkadapter] object StructuralVerifier {
             )
           case _ => Nil
         }
-        (locationViolation ++ formatViolation ++ saveModeViolation, checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields))
+        // Same both-sides-known, opt-in-per-dataset convention: only
+        // checked when the contract's output declares `catalog:` at all.
+        val catalogViolation = expectedOutput.catalog match {
+          case Some(req) => catalogViolations(req, actualCatalog, dataset.location, "OUTPUT")
+          case None       => Nil
+        }
+        (
+          locationViolation ++ formatViolation ++ saveModeViolation ++ catalogViolation,
+          checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields)
+        )
       case _ =>
         val violation = Violation(
           ViolationType.MissingOutput,
@@ -331,7 +380,8 @@ private[sparkadapter] object StructuralVerifier {
     }
 
     val violations =
-      missingInputs ++ undeclaredInputs ++ inputSchemaViolations ++ outputExistenceViolations ++ outputSchemaViolations
+      missingInputs ++ undeclaredInputs ++ inputSchemaViolations ++ inputCatalogViolations ++
+        outputExistenceViolations ++ outputSchemaViolations
 
     VerificationResult.of(s"${contract.id}@${contract.version}", violations)
   }
@@ -520,4 +570,96 @@ private[sparkadapter] object StructuralVerifier {
 
     fieldViolations ++ undeclaredViolations
   }
+
+  /** Checks one dataset's actual `CatalogIdentity` against the contract's
+    * declared `CatalogRequirement` — shared by both input and output
+    * checking, the same "one rule set applied twice" pattern `checkSchema`
+    * above already uses for schema. `req.required == false` means the
+    * contract declares an *expected* shape without gating on it
+    * (informational only, accepted by `ContractValidator`) — never a
+    * violation on its own, matching the plan's documented convention.
+    */
+  private def catalogViolations(
+    req: CatalogRequirement,
+    actual: Option[CatalogIdentity],
+    location: String,
+    contextPrefix: String
+  ): List[Violation] = {
+    if (!req.required) Nil
+    else
+      actual match {
+        case None =>
+          List(
+            Violation(
+              if (contextPrefix == "INPUT") ViolationType.MissingInputCatalogRegistration
+              else ViolationType.MissingOutputCatalogRegistration,
+              s"contract requires the ${contextPrefix.toLowerCase} at '$location' to be registered in a catalog, but it has no catalog registration",
+              remediation =
+                s"Register '$location' in a catalog (e.g. CREATE EXTERNAL TABLE, .saveAsTable(), or a DSv2 catalog read/write) instead of a bare path, or set catalog.required to false in the contract if registration isn't actually required.",
+              location = Some(location)
+            )
+          )
+        case Some(actualCatalog) =>
+          val mismatches = catalogFieldMismatches(req, actualCatalog)
+          if (mismatches.isEmpty) Nil
+          else
+            List(
+              Violation(
+                if (contextPrefix == "INPUT") ViolationType.InputCatalogMismatch else ViolationType.OutputCatalogMismatch,
+                s"contract's declared catalog registration for the ${contextPrefix.toLowerCase} at '$location' does not match the actual registration: ${mismatches
+                  .mkString("; ")}",
+                remediation =
+                  s"Update the catalog registration for '$location' to match the contract's declared catalog fields, or update the contract if this change is intentional.",
+                location = Some(location),
+                expected = Some(describeCatalogRequirement(req)),
+                actual = Some(describeCatalogIdentity(actualCatalog))
+              )
+            )
+      }
+  }
+
+  /** Compares only the sub-fields the contract actually declares — the same
+    * both-sides-known convention `formatViolation`/`saveModeViolation` in
+    * `verify` already use — so a `CatalogRequirement` that only pins
+    * `technology` doesn't spuriously fail over an unrelated `catalogName`/
+    * `location` difference the contract author never asked to check.
+    */
+  private def catalogFieldMismatches(req: CatalogRequirement, actual: CatalogIdentity): List[String] = {
+    val technology = req.technology
+      .filterNot(expected => actual.technology.exists(_.equalsIgnoreCase(expected)))
+      .map(expected => s"technology (expected '$expected', actual '${actual.technology.getOrElse("<none>")}')")
+    val catalogName = req.catalogName
+      .filterNot(expected => actual.catalogName.contains(expected))
+      .map(expected => s"catalogName (expected '$expected', actual '${actual.catalogName.getOrElse("<none>")}')")
+    val location = req.location
+      .filterNot(expected => actual.location.contains(expected))
+      .map(expected => s"location (expected '$expected', actual '${actual.location.getOrElse("<none>")}')")
+    val namespace =
+      if (req.namespace.nonEmpty && req.namespace != actual.namespace)
+        Some(s"namespace (expected '${req.namespace.mkString(".")}', actual '${actual.namespace.mkString(".")}')")
+      else None
+    val table = req.table
+      .filterNot(expected => actual.table.contains(expected))
+      .map(expected => s"table (expected '$expected', actual '${actual.table.getOrElse("<none>")}')")
+
+    List(technology, catalogName, location, namespace, table).flatten
+  }
+
+  private def describeCatalogRequirement(req: CatalogRequirement): String =
+    List(
+      req.technology.map(t => s"technology=$t"),
+      req.catalogName.map(c => s"catalogName=$c"),
+      req.location.map(l => s"location=$l"),
+      if (req.namespace.nonEmpty) Some(s"namespace=${req.namespace.mkString(".")}") else None,
+      req.table.map(t => s"table=$t")
+    ).flatten.mkString(", ")
+
+  private def describeCatalogIdentity(actual: CatalogIdentity): String =
+    List(
+      actual.technology.map(t => s"technology=$t"),
+      actual.catalogName.map(c => s"catalogName=$c"),
+      actual.location.map(l => s"location=$l"),
+      if (actual.namespace.nonEmpty) Some(s"namespace=${actual.namespace.mkString(".")}") else None,
+      actual.table.map(t => s"table=$t")
+    ).flatten.mkString(", ")
 }

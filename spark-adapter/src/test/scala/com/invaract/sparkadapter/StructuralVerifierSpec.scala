@@ -523,6 +523,291 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(resultB.passed, s"an unknown actual saveMode shouldn't be treated as a mismatch: ${resultB.violations}")
   }
 
+  // Catalog registration checks (docs/CONTRACT_MODEL.md's `catalog` field,
+  // ROADMAP.md's catalog-registration addendum). Mirrors the format/saveMode
+  // sections above exactly: opt-in per dataset (contract declares
+  // `catalog:` at all), checked only when `required: true`, and only the
+  // sub-fields the contract actually declares are compared. Applies to
+  // both `outputs` and `inputs` — the real motivating gap (a `CREATE
+  // EXTERNAL TABLE` whose declared schema doesn't match the underlying
+  // data, silently unverified — see docs/connectors/hive.md's "External
+  // tables" section) is a catalog-*identity* check, not a schema check by
+  // itself, so these tests exercise identity mismatches specifically.
+
+  test("MISSING_OUTPUT_CATALOG_REGISTRATION: contract requires catalog registration but the plan's write has none") {
+    val contract = ContractParser.parse(
+      """id: catalog_required_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.MissingOutputCatalogRegistration)
+      .getOrElse(fail(s"expected a MISSING_OUTPUT_CATALOG_REGISTRATION violation, got: ${result.violations}"))
+    assert(violation.location.contains("gold.out"))
+  }
+
+  test("OUTPUT_CATALOG_MISMATCH: actual catalog registration disagrees with the contract's declared technology/table") {
+    val contract = ContractParser.parse(
+      """id: catalog_mismatch_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      table: sales
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta"), table = Some("sales")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${result.violations}"))
+    assert(violation.expected.exists(_.contains("technology=hive")))
+    assert(violation.actual.exists(_.contains("technology=delta")))
+    // table matches on both sides - only technology should be named as a mismatch.
+    assert(!violation.message.contains("table (expected"), s"table matched on both sides, shouldn't be reported: ${violation.message}")
+  }
+
+  test("catalog matches: no violation when every declared sub-field agrees with the actual registration") {
+    val contract = ContractParser.parse(
+      """id: catalog_match_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      catalogName: spark_catalog
+        |      location: thrift://metastore1.example.com:9083
+        |      namespace: [default]
+        |      table: sales
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      catalog = Some(
+        com.invaract.ir.CatalogIdentity(
+          technology = Some("hive"),
+          catalogName = Some("spark_catalog"),
+          location = Some("thrift://metastore1.example.com:9083"),
+          namespace = List("default"),
+          table = Some("sales")
+        )
+      )
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"expected a fully matching catalog registration to pass: ${result.violations}")
+  }
+
+  test("catalog is not checked at all when the contract's output doesn't declare a catalog block") {
+    // Bare-path write, no catalog identity whatsoever - and the contract
+    // never opted into this check, so it's not a violation, exactly like a
+    // contract that doesn't declare `format`/`saveMode`.
+    val contract = ContractParser.parse(
+      """id: no_catalog_declared
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"a contract with no declared catalog block shouldn't check it at all: ${result.violations}")
+  }
+
+  test("catalog required: false is informational only - a declared-but-mismatched shape is not a violation") {
+    val contract = ContractParser.parse(
+      """id: catalog_optional_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: false
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    // No catalog registration at all, and even if there were one, required
+    // is false - neither MISSING nor MISMATCH should fire.
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"required: false shouldn't gate anything: ${result.violations}")
+  }
+
+  test("catalog check compares only the sub-fields the contract actually declares") {
+    // Contract only pins `technology` - a different `table` on the actual
+    // side must not be reported, the same both-sides-known convention
+    // format/saveMode already use.
+    val contract = ContractParser.parse(
+      """id: catalog_partial_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("hive"), table = Some("whatever_this_is")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"only technology was declared and it matched: ${result.violations}")
+  }
+
+  test("MISSING_INPUT_CATALOG_REGISTRATION and INPUT_CATALOG_MISMATCH mirror the output-side checks") {
+    val contract = ContractParser.parse(
+      """id: catalog_input_checks
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: raw.orders
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |  - name: customers
+        |    location: raw.customers
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val joined = com.invaract.ir.Join(
+      Read(DatasetRef("raw.orders")), // no catalog at all -> MISSING
+      Read(DatasetRef("raw.customers"), catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta")))), // wrong technology -> MISMATCH
+      com.invaract.ir.JoinType.Inner
+    )
+    val plan = com.invaract.ir.Write(DatasetRef("gold.out"), joined)
+    val outputSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(!result.passed)
+    val missing = result.violations.find(_.violationType == ViolationType.MissingInputCatalogRegistration)
+      .getOrElse(fail(s"expected a MISSING_INPUT_CATALOG_REGISTRATION violation, got: ${result.violations}"))
+    assert(missing.location.contains("raw.orders"))
+    val mismatch = result.violations.find(_.violationType == ViolationType.InputCatalogMismatch)
+      .getOrElse(fail(s"expected an INPUT_CATALOG_MISMATCH violation, got: ${result.violations}"))
+    assert(mismatch.location.contains("raw.customers"))
+    assert(mismatch.expected.exists(_.contains("technology=hive")))
+    assert(mismatch.actual.exists(_.contains("technology=delta")))
+  }
+
+  test("input catalog check is skipped (not a false MISSING_INPUT_CATALOG_REGISTRATION) when the declared input isn't read at all") {
+    // MISSING_INPUT already reports the absent read; piling on a second,
+    // less useful violation about its catalog identity would be noise.
+    val contract = ContractParser.parse(
+      """id: catalog_input_not_read
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: raw.orders
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.other")))
+    val outputSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInputCatalogRegistration))
+  }
+
   // The tests below were added while raising the module's mutation-testing
   // score (see ROADMAP.md Phase 1c and CLAUDE.md's mutation-score
   // requirement): each targets a specific predicate that was previously

@@ -1183,6 +1183,183 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     )
   }
 
+  // --- Catalog registration checks (docs/CONTRACT_MODEL.md's `catalog`
+  // field, ROADMAP.md's catalog-registration addendum) -----------------
+  //
+  // The real gap this closes: before this feature, a contract had no way
+  // to *require* that an output (or input) be registered in a catalog at
+  // all - a bare `.parquet(path)`/`.save(path)` write with a perfectly
+  // correct schema passed cleanly, with no way for an org to mandate "every
+  // job's output must have a real catalog entry so downstream tools can
+  // discover it" (the user's own original ask). Note what this does NOT
+  // close: `CREATE EXTERNAL TABLE ... LOCATION` itself is schema-only DDL,
+  // never checked against anything (see "External tables" in
+  // docs/connectors/hive.md) - a table registered with a schema that
+  // doesn't match its underlying physical data still succeeds silently.
+  // That's a distinct, still-open gap; these tests are about catalog
+  // *identity* (is there a registration, and does it match what's
+  // declared), not validating a table's declared schema against its
+  // physical files.
+
+  test("PASS: an EXTERNAL Hive table write satisfies a contract requiring catalog registration") {
+    val loc = extScratchDir("catalog_required_pass")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_catalog_required_pass_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: hive
+         |      catalogName: spark_catalog
+         |      table: hive_catalog_required_pass_tbl
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("INSERT INTO hive_catalog_required_pass_tbl SELECT 1, 10") // must not throw
+    }
+    assert(spark.table("hive_catalog_required_pass_tbl").count() == 1)
+  }
+
+  test("FAIL: a bare-path parquet write with a correct schema is rejected (MISSING_OUTPUT_CATALOG_REGISTRATION) when the contract mandates catalog registration") {
+    // This is the concrete fix for the org-wide policy the user asked for:
+    // "all spark jobs in their ecosystem [must] have a catalog entry ...
+    // downstream technologies can interoperate more easily." Before this
+    // feature, this exact write - correct schema, correct location -
+    // passed with zero violations, because nothing in the contract format
+    // could express "this output must be catalog-registered" at all.
+    val loc = extScratchDir("catalog_required_fail_bare")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: hive
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val ex = intercept[ContractViolationException] {
+        df().write.mode("overwrite").parquet(loc) // correct schema, but no catalog registration at all
+      }
+      assert(ex.result.violations.exists(_.violationType == ViolationType.MissingOutputCatalogRegistration))
+    }
+    assert(
+      !Files.exists(java.nio.file.Paths.get(loc.stripPrefix("file:"))) ||
+        Files.list(java.nio.file.Paths.get(loc.stripPrefix("file:"))).count() == 0,
+      "a rejected write must never have committed any data"
+    )
+  }
+
+  test("FAIL: an EXTERNAL Hive table registered under the wrong technology is rejected (OUTPUT_CATALOG_MISMATCH)") {
+    // A real Hive registration exists - just not the one the contract
+    // declares. Confirms the check compares identity, not just presence.
+    val loc = extScratchDir("catalog_mismatch_fail")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_catalog_mismatch_fail_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: iceberg
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val ex = intercept[ContractViolationException] {
+        spark.sql("INSERT INTO hive_catalog_mismatch_fail_tbl SELECT 1, 10")
+      }
+      assert(ex.result.violations.exists(v =>
+        v.violationType == ViolationType.OutputCatalogMismatch &&
+          v.expected.exists(_.contains("technology=iceberg")) &&
+          v.actual.exists(_.contains("technology=hive"))
+      ))
+    }
+    assert(spark.table("hive_catalog_mismatch_fail_tbl").count() == 0, "a rejected insert must never have committed")
+  }
+
+  test("PASS: a real Hive-registered input satisfies a contract requiring input-side catalog registration") {
+    // Input-side mirror of the output tests above, against a real Hive
+    // read - confirms the check applies symmetrically per the user's own
+    // explicit answer ("both inputs and outputs").
+    val loc = extScratchDir("catalog_input_required")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_catalog_input_required_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+    spark.sql("INSERT INTO hive_catalog_input_required_tbl SELECT 1, 10")
+
+    val outLoc = extScratchDir("catalog_input_required_out")
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: in
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: hive
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |        - name: value
+         |          type: long
+         |outputs:
+         |  - name: out
+         |    location: ${outLoc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: false
+         |        - name: value
+         |          type: long
+         |          required: false
+         |""".stripMargin
+
+    // Output fields are `required: false` (not `required: true`) because
+    // the write reads back through a Hive table, which - per the "feature
+    // surface: a Hive table read-back reports every field nullable" test
+    // above - always reports every field nullable regardless of the
+    // underlying DDL; this test is about the catalog check, not schema
+    // nullability, so it avoids that unrelated, already-documented quirk.
+    withContract(yaml) {
+      spark.table("hive_catalog_input_required_tbl").write.mode("overwrite").parquet(outLoc) // must not throw: read is catalog-registered
+    }
+    assert(spark.read.parquet(outLoc).count() == 1)
+  }
+
   // --- Real notification messages, captured against an external table ----
   //
   // Everything above proves enforcement decides PASS/FAIL correctly.
