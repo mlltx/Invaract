@@ -127,6 +127,131 @@ cd spark-adapter
 sbt "testOnly com.invaract.sparkadapter.HiveConnectorSpec"
 ```
 
+For a narrated, end-to-end walkthrough instead of a test-suite run, `./dev/catalog-registration-demo`
+runs three real, separate Spark sessions against an embedded Hive metastore — one per
+scenario below — each installing `ContractEnforcementRule.forContract` and a
+`SparkAdapterListener` the exact way a real job would, and prints every real event
+published along the way:
+
+```bash
+./dev/catalog-registration-demo
+```
+
+The three scenarios below are the **real, unedited output** of that script (only Spark's
+own log noise and the JVM startup banner are trimmed). Each one names, explicitly, what
+Invaract validated and what it published — and, just as importantly, what it *didn't*.
+
+### Scenario 1: `pass` — a correctly Hive-registered write
+
+The contract requires `catalog: { required: true, technology: hive, table: sales_tbl }`.
+A real `CREATE EXTERNAL TABLE ... LOCATION` registers the output under exactly that table
+name before the write, the same way a platform team would set a table up once and let many
+jobs write to it:
+
+```
+====================================================================================================
+Scenario: pass
+====================================================================================================
+Contract:
+id: catalog_registration_demo
+version: "1.0.0"
+outputs:
+  - name: sales
+    location: /tmp/invaract-catalog-demo.../sales
+    format: parquet
+    catalog:
+      required: true
+      technology: hive
+      table: sales_tbl
+    schema:
+      fields:
+        - name: id
+          type: long
+          required: true
+        - name: value
+          type: long
+          required: true
+
+Result: write SUCCEEDED (catalog registration satisfied)
+
+----------------------------------------------------------------------------------------------------
+Published notification events (real captured JSON, one line per event):
+----------------------------------------------------------------------------------------------------
+{"eventType": "CONTRACT_VALIDATION", "status": "PASSED", "violations": [], "contract": "catalog_registration_demo@1.0.0", ...}
+{"eventType": "WRITE", "catalog": {"location": "embedded:jdbc:derby:;databaseName=/tmp/.../metastore_db;create=true", "technology": "hive", "catalogName": "spark_catalog", "namespace": ["default"], "table": "sales_tbl"}, "location": "file:/tmp/.../sales", "rowCount": 1, "saveMode": "append", ...}
+====================================================================================================
+```
+
+**What this shows**: two *different* events publish for one successful write — a
+pre-write `ContractValidationEvent` (from the check rule, before anything is committed)
+and a post-write `WriteEvent` (from `SparkAdapterListener`, once Spark reports the write
+actually completed). Only the `WriteEvent` carries the real, resolved `catalog` field —
+this is the first place a downstream consumer can see the *actual* metastore address a
+write resolved to, not just what it was compared against.
+
+### Scenario 2: `missing-registration` — a bare-path write, rejected
+
+Same contract, but the job writes with a plain `.write.parquet(path)` — no `CREATE TABLE`,
+no catalog entry of any kind. Before this feature, this passed cleanly:
+
+```
+====================================================================================================
+Scenario: missing-registration
+====================================================================================================
+Result: write REJECTED
+
+----------------------------------------------------------------------------------------------------
+Published notification events (real captured JSON, one line per event):
+----------------------------------------------------------------------------------------------------
+{"eventType": "CONTRACT_VALIDATION", "status": "FAILED", "violations": [{"type": "MISSING_OUTPUT_CATALOG_REGISTRATION", "message": "contract requires the output at 'file:/tmp/.../sales' to be registered in a catalog, but it has no catalog registration", "remediation": "Register 'file:/tmp/.../sales' in a catalog (e.g. CREATE EXTERNAL TABLE, .saveAsTable(), or a DSv2 catalog read/write) instead of a bare path, or set catalog.required to false in the contract if registration isn't actually required.", "location": "file:/tmp/.../sales"}], "contract": "catalog_registration_demo@1.0.0"}
+====================================================================================================
+```
+
+**What this shows**: the write is aborted before it commits — no `WriteEvent` publishes at
+all, since Spark never reports a successful write. Only the `ContractValidationEvent`
+fires, `FAILED`, with a `remediation` string telling the job's author exactly what to fix.
+
+### Scenario 3: `wrong-metastore` — registered, but under the wrong metastore
+
+The contract now pins `catalog.location: thrift://not-the-real-metastore.example.com:9083`.
+The job registers the table exactly as in scenario 1 — a real Hive registration exists —
+just not against the metastore the contract names:
+
+```
+====================================================================================================
+Scenario: wrong-metastore
+====================================================================================================
+Result: write REJECTED
+
+----------------------------------------------------------------------------------------------------
+Published notification events (real captured JSON, one line per event):
+----------------------------------------------------------------------------------------------------
+{"eventType": "CONTRACT_VALIDATION", "status": "FAILED", "violations": [{"location": "file:/tmp/.../sales", "expected": "technology=hive, location=thrift://not-the-real-metastore.example.com:9083", "remediation": "Update the catalog registration for 'file:/tmp/.../sales' to match the contract's declared catalog fields, or update the contract if this change is intentional.", "message": "contract's declared catalog registration for the output at 'file:/tmp/.../sales' does not match the actual registration: location (expected 'thrift://not-the-real-metastore.example.com:9083', actual 'embedded:jdbc:derby:;databaseName=/tmp/.../metastore_db;create=true')", "type": "OUTPUT_CATALOG_MISMATCH", "actual": "technology=hive, catalogName=spark_catalog, location=embedded:jdbc:derby:;databaseName=/tmp/.../metastore_db;create=true, namespace=default, table=sales_tbl"}], "contract": "catalog_registration_demo@1.0.0"}
+====================================================================================================
+```
+
+**What this shows**: registration *existing* isn't enough on its own — this is the
+concrete answer to "can a job silently write through a different Hive metastore than the
+one the contract declares?" It reports both the `expected` and `actual` catalog
+descriptors, and names exactly which sub-field disagreed (`location`), so nothing about
+the mismatch is left for the reader to reconstruct by hand.
+
+### Summary: what's validated, what's published, and what isn't
+
+| | `pass` | `missing-registration` | `wrong-metastore` |
+|---|---|---|---|
+| Write committed? | Yes | No — aborted pre-write | No — aborted pre-write |
+| `ContractValidationEvent` published? | Yes, `PASSED` | Yes, `FAILED` | Yes, `FAILED` |
+| `WriteEvent` published? | Yes, with a real `catalog` field | No — write never completed | No — write never completed |
+| Validated | Schema **and** catalog registration (presence, and every declared sub-field) | Schema (passed); catalog registration (failed: missing) | Schema (passed); catalog registration (failed: mismatch) |
+
+And, independent of scenario — the honest limitation from
+["What `location` can and can't check"](#what-location-can-and-cant-check) above still
+applies: `technology`/`catalogName`/`namespace`/`table` are checked for Delta, Iceberg,
+and JDBC outputs too, but `catalog.location` is accepted as a no-op for all three — there
+is no equivalent "wrong metastore" proof for a non-Hive catalog today, because no DSv2
+catalog exposes its own network endpoint through an API this module can read.
+
 ## What's next
 
 See [Reference → Contract Format](/reference/contract-format/#catalog-registration) for
