@@ -95,6 +95,14 @@ class ContractSchemaSpec extends AnyFunSuite {
     assertRejected(fixture("invalid_missing_id.yaml"), "id")
   }
 
+  test("a contract with a fully-populated catalog block conforms to the schema") {
+    assertConformant(fixture("catalog_registration.yaml"))
+  }
+
+  test("a catalog block missing the required 'required' key is rejected by the schema") {
+    assertRejected(fixture("invalid_catalog_missing_required.yaml"), "required")
+  }
+
   test("a contract with no outputs is rejected by the schema") {
     // ContractParser itself would accept this (outputs defaults to an
     // empty list); ContractValidator is what actually rejects it

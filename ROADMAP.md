@@ -1575,6 +1575,45 @@ since the fail-closed policy can't distinguish table type from a bare
 class name. Ten new tests; `HiveConnectorSpec`: 36 total. Full findings:
 docs/connectors/hive.md's "External tables" section.
 
+**Addendum: mandatory catalog registration (done).** A real, org-level
+gap surfaced by the external-tables pass above: nothing in the contract
+format could *require* a dataset be registered in a catalog at all — a
+bare-path write with a perfectly correct schema passed cleanly, with no
+way to express "every job's output needs a real catalog entry so
+downstream tools can discover it." Closed across all four engine
+modules: `contract.CatalogRequirement`/`Dataset.catalog` (opt-in per
+dataset, structured technology/catalogName/location/namespace/table
+fields, orthogonal to `format`/`saveMode`); `ir.CatalogIdentity` on
+`Read`/`Write` (the observed counterpart, folded into `fingerprint`'s
+overall hash the same way format/saveMode already are);
+`spark-adapter` extraction of real catalog identity for every write/read
+shape (closing two found-along-the-way gaps: `ReplaceTableAsSelect`/
+`CreateTableAsSelect` and `deleteFromTable` never threaded already-
+available catalog info into `WriteCommandInfo`);
+`StructuralVerifier`'s `MissingOutputCatalogRegistration`/
+`OutputCatalogMismatch` checks (and input-side mirrors); and a real
+`catalog` field on the published `WriteEvent`. Proven against a real
+Hive metastore, not assumed: a bare `.parquet(path)` write that used to
+pass cleanly is now rejected when a contract requires catalog
+registration, and a write through the *wrong* Hive metastore is rejected
+too (`location` is the metastore's real network address, read from the
+active session, not a Spark-local alias). A real bug was found and fixed
+along the way: the mismatch check originally compared a declared
+`location` unconditionally, which would have made declaring
+`catalog.location` against any DSv2 (Delta/Iceberg/JDBC) output
+permanently unsatisfiable, since those connectors report no location at
+all — caught by a real Delta enforcement test, not inspection; fixed to
+treat an unknown actual sub-field as "not comparable," the same
+both-sides-known convention `format`/`saveMode` already use. `contract`
+and `ir` each took a MiMa-tracked MINOR bump (0.3.0 → 0.4.0) for the new
+case class fields; `spark-adapter` took its own (0.3.0 → 0.4.0) for
+`WriteEvent`'s new field. Seven new `HiveConnectorSpec` tests (43
+total), plus `StructuralVerifierSpec`/`NotificationJsonSpec` unit
+coverage. Full findings and the real captured mismatch JSON:
+docs/connectors/hive.md's "Catalog registration checks" section; user
+guide: docs-site's [Require Catalog
+Registration](docs-site/src/content/docs/guides/requiring-catalog-registration.mdx).
+
 #### Sub-phase: Avro connector support (done)
 
 Sixth connector onboarded. `spark-avro` added as the first real

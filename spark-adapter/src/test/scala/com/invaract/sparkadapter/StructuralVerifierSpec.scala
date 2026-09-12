@@ -721,6 +721,51 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.passed, s"only technology was declared and it matched: ${result.violations}")
   }
 
+  // Regression test for a real bug caught by a HiveConnectorSpec
+  // enforcement test, not found by inspection: a sub-field can be
+  // "unknown" in two different ways - the contract didn't declare it
+  // (already covered above), or the contract DID declare it but the
+  // actual side has no value to compare against (e.g. `location` for
+  // every DSv2 connector today - see CatalogIdentitySupport.fromV2's own
+  // doc). The first commit of this check compared unconditionally once a
+  // sub-field was declared, which meant declaring `catalog.location`
+  // against a Delta/Iceberg/JDBC output could NEVER be satisfied - every
+  // future write would fail, regardless of the value chosen, since the
+  // actual side is permanently `None` for those. Fixed to treat an
+  // unknown actual sub-field the same way `formatViolation`'s own doc
+  // already treats an unknown actual format: no comparison, no violation.
+  test("catalog check does not flag a sub-field the contract declares when the actual identity has no value for it") {
+    val contract = ContractParser.parse(
+      """id: catalog_location_unknown_actual
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: delta
+        |      location: thrift://this-can-never-be-observed:9083
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      // technology matches; location is None, the real shape every DSv2
+      // catalog identity has today - not "declared and disagreeing", but
+      // "declared and unobservable".
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta"), location = None, table = Some("out")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"declaring a location the actual side can't report at all must not be treated as a mismatch: ${result.violations}")
+  }
+
   test("MISSING_INPUT_CATALOG_REGISTRATION and INPUT_CATALOG_MISMATCH mirror the output-side checks") {
     val contract = ContractParser.parse(
       """id: catalog_input_checks

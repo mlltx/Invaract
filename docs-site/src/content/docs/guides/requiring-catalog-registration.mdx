@@ -1,0 +1,136 @@
+---
+title: Require Catalog Registration
+description: Make a dataset's catalog registration part of what a contract checks — not just its schema.
+sidebar:
+  order: 11
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A contract's `schema`/`format`/`saveMode` all describe *what a dataset looks like*. None
+of them say anything about *where downstream tools can find it* — a job can write
+perfectly well-formed Parquet to a bare path that no catalog knows about at all, and
+nothing in the contract format could require otherwise. `catalog:` closes that gap: a
+dataset can declare that it must be registered in a real catalog — optionally pinning
+down exactly which one.
+
+## Declare it in your contract
+
+```yaml
+outputs:
+  - name: sales
+    location: /warehouse/sales
+    format: parquet
+    catalog:
+      required: true
+      technology: hive
+      catalogName: spark_catalog
+      location: thrift://metastore1.example.com:9083
+      namespace: [default]
+      table: sales
+    schema:
+      fields:
+        - name: id
+          type: long
+          required: true
+```
+
+`catalog:` is entirely opt-in, per dataset — a dataset that omits it (like every contract
+before this feature existed) is checked exactly as it always was. `required: true` is the
+only mandatory key *within* a present `catalog:` block; every other sub-field is
+independently optional and only checked when you declare it:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `required` | yes | Whether this dataset must be registered in a catalog at all. |
+| `technology` | no | The catalog implementation, e.g. `hive`, `delta`, `iceberg`. Open vocabulary, not a closed enum. |
+| `catalogName` | no | The Spark-level catalog plugin/session-catalog name, e.g. `spark_catalog` — a local alias, not necessarily unique across an organization. |
+| `location` | no | The catalog *service's* own address — e.g. a Hive metastore's `thrift://host:port` URI. See "What `location` can and can't check" below. |
+| `namespace` | no | The database/schema path within the catalog, as an ordered list, e.g. `[default]`. |
+| `table` | no | The table name within that namespace. |
+
+Applies identically to `inputs` and `outputs` — the same `Dataset` type both share. An
+org that requires every job's *output* to have a catalog entry, and separately requires
+every *input* it reads to already be catalog-registered too, declares both independently.
+
+## Only the sub-fields you declare are checked
+
+Declaring `technology: hive` alone doesn't require a specific `table` or `catalogName` —
+each sub-field is compared independently, the same way `format`/`saveMode` are only
+checked when a contract declares them. Pin down as much or as little as matters to you:
+
+```yaml
+catalog:
+  required: true
+  technology: hive   # any Hive-registered table satisfies this
+```
+
+## What happens on a mismatch
+
+Two ways a required registration can fail: **missing** (no catalog entry exists at all)
+and **mismatch** (a real entry exists, but disagrees with a declared sub-field). A real
+example — a contract requiring Hive registration under one metastore, checked against a
+table actually registered under a different one:
+
+```
+1. [OUTPUT_CATALOG_MISMATCH] contract's declared catalog registration for the output at
+   '/tmp/.../external_catalog_location_mismatch' does not match the actual registration:
+   location (expected 'thrift://not-the-real-metastore.example.com:9083', actual
+   'embedded:jdbc:derby:;databaseName=/tmp/.../metastore_db;create=true')
+```
+
+The write is aborted before anything is committed — see
+[Fail-Closed by Default](/concepts/fail-closed/). Input-side mirrors
+(`MISSING_INPUT_CATALOG_REGISTRATION`/`INPUT_CATALOG_MISMATCH`) behave identically against
+`inputs`. See [Reference → Violation Types](/reference/violation-types/) for the full list.
+
+<Aside type="tip" title="required: false is informational, not a check">
+`catalog: { required: false, technology: hive }` records an *expected* shape without
+gating anything — useful for documenting intent (`ContractValidator` warns on this
+combination, since a fully-specified but non-required block is easy to write by mistake).
+Nothing about a plan's actual catalog registration is compared unless `required: true`.
+</Aside>
+
+## What `location` can and can't check
+
+`location` is the one sub-field worth understanding carefully, because what it can verify
+depends on the catalog technology — this isn't a hypothetical caveat, it's exactly what
+closing the org-wide "every job needs a real catalog entry" policy required confirming
+for real, against a real Spark session, rather than assuming.
+
+**Hive: a real, durable check.** For a Hive-backed write or read, `location` is the
+metastore's own network address — `hive.metastore.uris` (a real `thrift://host:port`),
+or an `embedded:<jdbc-url>` fallback for a local/embedded metastore — read from the
+*active session's own Hadoop configuration*, not a value this module invents. This
+answers the concrete question a platform team would actually ask: **can a job silently
+write through a different Hive metastore than the one the contract declares?** No — a job
+connected to the wrong metastore reports that metastore's real address, which disagrees
+with the contract's declared one and is rejected, exactly like the example above.
+
+**Delta / Iceberg / JDBC: not checked, honestly.** No DSv2 catalog implementation exposes
+its own network endpoint through a public API this module can read without taking on a
+compile-time dependency on that connector — so `location` is always absent for these
+today. Declaring `catalog.location` against a Delta/Iceberg/JDBC output is accepted as a
+no-op (not an error, and never a permanent, unsatisfiable rejection) — only
+`technology`/`catalogName`/`namespace`/`table` are actually verified for those. If you
+need to pin down *which* Delta/Iceberg catalog instance a job talks to, that's not
+something this check can do yet.
+
+## Trying it yourself
+
+Every example above comes from `HiveConnectorSpec`'s real enforcement tests against a
+real (embedded) Hive metastore — not invented. Run them directly to see the real PASS/FAIL
+behavior, including the wrong-metastore rejection:
+
+```bash
+cd spark-adapter
+sbt "testOnly com.invaract.sparkadapter.HiveConnectorSpec"
+```
+
+## What's next
+
+See [Reference → Contract Format](/reference/contract-format/#catalog-registration) for
+the complete field reference, and
+[docs/connectors/hive.md](https://github.com/mlltx/Invaract/blob/main/docs/connectors/hive.md#catalog-registration-checks)
+for the full investigation this feature was built against, including the real bug found
+and fixed while proving the Delta/Iceberg/JDBC limitation above.

@@ -462,6 +462,73 @@ comparison surfaces is entirely about *event cardinality*: one write
 statement, one validation and one write event; one `.saveAsTable()` call,
 two of each.
 
+## Catalog registration checks
+
+`Dataset.catalog` (`docs/CONTRACT_MODEL.md`'s `catalog` field, added
+alongside `format`/`saveMode`) lets a contract require an input or output
+to actually be registered in a catalog — the org-wide policy motivating
+this: every job's output should have a real catalog entry so downstream
+tools can discover it, not just a bare path only the writing job knows
+about. Hive is the connector this was built and proven against first,
+since it's the one this document's own "External tables" section already
+established has no *translation* gap, only a *checking* one — nothing
+stopped a `CREATE EXTERNAL TABLE` from registering a wrong or absent
+schema over already-written data, because catalog registration itself
+was never something a contract could require or verify at all.
+
+`ir.CatalogIdentity` (technology/catalogName/location/namespace/table) is
+the *observed* registration a real write/read resolved to, extracted per
+write/read shape by `CatalogIdentitySupport`/`WriteCommandSupport`/
+`SparkPlanAdapter`, and compared against the contract's declared
+`CatalogRequirement` by `StructuralVerifier`. Two new violation pairs:
+`MISSING_OUTPUT_CATALOG_REGISTRATION`/`OUTPUT_CATALOG_MISMATCH` and their
+input-side mirrors — only fired when a dataset's `catalog:` block declares
+`required: true`; a contract that doesn't declare `catalog:` at all
+behaves exactly as it did before this feature existed.
+
+**`technology`/`catalogName`/`namespace`/`table` are straightforward: real
+values, always populated for a real Hive write (`spark_catalog`, the
+table's database/name, `technology: hive`).** The one field genuinely
+worth documenting carefully is `location` — the Hive metastore's own
+network address (`hive.metastore.uris`, or an `embedded:<jdbc-url>`
+fallback for a local/embedded metastore like this suite's own test
+fixture), read from the *active session's* Hadoop configuration, not a
+Spark-local catalog alias. This answers a specific, real question a
+platform team would ask: **can a job silently write through a different
+Hive metastore than the contract declares?** No — confirmed by a real
+enforcement test (`HiveConnectorSpec`'s "FAIL: a write through the wrong
+Hive metastore location is rejected"): a contract declaring
+`location: thrift://not-the-real-metastore.example.com:9083` against a
+session actually backed by a different (here, embedded) metastore is
+rejected with `OUTPUT_CATALOG_MISMATCH`, naming exactly which field
+disagreed and what the real value was. The matching PASS test reads the
+session's real value the same way `CatalogIdentitySupport.hiveMetastoreLocation`
+itself does (not hand-typed) and confirms a correctly-declared location is
+accepted.
+
+**A real gap, and a real bug it caused, found while proving the above for
+DSv2 connectors.** `ir.CatalogIdentity.location` is `None` for every DSv2
+catalog (Delta/Iceberg/JDBC) — confirmed, not assumed: no reflective
+accessor exists in any of these connectors' public API to read a catalog
+plugin's own network endpoint without a compile-time dependency this
+module deliberately doesn't take (see `CatalogIdentitySupport.fromV2`'s
+own doc). The first version of the mismatch check compared a declared
+`location` unconditionally once the contract declared it — which meant
+declaring `catalog.location` against *any* Delta/Iceberg/JDBC output
+would never be satisfiable, regardless of the value chosen, since the
+actual side is permanently `None` there. A real Delta enforcement test
+(reused from this document's own external-table fixtures) caught this
+immediately: a `.saveAsTable()` append that should have passed cleanly
+was rejected instead. Fixed in `StructuralVerifier.catalogFieldMismatches`
+to treat an unknown *actual* sub-field the same way `formatViolation`'s
+own doc already treats an unknown actual format — no comparison, no
+violation — so declaring `catalog.location` against a DSv2 output is
+accepted as a no-op today (only `technology`/`catalogName`/`namespace`/
+`table` are actually checked for those), not a permanent, un-fixable
+rejection. `HiveConnectorSpec`'s "known limitation: a Delta output's
+declared catalog.location is never checked" test and a dedicated
+`StructuralVerifierSpec` regression test both pin this down directly.
+
 ## `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
 
 Both confirmed to be rejected by Spark before producing any analyzable
@@ -505,6 +572,7 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | EXTERNAL tables (Hive SerDe and datasource-provider Parquet/Delta, both `LOCATION`-via-raw-SQL and `.option("path", ...)`-via-`.saveAsTable()`) | ✅ Confirmed — no gap, with one pre-existing DSv2 limitation reconfirmed | Every write shape an external table produces was already a recognized `WriteCommandSupport` case; notification publishing (`ContractValidationEvent`/`WriteEvent`) is correct for the same reason, confirmed with real captured JSON. One caveat, not new to external tables: a NEW Delta table's `CreateTableAsSelect` still resolves to the qualified catalog identifier, not the physical path, `.option("path", ...)` or not — the same `StagedTable` behavior `docs/connectors/delta.md` already documents for the default in-memory catalog. See "External tables" above; `HiveConnectorSpec`'s 10 new tests. |
 | `DROP TABLE` on an EXTERNAL table | ✅ Confirmed — deliberate, accepted false rejection | Data survives a real `DROP TABLE` on an EXTERNAL table, but Invaract rejects it anyway (not in `FailClosedCommands`' safe list, table type isn't inspected) — working as designed per that list's own safe-vs-unsafe asymmetry, not a bug. `HiveConnectorSpec`'s test confirms both halves. |
 | Notification publishing (`ContractValidationEvent`/`WriteEvent`) against an external table | ✅ Confirmed — real messages captured, not asserted from the code | A real `FileNotificationSink` receives a correctly-populated `ContractValidationEvent` (status, contract ref) and `WriteEvent` (the real external `location`, format, row/byte/file counts) for an external-table write — real JSON captured and quoted in "External tables" above. `HiveConnectorSpec`'s test. |
+| Catalog registration checks (`catalog:` on a contract dataset) | 🔧 **Found and fixed, with one disclosed non-Hive limitation** | Real Hive metastore identity (technology/catalogName/location/namespace/table) extracted and checked for real — including a genuine "wrong metastore" rejection, the specific concern this feature exists to close. A real bug was found and fixed along the way: the mismatch check originally compared `location` unconditionally, which would have made declaring `catalog.location` against any DSv2 (Delta/Iceberg/JDBC) output permanently unsatisfiable, since those connectors report no location at all — caught by a real Delta enforcement test, not inspection. See "Catalog registration checks" above; 7 new `HiveConnectorSpec` tests plus a dedicated `StructuralVerifierSpec` regression test. |
 
 Net assessment: Hive is not "100% supported," the same honest framing
 every other connector in this document gets — but every operation-surface
@@ -523,5 +591,11 @@ Hive's own V1 command — only the managed case, and separately, the DSv2
 `CreateTableAsSelect` case regardless of external-vs-managed), confirmed
 a deliberate false rejection for `DROP TABLE` on external tables, and
 captured real notification JSON against an external table for the first
-time. `HiveConnectorSpec`: 36 tests.
+time. A later, catalog-registration-focused pass added 7 more tests
+proving the org-wide "every job needs a real catalog entry" policy is
+actually enforceable — including a genuine wrong-metastore rejection —
+and found and fixed a real bug of its own along the way (an
+unconditional `location` comparison that would have made the check
+permanently unsatisfiable for every DSv2 connector). `HiveConnectorSpec`:
+43 tests.
 

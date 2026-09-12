@@ -618,29 +618,50 @@ private[sparkadapter] object StructuralVerifier {
       }
   }
 
-  /** Compares only the sub-fields the contract actually declares — the same
-    * both-sides-known convention `formatViolation`/`saveModeViolation` in
-    * `verify` already use — so a `CatalogRequirement` that only pins
-    * `technology` doesn't spuriously fail over an unrelated `catalogName`/
-    * `location` difference the contract author never asked to check.
+  /** Compares only the sub-fields the contract actually declares AND that
+    * the actual side reports a real value for — the same both-sides-known
+    * convention `formatViolation`/`saveModeViolation` in `verify` already
+    * use for the overall `format`/`saveMode` check, applied per sub-field
+    * here. Two independent reasons a sub-field can be left uncompared:
+    * a `CatalogRequirement` that only pins `technology` doesn't
+    * spuriously fail over an unrelated `catalogName`/`location` the
+    * contract author never asked to check (`req`'s side is `None`); and
+    * `location` specifically is a real, disclosed capability gap for
+    * every DSv2 connector today (`ir.CatalogIdentity.location` is always
+    * `None` for Delta/Iceberg/JDBC - see `CatalogIdentitySupport.fromV2`'s
+    * own doc) - comparing it there would make declaring `catalog.location`
+    * against such an output permanently, unfixably fail regardless of the
+    * value chosen, exactly the false-rejection-on-unknown-information risk
+    * `formatViolation`'s own doc already warns against (`actual`'s side is
+    * `None`). Confirmed by a real Delta enforcement test, not assumed:
+    * without this, every DSv2 catalog write that ever declares a
+    * `catalog.location` requirement would be un-satisfiable.
     */
   private def catalogFieldMismatches(req: CatalogRequirement, actual: CatalogIdentity): List[String] = {
-    val technology = req.technology
-      .filterNot(expected => actual.technology.exists(_.equalsIgnoreCase(expected)))
-      .map(expected => s"technology (expected '$expected', actual '${actual.technology.getOrElse("<none>")}')")
-    val catalogName = req.catalogName
-      .filterNot(expected => actual.catalogName.contains(expected))
-      .map(expected => s"catalogName (expected '$expected', actual '${actual.catalogName.getOrElse("<none>")}')")
-    val location = req.location
-      .filterNot(expected => actual.location.contains(expected))
-      .map(expected => s"location (expected '$expected', actual '${actual.location.getOrElse("<none>")}')")
+    val technology = req.technology.flatMap(expected =>
+      actual.technology
+        .filterNot(_.equalsIgnoreCase(expected))
+        .map(actualValue => s"technology (expected '$expected', actual '$actualValue')")
+    )
+    val catalogName = req.catalogName.flatMap(expected =>
+      actual.catalogName
+        .filterNot(_ == expected)
+        .map(actualValue => s"catalogName (expected '$expected', actual '$actualValue')")
+    )
+    val location = req.location.flatMap(expected =>
+      actual.location
+        .filterNot(_ == expected)
+        .map(actualValue => s"location (expected '$expected', actual '$actualValue')")
+    )
     val namespace =
-      if (req.namespace.nonEmpty && req.namespace != actual.namespace)
+      if (req.namespace.nonEmpty && actual.namespace.nonEmpty && req.namespace != actual.namespace)
         Some(s"namespace (expected '${req.namespace.mkString(".")}', actual '${actual.namespace.mkString(".")}')")
       else None
-    val table = req.table
-      .filterNot(expected => actual.table.contains(expected))
-      .map(expected => s"table (expected '$expected', actual '${actual.table.getOrElse("<none>")}')")
+    val table = req.table.flatMap(expected =>
+      actual.table
+        .filterNot(_ == expected)
+        .map(actualValue => s"table (expected '$expected', actual '$actualValue')")
+    )
 
     List(technology, catalogName, location, namespace, table).flatten
   }

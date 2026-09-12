@@ -1311,6 +1311,134 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_catalog_mismatch_fail_tbl").count() == 0, "a rejected insert must never have committed")
   }
 
+  // The specific, concrete question this whole check exists to answer:
+  // can a job silently write through a DIFFERENT Hive metastore than the
+  // contract declares? `location` (CatalogIdentitySupport.hiveMetastoreLocation)
+  // is a real, session-derived value - hive.metastore.uris, or an
+  // "embedded:<jdbc-url>" fallback for a local/embedded metastore, exactly
+  // this test session's own setup - not a Spark-local alias like
+  // catalogName. These two tests prove it's actually compared, not just
+  // present in the data model: a wrong declared location is rejected, and
+  // the real one (read the same way CatalogIdentitySupport itself does,
+  // not hand-typed) passes.
+
+  test("FAIL: a write through the wrong Hive metastore location is rejected (OUTPUT_CATALOG_MISMATCH names 'location')") {
+    val loc = extScratchDir("catalog_location_mismatch")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_catalog_location_mismatch_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: hive
+         |      location: thrift://not-the-real-metastore.example.com:9083
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val ex = intercept[ContractViolationException] {
+        spark.sql("INSERT INTO hive_catalog_location_mismatch_tbl SELECT 1, 10")
+      }
+      val violation = ex.result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+        .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${ex.result.violations}"))
+      assert(violation.expected.exists(_.contains("location=thrift://not-the-real-metastore.example.com:9083")))
+      assert(!violation.actual.exists(_.contains("thrift://not-the-real-metastore.example.com:9083")), "the actual side must report this session's REAL metastore location, not echo the wrong declared one")
+    }
+    assert(spark.table("hive_catalog_location_mismatch_tbl").count() == 0, "a rejected insert must never have committed")
+  }
+
+  test("PASS: a write against the contract's correctly-declared Hive metastore location is accepted") {
+    val loc = extScratchDir("catalog_location_pass")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_catalog_location_pass_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+
+    // The real value this session's own writes will actually report -
+    // read the identical way CatalogIdentitySupport.hiveMetastoreLocation
+    // does, not hand-typed, so this test can't pass by coincidentally
+    // matching a guess.
+    val realMetastoreLocation = CatalogIdentitySupport.hiveMetastoreLocation
+      .getOrElse(fail("expected this test session to report a real Hive metastore location (embedded or thrift)"))
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: hive
+         |      location: $realMetastoreLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("INSERT INTO hive_catalog_location_pass_tbl SELECT 1, 10") // must not throw
+    }
+    assert(spark.table("hive_catalog_location_pass_tbl").count() == 1)
+  }
+
+  // The disclosed, real counterpart to the Hive tests above: for a DSv2
+  // catalog (Delta/Iceberg/JDBC), `location` is ALWAYS None -
+  // CatalogIdentitySupport.fromV2's own doc explains why (no reflective
+  // accessor exists in any of these connectors' public API to read a
+  // catalog plugin's own network endpoint without a compile-time
+  // dependency this module deliberately doesn't take). This means a
+  // contract declaring `catalog.location` against a Delta/Iceberg/JDBC
+  // output can never be verified today - only `technology`/`catalogName`/
+  // `namespace`/`table` are actually checked for those. Confirmed here
+  // rather than left as an assumption: declaring a location the actual
+  // write plainly does NOT satisfy still passes cleanly, because the
+  // location sub-field is never compared when the actual side is None -
+  // same "no false rejection on unknown information" rule format/saveMode
+  // already follow.
+  test("known limitation: a Delta output's declared catalog.location is never checked (DSv2 catalogs report no location at all)") {
+    val loc = extScratchDir("catalog_location_delta_unchecked")
+    df().write.format("delta").option("path", loc).saveAsTable("delta_catalog_location_unchecked_tbl") // new table, no contract active yet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: delta
+         |      location: this-value-is-never-actually-checked-for-delta
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      df().write.format("delta").mode("append").saveAsTable("delta_catalog_location_unchecked_tbl") // must not throw
+    }
+    assert(spark.read.format("delta").load(loc).count() == 4)
+  }
+
   test("PASS: a real Hive-registered input satisfies a contract requiring input-side catalog registration") {
     // Input-side mirror of the output tests above, against a real Hive
     // read - confirms the check applies symmetrically per the user's own
