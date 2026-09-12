@@ -349,70 +349,118 @@ present could silently defeat the whole feature). `HiveConnectorSpec`'s
 fail-closed test confirms both halves: the rejection fires, and the data
 really would have survived anyway.
 
-### Real notification messages, captured against an external table
+### Real notification messages: write-then-register vs. `.saveAsTable()`
 
-`HiveConnectorSpec`'s notification test wires a real `FileNotificationSink`
-(the same sink `demo/notify.properties`/`./dev/test` use — not a mock)
-into a real external-Parquet-table write, via `ContractEnforcementRule`'s
-sink-aware `verifyOrThrow` overload for `ContractValidationEvent` and a
-`SparkAdapterListener` for `WriteEvent`. Real captured output (reformatted
-for readability — the actual sink writes one compact JSON line per
-event):
+The two write paths this document compares throughout don't just differ
+in which `WriteCommandSupport` case handles them — they publish a
+genuinely different amount of notification traffic for what looks, from
+the caller's side, like "one write." `HiveConnectorSpec`'s comparison
+test wires a real `FileNotificationSink` (the same sink
+`demo/notify.properties`/`./dev/test` use — not a mock) into both forms,
+using this contract shape for both (note the `format:` field — a
+contract can declare an expected output *format*, checked against the
+plan's actual format, independently of the per-field `type`s in
+`schema.fields`):
 
-```json
-{
-  "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1789195078790,
-  "contract": "enforcement_demo@1.0.0",
-  "status": "PASSED",
-  "violations": [],
-  "metadata": {},
-  "applicationId": "local-1789195049331",
-  "fingerprints": null
-}
+```yaml
+id: enforcement_demo
+version: "1.0.0"
+outputs:
+  - name: out
+    location: <the external location>
+    format: parquet
+    schema:
+      fields:
+        - name: id
+          type: long
+          required: true
+        - name: value
+          type: long
+          required: true
 ```
 
-```json
-{
-  "eventType": "WRITE",
-  "timestamp": 1789195078864,
-  "contract": "enforcement_demo@1.0.0",
-  "location": "file:/tmp/invaract-hive-test1303275868275135991/external_notify_ext",
-  "format": "parquet",
-  "saveMode": "append",
-  "schema": [
-    { "name": "id", "type": "long", "nullable": false },
-    { "name": "value", "type": "long", "nullable": false }
-  ],
-  "metadata": {},
-  "durationMs": 69,
-  "rowCount": 1,
-  "bytesWritten": 718,
-  "fileCount": 1,
-  "applicationId": "local-1789195049331",
-  "deltaVersion": null,
-  "icebergSnapshotId": null,
-  "operation": null
-}
+**(A) Write parquet directly, then separately register a Hive `EXTERNAL`
+table over the already-written data** — the realistic "an ETL job writes
+files, a later metadata step catalogs them" pattern:
+
+```scala
+df.write.mode("overwrite").parquet(path)                                    // the only write
+spark.sql(s"CREATE EXTERNAL TABLE t (id BIGINT, value BIGINT) " +
+          s"STORED AS PARQUET LOCATION '$path'")                            // metadata only
 ```
 
-(`nullable: false` here is a property of this test's own `df()` fixture —
-built from a typed `Seq[(Long, Long)]`, whose encoder produces non-null
-primitive columns — not something being an external table changes;
-`HiveConnectorSpec`'s other tests, built from nullable-by-default catalog
-reads, show `nullable: true` instead.)
+Real captured output — **exactly one of each event, and nothing at all
+from the `CREATE EXTERNAL TABLE` step**:
 
-Both events carry the table's *real, external* `location` (never a
-warehouse-relative or catalog-identifier form) and the same
-`contract`/`applicationId` pair, confirming a subscriber can correlate the
-two for an external table exactly as it would for a managed one — nothing
-about being external changes the shape or correctness of what's
-published. `rowCount`/`bytesWritten`/`fileCount` are populated here
-because this is a plain V1 datasource write (`InsertIntoHadoopFsRelationCommand`);
-per `WriteEvent`'s own doc, the equivalent Delta/DSv2 write shapes above
-(`AppendData`) do not populate these three fields — an honest gap in
-*this specific metric*, already documented, not something the
-external-table pass changes.
+```json
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196777660, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
+```
+```json
+{"eventType": "WRITE", "timestamp": 1789196779435, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_sql", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 1761, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "applicationId": "local-1789196775261"}
+```
+
+The `CREATE EXTERNAL TABLE` statement that follows publishes **nothing**
+— confirmed directly (a real assertion, not an assumption): schema-only
+`CREATE EXTERNAL TABLE` with no `AS SELECT` is `CreateTableCommand`,
+already on `FailClosedCommands`' safe list, so it never reaches
+`verifyOrThrow`'s `ir.Write` branch at all. There is no "the table was
+registered" event of any kind — the contract was already fully checked
+at the moment the data itself was written; registering an external table
+over already-verified data adds nothing for Invaract to check, because
+it changes no row content.
+
+**(B) `.format("parquet").option("path", ...).saveAsTable(newTable)`** —
+one call doing both, for the exact same input data:
+
+```scala
+df.write.format("parquet").option("path", path).saveAsTable("t")
+```
+
+Real captured output — **two of each event**, for what the caller
+experiences as one write:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783942, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783958, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
+```
+```json
+{"eventType": "WRITE", "timestamp": 1789196784087, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 127, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "applicationId": "local-1789196775261"}
+{"eventType": "WRITE", "timestamp": 1789196784147, "contract": "enforcement_demo@1.0.0", "location": "file:///tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "error", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 201, "rowCount": null, "bytesWritten": null, "fileCount": null, "applicationId": "local-1789196775261"}
+```
+
+**Why two, and a real correction to what this document previously assumed
+from the Hive-specific write-up above:** `.saveAsTable()` on a new table
+analyzes to two nested `Command` plans
+(`CreateDataSourceTableAsSelectCommand` wrapping an inner
+`InsertIntoHadoopFsRelationCommand`), and `injectCheckRule` sees and
+verifies both independently — hence two `ContractValidationEvent`s, both
+`PASSED`, for one logical call. That part was expected, the same
+"one call, two Command-shaped plans" pitfall already documented for
+Hive's own `CreateHiveTableAsSelectCommand`/`InsertIntoHiveTable` pair
+above. What's **not** the same as the Hive case: this document's
+`CreateHiveTableAsSelectCommand` write-up states
+`SparkAdapterListener`'s `QueryExecutionListener` "only observes the
+top-level query" — true for *that* command, but confirmed here (not
+assumed to generalize) that `CreateDataSourceTableAsSelectCommand` is
+different: Spark executes its inner write as its own separate
+`QueryExecution`, so `onSuccess` genuinely fires **twice**, producing two
+`WriteEvent`s — one for the real physical write (accurate
+`rowCount`/`bytesWritten`/`fileCount`, `saveMode` reported as Spark's own
+internal `"overwrite"` for the fresh table) and one for the outer command
+itself (`saveMode: "error"` — `.saveAsTable()`'s default for a brand-new
+table with no explicit `.mode()` — with `rowCount`/`bytesWritten`/`fileCount`
+all `null`, since the outer command's own executed plan carries no
+`SQLMetric`s at all). A subscriber consuming `WriteEvent`s from a
+`.saveAsTable()` call needs to expect this pair, not a single event, and
+know to prefer the one with real metrics over the metrics-free duplicate.
+
+Both forms' events carry the table's *real, external* `location` (never
+a warehouse-relative or catalog-identifier form) and the same
+`contract`/`applicationId` pair — nothing about being external changes
+the shape or correctness of what's published. The real difference this
+comparison surfaces is entirely about *event cardinality*: one write
+statement, one validation and one write event; one `.saveAsTable()` call,
+two of each.
 
 ## `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
 

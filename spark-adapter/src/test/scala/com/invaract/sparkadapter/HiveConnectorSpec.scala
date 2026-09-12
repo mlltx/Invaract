@@ -3,7 +3,6 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.ContractParser
 import com.invaract.sparkadapter.notification.FileNotificationSink
 
 import org.apache.spark.sql.SparkSession
@@ -1194,62 +1193,161 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // detail. Captured via FileNotificationSink, the same sink
   // demo/notify.properties and ./dev/test's own real-message proof use -
   // not a mock, not a hand-built JSON string.
-  test("notifications: an external Parquet write publishes a real ContractValidationEvent and WriteEvent to a configured sink") {
-    val loc = extScratchDir("notify_ext")
-    spark.sql(s"CREATE EXTERNAL TABLE hive_notify_ext_tbl (id BIGINT, value BIGINT) USING PARQUET LOCATION '$loc'")
+  /** One end-to-end scenario's real captured notification traffic: how many
+    * of each event type a fresh `FileNotificationSink` actually received,
+    * plus the raw lines - built once, reused by both halves of the
+    * comparison test below so neither has to duplicate the
+    * sink-wiring/eventually-wait boilerplate.
+    */
+  private case class CapturedEvents(validationLines: Seq[String], writeLines: Seq[String])
 
-    val eventsFile = scratchDir.resolve("notify_events.jsonl")
-    val sink = new FileNotificationSink
-    sink.configure(Map("path" -> eventsFile.toString))
-
-    val contract = parseContract(
-      s"""id: enforcement_demo
-         |version: "1.0.0"
-         |outputs:
-         |  - name: out
-         |    location: ${loc.stripPrefix("file:")}
-         |    schema:
-         |      fields:
-         |        - name: id
-         |          type: long
-         |          required: true
-         |        - name: value
-         |          type: long
-         |          required: true
-         |""".stripMargin
-    )
+  /** `expectedWriteEvents` matters here in a way it wouldn't for a simpler
+    * "wait for at least one" check: `SparkAdapterListener.onSuccess` fires
+    * asynchronously on Spark's own listener-bus thread (documented
+    * elsewhere in this file - see `awaitWriteTo`'s own doc), and a
+    * `.saveAsTable()` call that triggers it *twice* (once per nested
+    * Command plan - see the comparison test below) has no ordering/timing
+    * guarantee that both have landed by the time a generic "any WriteEvent
+    * yet" check would already return - confirmed the hard way by this
+    * exact test flaking between 1 and 2 observed WriteEvents before this
+    * fix. Waiting for the *exact expected count* (not just "at least one")
+    * is what `awaitWriteTo`'s own location/saveMode filters achieve for a
+    * single expected write; this generalizes that to N.
+    */
+  private def captureNotifications(
+    contractYaml: String,
+    sink: FileNotificationSink,
+    eventsFile: Path,
+    expectedWriteEvents: Int
+  )(body: => Unit): CapturedEvents = {
+    val contract = parseContract(contractYaml)
     val listener = new SparkAdapterListener(Some(sink), Some(contract))
     spark.listenerManager.register(listener)
-
     withSink(sink) {
-      withContract(ContractParser.write(contract)) {
-        spark.sql("INSERT INTO hive_notify_ext_tbl SELECT 1, 10") // must not throw
+      withContract(contractYaml) {
+        body
       }
     }
-
     val lines = org.scalatest.concurrent.Eventually.eventually(
       org.scalatest.concurrent.Eventually.timeout(org.scalatest.time.Span(5, org.scalatest.time.Seconds))
     ) {
-      val ls = Files.readAllLines(eventsFile).toArray.map(_.toString)
-      assert(ls.exists(_.contains("\"eventType\": \"WRITE\"")), "expected a WriteEvent line by now")
+      val ls = if (Files.exists(eventsFile)) Files.readAllLines(eventsFile).toArray.toIndexedSeq.map(_.toString) else IndexedSeq.empty
+      val writeCount = ls.count(_.contains("\"eventType\": \"WRITE\""))
+      assert(writeCount == expectedWriteEvents, s"expected $expectedWriteEvents WriteEvent(s) by now, have $writeCount so far")
       ls
     }
+    CapturedEvents(
+      lines.filter(_.contains("\"eventType\": \"CONTRACT_VALIDATION\"")),
+      lines.filter(_.contains("\"eventType\": \"WRITE\""))
+    )
+  }
 
-    val validationLine = lines.find(_.contains("\"eventType\": \"CONTRACT_VALIDATION\"")).getOrElse(fail("no ContractValidationEvent captured"))
-    assert(validationLine.contains("\"status\": \"PASSED\""))
-    assert(validationLine.contains(s""""contract": "enforcement_demo@1.0.0""""))
+  private def contractFor(location: String): String =
+    s"""id: enforcement_demo
+       |version: "1.0.0"
+       |outputs:
+       |  - name: out
+       |    location: $location
+       |    format: parquet
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: long
+       |          required: true
+       |        - name: value
+       |          type: long
+       |          required: true
+       |""".stripMargin
 
-    val writeLine = lines.find(_.contains("\"eventType\": \"WRITE\"")).getOrElse(fail("no WriteEvent captured"))
-    assert(writeLine.contains(loc.stripPrefix("file:")), s"expected the real external location in the WriteEvent, got: $writeLine")
-    assert(writeLine.contains("\"format\": \"parquet\""))
-    assert(writeLine.contains(s""""contract": "enforcement_demo@1.0.0""""))
+  // --- Comparing the two write paths the user actually asked about -------
+  //
+  // Not ".saveAsTable() vs. a single CREATE EXTERNAL TABLE ... AS SELECT",
+  // but the more realistic pairing: (A) write plain parquet data first,
+  // then separately point a Hive EXTERNAL table at the already-written
+  // data (a common real pattern - an ETL job writes files, a later
+  // metadata-registration step catalogs them) vs. (B) .saveAsTable() doing
+  // both the write AND the table registration in one call. Captured with a
+  // real FileNotificationSink for both, to see how the actual published
+  // traffic differs, not just whether each individually passes.
+  test("notifications: write-then-register (raw SQL) vs. saveAsTable() (write+register in one call) - real captured message counts differ") {
+    // --- (A) raw SQL: write parquet directly, THEN register an EXTERNAL
+    // Hive table over the already-existing data (schema-only DDL, no AS
+    // SELECT - no data is written by this second statement). ---
+    val locA = extScratchDir("compare_sql")
+    val eventsFileA = scratchDir.resolve("compare_sql_events.jsonl")
+    val sinkA = new FileNotificationSink
+    sinkA.configure(Map("path" -> eventsFileA.toString))
 
-    // Surfaced for the human reading test output/docs, not asserted on -
-    // this is exactly the real captured JSON docs/connectors/hive.md's
-    // "External tables" section quotes.
+    val capturedA = captureNotifications(contractFor(locA.stripPrefix("file:")), sinkA, eventsFileA, expectedWriteEvents = 1) {
+      df().write.mode("overwrite").parquet(locA) // the ONLY write in this scenario
+    }
+    val countAfterWrite = Files.readAllLines(eventsFileA).size()
+
+    // Register the external table over the data that's already there - no
+    // active contract even needed to prove the point, since this must
+    // publish nothing regardless: CREATE EXTERNAL TABLE with no AS SELECT
+    // is CreateTableCommand, safe-listed DDL, never reaches verifyOrThrow's
+    // ir.Write branch at all.
+    spark.sql(s"CREATE EXTERNAL TABLE hive_compare_sql_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$locA'")
+    Thread.sleep(500) // let any (unexpected) async event a chance to land before asserting its absence
+    val countAfterCreate = Files.readAllLines(eventsFileA).size()
+    assert(
+      countAfterCreate == countAfterWrite,
+      "CREATE EXTERNAL TABLE over already-written data is metadata-only and must publish NO additional event " +
+        s"(had $countAfterWrite lines after the write, $countAfterCreate after the CREATE)"
+    )
+    assert(spark.table("hive_compare_sql_tbl").count() == 2, "the external table must see the data written before it existed")
+
+    // --- (B) .saveAsTable(): a single call both creates the table (a new
+    // one) and writes the data, analyzing to TWO Command-shaped plans
+    // (CreateDataSourceTableAsSelectCommand + a nested
+    // InsertIntoHadoopFsRelationCommand) - the same "one call, two writes"
+    // shape already documented elsewhere in this file for Hive/Delta's own
+    // CTAS. ---
+    val locB = extScratchDir("compare_saveastable")
+    val eventsFileB = scratchDir.resolve("compare_saveastable_events.jsonl")
+    val sinkB = new FileNotificationSink
+    sinkB.configure(Map("path" -> eventsFileB.toString))
+
+    val capturedB = captureNotifications(contractFor(locB.stripPrefix("file:")), sinkB, eventsFileB, expectedWriteEvents = 2) {
+      df().write.format("parquet").option("path", locB).saveAsTable("hive_compare_saveastable_tbl")
+    }
+
+    // The real, previously-unstated difference this test exists to show -
+    // and a real correction to an assumption carried over from Hive's own
+    // CreateHiveTableAsSelectCommand write-up (whose QueryExecutionListener
+    // genuinely does only fire once): CreateDataSourceTableAsSelectCommand
+    // is different. injectCheckRule sees BOTH nested Command plans
+    // .saveAsTable() produces and verifies each independently, so ONE
+    // .saveAsTable() call publishes TWO ContractValidationEvents - expected.
+    // But confirmed empirically (not assumed from the Hive precedent) that
+    // SparkAdapterListener.onSuccess ALSO fires twice here, not once: Spark
+    // executes CreateDataSourceTableAsSelectCommand's inner write as its
+    // own separate QueryExecution, so this specific V1 CTAS command
+    // produces TWO WriteEvents for one logical call - one for the real
+    // physical write (real rowCount/bytesWritten/fileCount, saveMode
+    // reported as Spark's own internal "overwrite" for the fresh table),
+    // and one for the outer command itself (saveMode "error" - the
+    // .saveAsTable() default for a brand-new table with no explicit
+    // .mode() - and no SQLMetrics at all, so rowCount/bytesWritten/
+    // fileCount are null). Scenario (A)'s explicit two-statement form has
+    // no such doubling on either channel - exactly one of each.
+    assert(capturedA.validationLines.size == 1, s"expected exactly 1 ContractValidationEvent for the explicit write+register form, got ${capturedA.validationLines.size}")
+    assert(capturedA.writeLines.size == 1, s"expected exactly 1 WriteEvent for the explicit write+register form, got ${capturedA.writeLines.size}")
+    assert(capturedB.validationLines.size == 2, s"expected exactly 2 ContractValidationEvents for .saveAsTable() (one per nested Command plan), got ${capturedB.validationLines.size}")
+    assert(capturedB.writeLines.size == 2, s"expected exactly 2 WriteEvents for .saveAsTable() (the outer CTAS command AND its inner physical write each trigger onSuccess separately), got ${capturedB.writeLines.size}")
+    capturedB.validationLines.foreach(l => assert(l.contains("\"status\": \"PASSED\"")))
+
+    // Surfaced for the human reading test output/docs, not asserted on
+    // beyond the counts above - this is exactly the real captured JSON
+    // docs/connectors/hive.md's "External tables" section quotes.
     // scalastyle:off println
-    println(s"[real ContractValidationEvent] $validationLine")
-    println(s"[real WriteEvent] $writeLine")
+    println(s"[scenario A: write, then CREATE EXTERNAL TABLE] ${capturedA.validationLines.size} ContractValidationEvent(s), ${capturedA.writeLines.size} WriteEvent(s)")
+    capturedA.validationLines.foreach(l => println(s"[A ContractValidationEvent] $l"))
+    capturedA.writeLines.foreach(l => println(s"[A WriteEvent] $l"))
+    println(s"[scenario B: .saveAsTable()] ${capturedB.validationLines.size} ContractValidationEvent(s), ${capturedB.writeLines.size} WriteEvent(s)")
+    capturedB.validationLines.foreach(l => println(s"[B ContractValidationEvent] $l"))
+    capturedB.writeLines.foreach(l => println(s"[B WriteEvent] $l"))
     // scalastyle:on println
   }
 
