@@ -51,22 +51,36 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # spark-adapter and runner resolve contract/ir/fingerprint (and, for
-      # runner, spark-adapter too) as real libraryDependencies against their
-      # published coordinates, not unmanagedJars (see spark-adapter/
-      # build.sbt's and runner/build.sbt's own comments) - each matrix leg
+      # fingerprint resolves ir, and spark-adapter/runner resolve
+      # contract/ir/fingerprint (and, for runner, spark-adapter too), all
+      # as real libraryDependencies against their published coordinates,
+      # not unmanagedJars (see fingerprint/build.sbt's, spark-adapter/
+      # build.sbt's, and runner/build.sbt's own comments) - each matrix leg
       # here is an independent job/checkout, so unlike dev/build's single
       # ordered run, this needs its own publishLocal of every such
       # dependency before the submission step can resolve them, the same
       # fix already applied to every spark-adapter-building job in
-      # test.yml. No-op for contract/ir/fingerprint/plugin/notification-kafka,
-      # which have no such dependency to publish first.
+      # test.yml. No-op for contract/plugin/notification-kafka, which have
+      # no such dependency to publish first.
+      #
+      # fingerprint originally wasn't included in this condition - its own
+      # "Submit fingerprint dependencies" step failed with the identical
+      # "Error downloading com.invaract:invaract-ir_2.12" ResolveException
+      # spark-adapter/runner's jobs already guard against, confirmed on a
+      # real run (2026-09-12) against main, since this workflow only
+      # triggers on a push to main and fingerprint's own real dependency on
+      # ir predates that run.
       - name: Publish local dependencies for ${{ matrix.module }}
-        if: matrix.module == 'spark-adapter' || matrix.module == 'runner'
+        if: matrix.module == 'fingerprint' || matrix.module == 'spark-adapter' || matrix.module == 'runner'
         run: |
-          cd contract && sbt -batch publishLocal && cd ..
-          cd ir && sbt -batch publishLocal && cd ..
-          cd fingerprint && sbt -batch publishLocal && cd ..
+          if [ "${{ matrix.module }}" = "fingerprint" ]; then
+            cd ir && sbt -batch publishLocal && cd ..
+          fi
+          if [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
+            cd contract && sbt -batch publishLocal && cd ..
+            cd ir && sbt -batch publishLocal && cd ..
+            cd fingerprint && sbt -batch publishLocal && cd ..
+          fi
           if [ "${{ matrix.module }}" = "runner" ]; then
             cd spark-adapter && sbt -batch publishLocal && cd ..
           fi
