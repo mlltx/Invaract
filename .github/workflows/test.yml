@@ -460,7 +460,7 @@ jobs:
           - name: shard-1
             files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala"
           - name: shard-2
-            files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala"
           - name: shard-3
             files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala"
           - name: shard-4
