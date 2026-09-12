@@ -165,4 +165,71 @@ class ContractValidatorTest extends AnyFunSuite {
     val result = ContractValidator.validate(contract)
     assert(result.warnings.exists(_.path.endsWith("address.zip")))
   }
+
+  test("validate should accept a dataset with no catalog block at all, unaffected") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "no_catalog",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", Some("parquet"), schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should accept catalog.required=true with a fully-specified identity, no warnings") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "required_catalog",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(
+        Dataset(
+          "out",
+          "/data/sales",
+          Some("parquet"),
+          schema,
+          catalog = Some(CatalogRequirement(required = true, technology = Some("hive"), table = Some("sales")))
+        )
+      ),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should warn when catalog.required=false but an identity is still declared") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "meaningless_catalog",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(
+        Dataset(
+          "out",
+          "gold.out",
+          None,
+          schema,
+          catalog = Some(CatalogRequirement(required = false, technology = Some("hive")))
+        )
+      ),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "this is a warning, not an error")
+    assert(result.warnings.exists(_.message.contains("will not be checked")))
+  }
 }

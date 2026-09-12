@@ -13,7 +13,7 @@ name := "invaract-ir"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -82,7 +82,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.3.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.4.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -122,12 +122,27 @@ mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.3.0")
 // bump, mirroring this section's own history - do not make that flip in
 // the PR doing the bump itself (base-ref won't have it yet).
 //
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - both breaks that motivated the 0.2.0 -> 0.3.0 bump (the
-// expression-algebra rework splitting FunctionCall/renaming Unsupported*/
-// adding ColumnRef.id, and the lineage rework replacing ColumnLineage's
-// aggregated: Boolean with derivation/aggregations) are now baked into
-// both sides of the comparison. The ~20 filter lines that documented them
-// against the old 0.2.0 baseline were removed here rather than left as
-// dead entries with nothing left to match.
+// The 0.3.0 -> 0.4.0 bump (this file's version above) is this module's own
+// next deliberate break: Read and Write each gained a trailing
+// `catalog: Option[CatalogIdentity]` constructor parameter (see
+// contract/build.sbt's matching comment for the identical reasoning -
+// source-compatible, not binary-compatible, since Scala's case-class
+// codegen has exactly one apply/copy/constructor per class). Filtered per
+// MiMa's own suggested exclusions for exactly this break:
+import com.typesafe.tools.mima.core._
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.Read$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.Write$")
+)
+
+// FOLLOW-UP (once a future PR bumps `version` above again): flip
+// `mimaPreviousArtifacts` to this module's new current version and remove
+// the filters above once base-ref itself publishes 0.4.0 (mirroring this
+// section's own history) - do not make that flip in the PR doing the bump
+// itself (base-ref won't have it yet).

@@ -85,7 +85,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
       org.scalatest.concurrent.Eventually.timeout(org.scalatest.time.Span(5, org.scalatest.time.Seconds))
     ) {
       listener.lastWrite match {
-        case Some(r @ TranslationResult(w @ com.invaract.ir.Write(com.invaract.ir.DatasetRef(loc), _, _, _), _))
+        case Some(r @ TranslationResult(w @ com.invaract.ir.Write(com.invaract.ir.DatasetRef(loc), _, _, _, _), _))
           if loc.contains(expectedLocationFragment) && extra(w) => r
         case Some(other) => fail(s"listener's last captured write doesn't match yet: $other")
         case None => fail(s"listener has not captured a write targeting '$expectedLocationFragment' yet")
@@ -118,7 +118,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
 
     val result = SparkPlanAdapter.translate(spark.table("hive_text_read_tbl").queryExecution.analyzed)
     result.plan match {
-      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _) =>
+      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _, _) =>
         assert(location.stripPrefix("file:") == tableLocation("hive_text_read_tbl"))
       case other => fail(s"expected a Read, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
@@ -173,7 +173,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
 
     val result = SparkPlanAdapter.translate(spark.table("hive_parquet_conv_tbl").queryExecution.analyzed)
     result.plan match {
-      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _) =>
+      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _, _) =>
         assert(location.stripPrefix("file:") == tableLocation("hive_parquet_conv_tbl"))
       case other => fail(s"expected a Read, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
@@ -192,7 +192,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
       spark.sql("INSERT INTO hive_parquet_noconv_tbl VALUES (1, 10)")
       val result = SparkPlanAdapter.translate(spark.table("hive_parquet_noconv_tbl").queryExecution.analyzed)
       result.plan match {
-        case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _) =>
+        case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _, _) =>
           assert(location.stripPrefix("file:") == tableLocation("hive_parquet_noconv_tbl"))
         case other => fail(s"expected a Read, got ${com.invaract.ir.PlanPrinter.render(other)}")
       }
@@ -323,7 +323,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     // target write's.
     val result = awaitWriteTo(listener, "hive_ctas_overwrite_gap_tbl", w => w.dataset.location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl")
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, _, _) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, _, _, _) =>
         assert(location == "spark_catalog.default.hive_ctas_overwrite_gap_tbl",
           s"expected the outer command's qualified-identifier fallback, got '$location'")
         assert(location.stripPrefix("file:") != tableLocation("hive_ctas_overwrite_gap_tbl"),
@@ -345,7 +345,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
 
     val result = awaitWriteTo(listener, "hive_insertinto_append_tbl", w => w.saveMode.contains("append"))
     result.plan match {
-      case com.invaract.ir.Write(_, _, format, saveMode) =>
+      case com.invaract.ir.Write(_, _, format, saveMode, _) =>
         assert(format.contains("hive"))
         assert(saveMode.contains("append"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
@@ -429,7 +429,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     // bus's FIFO order to actually arrive and overwrite `lastWrite`.
     val result = awaitWriteTo(listener, "hive_overwrite_tbl", w => w.saveMode.contains("overwrite"))
     result.plan match {
-      case com.invaract.ir.Write(_, _, format, saveMode) =>
+      case com.invaract.ir.Write(_, _, format, saveMode, _) =>
         assert(format.contains("hive"))
         assert(saveMode.contains("overwrite"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
@@ -570,7 +570,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
 
     val result = awaitWriteTo(listener, outDir)
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode, _) =>
         assert(location.contains(outDir) || location == outDir, s"expected the real directory path, got '$location'")
         assert(format.contains("hive"))
         assert(saveMode.contains("overwrite"))
@@ -842,7 +842,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     // same way as an unbucketed one.
     val result = SparkPlanAdapter.translate(spark.table("hive_bucket_feature_tbl").queryExecution.analyzed)
     result.plan match {
-      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _) => assert(location.stripPrefix("file:") == loc)
+      case com.invaract.ir.Read(com.invaract.ir.DatasetRef(location), _, _) => assert(location.stripPrefix("file:") == loc)
       case other => fail(s"expected a Read, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
   }
@@ -958,7 +958,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     // location-resolution path than a managed one).
     val result = awaitWriteTo(listener, loc.stripPrefix("file:"))
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _, _) =>
         assert(location.stripPrefix("file:") == loc.stripPrefix("file:"))
         assert(format.contains("parquet"), s"expected a plain parquet write (not Hive), got format=$format")
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
@@ -1131,7 +1131,7 @@ class HiveConnectorSpec extends ConnectorSpecBase {
 
     val result = awaitWriteTo(listener, "delta_saveastable_ctas_gap_tbl")
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _, _) =>
         assert(location == "spark_catalog.default.delta_saveastable_ctas_gap_tbl",
           s"expected the qualified-identifier fallback (unaffected by .option(path, ...)), got '$location'")
         assert(format.contains("delta"))

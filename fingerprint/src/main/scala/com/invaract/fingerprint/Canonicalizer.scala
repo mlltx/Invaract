@@ -84,7 +84,7 @@ object Canonicalizer {
     val worklist = scala.collection.mutable.Stack(plan)
     while (worklist.nonEmpty) {
       worklist.pop() match {
-        case Read(dataset, alias) =>
+        case Read(dataset, alias, _) =>
           val scopeString = alias.getOrElse(dataset.location)
           val positionalId = substitution.getOrElseUpdate(scopeString, s"src${substitution.size}")
           val index = locationCounts(dataset.location)
@@ -263,16 +263,51 @@ object Canonicalizer {
   // Plans
   // ---------------------------------------------------------------------
 
+  /** `catalog`'s registration identity (technology/catalogName/location/
+    * namespace/table) folded into the hash the same way `Write.format`/
+    * `saveMode` already are - it describes where data is registered, not
+    * any column's business logic, the same "report vs. hash" bucket those
+    * two fields are already documented in (see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md
+    * §2.2/§3). Applied identically on `Read` and `Write`: two reads (or
+    * writes) of the same `location` but genuinely different catalog
+    * registrations are treated as observably different, the same way
+    * `Write.format`/`saveMode` already distinguish two writes to the same
+    * location under a different format/mode.
+    */
+  private def canonicalizeCatalogIdentity(catalog: Option[CatalogIdentity]): CanonicalNode =
+    optionNode(catalog.map { c =>
+      CTag(
+        "CatalogIdentity",
+        List(
+          optionNode(c.technology.map(stringLeaf)),
+          optionNode(c.catalogName.map(stringLeaf)),
+          optionNode(c.location.map(stringLeaf)),
+          CTag("Namespace", c.namespace.map(stringLeaf)),
+          optionNode(c.table.map(stringLeaf))
+        )
+      )
+    })
+
   private def canonicalizePlanT(plan: Plan, scope: Map[String, String]): TailRec[CanonicalNode] = plan match {
-    case Read(dataset, _alias) =>
+    case Read(dataset, _alias, catalog) =>
       // alias is deliberately never read here - it never affects the hash
       // directly, only (via ScopeInfo.substitution, applied at every
       // ColumnRef site) which positional label downstream references are
-      // normalized to. See §2.3.
-      done(CTag("Read", List(stringLeaf(dataset.location))))
-    case Write(dataset, input, format, saveMode) =>
+      // normalized to. See §2.3. catalog, unlike alias, does affect the
+      // hash - see canonicalizeCatalogIdentity's own doc.
+      done(CTag("Read", List(stringLeaf(dataset.location), canonicalizeCatalogIdentity(catalog))))
+    case Write(dataset, input, format, saveMode, catalog) =>
       tailcall(canonicalizePlanT(input, scope)).map { inputNode =>
-        CTag("Write", List(stringLeaf(dataset.location), inputNode, optionNode(format.map(stringLeaf)), optionNode(saveMode.map(stringLeaf))))
+        CTag(
+          "Write",
+          List(
+            stringLeaf(dataset.location),
+            inputNode,
+            optionNode(format.map(stringLeaf)),
+            optionNode(saveMode.map(stringLeaf)),
+            canonicalizeCatalogIdentity(catalog)
+          )
+        )
       }
     case Project(input, columns) =>
       for {
@@ -459,7 +494,7 @@ object Canonicalizer {
   def resolveExprDeep(expr: Expr, input: Plan): Expr = resolveExprDeepT(expr, input).result
 
   private def resolveRefDeepT(ref: ColumnRef, plan: Plan): TailRec[Option[Expr]] = plan match {
-    case Read(dataset, alias) =>
+    case Read(dataset, alias, _) =>
       val scope = alias.getOrElse(dataset.location)
       done(if (ref.qualifier.forall(_ == scope)) Some(ColumnReference(ColumnRef(ref.name, Some(scope)))) else None)
     case Project(input, columns) =>
@@ -513,8 +548,8 @@ object Canonicalizer {
         case (Some(lv), Some(_)) => Some(lv)
         case (None, None)        => None
       }
-    case Write(_, input, _, _) => tailcall(resolveRefDeepT(ref, input))
-    case UnknownPlan(_, _, _)  => done(None)
+    case Write(_, input, _, _, _) => tailcall(resolveRefDeepT(ref, input))
+    case UnknownPlan(_, _, _)     => done(None)
   }
 
   /** The per-output deep-resolved expression for every output name a
@@ -548,9 +583,9 @@ object Canonicalizer {
           l <- tailcall(outputsOfT(left))
           r <- tailcall(outputsOfT(right))
         } yield l ++ r
-      case Write(_, input, _, _) => tailcall(outputsOfT(input))
-      case Read(_, _)            => done(Nil)
-      case UnknownPlan(_, _, _)  => done(Nil)
+      case Write(_, input, _, _, _) => tailcall(outputsOfT(input))
+      case Read(_, _, _)            => done(Nil)
+      case UnknownPlan(_, _, _)     => done(Nil)
     }
     // Later entries win on a duplicate name, matching Map's own
     // to-Map-from-list convention - a real, well-formed plan does not

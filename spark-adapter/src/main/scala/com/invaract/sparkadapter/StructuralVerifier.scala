@@ -270,7 +270,7 @@ private[sparkadapter] object StructuralVerifier {
 
     val expectedOutput = contract.outputs.head
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
-      case Write(dataset, _, actualFormat, actualSaveMode) =>
+      case Write(dataset, _, actualFormat, actualSaveMode, _) =>
         val locationViolation =
           if (locationsMatch(expectedOutput.location, dataset.location)) Nil
           else

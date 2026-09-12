@@ -99,6 +99,20 @@ object ContractValidator {
       issues += ValidationIssue(ValidationSeverity.Error, s"$path.location", "Dataset location must not be empty")
     }
 
+    dataset.catalog.foreach { catalog =>
+      val declaresIdentity =
+        catalog.technology.isDefined || catalog.catalogName.isDefined || catalog.location.isDefined ||
+          catalog.namespace.nonEmpty || catalog.table.isDefined
+      if (!catalog.required && declaresIdentity) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          s"$path.catalog",
+          "catalog.required is false but an expected catalog identity is declared; it will not be " +
+            "checked against anything until 'required' is set to true"
+        )
+      }
+    }
+
     if (dataset.schema.fields.isEmpty) {
       issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", "Schema must declare at least one field")
     }

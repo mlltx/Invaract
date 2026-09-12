@@ -461,4 +461,172 @@ class ContractParserTest extends AnyFunSuite {
     assert(!written.contains("extensions"))
     assert(ContractParser.parse(written) == contract)
   }
+
+  // -- catalog: an output (or input) can declare format with no catalog
+  // requirement at all (unchanged, default behavior), a fully-specified
+  // one, or anything in between - every sub-field beyond `required` is
+  // independently optional. --
+
+  test("parse should default catalog to None when the dataset declares format but no catalog block") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    format: parquet
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).output("out").get.catalog.isEmpty)
+  }
+
+  test("parse should capture a fully-specified catalog requirement") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    format: parquet
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      catalogName: spark_catalog
+        |      location: "thrift://metastore1.example.com:9083"
+        |      namespace: [default]
+        |      table: sales
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val catalog = ContractParser.parse(yaml).output("out").get.catalog.get
+    assert(catalog.required)
+    assert(catalog.technology.contains("hive"))
+    assert(catalog.catalogName.contains("spark_catalog"))
+    assert(catalog.location.contains("thrift://metastore1.example.com:9083"))
+    assert(catalog.namespace == List("default"))
+    assert(catalog.table.contains("sales"))
+  }
+
+  test("parse should capture catalog with only 'required' set, every identity sub-field left as None/empty") {
+    val yaml =
+      """id: minimal_catalog_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/out
+        |    catalog:
+        |      required: true
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val catalog = ContractParser.parse(yaml).output("out").get.catalog.get
+    assert(catalog.required)
+    assert(catalog.technology.isEmpty)
+    assert(catalog.catalogName.isEmpty)
+    assert(catalog.location.isEmpty)
+    assert(catalog.namespace.isEmpty)
+    assert(catalog.table.isEmpty)
+  }
+
+  test("parse should apply catalog independently on an input dataset too") {
+    val yaml =
+      """id: two_dataset_contract
+        |version: "1.0.0"
+        |inputs:
+        |  - name: in
+        |    location: /data/in
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |outputs:
+        |  - name: out
+        |    location: /data/out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val contract = ContractParser.parse(yaml)
+    assert(contract.input("in").get.catalog.exists(c => c.required && c.technology.contains("hive")))
+    assert(contract.output("out").get.catalog.isEmpty)
+  }
+
+  test("parse should raise ContractParseException when a catalog block omits 'required'") {
+    val yaml =
+      """id: bad_catalog
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/out
+        |    catalog:
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val ex = intercept[ContractParseException] { ContractParser.parse(yaml) }
+    assert(ex.getMessage.contains("required"))
+    assert(ex.getMessage.contains("catalog"))
+  }
+
+  test("write should round-trip a fully-specified catalog requirement") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    format: parquet
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      catalogName: spark_catalog
+        |      location: "thrift://metastore1.example.com:9083"
+        |      namespace: [default, region_eu]
+        |      table: sales
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped == original)
+    assert(roundTripped.output("out").get.catalog == original.output("out").get.catalog)
+  }
+
+  test("write should omit the catalog key entirely for a dataset that declares none") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val written = ContractParser.write(ContractParser.parse(yaml))
+    assert(!written.contains("catalog"))
+  }
 }

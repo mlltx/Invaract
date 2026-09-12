@@ -116,6 +116,18 @@ object ContractParser {
     dataset.format.foreach(m.put("format", _))
     m.put("schema", schemaToJava(dataset.schema))
     dataset.saveMode.foreach(m.put("saveMode", _))
+    dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
+    m
+  }
+
+  private def catalogToJava(catalog: CatalogRequirement): java.util.Map[String, Any] = {
+    val m = new java.util.LinkedHashMap[String, Any]()
+    m.put("required", Boolean.box(catalog.required))
+    catalog.technology.foreach(m.put("technology", _))
+    catalog.catalogName.foreach(m.put("catalogName", _))
+    catalog.location.foreach(m.put("location", _))
+    if (catalog.namespace.nonEmpty) m.put("namespace", catalog.namespace.asJava)
+    catalog.table.foreach(m.put("table", _))
     m
   }
 
@@ -181,13 +193,38 @@ object ContractParser {
     val location = requireString(raw, "location", context)
     val format = optString(raw, "format")
     val saveMode = optString(raw, "saveMode")
+    val catalog = parseCatalog(raw, context)
     val schemaRaw = raw.getOrElse(
       "schema",
       throw new ContractParseException(s"Missing 'schema' in $context")
     )
     val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
-    Dataset(name, location, format, schema, saveMode)
+    Dataset(name, location, format, schema, saveMode, catalog)
   }
+
+  /** Parses an optional nested `catalog:` block on a dataset — see
+    * `CatalogRequirement`'s own doc for what each sub-field means. Every
+    * sub-field beyond `required` is independently optional; only
+    * `required` itself is mandatory *within* a present `catalog:` block
+    * (a block with no `required` key is ambiguous about the one thing
+    * that decides whether it gates anything, so it's rejected the same
+    * way a dataset missing `schema` is, rather than silently defaulting).
+    */
+  private def parseCatalog(raw: Map[String, Any], context: String): Option[CatalogRequirement] =
+    optValue(raw, "catalog").map { value =>
+      val m = loadMap(value, s"$context.catalog")
+      val catalogContext = s"$context.catalog"
+      CatalogRequirement(
+        required = optBoolean(m, "required", catalogContext).getOrElse(
+          throw new ContractParseException(s"Missing required field 'required' in $catalogContext")
+        ),
+        technology = optString(m, "technology"),
+        catalogName = optString(m, "catalogName"),
+        location = optString(m, "location"),
+        namespace = optStringList(m, "namespace", catalogContext),
+        table = optString(m, "table")
+      )
+    }
 
   private def parseSchema(raw: Map[String, Any], context: String): Schema = {
     val fieldsRaw = raw.getOrElse(
@@ -291,5 +328,20 @@ object ContractParser {
           case s: String => s
           case other => throw new ContractParseException(s"Expected a list of strings for '$context.$key', got: $other")
         }.toSet
+    }
+
+  /** Same coercion as `optStringSet`, but order-preserving — used for
+    * `CatalogRequirement.namespace` (`["db", "schema"]`), where position
+    * is meaningful (a database/schema path), unlike `sensitivityTags`'
+    * unordered governance labels.
+    */
+  private def optStringList(raw: Map[String, Any], key: String, context: String): List[String] =
+    optValue(raw, key) match {
+      case None => Nil
+      case Some(value) =>
+        loadList(value, s"$context.$key").map {
+          case s: String => s
+          case other => throw new ContractParseException(s"Expected a list of strings for '$context.$key', got: $other")
+        }
     }
 }

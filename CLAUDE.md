@@ -649,8 +649,8 @@ If `./dev/test` fails:
 ### Engine and plugin JARs
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.3.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.3.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.4.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.4.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.1.0.jar`
 - `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar` — via
   `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
