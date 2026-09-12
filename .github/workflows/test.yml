@@ -1167,42 +1167,62 @@ jobs:
       - name: Publish PR head's fingerprint locally (spark-adapter's libraryDependency)
         run: cd fingerprint && sbt publishLocal
 
-      # One module at a time, in dependency order (contract, ir, then
-      # spark-adapter, which needs both of theirs; fingerprint last - it
-      # depends on ir alone, and nothing inside this loop depends on it, so
-      # its position doesn't affect correctness): if a module doesn't exist
-      # at the base commit, it has no prior public API to be compatible
-      # with, so it's skipped entirely rather than erroring (base-ref/
-      # $module wouldn't exist to build) or treating "brand new" as "broke
-      # everything" - the correct, honest answer either way is "nothing to
-      # compare, nothing can have broken." That's the normal case for PR #1
-      # specifically (contract/ir/spark-adapter all postdate its base commit
-      # - introducing them *is* what that PR does) and, later, for whichever
-      # PR first adds fingerprint/ to the repository; for any normal future
-      # PR opened against an up-to-date base branch, every module will
-      # already exist there and this check runs for real.
+      # One module at a time, in dependency order: contract, ir, then
+      # fingerprint (depends on ir alone), THEN spark-adapter last, since
+      # spark-adapter's own build.sbt depends on all three (contract, ir,
+      # fingerprint) as real libraryDependencies. fingerprint must run
+      # before spark-adapter, not after - confirmed the hard way by a real
+      # CI failure, not assumed: this loop's own "publish base-ref build to
+      # the local Ivy cache" step for spark-adapter needs BASE-REF's
+      # fingerprint coordinate resolvable (base-ref/spark-adapter's
+      # build.sbt still declares whatever fingerprint version was current
+      # at the base commit), and the only thing that ever publishes that
+      # exact coordinate is fingerprint's own base-ref iteration of this
+      # same loop - there is no Maven Central release to fall back to. With
+      # the old contract/ir/spark-adapter/fingerprint order, this
+      # accidentally worked only so long as fingerprint's own version never
+      # changed across a PR (base-ref's and PR-head's fingerprint shared one
+      # coordinate, so the unconditional "Publish PR head's fingerprint
+      # locally" step above happened to satisfy both) - the first PR to
+      # actually bump fingerprint's own version (this one, forced by ir's
+      # version bump landing alongside it) broke that coincidence outright:
+      # "Error downloading com.invaract:invaract-fingerprint_2.12:0.1.0 -
+      # Not found", since only PR-head's fingerprint (now a different,
+      # newer coordinate) had been published anywhere by the time
+      # spark-adapter's base-ref iteration needed the old one.
       #
-      # spark-adapter's build.sbt resolves ir and contract (and, as of
-      # docs/SEMANTIC_LINEAGE_FINGERPRINTING.md, fingerprint) as real
-      # libraryDependencies against their own published coordinate (no
-      # aggregating root build.sbt) - PR-head's own contract/ir builds are
-      # published to the local Ivy cache in their own loop iterations below
-      # (overwriting whatever base-ref's iteration put there for the MiMa
-      # comparison, which is no longer needed once that module's own check
-      # has run), so spark-adapter's iteration compiles against the PR's
-      # actual current contract/ir, not whatever version happens to be
+      # If a module doesn't exist at the base commit, it has no prior
+      # public API to be compatible with, so it's skipped entirely rather
+      # than erroring (base-ref/$module wouldn't exist to build) or
+      # treating "brand new" as "broke everything" - the correct, honest
+      # answer either way is "nothing to compare, nothing can have broken."
+      # That's the normal case for PR #1 specifically (contract/ir/
+      # spark-adapter all postdate its base commit - introducing them *is*
+      # what that PR does) and, later, for whichever PR first adds
+      # fingerprint/ to the repository; for any normal future PR opened
+      # against an up-to-date base branch, every module will already exist
+      # there and this check runs for real.
+      #
+      # PR-head's own contract/ir/fingerprint builds are published to the
+      # local Ivy cache in their own loop iterations below (overwriting
+      # nothing - base-ref and PR-head never share a coordinate once a
+      # module's version has actually changed, and when it hasn't, PR-head's
+      # republish is simply a no-op refresh of the same content), so
+      # spark-adapter's iteration compiles against the PR's actual current
+      # contract/ir/fingerprint, not whatever version happens to already be
       # sitting in the cache. Without this, spark-adapter's compile step
-      # here would only work by coincidence when contract/ir's version
-      # didn't change in the same PR - which is exactly the trap a version
-      # bump landing alongside a spark-adapter change would fall into.
-      # fingerprint's own PR-head build is instead published unconditionally
-      # above (see that step's own comment for why: spark-adapter needs it
-      # even on the one PR where this loop's own fingerprint iteration is
-      # skipped for having no base-ref counterpart yet).
+      # here would only work by coincidence when none of its dependencies'
+      # versions changed in the same PR - exactly the trap a version bump
+      # landing alongside a spark-adapter change would fall into.
+      # fingerprint's own PR-head build is additionally published
+      # unconditionally above (see that step's own comment for why:
+      # spark-adapter needs it even on the one PR where this loop's own
+      # fingerprint iteration is skipped for having no base-ref counterpart
+      # yet).
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          for module in contract ir spark-adapter fingerprint; do
+          for module in contract ir fingerprint spark-adapter; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
               continue

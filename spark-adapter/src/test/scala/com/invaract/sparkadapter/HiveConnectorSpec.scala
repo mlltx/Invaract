@@ -959,7 +959,17 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     val result = awaitWriteTo(listener, loc.stripPrefix("file:"))
     result.plan match {
       case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _, _) =>
-        assert(location.stripPrefix("file:") == loc.stripPrefix("file:"))
+        // StructuralVerifier.locationsMatch, not a raw stripPrefix("file:")
+        // == - a Windows absolute path's file: URI (file:/C:/Users/...) and
+        // this test's own extScratchDir-derived loc (C:/Users/..., no
+        // leading slash) are both correct representations of the identical
+        // real path, but differ by exactly that leading slash before the
+        // drive letter - a real Windows CI failure, not assumed. Every
+        // real enforcement check in this codebase already goes through
+        // locationsMatch for exactly this reason; this translation-only
+        // test should too, rather than reimplementing a stricter,
+        // Windows-fragile comparison of its own.
+        assert(StructuralVerifier.locationsMatch(loc, location))
         assert(format.contains("parquet"), s"expected a plain parquet write (not Hive), got format=$format")
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
@@ -1080,7 +1090,11 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     }
     val t = spark.sessionState.catalog.getTableMetadata(TableIdentifier("hive_saveastable_ext_tbl"))
     assert(t.tableType == CatalogTableType.EXTERNAL)
-    assert(t.storage.locationUri.get.toString.stripPrefix("file:") == loc.stripPrefix("file:"))
+    // See the sibling translation test above for why this is
+    // locationsMatch, not a raw stripPrefix("file:") == - the same
+    // Windows leading-slash discrepancy applies to a CatalogTable's own
+    // storage.locationUri.
+    assert(StructuralVerifier.locationsMatch(loc, t.storage.locationUri.get.toString))
     assert(spark.table("hive_saveastable_ext_tbl").count() == 2)
   }
 
