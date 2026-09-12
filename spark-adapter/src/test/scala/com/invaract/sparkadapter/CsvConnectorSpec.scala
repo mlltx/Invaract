@@ -58,7 +58,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .insertInto() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode, _) =>
         assert(location.contains("csv_insert_into_tbl"))
         assert(format.contains("csv"))
         assert(saveMode.contains("append"))
@@ -171,7 +171,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .writeTo().create() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(_, _, format, _) => assert(format.contains("csv"))
+      case com.invaract.ir.Write(_, _, format, _, _) => assert(format.contains("csv"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
     assert(spark.table("csv_writeto_create_tbl").count() == 2)
@@ -234,7 +234,7 @@ class CsvConnectorSpec extends ConnectorSpecBase {
 
     val result = SparkPlanAdapter.translate(writeToStream)
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _, _) =>
         assert(location == outPath, s"expected the real physical path, got '$location'")
         assert(format.contains("csv"), s"expected format Some(csv), got $format")
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")

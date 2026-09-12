@@ -166,6 +166,52 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"deltaVersion\": null"))
     assert(json.contains("\"icebergSnapshotId\": null"))
     assert(json.contains("\"operation\": null"))
+    assert(json.contains("\"catalog\": null"))
+  }
+
+  test("toJson for WriteEvent renders a populated catalog as a nested object, only its declared sub-fields") {
+    val event = WriteEvent(
+      contract = None,
+      location = "file:/tmp/out.parquet",
+      format = Some("parquet"),
+      saveMode = None,
+      schema = Nil,
+      timestamp = 0L,
+      metadata = Map.empty,
+      catalog = Some(
+        CatalogInfo(
+          technology = Some("hive"),
+          catalogName = Some("spark_catalog"),
+          location = Some("thrift://metastore1.example.com:9083"),
+          namespace = List("default"),
+          table = Some("sales")
+        )
+      )
+    )
+    val json = NotificationJson.toJson(event)
+    assert(json.contains("\"technology\": \"hive\""))
+    assert(json.contains("\"catalogName\": \"spark_catalog\""))
+    assert(json.contains("\"location\": \"thrift://metastore1.example.com:9083\""))
+    assert(json.contains("\"namespace\": [\"default\"]"))
+    assert(json.contains("\"table\": \"sales\""))
+  }
+
+  test("toJson for WriteEvent's catalog omits unset sub-fields entirely rather than rendering them as null") {
+    val event = WriteEvent(
+      contract = None,
+      location = "file:/tmp/out.parquet",
+      format = None,
+      saveMode = None,
+      schema = Nil,
+      timestamp = 0L,
+      metadata = Map.empty,
+      catalog = Some(CatalogInfo(technology = Some("delta")))
+    )
+    val json = NotificationJson.toJson(event)
+    assert(json.contains("\"technology\": \"delta\""))
+    assert(!json.contains("\"catalogName\""), s"unset catalogName shouldn't appear at all: $json")
+    assert(!json.contains("\"table\""), s"unset table shouldn't appear at all: $json")
+    assert(json.contains("\"namespace\": []"), "namespace always renders, even empty - it's the only non-Option field")
   }
 
   test("toJson for WriteEvent renders operation, None as null and Some as a plain string") {

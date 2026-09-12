@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+import com.invaract.ir.CatalogIdentity
+
 import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable => SparkCatalogTable}
 import org.apache.spark.sql.catalyst.plans.logical.{
@@ -75,7 +77,14 @@ private[sparkadapter] case class WriteCommandInfo(
   // `dsv2RowLevelWrite`/`deleteFromTable` below. `None` everywhere else,
   // deliberately not duplicating what `saveMode` already conveys for a
   // plain append/overwrite/create.
-  operation: Option[String] = None
+  operation: Option[String] = None,
+  // The data-catalog identity this write actually resolved to - see
+  // CatalogIdentitySupport's own doc for how each case below derives it
+  // (never guessed: only from a CatalogTable/Identifier+CatalogPlugin
+  // already reachable at that case's own call site). `None` for a write
+  // genuinely not catalog-registered (a bare path write/directory export),
+  // not "not yet computed."
+  catalogIdentity: Option[CatalogIdentity] = None
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -116,7 +125,13 @@ private[sparkadapter] object WriteCommandSupport {
         query = unwrapWriteWrapper(cmd.query),
         format = SparkPlanAdapter.formatOf(cmd.fileFormat),
         saveMode = SparkPlanAdapter.saveModeOf(cmd.mode),
-        outputSchema = cmd.query.schema
+        outputSchema = cmd.query.schema,
+        // `catalogTable` is `None` for a bare `.parquet(path)`/`.save(path)`
+        // write - genuinely not catalog-registered, confirmed empirically
+        // (docs/connectors/hive.md's "External tables" write-then-register
+        // comparison) - and `Some` for a `.saveAsTable()` append onto an
+        // existing V1 table, which this same command also handles.
+        catalogIdentity = cmd.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
       )
   }
 
@@ -199,7 +214,8 @@ private[sparkadapter] object WriteCommandSupport {
         format = cmd.table.provider,
         saveMode = SparkPlanAdapter.saveModeOf(cmd.mode),
         outputSchema = cmd.query.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(cmd.table))
       )
   }
 
@@ -235,7 +251,11 @@ private[sparkadapter] object WriteCommandSupport {
         // other format-detection miss elsewhere in this module.
         saveMode = None,
         outputSchema = ws.inputQuery.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        // ws.catalogTable is None for a bare `.start(path)`/path-based sink
+        // - genuinely not catalog-registered, the same as every other
+        // bare-path write shape in this file.
+        catalogIdentity = ws.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
       )
   }
 
@@ -373,7 +393,8 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = Some("append"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
-        catalogTableRef = catalogTableRefOf(cmd.table)
+        catalogTableRef = catalogTableRefOf(cmd.table),
+        catalogIdentity = catalogIdentityOf(cmd.table)
       )
   }
 
@@ -398,7 +419,8 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = Some("overwrite"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
-        catalogTableRef = catalogTableRefOf(cmd.table)
+        catalogTableRef = catalogTableRefOf(cmd.table),
+        catalogIdentity = catalogIdentityOf(cmd.table)
       )
   }
 
@@ -430,7 +452,8 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = Some("overwrite"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
-        catalogTableRef = catalogTableRefOf(cmd.table)
+        catalogTableRef = catalogTableRefOf(cmd.table),
+        catalogIdentity = catalogIdentityOf(cmd.table)
       )
   }
 
@@ -458,7 +481,8 @@ private[sparkadapter] object WriteCommandSupport {
         // approximation.
         saveMode = Some("overwrite"),
         outputSchema = cmd.query.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name)
       )
   }
 
@@ -489,7 +513,8 @@ private[sparkadapter] object WriteCommandSupport {
         // SaveMode.ErrorIfExists make on the V1 side.
         saveMode = Some(if (cmd.ignoreIfExists) "ignore" else "error"),
         outputSchema = cmd.query.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name)
       )
   }
 
@@ -513,6 +538,22 @@ private[sparkadapter] object WriteCommandSupport {
         val msg = s"Could not resolve a table identifier from $tag's unresolved " +
           s"name (${other.getClass.getSimpleName}); using its toString as a best-effort location"
         (other.toString, Some(Diagnostic(tag, msg)))
+    }
+
+  /** The `(CatalogPlugin, Identifier)` pair behind `replaceTableAsSelect`/
+    * `createTableAsSelect`'s own target name - real, confirmed gap fixed
+    * here: both cases already had `ri.catalog`/`ri.identifier` available
+    * via `v2CreateOrReplaceLocation` above, but neither ever threaded a
+    * `CatalogIdentity` into their `WriteCommandInfo` before this. Unlike
+    * `v2CreateOrReplaceLocation`'s own *location* handling, there is no
+    * "unresolved name" fallback needed here: an unresolved `name` simply
+    * yields no catalog identity, the same as any other write shape that
+    * can't determine one.
+    */
+  private def v2CreateOrReplaceCatalogIdentity(name: LogicalPlan): Option[CatalogIdentity] =
+    name match {
+      case ri: ResolvedIdentifier => Some(CatalogIdentitySupport.fromV2(ri.catalog, ri.identifier))
+      case _                      => None
     }
 
   /** Shared by `appendData`/`overwriteByExpression` above and
@@ -623,6 +664,17 @@ private[sparkadapter] object WriteCommandSupport {
         }
       case _ => None
     }
+
+  /** `ir.CatalogIdentity` for the same `NamedRelation` target
+    * `catalogTableRefOf` above already resolves a `(CatalogPlugin,
+    * Identifier)` pair for - deliberately reuses that exact pair (not a
+    * second, independent resolution) so the two can never disagree about
+    * which write targets are catalog-registered. See this class's own doc
+    * for why a `StagedTable`'s catalog/identifier (unlike its physical
+    * location) is still trustworthy pre-commit.
+    */
+  private[sparkadapter] def catalogIdentityOf(table: NamedRelation): Option[CatalogIdentity] =
+    catalogTableRefOf(table).map { case (catalog, identifier) => CatalogIdentitySupport.fromV2(catalog, identifier) }
 
   /** A resolved write target can legitimately have fields the write's own
     * `query` doesn't supply, that will still exist in the committed row -
@@ -830,7 +882,11 @@ private[sparkadapter] object WriteCommandSupport {
             saveMode = None, // in-place mutation isn't append/overwrite/ignore/error
             outputSchema = outputSchema,
             diagnostic = diagnostic.orElse(evolutionDiagnostic),
-            operation = deltaDmlOperationNames.get(plan.getClass.getName)
+            operation = deltaDmlOperationNames.get(plan.getClass.getName),
+            // None for a path-based (not catalog-registered) Delta table's
+            // MERGE/UPDATE/DELETE, confirmed empirically above - the exact
+            // same catalogTable this case already extracted for location.
+            catalogIdentity = catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
           )
         }.toOption
     }
@@ -891,6 +947,7 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = cmd.table.schema,
         diagnostic = diagnostic,
         catalogTableRef = catalogTableRefOf(cmd.table),
+        catalogIdentity = catalogIdentityOf(cmd.table),
         // Unlike Delta above, this needs no class-name/reflection lookup
         // at all: RowLevelOperation.Command (DELETE/UPDATE/MERGE) is a
         // real, public, stable enum on Spark's own connector.write API -
@@ -938,7 +995,8 @@ private[sparkadapter] object WriteCommandSupport {
             saveMode = None,
             outputSchema = relation.schema,
             diagnostic = diagnostic,
-            operation = Some("delete")
+            operation = Some("delete"),
+            catalogIdentity = catalogIdentityOf(relation)
           )
         case None =>
           val msg = s"No NamedRelation found under DeleteFromTable's target; " +
@@ -1034,7 +1092,8 @@ private[sparkadapter] object WriteCommandSupport {
             format = Some(tableDesc.provider.getOrElse("hive")),
             saveMode = SparkPlanAdapter.saveModeOf(mode),
             outputSchema = query.schema,
-            diagnostic = diagnostic
+            diagnostic = diagnostic,
+            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(tableDesc))
           )
         }.toOption
     }
@@ -1093,7 +1152,8 @@ private[sparkadapter] object WriteCommandSupport {
             format = Some(table.provider.getOrElse("hive")),
             saveMode = Some(if (overwrite) "overwrite" else "append"),
             outputSchema = outputSchema,
-            diagnostic = locationDiagnostic.orElse(evolutionDiagnostic)
+            diagnostic = locationDiagnostic.orElse(evolutionDiagnostic),
+            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(table))
           )
         }.toOption
     }

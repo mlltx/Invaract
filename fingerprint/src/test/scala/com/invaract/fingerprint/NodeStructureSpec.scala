@@ -114,7 +114,39 @@ class NodeStructureSpec extends AnyFunSuite {
   // --- Plan node kinds ---
 
   test("Read structure") {
-    assert(canonPlan(Read(DatasetRef("raw.orders"))) == CTag("Read", List(stringLeaf("raw.orders"))))
+    assert(canonPlan(Read(DatasetRef("raw.orders"))) == CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))))
+  }
+
+  test("Read structure, with a catalog identity") {
+    val catalog = CatalogIdentity(
+      technology = Some("hive"),
+      catalogName = Some("spark_catalog"),
+      location = Some("thrift://metastore1.example.com:9083"),
+      namespace = List("default"),
+      table = Some("orders")
+    )
+    assert(canonPlan(Read(DatasetRef("raw.orders"), catalog = Some(catalog))) ==
+      CTag(
+        "Read",
+        List(
+          stringLeaf("raw.orders"),
+          CTag(
+            "Option",
+            List(
+              CTag(
+                "CatalogIdentity",
+                List(
+                  CTag("Option", List(stringLeaf("hive"))),
+                  CTag("Option", List(stringLeaf("spark_catalog"))),
+                  CTag("Option", List(stringLeaf("thrift://metastore1.example.com:9083"))),
+                  CTag("Namespace", List(stringLeaf("default"))),
+                  CTag("Option", List(stringLeaf("orders")))
+                )
+              )
+            )
+          )
+        )
+      ))
   }
 
   test("Write structure, with format and saveMode") {
@@ -124,9 +156,10 @@ class NodeStructureSpec extends AnyFunSuite {
         "Write",
         List(
           stringLeaf("gold.out"),
-          CTag("Read", List(stringLeaf("raw.orders"))),
+          CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))),
           CTag("Option", List(stringLeaf("parquet"))),
-          CTag("Option", List(stringLeaf("append")))
+          CTag("Option", List(stringLeaf("append"))),
+          CTag("Option")
         )
       ))
   }
@@ -134,19 +167,52 @@ class NodeStructureSpec extends AnyFunSuite {
   test("Write structure, with no format/saveMode") {
     val plan = Write(DatasetRef("gold.out"), Read(DatasetRef("raw.orders")))
     assert(canonPlan(plan) ==
-      CTag("Write", List(stringLeaf("gold.out"), CTag("Read", List(stringLeaf("raw.orders"))), CTag("Option"), CTag("Option"))))
+      CTag(
+        "Write",
+        List(stringLeaf("gold.out"), CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))), CTag("Option"), CTag("Option"), CTag("Option"))
+      ))
+  }
+
+  test("Write structure, with a catalog identity") {
+    val catalog = CatalogIdentity(technology = Some("delta"), table = Some("sales"))
+    val plan = Write(DatasetRef("gold.out"), Read(DatasetRef("raw.orders")), catalog = Some(catalog))
+    assert(canonPlan(plan) ==
+      CTag(
+        "Write",
+        List(
+          stringLeaf("gold.out"),
+          CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))),
+          CTag("Option"),
+          CTag("Option"),
+          CTag(
+            "Option",
+            List(
+              CTag(
+                "CatalogIdentity",
+                List(
+                  CTag("Option", List(stringLeaf("delta"))),
+                  CTag("Option"),
+                  CTag("Option"),
+                  CTag("Namespace"),
+                  CTag("Option", List(stringLeaf("sales")))
+                )
+              )
+            )
+          )
+        )
+      ))
   }
 
   test("Project structure") {
     val plan = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("out", x)))
     assert(canonPlan(plan) ==
-      CTag("Project", List(CTag("Read", List(stringLeaf("raw.orders"))), CTag("NamedExpr", List(stringLeaf("out"), cRef("x"))))))
+      CTag("Project", List(CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))), CTag("NamedExpr", List(stringLeaf("out"), cRef("x"))))))
   }
 
   test("Filter structure") {
     val plan = Filter(Read(DatasetRef("raw.orders")), Comparison("=", x, x))
     assert(canonPlan(plan) ==
-      CTag("Filter", List(CTag("Read", List(stringLeaf("raw.orders"))), CTag("Comparison", List(stringLeaf("="), cRef("x"), cRef("x"))))))
+      CTag("Filter", List(CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))), CTag("Comparison", List(stringLeaf("="), cRef("x"), cRef("x"))))))
   }
 
   test("Join structure, with a condition") {
@@ -157,8 +223,8 @@ class NodeStructureSpec extends AnyFunSuite {
       CTag(
         "Join",
         List(
-          CTag("Read", List(stringLeaf("raw.orders"))),
-          CTag("Read", List(stringLeaf("raw.customers"))),
+          CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))),
+          CTag("Read", List(stringLeaf("raw.customers"), CTag("Option"))),
           stringLeaf("LeftOuter"),
           CTag("Option", List(cRef("x")))
         )
@@ -168,7 +234,7 @@ class NodeStructureSpec extends AnyFunSuite {
   test("Join structure, with no condition") {
     val plan = Join(Read(DatasetRef("a")), Read(DatasetRef("b")), JoinType.Cross, None)
     assert(canonPlan(plan) ==
-      CTag("Join", List(CTag("Read", List(stringLeaf("a"))), CTag("Read", List(stringLeaf("b"))), stringLeaf("Cross"), CTag("Option"))))
+      CTag("Join", List(CTag("Read", List(stringLeaf("a"), CTag("Option"))), CTag("Read", List(stringLeaf("b"), CTag("Option"))), stringLeaf("Cross"), CTag("Option"))))
   }
 
   test("Aggregate structure") {
@@ -177,7 +243,7 @@ class NodeStructureSpec extends AnyFunSuite {
       CTag(
         "Aggregate",
         List(
-          CTag("Read", List(stringLeaf("raw.orders"))),
+          CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))),
           CTag("GroupBy", List(cRef("x"))),
           CTag("NamedExpr", List(stringLeaf("total"), CTag("AggregateCall", List(stringLeaf("SUM"), boolLeaf(false), cRef("x")))))
         )
@@ -186,18 +252,18 @@ class NodeStructureSpec extends AnyFunSuite {
 
   test("Union structure") {
     val plan = Union(List(Read(DatasetRef("a")), Read(DatasetRef("b"))))
-    assert(canonPlan(plan) == CTag("Union", List(CTag("Read", List(stringLeaf("a"))), CTag("Read", List(stringLeaf("b"))))))
+    assert(canonPlan(plan) == CTag("Union", List(CTag("Read", List(stringLeaf("a"), CTag("Option"))), CTag("Read", List(stringLeaf("b"), CTag("Option"))))))
   }
 
   test("Sort structure") {
     val plan = Sort(Read(DatasetRef("raw.orders")), List(SortOrder(x, ascending = false, nullsFirst = true)))
     assert(canonPlan(plan) ==
-      CTag("Sort", List(CTag("Read", List(stringLeaf("raw.orders"))), CTag("SortOrder", List(cRef("x"), boolLeaf(false), boolLeaf(true))))))
+      CTag("Sort", List(CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))), CTag("SortOrder", List(cRef("x"), boolLeaf(false), boolLeaf(true))))))
   }
 
   test("Limit structure") {
     val plan = Limit(Read(DatasetRef("raw.orders")), 10, 5)
-    assert(canonPlan(plan) == CTag("Limit", List(CTag("Read", List(stringLeaf("raw.orders"))), intLeaf(10), intLeaf(5))))
+    assert(canonPlan(plan) == CTag("Limit", List(CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))), intLeaf(10), intLeaf(5))))
   }
 
   test("Window structure") {
@@ -206,7 +272,7 @@ class NodeStructureSpec extends AnyFunSuite {
       CTag(
         "Window",
         List(
-          CTag("Read", List(stringLeaf("raw.orders"))),
+          CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))),
           CTag("PartitionBy", List(cRef("x"))),
           CTag("OrderBy", List(CTag("SortOrder", List(cRef("x"), boolLeaf(true), boolLeaf(true))))),
           CTag("NamedExpr", List(stringLeaf("rk"), CTag("Function", List(stringLeaf("RANK")))))
@@ -216,7 +282,7 @@ class NodeStructureSpec extends AnyFunSuite {
 
   test("UnknownPlan structure") {
     val plan = UnknownPlan("desc", "Kind", List(Read(DatasetRef("raw.orders"))))
-    assert(canonPlan(plan) == CTag("UnknownPlan", List(stringLeaf("Kind"), CTag("Read", List(stringLeaf("raw.orders"))))))
+    assert(canonPlan(plan) == CTag("UnknownPlan", List(stringLeaf("Kind"), CTag("Read", List(stringLeaf("raw.orders"), CTag("Option"))))))
   }
 
   // --- Lineage summary layer ---

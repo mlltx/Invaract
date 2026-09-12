@@ -72,6 +72,14 @@ export default defineConfig({
 							label: 'Fingerprint a Transformation',
 							slug: 'guides/fingerprinting-transformations',
 						},
+						{
+							label: 'Resolve Dataset Locations at Runtime',
+							slug: 'guides/resolving-dataset-locations',
+						},
+						{
+							label: 'Require Catalog Registration',
+							slug: 'guides/requiring-catalog-registration',
+						},
 					],
 				},
 				{

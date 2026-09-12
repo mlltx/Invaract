@@ -1553,6 +1553,67 @@ not fixed, with a standing regression test proving it: a path-less new
 Hive table's two nested write commands disagree on location. Full
 findings and both ledgers: docs/connectors/hive.md.
 
+**Addendum: external tables (done).** A follow-up pass investigated
+`EXTERNAL` Hive tables specifically (raw-SQL `CREATE EXTERNAL TABLE ...
+LOCATION` and `.saveAsTable()` via `.option("path", ...)`), on top of
+Parquet, Delta, and Hive's own SerDe formats — the original pass only
+ever exercised managed tables at the default warehouse path. Found no
+translation or enforcement gap: every write shape an external table
+produces was already a recognized `WriteCommandSupport` case, so
+notification publishing is correct for the same reason (confirmed with
+real captured `ContractValidationEvent`/`WriteEvent` JSON, not asserted).
+Narrowed the existing CTAS/overwrite location-resolution limitation above
+(it doesn't apply to a new *external* table via Hive's own
+`.saveAsTable()` — only the managed case); separately reconfirmed, under
+Hive's own catalog for the first time, the already-known DSv2
+`CreateTableAsSelect`/`StagedTable` limitation `docs/connectors/delta.md`
+documents (a new table's location is the qualified identifier regardless
+of any path option — genuinely unrelated to being external). Also
+confirmed a deliberate, accepted false rejection: `DROP TABLE` on an
+EXTERNAL table is rejected even though the underlying data survives,
+since the fail-closed policy can't distinguish table type from a bare
+class name. Ten new tests; `HiveConnectorSpec`: 36 total. Full findings:
+docs/connectors/hive.md's "External tables" section.
+
+**Addendum: mandatory catalog registration (done).** A real, org-level
+gap surfaced by the external-tables pass above: nothing in the contract
+format could *require* a dataset be registered in a catalog at all — a
+bare-path write with a perfectly correct schema passed cleanly, with no
+way to express "every job's output needs a real catalog entry so
+downstream tools can discover it." Closed across all four engine
+modules: `contract.CatalogRequirement`/`Dataset.catalog` (opt-in per
+dataset, structured technology/catalogName/location/namespace/table
+fields, orthogonal to `format`/`saveMode`); `ir.CatalogIdentity` on
+`Read`/`Write` (the observed counterpart, folded into `fingerprint`'s
+overall hash the same way format/saveMode already are);
+`spark-adapter` extraction of real catalog identity for every write/read
+shape (closing two found-along-the-way gaps: `ReplaceTableAsSelect`/
+`CreateTableAsSelect` and `deleteFromTable` never threaded already-
+available catalog info into `WriteCommandInfo`);
+`StructuralVerifier`'s `MissingOutputCatalogRegistration`/
+`OutputCatalogMismatch` checks (and input-side mirrors); and a real
+`catalog` field on the published `WriteEvent`. Proven against a real
+Hive metastore, not assumed: a bare `.parquet(path)` write that used to
+pass cleanly is now rejected when a contract requires catalog
+registration, and a write through the *wrong* Hive metastore is rejected
+too (`location` is the metastore's real network address, read from the
+active session, not a Spark-local alias). A real bug was found and fixed
+along the way: the mismatch check originally compared a declared
+`location` unconditionally, which would have made declaring
+`catalog.location` against any DSv2 (Delta/Iceberg/JDBC) output
+permanently unsatisfiable, since those connectors report no location at
+all — caught by a real Delta enforcement test, not inspection; fixed to
+treat an unknown actual sub-field as "not comparable," the same
+both-sides-known convention `format`/`saveMode` already use. `contract`
+and `ir` each took a MiMa-tracked MINOR bump (0.3.0 → 0.4.0) for the new
+case class fields; `spark-adapter` took its own (0.3.0 → 0.4.0) for
+`WriteEvent`'s new field. Seven new `HiveConnectorSpec` tests (43
+total), plus `StructuralVerifierSpec`/`NotificationJsonSpec` unit
+coverage. Full findings and the real captured mismatch JSON:
+docs/connectors/hive.md's "Catalog registration checks" section; user
+guide: docs-site's [Require Catalog
+Registration](docs-site/src/content/docs/guides/requiring-catalog-registration.mdx).
+
 #### Sub-phase: Avro connector support (done)
 
 Sixth connector onboarded. `spark-avro` added as the first real

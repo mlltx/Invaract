@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractParser}
+import com.invaract.sparkadapter.notification.NotificationSink
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.SparkSessionExtensions
@@ -30,13 +31,21 @@ trait ConnectorSpecBase extends AnyFunSuite with BeforeAndAfterAll {
 
   @volatile protected var activeContract: Option[Contract] = None
   @volatile protected var activeOptions: VerificationOptions = VerificationOptions()
+  // None by default (every existing *ConnectorSpec's behavior is
+  // unaffected) - a spec that wants to observe real ContractValidationEvent
+  // JSON (not just PASS/FAIL) sets this via withSink, and injectContractCheck
+  // passes it straight through to the same sink-aware verifyOrThrow overload
+  // ContractEnforcementRule.forContract(contract, options, sink) itself uses.
+  @volatile protected var activeSink: Option[NotificationSink] = None
   protected val capturedPlans: scala.collection.mutable.ListBuffer[LogicalPlan] =
     scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
   protected def injectContractCheck(ext: SparkSessionExtensions): Unit =
-    ext.injectCheckRule { _ => (plan: LogicalPlan) =>
+    ext.injectCheckRule { session => (plan: LogicalPlan) =>
       capturedPlans += plan
-      activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions))
+      activeContract.foreach(c =>
+        ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink, Some(session.sparkContext.applicationId))
+      )
     }
 
   override def afterAll(): Unit = spark.stop()
@@ -48,6 +57,17 @@ trait ConnectorSpecBase extends AnyFunSuite with BeforeAndAfterAll {
     activeOptions = options
     try body
     finally activeContract = None
+  }
+
+  /** Scopes a `NotificationSink` to `body`, the same convention `withContract`
+    * already uses - for a test that wants to inspect the real
+    * `ContractValidationEvent`/`WriteEvent` JSON a sink receives, not just
+    * whether a write passed or failed.
+    */
+  protected def withSink[T](sink: NotificationSink)(body: => T): T = {
+    activeSink = Some(sink)
+    try body
+    finally activeSink = None
   }
 
   protected def df() = spark.createDataFrame(Seq((1L, 10L), (2L, 20L))).toDF("id", "value")

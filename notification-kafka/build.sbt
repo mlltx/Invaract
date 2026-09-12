@@ -32,7 +32,7 @@ scalacOptions ++= Seq(
 // spark-adapter's own build.sbt, so they're excluded from its assembly
 // jar - this module needs no Spark on its classpath either, at compile or
 // runtime.
-unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar")
+unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.4.0.jar")
 
 assembly / assemblyJarName := "invaract-notification-kafka-0.2.0.jar"
 assembly / assemblyMergeStrategy := {

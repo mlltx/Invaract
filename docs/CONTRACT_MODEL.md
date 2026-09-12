@@ -104,7 +104,43 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `location` | yes | Physical location (table name, path, topic). |
 | `format` | no | Storage/serialization format. |
 | `saveMode` | no | Expected write behavior toward existing data at `location` (`append`/`overwrite`/`ignore`/`error`). Meaningful for outputs only; checked against the plan's actual write mode. |
+| `catalog` | no | Expected data-catalog registration — see `CatalogRequirement` below. Unlike `saveMode`, meaningful for both inputs and outputs. Omitted entirely (the default) means no check at all. |
 | `schema.fields` | yes | List of fields (at least one). |
+
+A dataset's `catalog` block, when present:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `required` | yes (within a present `catalog:` block) | Whether this dataset must be registered in a catalog at all. `false` means the rest of the block is informational only — declared but not checked (`ContractValidator` warns on this combination). |
+| `technology` | no | The catalog implementation, e.g. `hive`, `delta`, `iceberg`. Open-vocabulary, not a closed enum. |
+| `catalogName` | no | The Spark-level catalog plugin/session-catalog name, e.g. `spark_catalog` — a local alias, not necessarily unique across an organization. |
+| `location` | no | The catalog *service's* own address (e.g. a Hive metastore's `thrift://host:port` URI) — the durable, technology-specific answer to "which Hive," distinct from `catalogName`'s local alias. |
+| `namespace` | no | The database/schema path within the catalog, as an ordered list (e.g. `[default]`). |
+| `table` | no | The table name within `namespace`. |
+
+Every sub-field beyond `required` is independently optional and checked
+only when declared — the same "both sides known" convention `format`
+already uses. A dataset can declare `format` with no `catalog` block at
+all (unchanged, default behavior), `catalog: {required: false, ...}` (an
+expected shape that gates nothing), or `catalog: {required: true, ...}`
+(checked against the transformation's actual resolved catalog identity —
+see `spark-adapter`'s `StructuralVerifier`):
+
+```yaml
+outputs:
+  - name: sales
+    location: /data/sales
+    format: parquet
+    catalog:
+      required: true
+      technology: hive
+      catalogName: spark_catalog
+      location: "thrift://metastore1.example.com:9083"
+      namespace: [default]
+      table: sales
+    schema:
+      fields: [...]
+```
 
 Each field has:
 
@@ -137,7 +173,16 @@ Dataset
 ├── location: String
 ├── format: Option[String]
 ├── schema: Schema(fields: List[Field])
-└── saveMode: Option[String]
+├── saveMode: Option[String]
+└── catalog: Option[CatalogRequirement]
+
+CatalogRequirement
+├── required: Boolean
+├── technology: Option[String]
+├── catalogName: Option[String]
+├── location: Option[String]
+├── namespace: List[String]
+└── table: Option[String]
 
 Field
 ├── name: String
@@ -196,6 +241,7 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
 | Field marked both `required` and `nullable` | Warning |
+| `catalog.required: false` with an identity sub-field still declared | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on
@@ -227,6 +273,15 @@ report.changes          // every detected change, each tagged with a level and p
 | Field changed optional → required | Breaking |
 | Field changed nullable → non-nullable | Breaking |
 | Contract `id` changed | Breaking |
+
+**Known gap, not a deliberate design choice**: `Dataset.format`,
+`Dataset.saveMode`, and `Dataset.catalog` are not compared at all today —
+`diffDatasets` only ever looks at `location` and recurses into `schema`.
+A contract that changes only its declared format, save mode, or catalog
+requirement produces zero `CompatibilityChange` entries and is silently
+invisible to `verifyVersionBump`. This predates `catalog` (it was already
+true of `format`/`saveMode`) and isn't specific to it — noted here rather
+than silently left undocumented.
 
 `ContractCompatibility.verifyVersionBump(previous, next)` checks that the
 *declared* version bump matches the *actual* scope of change, and returns

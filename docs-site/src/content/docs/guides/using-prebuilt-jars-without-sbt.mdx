@@ -33,9 +33,9 @@ Download the three jars you need:
 
 ```bash
 RELEASE="https://github.com/mlltx/Invaract/releases/download/spark-jars-latest"
-curl -fLO "$RELEASE/invaract-contract-0.3.0.jar"
-curl -fLO "$RELEASE/invaract-ir-0.3.0.jar"
-curl -fLO "$RELEASE/invaract-spark-adapter-0.3.0.jar"
+curl -fLO "$RELEASE/invaract-contract-0.4.0.jar"
+curl -fLO "$RELEASE/invaract-ir-0.4.0.jar"
+curl -fLO "$RELEASE/invaract-spark-adapter-0.4.0.jar"
 ```
 
 Check the release page for the current filenames if these version numbers have moved —
@@ -54,7 +54,7 @@ compile against.
 spark-submit \
   --class com.example.MySparkJob \
   --master local[*] \
-  --jars invaract-spark-adapter-0.3.0.jar \
+  --jars invaract-spark-adapter-0.4.0.jar \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   target/my-job.jar \
@@ -80,19 +80,19 @@ classpath. Register them with Maven:
 
    ```bash
    mvn install:install-file \
-     -Dfile=invaract-contract-0.3.0.jar \
+     -Dfile=invaract-contract-0.4.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-contract \
-     -Dversion=0.3.0 -Dpackaging=jar
+     -Dversion=0.4.0 -Dpackaging=jar
 
    mvn install:install-file \
-     -Dfile=invaract-ir-0.3.0.jar \
+     -Dfile=invaract-ir-0.4.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-ir \
-     -Dversion=0.3.0 -Dpackaging=jar
+     -Dversion=0.4.0 -Dpackaging=jar
 
    mvn install:install-file \
-     -Dfile=invaract-spark-adapter-0.3.0.jar \
+     -Dfile=invaract-spark-adapter-0.4.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-spark-adapter \
-     -Dversion=0.3.0 -Dpackaging=jar
+     -Dversion=0.4.0 -Dpackaging=jar
    ```
 
    This puts them in `~/.m2/repository` under the same `com.invaract` coordinates
@@ -105,19 +105,19 @@ classpath. Register them with Maven:
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-contract</artifactId>
-     <version>0.3.0</version>
+     <version>0.4.0</version>
      <scope>provided</scope>
    </dependency>
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-ir</artifactId>
-     <version>0.3.0</version>
+     <version>0.4.0</version>
      <scope>provided</scope>
    </dependency>
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-spark-adapter</artifactId>
-     <version>0.3.0</version>
+     <version>0.4.0</version>
      <scope>provided</scope>
    </dependency>
    ```
@@ -139,7 +139,7 @@ classpath. Register them with Maven:
    spark-submit \
      --class com.example.MySparkJob \
      --master local[*] \
-     --jars invaract-contract-0.3.0.jar,invaract-ir-0.3.0.jar,invaract-spark-adapter-0.3.0.jar \
+     --jars invaract-contract-0.4.0.jar,invaract-ir-0.4.0.jar,invaract-spark-adapter-0.4.0.jar \
      target/my-job.jar \
      ...
    ```
