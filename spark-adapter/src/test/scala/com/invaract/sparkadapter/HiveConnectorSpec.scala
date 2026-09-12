@@ -1536,6 +1536,15 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(capturedB.writeLines.size == 2, s"expected exactly 2 WriteEvents for .saveAsTable() (the outer CTAS command AND its inner physical write each trigger onSuccess separately), got ${capturedB.writeLines.size}")
     capturedB.validationLines.foreach(l => assert(l.contains("\"status\": \"PASSED\"")))
 
+    // Real captured catalog identity, per scenario: (A)'s write happens
+    // BEFORE the EXTERNAL TABLE is ever registered, so its one WriteEvent
+    // has no catalog at all - an honest "not registered at write time,"
+    // not a bug. (B)'s saveAsTable() registers the table as part of the
+    // very same call, so its WriteEvent(s) do carry a real Hive catalog
+    // identity - confirmed against the actual captured JSON, not assumed.
+    assert(capturedA.writeLines.forall(_.contains("\"catalog\": null")), s"scenario A's write predates catalog registration entirely: ${capturedA.writeLines}")
+    assert(capturedB.writeLines.exists(l => l.contains("\"technology\": \"hive\"")), s"expected at least one of scenario B's WriteEvents to carry a real Hive catalog identity: ${capturedB.writeLines}")
+
     // Surfaced for the human reading test output/docs, not asserted on
     // beyond the counts above - this is exactly the real captured JSON
     // docs/connectors/hive.md's "External tables" section quotes.

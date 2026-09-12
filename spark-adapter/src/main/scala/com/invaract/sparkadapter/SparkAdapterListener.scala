@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.Contract
-import com.invaract.sparkadapter.notification.{NotificationSink, WriteEvent, WriteFieldInfo}
+import com.invaract.sparkadapter.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
@@ -108,7 +108,8 @@ class SparkAdapterListener(
             icebergSnapshotId = info.catalogTableRef.flatMap { case (catalog, identifier) =>
               SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
             },
-            operation = info.operation
+            operation = info.operation,
+            catalog = info.catalogIdentity.map(CatalogInfo.from)
           )
         )
       }

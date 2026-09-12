@@ -27,7 +27,7 @@ attached to — the same way Delta Lake's own
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.3.0.jar \
+  --jars invaract-spark-adapter-0.4.0.jar \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   my-real-job.jar

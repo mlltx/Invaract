@@ -156,7 +156,7 @@ dependencyOverrides ++= Seq(
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.4.0",
   "com.invaract" %% "invaract-ir" % "0.4.0",
-  "com.invaract" %% "invaract-spark-adapter" % "0.3.0"
+  "com.invaract" %% "invaract-spark-adapter" % "0.4.0"
 )
 
 // plugin is harness-only (CLAUDE.md's "example integration and test

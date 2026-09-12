@@ -1016,6 +1016,22 @@ equivalent Delta DML tests got the same treatment defensively, since the
 underlying race is about `QueryExecutionListener` delivery timing, not
 anything Iceberg-specific.
 
+**`WriteEvent` also carries `catalog: Option[notification.CatalogInfo]`,
+the write's real catalog registration when it has one.** `CatalogInfo`
+(technology/catalogName/location/namespace/table) is a deliberately
+minimal, notification-package-local mirror of `ir.CatalogIdentity`'s
+shape — the same "own case class, not a type alias" reasoning
+`WriteFieldInfo` already uses for `StructField` — so a `NotificationSink`
+consumer's JSON schema stays stable independent of `ir`'s own internal
+representation. Populated from `WriteCommandInfo.catalogIdentity`
+(`SparkAdapterListener.onSuccess`), the same value `StructuralVerifier`'s
+catalog-registration checks compare against a contract's declared
+`catalog:` block (see docs/CONTRACT_MODEL.md's `catalog` field and
+ROADMAP.md's catalog-registration addendum). `None` — not an absent JSON
+field, but a literal `"catalog": null` — is an explicit signal that this
+write has no catalog entry at all, distinguishable from a field a
+consumer might otherwise mistake for "not populated by this version."
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment

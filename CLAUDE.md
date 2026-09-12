@@ -652,7 +652,7 @@ If `./dev/test` fails:
 - `contract/target/scala-2.12/invaract-contract-0.4.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.4.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.1.0.jar`
-- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar` — via
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.4.0.jar` — via
   `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
   same as `contract`/`ir`), this fat jar already contains
   `com.invaract.fingerprint`'s compiled classes too (confirmed directly:
@@ -956,7 +956,7 @@ Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ```bash
 # Start Spark shell with the engine + plugin JARs
-spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar
+spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.4.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)
