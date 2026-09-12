@@ -175,6 +175,20 @@ mode, so CI cannot enforce "the new code specifically" on its own. (It
 reruns `sbt stryker` scoped to just the changed files — see
 docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 
+**Adding a new file under `spark-adapter/src/main/scala` also means updating
+`.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
+sharded across a 4-way matrix job (`mutation-testing-spark-adapter`), and each
+shard's file list is hand-written (`strategy.matrix.include`, one
+comma-separated `files:` string per shard) — see docs/SPARK_ADAPTER.md's
+"Sharding `spark-adapter`'s whole-module run." A new source file isn't
+automatically picked up by any shard, and a separate `mutation-shard-drift-check`
+job fails the build specifically to catch that: it parses the workflow file's
+own shard lists and fails if any real file under `spark-adapter/src/main/scala`
+isn't claimed by exactly one shard. So when adding a new file there, add it to
+one shard's `files:` list in the same PR — pick whichever shard is currently
+smallest — or CI's `mutation-shard-drift-check` job will fail on a change
+that otherwise looks unrelated to it.
+
 This bar — and every other regression-testing guardrail in this repo
 (property-based fuzzing, mutation testing, API-compatibility checking, and
 the still-outstanding compatibility matrix / coverage gating) — is scoped
