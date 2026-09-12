@@ -766,6 +766,117 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.passed, s"declaring a location the actual side can't report at all must not be treated as a mismatch: ${result.violations}")
   }
 
+  // A scoped Stryker run against StructuralVerifier.scala (see CLAUDE.md's
+  // Mutation Testing Requirement) found `namespace`'s own comparison -
+  // structurally different from every other catalog sub-field, since it's
+  // a `List`, not an `Option` - genuinely undercovered: every existing
+  // catalog test above either declares no namespace at all, or declares
+  // namespaces that already match. The three tests below isolate
+  // namespace as the only varying field, so each one exercises exactly
+  // one of `catalogFieldMismatches`'/`describeCatalogRequirement`'s/
+  // `describeCatalogIdentity`'s three independent `nonEmpty` guards.
+  test("OUTPUT_CATALOG_MISMATCH: namespace itself differs when both contract and actual declare a non-empty namespace") {
+    val contract = ContractParser.parse(
+      """id: catalog_namespace_mismatch
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      namespace: [prod]
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      // technology matches; only namespace disagrees.
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("hive"), namespace = List("default")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${result.violations}"))
+    assert(violation.message.contains("namespace (expected 'prod', actual 'default')"), violation.message)
+    assert(!violation.message.contains("technology (expected"), s"technology matched on both sides, shouldn't be reported: ${violation.message}")
+    assert(violation.expected.exists(_.contains("namespace=prod")), violation.expected.getOrElse(""))
+    assert(violation.actual.exists(_.contains("namespace=default")), violation.actual.getOrElse(""))
+  }
+
+  test("catalog check does not flag namespace when the contract doesn't declare one, even though the actual registration has one") {
+    val contract = ContractParser.parse(
+      """id: catalog_namespace_not_declared
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("hive"), namespace = List("default")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(result.passed, s"namespace wasn't declared, so the actual registration having one must not be flagged: ${result.violations}")
+  }
+
+  test("a catalog mismatch's 'actual' descriptor omits namespace when the actual registration has none") {
+    val contract = ContractParser.parse(
+      """id: catalog_actual_namespace_absent
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |      namespace: [default]
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      // technology disagrees (so a violation is raised at all); namespace
+      // is genuinely unknown on the actual side (e.g. a DSv2 catalog,
+      // which never resolves one - see CatalogIdentitySupport.fromV2's
+      // own doc) - "unknown", not "empty and matching", so it must not be
+      // echoed into the actual descriptor at all.
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta"), namespace = Nil))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${result.violations}"))
+    assert(!violation.actual.exists(_.contains("namespace=")), violation.actual.getOrElse(""))
+    assert(violation.expected.exists(_.contains("namespace=default")), violation.expected.getOrElse(""))
+  }
+
   test("MISSING_INPUT_CATALOG_REGISTRATION and INPUT_CATALOG_MISMATCH mirror the output-side checks") {
     val contract = ContractParser.parse(
       """id: catalog_input_checks
