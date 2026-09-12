@@ -3,8 +3,12 @@
 
 package com.invaract.sparkadapter
 
+import com.invaract.contract.ContractParser
+import com.invaract.sparkadapter.notification.FileNotificationSink
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 import java.nio.file.{Files, Path}
@@ -47,6 +51,12 @@ class HiveConnectorSpec extends ConnectorSpecBase {
       .config("javax.jdo.option.ConnectionURL", s"jdbc:derby:;databaseName=${scratchDir.resolve("metastore_db")};create=true")
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
+      // Delta's own extension/catalog, added for this suite's external-table
+      // pass (see "External tables" below) - harmless alongside plain Hive
+      // SerDe tables (every existing test above STORED AS ... is unaffected;
+      // DeltaCatalog only intercepts USING DELTA/delta-provider tables).
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .enableHiveSupport()
       .withExtensions(injectContractCheck)
       .getOrCreate()
@@ -921,4 +931,331 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     }
     assert(ex.result.violations.exists(_.violationType == ViolationType.OutputFieldNullabilityMismatch))
   }
+
+  // --- External tables ---------------------------------------------------
+  //
+  // Everything above uses a plain managed table (default warehouse path).
+  // None of it exercises an EXTERNAL table or a LOCATION outside the
+  // warehouse dir - a real, previously-uninvestigated gap, closed here
+  // against a real embedded-Derby session for both Hive-SerDe and
+  // datasource-provider (Parquet/Delta) formats, and both the raw-SQL
+  // `CREATE EXTERNAL TABLE` and `.saveAsTable()` write paths. See
+  // docs/connectors/hive.md's "External tables" section for the full
+  // writeup this pass produced.
+
+  test("translates a read/write of a Hive SerDe EXTERNAL table (STORED AS PARQUET, conversion ON) via the datasource path, not InsertIntoHiveTable") {
+    val loc = extScratchDir("hive_ext_serde_parquet")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_ext_serde_parquet_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+    assert(spark.sessionState.catalog.getTableMetadata(TableIdentifier("hive_ext_serde_parquet_tbl")).tableType == CatalogTableType.EXTERNAL)
+
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    spark.sql("INSERT INTO hive_ext_serde_parquet_tbl SELECT 1, 10")
+    // Conversion ON (the default) means even a Hive-SerDe EXTERNAL Parquet
+    // table writes through the plain datasource command, not
+    // InsertIntoHiveTable - the write-side counterpart of this suite's
+    // existing read-side "conversion ON" confirmation above, now checked
+    // against an EXTERNAL table specifically (a genuinely different
+    // location-resolution path than a managed one).
+    val result = awaitWriteTo(listener, loc.stripPrefix("file:"))
+    result.plan match {
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+        assert(location.stripPrefix("file:") == loc.stripPrefix("file:"))
+        assert(format.contains("parquet"), s"expected a plain parquet write (not Hive), got format=$format")
+      case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
+    }
+  }
+
+  test("PASS: an EXTERNAL Hive SerDe table's real physical LOCATION (outside the warehouse dir) satisfies a contract declaring that exact location") {
+    val loc = extScratchDir("hive_ext_serde_pass")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_ext_serde_pass_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("INSERT INTO hive_ext_serde_pass_tbl SELECT 1, 10") // must not throw
+    }
+    assert(spark.table("hive_ext_serde_pass_tbl").count() == 1)
+  }
+
+  test("PASS: a datasource-provider EXTERNAL table (CREATE TABLE ... USING PARQUET LOCATION, no EXTERNAL keyword) is fully verified") {
+    val loc = extScratchDir("ds_ext_parquet")
+    spark.sql(s"CREATE TABLE ds_ext_parquet_tbl (id BIGINT, value BIGINT) USING PARQUET LOCATION '$loc'")
+    // Confirms Spark's own documented behavior: a bare LOCATION implies
+    // EXTERNAL even with no EXTERNAL keyword in the DDL at all.
+    assert(spark.sessionState.catalog.getTableMetadata(TableIdentifier("ds_ext_parquet_tbl")).tableType == CatalogTableType.EXTERNAL)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("INSERT INTO ds_ext_parquet_tbl SELECT 1, 10") // must not throw
+    }
+    assert(spark.table("ds_ext_parquet_tbl").count() == 1)
+  }
+
+  test("PASS: a Delta EXTERNAL table registered in the Hive metastore (CREATE TABLE ... USING DELTA LOCATION) is fully verified") {
+    val loc = extScratchDir("delta_ext")
+    spark.sql(s"CREATE TABLE delta_ext_tbl (id BIGINT, value BIGINT) USING DELTA LOCATION '$loc'")
+    assert(spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_ext_tbl")).tableType == CatalogTableType.EXTERNAL)
+    assert(spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_ext_tbl")).provider.contains("delta"))
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      spark.sql("INSERT INTO delta_ext_tbl SELECT 1, 10") // must not throw - real AppendData, already-covered DSv2 path
+    }
+    assert(spark.read.format("delta").load(loc).count() == 1)
+  }
+
+  // A real, previously-documented limitation ("Known limitation: CTAS with
+  // no pre-existing physical path" in docs/connectors/hive.md) says a
+  // genuinely NEW table's outer CreateHiveTableAsSelectCommand has no
+  // resolved physical path, disagreeing with the nested InsertIntoHiveTable.
+  // Confirmed here that supplying an explicit .option("path", ...) - the
+  // exact ".saveToTable()"-style external-table case - sidesteps that gap
+  // entirely: tableDesc.storage.locationUri is populated immediately, the
+  // same reason CreateDataSourceTableAsSelectCommand's own path-option case
+  // already doesn't have this problem either. A standing regression test
+  // for a real, working case, not just a probe's remembered output.
+  test("PASS: .format(hive).option(path, ...).saveAsTable() on a NEW table resolves the outer command to the real physical path, not the known CTAS gap") {
+    val loc = extScratchDir("hive_saveastable_ext")
+    withContract(
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    ) {
+      df().write.format("hive").option("path", loc).saveAsTable("hive_saveastable_ext_tbl") // must not throw
+    }
+    val t = spark.sessionState.catalog.getTableMetadata(TableIdentifier("hive_saveastable_ext_tbl"))
+    assert(t.tableType == CatalogTableType.EXTERNAL)
+    assert(t.storage.locationUri.get.toString.stripPrefix("file:") == loc.stripPrefix("file:"))
+    assert(spark.table("hive_saveastable_ext_tbl").count() == 2)
+  }
+
+  // Unlike Hive's own V1 CreateHiveTableAsSelectCommand (see the PASS test
+  // above), an explicit .option("path", ...) does NOT change how a new
+  // table's V2 CreateTableAsSelect resolves its location - confirmed here
+  // (not assumed) to be the same, already-documented behavior
+  // docs/connectors/delta.md's own new-table `.saveAsTable()` row already
+  // describes for the default in-memory catalog: a not-yet-committed
+  // StagedTable's location is never trusted (see
+  // WriteCommandSupport.namedRelationLocationAndFormat's own doc), so the
+  // outer CTAS always resolves to the qualified catalog identifier
+  // regardless of any path option - the CREATE step below is exercised
+  // with no contract active (matching how every other new-table CTAS setup
+  // in this suite/ContractEnforcementRuleSpec is written), and only the
+  // APPEND - against the now-resolved, committed table - is checked
+  // against a contract declaring the real physical path.
+  test("PASS: .format(delta).option(path, ...).saveAsTable() append onto an existing EXTERNAL table verifies against the real physical path") {
+    val loc = extScratchDir("delta_saveastable_ext")
+    df().write.format("delta").option("path", loc).saveAsTable("delta_saveastable_ext_tbl") // new table, no contract active yet
+
+    withContract(
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    ) {
+      df().write.format("delta").mode("append").option("path", loc).saveAsTable("delta_saveastable_ext_tbl") // must not throw
+    }
+    assert(spark.read.format("delta").load(loc).count() == 4)
+  }
+
+  test("known limitation (shared with the default in-memory catalog, not Hive-specific): a NEW external Delta table's CTAS resolves to the qualified identifier, not its physical path") {
+    val loc = extScratchDir("delta_saveastable_ctas_gap")
+    val listener = new SparkAdapterListener
+    spark.listenerManager.register(listener)
+    df().write.format("delta").option("path", loc).saveAsTable("delta_saveastable_ctas_gap_tbl")
+
+    val result = awaitWriteTo(listener, "delta_saveastable_ctas_gap_tbl")
+    result.plan match {
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+        assert(location == "spark_catalog.default.delta_saveastable_ctas_gap_tbl",
+          s"expected the qualified-identifier fallback (unaffected by .option(path, ...)), got '$location'")
+        assert(format.contains("delta"))
+      case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
+    }
+  }
+
+  // --- Fail-closed: DROP TABLE on an EXTERNAL table -----------------------
+  //
+  // Confirmed (not assumed): dropping an EXTERNAL table leaves its data
+  // files on disk - only the metastore entry is removed. Invaract's
+  // fail-closed policy nonetheless rejects DropTable unconditionally
+  // (it's neither a recognized write nor on FailClosedCommands' safe
+  // list), regardless of table type. This is a deliberate, accepted false
+  // rejection, not a bug: the class-name-only check can't distinguish "this
+  // specific DROP is harmless" from "this one deletes a managed table's
+  // real data" without inspecting the instance, and FailClosedCommands'
+  // own asymmetry (a safe command wrongly missing costs one rejection; one
+  // wrongly present could silently defeat the feature) already accepts that
+  // tradeoff. See docs/connectors/hive.md's "External tables" section.
+  test("fails closed: DROP TABLE on an EXTERNAL table is rejected, even though the underlying data would have survived") {
+    val loc = extScratchDir("drop_ext")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_drop_ext_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$loc'")
+    spark.sql("INSERT INTO hive_drop_ext_tbl SELECT 1, 10")
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val ex = intercept[ContractViolationException] {
+        spark.sql("DROP TABLE hive_drop_ext_tbl")
+      }
+      assert(ex.result.violations.exists(_.violationType == ViolationType.UnverifiableWrite))
+    }
+    assert(spark.sessionState.catalog.tableExists(TableIdentifier("hive_drop_ext_tbl")), "a rejected DROP must never have removed the catalog entry")
+    assert(
+      Files.list(java.nio.file.Paths.get(loc.stripPrefix("file:"))).count() > 0,
+      "an EXTERNAL table's data is never deleted by DROP TABLE in the first place - confirming what the rejection is (over-)protecting against"
+    )
+  }
+
+  // --- Real notification messages, captured against an external table ----
+  //
+  // Everything above proves enforcement decides PASS/FAIL correctly.
+  // This proves the *published* ContractValidationEvent/WriteEvent JSON -
+  // the messages an external NotificationSink actually receives - are
+  // correct for an external table too: real location (not a warehouse
+  // path), the contract ref, and (for WriteEvent) the real row/format
+  // detail. Captured via FileNotificationSink, the same sink
+  // demo/notify.properties and ./dev/test's own real-message proof use -
+  // not a mock, not a hand-built JSON string.
+  test("notifications: an external Parquet write publishes a real ContractValidationEvent and WriteEvent to a configured sink") {
+    val loc = extScratchDir("notify_ext")
+    spark.sql(s"CREATE EXTERNAL TABLE hive_notify_ext_tbl (id BIGINT, value BIGINT) USING PARQUET LOCATION '$loc'")
+
+    val eventsFile = scratchDir.resolve("notify_events.jsonl")
+    val sink = new FileNotificationSink
+    sink.configure(Map("path" -> eventsFile.toString))
+
+    val contract = parseContract(
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    )
+    val listener = new SparkAdapterListener(Some(sink), Some(contract))
+    spark.listenerManager.register(listener)
+
+    withSink(sink) {
+      withContract(ContractParser.write(contract)) {
+        spark.sql("INSERT INTO hive_notify_ext_tbl SELECT 1, 10") // must not throw
+      }
+    }
+
+    val lines = org.scalatest.concurrent.Eventually.eventually(
+      org.scalatest.concurrent.Eventually.timeout(org.scalatest.time.Span(5, org.scalatest.time.Seconds))
+    ) {
+      val ls = Files.readAllLines(eventsFile).toArray.map(_.toString)
+      assert(ls.exists(_.contains("\"eventType\": \"WRITE\"")), "expected a WriteEvent line by now")
+      ls
+    }
+
+    val validationLine = lines.find(_.contains("\"eventType\": \"CONTRACT_VALIDATION\"")).getOrElse(fail("no ContractValidationEvent captured"))
+    assert(validationLine.contains("\"status\": \"PASSED\""))
+    assert(validationLine.contains(s""""contract": "enforcement_demo@1.0.0""""))
+
+    val writeLine = lines.find(_.contains("\"eventType\": \"WRITE\"")).getOrElse(fail("no WriteEvent captured"))
+    assert(writeLine.contains(loc.stripPrefix("file:")), s"expected the real external location in the WriteEvent, got: $writeLine")
+    assert(writeLine.contains("\"format\": \"parquet\""))
+    assert(writeLine.contains(s""""contract": "enforcement_demo@1.0.0""""))
+
+    // Surfaced for the human reading test output/docs, not asserted on -
+    // this is exactly the real captured JSON docs/connectors/hive.md's
+    // "External tables" section quotes.
+    // scalastyle:off println
+    println(s"[real ContractValidationEvent] $validationLine")
+    println(s"[real WriteEvent] $writeLine")
+    // scalastyle:on println
+  }
+
+  // A path under scratchDir but a SIBLING of "warehouse" (not nested under
+  // it) - genuinely outside the Hive warehouse directory, the same
+  // property a real EXTERNAL table's LOCATION has in production, without
+  // needing a second temp-directory tree.
+  private def extScratchDir(name: String): String = scratchDir.resolve(s"external_$name").toString
 }

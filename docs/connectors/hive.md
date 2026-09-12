@@ -189,6 +189,19 @@ this one write shape — neither attempted here, consistent with the
 Parquet precedent of leaving the analogous gap as documented future work
 rather than a scope-widening fix.
 
+**This gap is narrower than it first reads — it does not apply to an
+EXTERNAL table created via `.option("path", ...)`.** Confirmed directly
+(a real probe, then promoted into a permanent test — see "External
+tables" below): when an explicit path is supplied,
+`CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri` is
+populated at analysis time, exactly the same reason
+`CreateDataSourceTableAsSelectCommand`'s own `.option("path", ...)` case
+(see "A shared pitfall" below Delta's own write-up) doesn't have this
+problem either — an explicit path never needs `defaultTablePath` guessing
+in the first place. So a genuinely NEW table's `.saveAsTable()` is fully
+covered *when it's an external table*; only the *managed* new-table case
+(and managed overwrite-onto-existing) retains the gap described above.
+
 ## Feature surface
 
 - **Bucketed tables (`CLUSTERED BY ... INTO n BUCKETS`)** — confirmed
@@ -241,6 +254,166 @@ table, not left as a theoretical carryover:
   is rejected by Spark itself before producing any `Command`-shaped plan
   at all — genuinely nothing for this policy to classify.
 
+## External tables
+
+Everything above (and every test in `HiveConnectorSpec` before this
+section) uses a plain *managed* table at the default warehouse path.
+None of it exercises an `EXTERNAL` table or a `LOCATION` outside the
+warehouse dir — a real gap in *investigation*, not an assumed one, closed
+here against a real embedded-Derby session for both Hive-SerDe
+(`STORED AS`) and datasource-provider (`USING PARQUET`/`USING DELTA`)
+formats, comparing the raw-SQL `CREATE EXTERNAL TABLE` path against
+`.saveAsTable()`.
+
+**The short answer: no translation or enforcement gap exists for any of
+it.** Every write shape an external table produces was already a
+recognized `WriteCommandSupport` entry; since it, `SparkPlanAdapter`,
+`ContractEnforcementRule`, and `SparkAdapterListener` all share the one
+registry, notification publishing is correct for free, with no
+external-table-specific code needed anywhere.
+
+- **`CREATE EXTERNAL TABLE t (...) STORED AS PARQUET LOCATION '<path>'`**
+  (Hive SerDe DDL, metastore conversion **on**, the default) — the
+  `CREATE` itself is `CreateTableCommand` (already safe-listed). The
+  catalog registers `tableType=EXTERNAL` with `location` set to exactly
+  the given path (never a computed warehouse path). The subsequent
+  `INSERT INTO` resolves to **`InsertIntoHadoopFsRelationCommand`**, not
+  `InsertIntoHiveTable` — conversion-on treats even an EXTERNAL
+  Hive-SerDe Parquet table as a plain datasource relation for *writes*
+  too, the write-side counterpart of this document's existing read-side
+  conversion-toggle finding, now confirmed for an EXTERNAL table
+  specifically. Already covered by the pre-existing `insertIntoHadoopFsRelation`
+  case. `HiveConnectorSpec`'s translation test and PASS test.
+- **`CREATE TABLE t (...) USING PARQUET LOCATION '<path>'`** (no
+  `EXTERNAL` keyword — the datasource DDL form) — confirmed directly that
+  a bare `LOCATION` implies `tableType=EXTERNAL` with no keyword needed
+  at all. `CreateDataSourceTableCommand` (safe-listed) → `InsertIntoHadoopFsRelationCommand`.
+  Already covered. `HiveConnectorSpec`'s PASS test.
+- **`CREATE TABLE t (...) USING DELTA LOCATION '<path>'`** under a
+  Hive-catalog session (`enableHiveSupport()` + Delta's own
+  `DeltaSparkSessionExtension`/`DeltaCatalog`) — the `CREATE` itself is a
+  safe-listed `CreateTable`, plus Delta's own internal transaction-log
+  bootstrap plans (`LogicalRDD`/`DeserializeToObject`/etc.), none of
+  which are `Command`-shaped so none ever reach the fail-closed gate at
+  all — confirmed noise, not a gap. The catalog registers
+  `tableType=EXTERNAL`, `provider=delta`. `INSERT INTO` resolves to
+  `AppendData` — the existing, connector-agnostic DSv2 write shape. First
+  real confirmation that Delta's write path is unaffected by Hive
+  metastore registration (every other Delta test in this codebase runs
+  under the default in-memory catalog). `HiveConnectorSpec`'s PASS test.
+- **`.format("hive").option("path", extPath).saveAsTable(newTable)`** —
+  the direct Hive analogue of `.saveAsTable()` against an external
+  location. Confirmed to produce a genuine `EXTERNAL` table, and — see
+  the amendment to "Known limitation" above — confirmed to sidestep that
+  limitation entirely: the outer `CreateHiveTableAsSelectCommand` and the
+  nested `InsertIntoHiveTable` agree on the real physical path by
+  construction, the same way `CreateDataSourceTableAsSelectCommand`'s own
+  `.option("path", ...)` case already does. `HiveConnectorSpec`'s PASS
+  test, which also pins this as a standing regression check on the fix.
+- **`.format("parquet").option("path", extPath).saveAsTable(newTable)`**
+  — already covered by the existing `CreateDataSourceTableAsSelectCommand`
+  case, whose `.option("path", ...)` handling was already documented to
+  resolve the physical path immediately. First confirmation under a real
+  Hive-catalog session specifically. `HiveConnectorSpec`'s PASS test.
+- **`.format("delta").option("path", extPath).saveAsTable(newTable)`** —
+  **the append side is fully covered** (`AppendData` against the
+  now-committed table resolves the real physical path; `HiveConnectorSpec`'s
+  PASS test), but **the new-table CREATE side is not, and `.option("path", ...)`
+  does not change that** — confirmed here (not assumed) to be the exact
+  same behavior `docs/connectors/delta.md`'s own new-table `.saveAsTable()`
+  row already documents for the default in-memory catalog: the outer
+  `CreateTableAsSelect`'s target is a `StagedTable` mid atomic-commit, whose
+  reported location is never trusted regardless of whether a path was
+  supplied (see `WriteCommandSupport.namedRelationLocationAndFormat`'s own
+  doc), so it always resolves to the qualified catalog identifier
+  (`spark_catalog.default.<table>`) instead. Unlike Hive's own
+  `CreateHiveTableAsSelectCommand` (a V1 command, above), an explicit path
+  option has no effect here — this is a genuine, pre-existing DSv2
+  limitation, not something being external changes one way or the other.
+  `HiveConnectorSpec`'s dedicated test confirms this explicitly rather than
+  leaving it as an unstated assumption carried over from `delta.md`.
+
+### `DROP TABLE` on an external table — a confirmed, deliberate false rejection
+
+Dropping an `EXTERNAL` table leaves its data files on disk — only the
+metastore entry is removed (confirmed directly: the table's files
+survive a `DROP TABLE`). Invaract's fail-closed policy nonetheless
+rejects `DropTable` unconditionally, regardless of table type — it's
+neither a recognized write nor on `FailClosedCommands`' safe list. This
+is **working as designed, not a bug**: a class-name-only check can't
+distinguish "this specific DROP is harmless" from "this one deletes a
+managed table's real data" without inspecting the instance, and
+`FailClosedCommands`' own documented asymmetry already accepts this
+tradeoff (a safe command wrongly missing costs one rejection; one wrongly
+present could silently defeat the whole feature). `HiveConnectorSpec`'s
+fail-closed test confirms both halves: the rejection fires, and the data
+really would have survived anyway.
+
+### Real notification messages, captured against an external table
+
+`HiveConnectorSpec`'s notification test wires a real `FileNotificationSink`
+(the same sink `demo/notify.properties`/`./dev/test` use — not a mock)
+into a real external-Parquet-table write, via `ContractEnforcementRule`'s
+sink-aware `verifyOrThrow` overload for `ContractValidationEvent` and a
+`SparkAdapterListener` for `WriteEvent`. Real captured output (reformatted
+for readability — the actual sink writes one compact JSON line per
+event):
+
+```json
+{
+  "eventType": "CONTRACT_VALIDATION",
+  "timestamp": 1789195078790,
+  "contract": "enforcement_demo@1.0.0",
+  "status": "PASSED",
+  "violations": [],
+  "metadata": {},
+  "applicationId": "local-1789195049331",
+  "fingerprints": null
+}
+```
+
+```json
+{
+  "eventType": "WRITE",
+  "timestamp": 1789195078864,
+  "contract": "enforcement_demo@1.0.0",
+  "location": "file:/tmp/invaract-hive-test1303275868275135991/external_notify_ext",
+  "format": "parquet",
+  "saveMode": "append",
+  "schema": [
+    { "name": "id", "type": "long", "nullable": false },
+    { "name": "value", "type": "long", "nullable": false }
+  ],
+  "metadata": {},
+  "durationMs": 69,
+  "rowCount": 1,
+  "bytesWritten": 718,
+  "fileCount": 1,
+  "applicationId": "local-1789195049331",
+  "deltaVersion": null,
+  "icebergSnapshotId": null,
+  "operation": null
+}
+```
+
+(`nullable: false` here is a property of this test's own `df()` fixture —
+built from a typed `Seq[(Long, Long)]`, whose encoder produces non-null
+primitive columns — not something being an external table changes;
+`HiveConnectorSpec`'s other tests, built from nullable-by-default catalog
+reads, show `nullable: true` instead.)
+
+Both events carry the table's *real, external* `location` (never a
+warehouse-relative or catalog-identifier form) and the same
+`contract`/`applicationId` pair, confirming a subscriber can correlate the
+two for an external table exactly as it would for a managed one — nothing
+about being external changes the shape or correctness of what's
+published. `rowCount`/`bytesWritten`/`fileCount` are populated here
+because this is a plain V1 datasource write (`InsertIntoHadoopFsRelationCommand`);
+per `WriteEvent`'s own doc, the equivalent Delta/DSv2 write shapes above
+(`AppendData`) do not populate these three fields — an honest gap in
+*this specific metric*, already documented, not something the
+external-table pass changes.
+
 ## `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
 
 Both confirmed to be rejected by Spark before producing any analyzable
@@ -263,13 +436,13 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | Streaming read (`readStream`) | 🚫 **N/A — no such mechanism exists** | No streaming source implementation exists for the Hive table format. Not attempted; genuinely nothing to test against. |
 | Change-data-feed / incremental read | 🚫 **N/A — no such mechanism exists** | No CDC mechanism exists for Hive tables. Nothing to translate. |
 | `.save(path)` | 🚫 **N/A — rejected by Spark itself** | `df.write.format("hive").save(path)` is rejected outright by Spark (`Hive data source can only be used with tables`) — confirmed via the Spark documentation this module's Phase 0 investigation checked; Hive is `.saveAsTable()`-only by design. Not a translation gap. |
-| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. Translation-level test passes; enforcement has a documented, tested gap when no physical path pre-exists — see "Known limitation" above. Next step: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change) or accept the qualified identifier as an equally valid declared `location`, neither attempted here. |
+| `.saveAsTable(...)`, new table | ✅ **Covered — closed this pass, with a known limitation for MANAGED tables only** | `CreateHiveTableAsSelectCommand` + nested `InsertIntoHiveTable`, both real `WriteCommandSupport` entries. A genuinely new **external** table (`.option("path", ...)`) is fully covered — the outer command resolves the real physical path immediately, confirmed by a dedicated `HiveConnectorSpec` PASS test (see "External tables"). Only a new **managed** table (no explicit path) retains the documented gap — see "Known limitation" above. Next step for the managed case: thread a `SparkSession` reference through `WriteCommandSupport` (a real API shape change) or accept the qualified identifier as an equally valid declared `location`, neither attempted here. |
 | `.saveAsTable(...)`, existing table (append) | ✅ **Covered — closed this pass** | Same two commands, confirmed to agree on the real physical path for append mode specifically. `HiveConnectorSpec`'s PASS/FAIL pair. |
 | `.insertInto(...)` | ✅ **Covered — closed this pass** | `InsertIntoHiveTable`. `HiveConnectorSpec`'s PASS/FAIL pair, plus a dedicated translation test confirming `INSERT OVERWRITE`'s save mode. |
 | `.writeTo(...)` (DataFrameWriterV2) | 🚫 **N/A — rejected by Spark itself, not an Invaract gap** | `Cannot write into v1 table` — the default `spark_catalog` isn't a `SupportsWrite` V2 catalog for Hive tables. `HiveConnectorSpec`'s test. |
 | Format-specific DML (`MERGE`/`UPDATE`/`DELETE`) | 🚫 **Fails closed (MERGE/UPDATE), N/A (DELETE)** | `MergeIntoTable`/`UpdateTable` are real `Command`-shaped plans, correctly rejected by the existing generic exclusion (no new code needed) — `HiveConnectorSpec`'s enforcement test. `DELETE FROM` is rejected by Spark itself before any plan is produced. Next step, if ever pursued: would need the same kind of structural-only treatment `deltaRowLevelDml`/`dsv2RowLevelWrite` give Delta/DSv2 MERGE — not attempted, since plain Hive tables have no ACID/row-level-mutation storage layer in vanilla OSS Spark to make this meaningful. |
 | Streaming write | 🚫 **N/A — rejected by Spark itself** | No valid streaming sink format for Hive tables — confirmed via a real rejected `.toTable()` call. `HiveConnectorSpec`'s test. |
-| Maintenance operations that touch data | ✅ **Covered by policy classification** | `LoadDataCommand` (`LOAD DATA INPATH`) and `TruncateTableCommand` confirmed, for real against a Hive table, to already be correctly excluded from `FailClosedCommands`' safe list — both fail closed, with a dedicated test proving the target table's data is left unchanged. `INSERT ... DIRECTORY` (`InsertIntoHiveDirCommand`) is a real, translated write, not a maintenance op — see above. |
+| Maintenance operations that touch data | ✅ **Covered by policy classification** | `LoadDataCommand` (`LOAD DATA INPATH`) and `TruncateTableCommand` confirmed, for real against a Hive table, to already be correctly excluded from `FailClosedCommands`' safe list — both fail closed, with a dedicated test proving the target table's data is left unchanged. `INSERT ... DIRECTORY` (`InsertIntoHiveDirCommand`) is a real, translated write, not a maintenance op — see above. `DROP TABLE` against an EXTERNAL table is a confirmed, deliberate false rejection (data survives a real DROP, but the policy can't distinguish table type from the class name alone) — see "External tables" below. |
 
 ## Hive feature-surface coverage ledger
 
@@ -281,6 +454,9 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | Real Hive UDFs (`HiveSimpleUDF`/`HiveGenericUDF`) | ✅ Confirmed transparent | The existing `isOpaqueUdf` suffix check, previously untested against a real Hive UDF, correctly recognizes `GenericUDFUpper`. `HiveConnectorSpec`'s test. |
 | Nullability on read-back | ✅ Confirmed — independently, same practical consequence as Parquet/CSV | Every Hive column (data or partition) is always nullable in the catalog schema — classic Hive DDL has no `NOT NULL` constraint to preserve. `HiveConnectorSpec`'s PASS/FAIL pair. |
 | Metastore-conversion toggle (`spark.sql.hive.convertMetastoreParquet`) | ✅ Confirmed — determines which operation-surface row applies, not a bug | With conversion on (default), a Parquet/ORC Hive table's reads/writes use the pre-existing `LogicalRelation`/`InsertIntoHadoopFsRelationCommand` cases; with it off, the same table uses `HiveTableRelation`/`InsertIntoHiveTable` instead. Both confirmed correct. `HiveConnectorSpec`'s tests for both settings. |
+| EXTERNAL tables (Hive SerDe and datasource-provider Parquet/Delta, both `LOCATION`-via-raw-SQL and `.option("path", ...)`-via-`.saveAsTable()`) | ✅ Confirmed — no gap, with one pre-existing DSv2 limitation reconfirmed | Every write shape an external table produces was already a recognized `WriteCommandSupport` case; notification publishing (`ContractValidationEvent`/`WriteEvent`) is correct for the same reason, confirmed with real captured JSON. One caveat, not new to external tables: a NEW Delta table's `CreateTableAsSelect` still resolves to the qualified catalog identifier, not the physical path, `.option("path", ...)` or not — the same `StagedTable` behavior `docs/connectors/delta.md` already documents for the default in-memory catalog. See "External tables" above; `HiveConnectorSpec`'s 10 new tests. |
+| `DROP TABLE` on an EXTERNAL table | ✅ Confirmed — deliberate, accepted false rejection | Data survives a real `DROP TABLE` on an EXTERNAL table, but Invaract rejects it anyway (not in `FailClosedCommands`' safe list, table type isn't inspected) — working as designed per that list's own safe-vs-unsafe asymmetry, not a bug. `HiveConnectorSpec`'s test confirms both halves. |
+| Notification publishing (`ContractValidationEvent`/`WriteEvent`) against an external table | ✅ Confirmed — real messages captured, not asserted from the code | A real `FileNotificationSink` receives a correctly-populated `ContractValidationEvent` (status, contract ref) and `WriteEvent` (the real external `location`, format, row/byte/file counts) for an external-table write — real JSON captured and quoted in "External tables" above. `HiveConnectorSpec`'s test. |
 
 Net assessment: Hive is not "100% supported," the same honest framing
 every other connector in this document gets — but every operation-surface
@@ -291,5 +467,13 @@ next step, not a silent one. Two real bugs were found and fixed (the
 gap was found and left open with a standing regression test proving it's
 still there (CTAS/overwrite location resolution); everything else was a
 genuine confirmation, not an assumption carried over from Delta/Iceberg/
-Parquet's own onboarding. `HiveConnectorSpec`: 26 tests.
+Parquet's own onboarding. A later, external-tables-focused pass added 10
+more tests confirming external Hive-SerDe/datasource-provider/Delta
+tables have no gap of their own, narrowed the CTAS/overwrite limitation's
+scope (it doesn't apply to an external new-table `.saveAsTable()` via
+Hive's own V1 command — only the managed case, and separately, the DSv2
+`CreateTableAsSelect` case regardless of external-vs-managed), confirmed
+a deliberate false rejection for `DROP TABLE` on external tables, and
+captured real notification JSON against an external table for the first
+time. `HiveConnectorSpec`: 36 tests.
 

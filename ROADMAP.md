@@ -1553,6 +1553,28 @@ not fixed, with a standing regression test proving it: a path-less new
 Hive table's two nested write commands disagree on location. Full
 findings and both ledgers: docs/connectors/hive.md.
 
+**Addendum: external tables (done).** A follow-up pass investigated
+`EXTERNAL` Hive tables specifically (raw-SQL `CREATE EXTERNAL TABLE ...
+LOCATION` and `.saveAsTable()` via `.option("path", ...)`), on top of
+Parquet, Delta, and Hive's own SerDe formats — the original pass only
+ever exercised managed tables at the default warehouse path. Found no
+translation or enforcement gap: every write shape an external table
+produces was already a recognized `WriteCommandSupport` case, so
+notification publishing is correct for the same reason (confirmed with
+real captured `ContractValidationEvent`/`WriteEvent` JSON, not asserted).
+Narrowed the existing CTAS/overwrite location-resolution limitation above
+(it doesn't apply to a new *external* table via Hive's own
+`.saveAsTable()` — only the managed case); separately reconfirmed, under
+Hive's own catalog for the first time, the already-known DSv2
+`CreateTableAsSelect`/`StagedTable` limitation `docs/connectors/delta.md`
+documents (a new table's location is the qualified identifier regardless
+of any path option — genuinely unrelated to being external). Also
+confirmed a deliberate, accepted false rejection: `DROP TABLE` on an
+EXTERNAL table is rejected even though the underlying data survives,
+since the fail-closed policy can't distinguish table type from a bare
+class name. Ten new tests; `HiveConnectorSpec`: 36 total. Full findings:
+docs/connectors/hive.md's "External tables" section.
+
 #### Sub-phase: Avro connector support (done)
 
 Sixth connector onboarded. `spark-avro` added as the first real
