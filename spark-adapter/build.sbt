@@ -860,7 +860,7 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.1.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.2.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.4.0.jar"

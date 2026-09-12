@@ -1,5 +1,5 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.1.0"
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -16,15 +16,26 @@ organization := "com.invaract"
 // FOLLOW-UP, once it is: add sonatype.sbt/pgp.sbt (mirroring ir's own).
 //
 // API compatibility (MiMa) IS wired up below, same as contract/ir/
-// spark-adapter, and in the same state their own very first introducing PR
-// left them in: `mimaPreviousArtifacts` points at this module's own current
-// coordinate, but this is the PR that first adds `fingerprint/` to the
-// repository at all, so CI's api-compatibility job (.github/workflows/
-// test.yml) will find no `base-ref/fingerprint` to compare against and skip
-// this module gracefully this one time (see CLAUDE.md's API Compatibility
-// Requirement: "A module that doesn't exist yet at the base commit is
-// skipped gracefully"). Starting with the next PR that touches this module,
-// the check runs for real.
+// spark-adapter. The 0.1.0 -> 0.2.0 bump above (this file's version) is
+// this module's first real one, and its motivation is a real bug found via
+// a genuine CI failure, not a break in this module's own public API
+// surface: this PR's catalog-registration feature bumped `ir`'s own
+// version (0.3.0 -> 0.4.0) and updated the `invaract-ir` dependency below
+// to match, but left this module's own version at 0.1.0 - meaning
+// "fingerprint 0.1.0 depending on ir 0.3.0" (already published locally/in
+// CI caches from before this PR) and "fingerprint 0.1.0 depending on ir
+// 0.4.0" (this PR's own state) both claim the exact same coordinate,
+// which is exactly what CI's api-compatibility job hit: an Ivy "version
+// conflict... suspected to be binary incompatible" resolving spark-adapter's
+// base-ref build (which needs ir 0.3.0) against an already-cached
+// fingerprint:0.1.0 that itself resolves to ir 0.4.0. The fix is the
+// coordinate bump itself, not a MiMa filter - this module's own compiled
+// classes (Canonicalizer's internal Read/Write pattern-match arity aside,
+// which is source-only, not part of any public signature) didn't change
+// shape, so `mimaPreviousArtifacts` stays at the pre-bump 0.1.0 baseline
+// with nothing to filter, the same "no filters needed right now" outcome
+// spark-adapter's own 0.2.0 -> 0.3.0 bump documented for an unrelated
+// reason.
 mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.1.0")
 
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
@@ -60,7 +71,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.1.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.2.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the

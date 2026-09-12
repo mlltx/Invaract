@@ -1689,6 +1689,13 @@ class HiveConnectorSpec extends ConnectorSpecBase {
   // A path under scratchDir but a SIBLING of "warehouse" (not nested under
   // it) - genuinely outside the Hive warehouse directory, the same
   // property a real EXTERNAL table's LOCATION has in production, without
-  // needing a second temp-directory tree.
-  private def extScratchDir(name: String): String = scratchDir.resolve(s"external_$name").toString
+  // needing a second temp-directory tree. Forward-slashed for the same
+  // reason the sibling INSERT OVERWRITE DIRECTORY tests above already are
+  // (see their own comment): every caller embeds this directly into a
+  // `LOCATION '...'` SQL literal, and Hive's own location parsing on
+  // Windows fails outright on a raw backslash-separated path
+  // ("Can not create a Path from an empty string") - a real, previously
+  // uncaught Windows-only failure across all 12 external-table/catalog
+  // tests that call this, confirmed via a real Windows CI run, not assumed.
+  private def extScratchDir(name: String): String = scratchDir.resolve(s"external_$name").toString.replace('\\', '/')
 }
