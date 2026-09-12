@@ -1278,10 +1278,20 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     val sinkA = new FileNotificationSink
     sinkA.configure(Map("path" -> eventsFileA.toString))
 
-    val capturedA = captureNotifications(contractFor(locA.stripPrefix("file:")), sinkA, eventsFileA, expectedWriteEvents = 1) {
+    val contractYamlA = contractFor(locA.stripPrefix("file:"))
+    val capturedA = captureNotifications(contractYamlA, sinkA, eventsFileA, expectedWriteEvents = 1) {
       df().write.mode("overwrite").parquet(locA) // the ONLY write in this scenario
     }
-    val countAfterWrite = Files.readAllLines(eventsFileA).size()
+    val linesAfterStep1 = Files.readAllLines(eventsFileA).toArray.toIndexedSeq.map(_.toString)
+
+    // scalastyle:off println
+    println("=" * 100)
+    println("STEP 1: df.write.mode(\"overwrite\").parquet(locA)")
+    println("Contract active during this step:")
+    println(contractYamlA)
+    println(s"Events file after step 1 (${linesAfterStep1.size} line(s)):")
+    linesAfterStep1.foreach(l => println(s"  $l"))
+    // scalastyle:on println
 
     // Register the external table over the data that's already there - no
     // active contract even needed to prove the point, since this must
@@ -1290,7 +1300,18 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     // ir.Write branch at all.
     spark.sql(s"CREATE EXTERNAL TABLE hive_compare_sql_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '$locA'")
     Thread.sleep(500) // let any (unexpected) async event a chance to land before asserting its absence
-    val countAfterCreate = Files.readAllLines(eventsFileA).size()
+    val linesAfterStep2 = Files.readAllLines(eventsFileA).toArray.toIndexedSeq.map(_.toString)
+
+    // scalastyle:off println
+    println("STEP 2: spark.sql(\"CREATE EXTERNAL TABLE hive_compare_sql_tbl (id BIGINT, value BIGINT) STORED AS PARQUET LOCATION '...'\")")
+    println("(no contract was even re-activated for this step - proving the point regardless of whether one is active)")
+    println(s"Events file after step 2 (${linesAfterStep2.size} line(s) - should be unchanged from step 1):")
+    linesAfterStep2.foreach(l => println(s"  $l"))
+    println("=" * 100)
+    // scalastyle:on println
+
+    val countAfterWrite = linesAfterStep1.size
+    val countAfterCreate = linesAfterStep2.size
     assert(
       countAfterCreate == countAfterWrite,
       "CREATE EXTERNAL TABLE over already-written data is metadata-only and must publish NO additional event " +
