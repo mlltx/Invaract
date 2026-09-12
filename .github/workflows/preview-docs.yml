@@ -151,8 +151,7 @@ jobs:
               else
                 url="$preview_url/"
               fi
-              list="$list- [\`$path\`]($url)
-"
+              list="$list- [\`$path\`]($url)"$'\n'
             done <<< "$changed_paths"
           else
             list="_No documentation pages changed in this push._"
