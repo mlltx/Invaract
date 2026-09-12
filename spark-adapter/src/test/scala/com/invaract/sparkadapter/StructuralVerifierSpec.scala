@@ -877,6 +877,49 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(violation.expected.exists(_.contains("namespace=default")), violation.expected.getOrElse(""))
   }
 
+  // Mirror of the test above, for the other side: a targeted Stryker
+  // re-run against StructuralVerifier.scala confirmed the mismatch-
+  // condition mutants above don't reach describeCatalogRequirement's own
+  // `if (req.namespace.nonEmpty) ...` guard at all when the contract
+  // simply never declares a namespace - that code path only runs once
+  // some OTHER field triggers a violation, which none of the earlier
+  // tests do while also leaving namespace undeclared.
+  test("a catalog mismatch's 'expected' descriptor omits namespace when the contract doesn't declare one") {
+    val contract = ContractParser.parse(
+      """id: catalog_expected_namespace_absent
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    catalog:
+        |      required: true
+        |      technology: hive
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold.out"),
+      Read(DatasetRef("raw.in")),
+      // technology disagrees (so a violation is raised at all); namespace
+      // was never declared in the contract, so the "expected" descriptor
+      // must not claim one either, even though the actual registration
+      // happens to have one.
+      catalog = Some(com.invaract.ir.CatalogIdentity(technology = Some("delta"), namespace = List("default")))
+    )
+    val actualSchema = new StructType().add("id", IntegerType)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+      .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${result.violations}"))
+    assert(!violation.expected.exists(_.contains("namespace=")), violation.expected.getOrElse(""))
+    assert(violation.actual.exists(_.contains("namespace=default")), violation.actual.getOrElse(""))
+  }
+
   test("MISSING_INPUT_CATALOG_REGISTRATION and INPUT_CATALOG_MISMATCH mirror the output-side checks") {
     val contract = ContractParser.parse(
       """id: catalog_input_checks
