@@ -91,6 +91,83 @@ combination, since a fully-specified but non-required block is easy to write by 
 Nothing about a plan's actual catalog registration is compared unless `required: true`.
 </Aside>
 
+## What's published on write
+
+A successful write publishes a `WriteEvent` — see
+[Notification Sinks](/guides/notification-sinks/) for how to receive these at all — and,
+since this feature, that event's `catalog` field carries the same real, resolved
+`CatalogIdentity` the check above compares against, not just a copy of the contract's
+declared expectation. This is the real, unedited `WriteEvent` for the `pass` scenario
+below (from a `FileNotificationSink` — field order is exactly as published):
+
+```json
+{
+  "eventType": "WRITE",
+  "contract": "catalog_registration_demo@1.0.0",
+  "location": "file:/tmp/.../sales",
+  "format": "parquet",
+  "saveMode": "append",
+  "schema": [
+    {"name": "id", "type": "long", "nullable": false},
+    {"name": "value", "type": "long", "nullable": false}
+  ],
+  "rowCount": 1,
+  "bytesWritten": 718,
+  "fileCount": 1,
+  "durationMs": 1217,
+  "applicationId": "local-...",
+  "deltaVersion": null,
+  "icebergSnapshotId": null,
+  "operation": null,
+  "catalog": {
+    "technology": "hive",
+    "catalogName": "spark_catalog",
+    "location": "embedded:jdbc:derby:;databaseName=/tmp/.../metastore_db;create=true",
+    "namespace": ["default"],
+    "table": "sales_tbl"
+  },
+  "metadata": {},
+  "timestamp": 1789247448778
+}
+```
+
+`catalog` mirrors the same five sub-fields the contract's `catalog:` block declares, but
+describes what the write actually resolved to, not what was required:
+
+| Key | Meaning |
+|---|---|
+| `technology` | The catalog implementation actually observed (`hive`, `delta`, `iceberg`, `jdbc`, or a raw class-name fallback for an unrecognized DSv2 catalog). |
+| `catalogName` | The Spark-level catalog plugin/session-catalog name actually in effect. |
+| `location` | The catalog service's own real address (a Hive metastore's `thrift://` URI, or `embedded:<jdbc-url>`) — absent for Delta/Iceberg/JDBC; see below. |
+| `namespace` | The database/schema path the write actually registered under. |
+| `table` | The table name the write actually registered under. |
+
+A few things worth being explicit about, since this is the piece the user asking "what's
+actually published" cares about most:
+
+- **`catalog` publishes independent of whether the contract declares a `catalog:`
+  requirement at all.** `SparkAdapterListener` resolves and reports a write's real catalog
+  identity whenever the underlying Spark command carries one — a Hive/Delta/Iceberg
+  write's `WriteEvent` carries a populated `catalog` field even against a contract with no
+  `catalog:` block on that dataset. `catalog:` in the contract only controls whether
+  Invaract *checks* the value; the notification always reports it when it exists.
+- **`catalog: null` is an explicit, honest signal, not a missing field.** A bare-path write
+  (`.write.parquet(path)`, `SaveIntoDataSourceCommand`, `insertIntoHiveDir`, and a few
+  other shapes with no `CatalogTable` at all — see
+  [docs/connectors/hive.md](https://github.com/mlltx/Invaract/blob/main/docs/connectors/hive.md#catalog-registration-checks))
+  always publishes `"catalog": null` — "this write really has no catalog entry," the same
+  distinction `format`/`saveMode` already make between "not applicable" and "not checked."
+- **A rejected write never publishes a `WriteEvent` at all.** `ContractEnforcementRule`
+  runs *before* Spark executes anything, so a rejected write (missing registration, or a
+  mismatch) only ever produces a `ContractValidationEvent` — see scenarios 2 and 3 below,
+  where no `WriteEvent` line appears in the captured output at all.
+- **The pre-write `ContractValidationEvent` never carries a `catalog` field itself.** A
+  catalog-registration failure is reported the same way every other structural violation
+  is — through that event's existing `violations` list (`MISSING_OUTPUT_CATALOG_REGISTRATION`/
+  `OUTPUT_CATALOG_MISMATCH`, or their input-side mirrors), not a dedicated field. There was
+  nothing to add there: the violation's own `message`/`expected`/`actual` strings (see
+  "What happens on a mismatch" above) already carry the full comparison.
+
 ## What `location` can and can't check
 
 `location` is the one sub-field worth understanding carefully, because what it can verify
