@@ -16,11 +16,13 @@ abort the write if it fails. `fingerprint/` is the newest of the four
 canonicalisation/hashing layer over `ir.Plan`/`ir.Expr`/`ir.Lineage`,
 surfaced (opt-in, via `VerificationOptions.computeFingerprint`) through
 `spark-adapter`'s existing validation message and notification-publishing
-channels. It is not yet wired into the Maven Central publishing, MiMa, or
-mutation-testing CI jobs `contract`/`ir`/`spark-adapter` have (see
-`fingerprint/build.sbt`'s own "FOLLOW-UP" comment) — a real gap to close,
-not a signal it's harness code. This is what a real user of Invaract would
-depend on.
+channels. It now has its own MiMa/`api-compatibility` check and its own
+whole-module + PR-scoped incremental mutation-testing CI jobs, the same
+guarantees `contract`/`ir`/`spark-adapter` have — but it is still not
+wired into `release.yml`'s Maven Central publish, which covers only
+`contract`/`ir`/`spark-adapter` today (see `fingerprint/build.sbt`'s own
+"FOLLOW-UP" comment) — a real, narrower gap to close, not a signal it's
+harness code. This is what a real user of Invaract would depend on.
 
 **`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
 test harness, not the product.** `plugin/` is a small illustrative Spark
@@ -122,14 +124,13 @@ file and still clear its module's break threshold.
 `fingerprint` (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) carries the same
 Stryker4s settings in its own `build.sbt` (`strykerThresholdsBreak := 50`,
 matching `ir`'s), and its code is held to the same developer-responsibility
-bar this section describes below — but, unlike `ir`/`spark-adapter`, it is
-**not yet wired into CI** (`.github/workflows/test.yml`'s whole-module
-mutation-testing job and PR-scoped incremental job don't cover it yet, nor
-does `api-compatibility`). That is a real, open gap — tracked in
-ROADMAP.md's fingerprinting sub-phase — not a signal that this module is
-exempt from the requirement; it just means the "MUST run it yourself"
-half below is not yet backed by an automatic CI check the way `ir`/
-`spark-adapter`'s is.
+bar this section describes below. It now has the same automatic backing
+`ir`/`spark-adapter` do: `.github/workflows/test.yml`'s
+`mutation-testing-fingerprint` job runs both a whole-module Stryker4s pass
+and its own PR-scoped incremental check, and `api-compatibility` covers it
+too. The one still-open, disclosed gap for this module is narrower —
+Maven Central publishing (see the "What's the product" section above) —
+not mutation testing or API compatibility.
 
 So: when a feature adds or changes code in `ir/src/main/scala/...`,
 `spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,
@@ -663,10 +664,10 @@ If `./dev/test` fails:
 ### Engine and plugin JARs
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.3.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.3.0.jar`
-- `fingerprint/target/scala-2.12/invaract-fingerprint-0.1.0.jar`
-- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar` — via
+- `contract/target/scala-2.12/invaract-contract-0.4.0.jar`
+- `ir/target/scala-2.12/invaract-ir-0.4.0.jar`
+- `fingerprint/target/scala-2.12/invaract-fingerprint-0.2.0.jar`
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.4.0.jar` — via
   `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
   same as `contract`/`ir`), this fat jar already contains
   `com.invaract.fingerprint`'s compiled classes too (confirmed directly:
@@ -970,7 +971,7 @@ Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ```bash
 # Start Spark shell with the engine + plugin JARs
-spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.3.0.jar
+spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.4.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)

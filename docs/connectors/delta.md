@@ -353,6 +353,28 @@ confirmed untestable in this environment, not silently skipped.
   permanent test asserting both halves: Invaract raises nothing, Delta
   does.
 
+- **Catalog registration checks (`catalog:` on a contract dataset) —
+  confirmed: a Delta table registered via `spark.sql.catalog.spark_catalog
+  = DeltaCatalog` (the config this document's own read/write tests, and
+  essentially every real deployment, already use) gets the same "wrong
+  Hive metastore" protection a plain Parquet Hive table does, once the
+  table already exists.** `ir.CatalogIdentity.location` is `None` for
+  most DSv2 catalogs (no reflective accessor exists to read a catalog
+  plugin's own network endpoint without a compile-time dependency this
+  module deliberately avoids — see `CatalogIdentitySupport.fromV2`'s own
+  doc) — but Delta is a real, confirmed exception: `DeltaCatalog`
+  installed as the session catalog doesn't run a separate metadata
+  service, it registers Delta tables as ordinary `CatalogTable`s in
+  whichever catalog `spark.sql.catalogImplementation` names, confirmed by
+  independently reading one back via
+  `spark.sessionState.catalog.getTableMetadata`. `CatalogIdentitySupport`
+  resolves the real Hive metastore location for exactly this case (a
+  brand-new table's first, table-creating write still can't — verified
+  *before* the table exists — the same limitation `StagedTable` handling
+  already has). Full writeup, the real PASS/FAIL tests, and the
+  `.saveAsTable()`-vs-SQL parity proof: docs/connectors/hive.md's
+  "Catalog registration checks" section.
+
 - **Identity columns (`GENERATED ALWAYS AS IDENTITY`) — confirmed
   untestable in this environment, not investigated further.** Spark
   3.5.1's own SQL parser rejects the syntax outright

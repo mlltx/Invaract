@@ -1,0 +1,45 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+source dev/lib.sh
+
+echo "======================================"
+echo "Invaract Catalog Registration Demo"
+echo "======================================"
+echo ""
+echo "Runs three real, separate Spark sessions against an embedded Hive"
+echo "metastore - one per scenario - each installing the enforcement rule"
+echo "exactly the way a real job would, via ContractEnforcementRule.forContract."
+echo "See docs-site's 'Require Catalog Registration' guide for the full"
+echo "explanation and the exact output this produces."
+echo ""
+echo "  1. pass                 - a Hive-registered table satisfies the"
+echo "                            contract's declared catalog requirement"
+echo "  2. missing-registration - a bare-path write is rejected: no catalog"
+echo "                            entry exists at all"
+echo "  3. wrong-metastore      - a real Hive registration exists, but not"
+echo "                            under the metastore the contract declares"
+echo ""
+
+install_failure_trap "Catalog registration demo failed"
+
+run_scenario() {
+  local scenario="$1"
+  echo ""
+  echo -e "${YELLOW}>>> Scenario: $scenario${NC}"
+  echo ""
+  (
+    cd spark-adapter
+    sbt -batch "Test/runMain com.invaract.sparkadapter.CatalogRegistrationDemo $scenario"
+  )
+}
+
+run_scenario "pass"
+run_scenario "missing-registration"
+run_scenario "wrong-metastore"
+
+echo ""
+echo -e "${GREEN}✓ All three scenarios ran - see docs-site's 'Require Catalog Registration' guide${NC}"
+echo -e "${GREEN}  for these exact captured outputs, explained.${NC}"

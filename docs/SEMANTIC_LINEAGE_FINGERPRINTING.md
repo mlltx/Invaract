@@ -172,6 +172,7 @@ This is the central table the "deterministic" requirement asks for.
 | `UnknownPlan`/`UnknownExpression.description` | Free text — may reword across translator versions for the same unrecognized construct | Surfaced as metadata, **excluded** from the hash (§8) |
 | `UnknownPlan`/`UnknownExpression.sourceType` | Yes — a stable class/kind name | Hashed as-is (§8) |
 | `Write.format` / `Write.saveMode` | Yes | Included in the **overall** fingerprint only, never in a per-output fingerprint (§3) |
+| `Read.catalog` / `Write.catalog` (`CatalogIdentity`: technology/catalogName/location/namespace/table) | Yes | Included in the **overall** fingerprint only, never in a per-output fingerprint — same bucket, and same reason, as `Write.format`/`saveMode` (§3): describes where data is registered, not any column's business logic. Unlike `format`/`saveMode`, included on `Read` too (a `Read`'s catalog registration is exactly as much "where does this data live" as its already-hashed `dataset.location`) — but this still only reaches `overall`, since per-output/per-expression fingerprints resolve through `ColumnRef`s, never a `Read` node's own canonical form |
 | List order where SQL semantics make it observable (see §2.4) | Yes | Preserved exactly as declared |
 | List order where it's set-like (`groupBy`, `partitionBy`) | N/A — no ordering exists in the semantics | Canonically sorted (§2.4) |
 | `Set[ColumnRef]` / `Set[AggregationDetail]` from `Lineage.trace` | **No** — Scala's `Set` iteration order is hash-based and not guaranteed stable across JVM/Scala versions | Canonically sorted by each element's own encoded bytes before hashing (§2.4) |
@@ -324,12 +325,15 @@ answer genuinely different questions and can disagree usefully:
   two (`hash(encode(expression) ++ encode(lineage))`), not recomputed
   from raw model data a second time.
 
-`Write.format`/`Write.saveMode`/`Write.dataset` feed only `overall` —
-they describe how the result is persisted, not any column's business
-logic, and per this design's own principle (report vs. hash — see §7,
-§8) that distinction is enforced structurally: an output's `expression`/
-`lineage` fingerprints are computed strictly from the subtree rooted at
-that `NamedExpr`, never from the enclosing `Write`.
+`Write.format`/`Write.saveMode`/`Write.dataset`/`Write.catalog`/`Read.catalog`
+feed only `overall` — they describe how the result is persisted or where
+it's registered, not any column's business logic, and per this design's
+own principle (report vs. hash — see §7, §8) that distinction is enforced
+structurally: an output's `expression`/`lineage` fingerprints are computed
+strictly from the subtree rooted at that `NamedExpr`, never from the
+enclosing `Write` (or, for `Read.catalog`, from any `Read` node at all —
+per-output resolution goes through `ColumnRef`s, not `Read`'s own
+canonical form).
 
 `inputs` is keyed by `"<location>#<occurrenceIndex>"` rather than by the
 raw alias, for the same alpha-renaming reason as §2.3 — but

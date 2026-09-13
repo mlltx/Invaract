@@ -307,11 +307,11 @@ class ExpressionTranslationSpec extends AnyFunSuite with BeforeAndAfterAll {
     val join = findJoin(translate(joined).plan).getOrElse(fail("no Join node found"))
     assert(join.joinType == JoinType.LeftOuter)
     join.left match {
-      case Read(_, Some("l")) => // expected
+      case Read(_, Some("l"), _) => // expected
       case other                => fail(s"expected the left relation's alias preserved, got $other")
     }
     join.right match {
-      case Read(_, Some("r")) => // expected
+      case Read(_, Some("r"), _) => // expected
       case other                => fail(s"expected the right relation's alias preserved, got $other")
     }
     assert(join.condition.exists(_.references.exists(_.name == "id")))

@@ -71,6 +71,51 @@ case class Schema(fields: List[Field]) {
   def field(name: String): Option[Field] = fields.find(_.name == name)
 }
 
+/** A dataset's expected data-catalog registration — e.g. "this must be
+  * registered in a specific Hive metastore, under this database/table
+  * name," not merely written to a physical location. Independent of
+  * `Dataset.format`: a dataset can declare a format with no catalog
+  * requirement at all (today's behavior, unchanged), a format with
+  * `catalog.required = false` (an informational expected shape that
+  * gates nothing), or a format with `catalog.required = true` (checked
+  * by `StructuralVerifier`/`ContractEnforcementRule` against the actual
+  * write's or read's resolved catalog identity).
+  *
+  * Every identity sub-field beyond `required` is independently optional,
+  * the same "both sides known" convention `format`/`saveMode` already
+  * use: declaring only `required: true` means "must be registered
+  * *somewhere*"; adding `technology`/`catalogName`/`location`/`namespace`/
+  * `table` progressively pins down *where*, and only the sub-fields
+  * actually declared here are compared against the observed catalog
+  * identity — an undeclared sub-field is never treated as "must be
+  * absent."
+  *
+  * @param required whether this dataset must be registered in a catalog
+  *   at all. `false` (or the whole `catalog` block being absent from
+  *   the contract) means no check is performed — see the class doc.
+  * @param technology the catalog implementation, e.g. `"hive"`,
+  *   `"delta"`, `"iceberg"` — open-vocabulary, not a closed enum (an
+  *   org's ecosystem can include catalog technologies Invaract has no
+  *   built-in name for).
+  * @param catalogName the Spark-level catalog plugin/session-catalog
+  *   name, e.g. `"spark_catalog"` — a *local* alias, not necessarily
+  *   unique across an organization's many Spark sessions.
+  * @param location the catalog *service's* own address (e.g. a Hive
+  *   metastore's `thrift://host:port` URI) — the durable, technology-
+  *   specific answer to "which Hive," distinct from `catalogName`'s
+  *   local alias.
+  * @param namespace the database/schema path within the catalog.
+  * @param table the table name within `namespace`.
+  */
+case class CatalogRequirement(
+  required: Boolean,
+  technology: Option[String] = None,
+  catalogName: Option[String] = None,
+  location: Option[String] = None,
+  namespace: List[String] = Nil,
+  table: Option[String] = None
+)
+
 /** A dataset the contract reads from (input) or writes to (output).
   *
   * @param location physical location of the dataset (table name, path, topic, etc.)
@@ -79,13 +124,17 @@ case class Schema(fields: List[Field]) {
   *   toward data already present at `location` (e.g. "append", "overwrite",
   *   "ignore", "error"). Meaningless for an input dataset; only checked by
   *   `StructuralVerifier` against a plan's `Write` node.
+  * @param catalog optional data-catalog registration requirement — see
+  *   `CatalogRequirement`'s own doc. Unlike `saveMode`, meaningful for
+  *   both inputs and outputs.
   */
 case class Dataset(
   name: String,
   location: String,
   format: Option[String],
   schema: Schema,
-  saveMode: Option[String] = None
+  saveMode: Option[String] = None,
+  catalog: Option[CatalogRequirement] = None
 )
 
 /** Rule types Invaract currently interprets during verification (see

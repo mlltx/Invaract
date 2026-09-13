@@ -141,7 +141,7 @@ class ClickHouseConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .insertInto() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, _, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, _, saveMode, _) =>
         assert(location == "ch.probe_db.insertinto_translate_tbl")
         assert(saveMode.contains("append"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")

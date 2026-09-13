@@ -15,7 +15,7 @@ name := "invaract-spark-adapter"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -851,8 +851,8 @@ excludeDependencies ++= Seq(
 // exactly, the same invariant this module's mimaPreviousArtifacts
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.3.0",
-  "com.invaract" %% "invaract-contract" % "0.3.0",
+  "com.invaract" %% "invaract-ir" % "0.4.0",
+  "com.invaract" %% "invaract-contract" % "0.4.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning
@@ -860,10 +860,10 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.1.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.2.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.3.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.4.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1021,11 +1021,24 @@ mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.3.0
 // bump, mirroring this section's own history - do not make that flip in
 // the PR doing the bump itself (base-ref won't have it yet).
 //
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - the one break that motivated the 0.2.0 -> 0.3.0 bump
-// (`computeFingerprint` added to `VerificationOptions`, `fingerprints`
-// added to `VerificationResult`/`notification.ContractValidationEvent`)
-// is now baked into both sides of the comparison. The 12 filter lines
-// that documented it against the old 0.2.0 baseline were removed here
-// rather than left as dead entries with nothing left to match.
+// The 0.3.0 -> 0.4.0 bump (this file's version above) is this module's own
+// next deliberate break: notification.WriteEvent gained a trailing
+// `catalog: Option[notification.CatalogInfo]` constructor parameter (see
+// contract/build.sbt's and ir/build.sbt's matching comments for the
+// identical reasoning - source-compatible, not binary-compatible, since
+// Scala's case-class codegen has exactly one apply/copy/constructor per
+// class). Filtered per MiMa's own suggested exclusions for exactly this
+// break:
+import com.typesafe.tools.mima.core._
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.WriteEvent$")
+)
+
+// FOLLOW-UP (once a future PR bumps `version` above again): flip
+// `mimaPreviousArtifacts` to this module's new current version and remove
+// the filters above once base-ref itself publishes 0.4.0 (mirroring this
+// section's own history) - do not make that flip in the PR doing the bump
+// itself (base-ref won't have it yet).
