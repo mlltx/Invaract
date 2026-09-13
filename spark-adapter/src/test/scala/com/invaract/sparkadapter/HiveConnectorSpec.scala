@@ -1409,34 +1409,40 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_catalog_location_pass_tbl").count() == 1)
   }
 
-  // The disclosed, real counterpart to the Hive tests above: for a DSv2
-  // catalog (Delta/Iceberg/JDBC), `location` is ALWAYS None -
-  // CatalogIdentitySupport.fromV2's own doc explains why (no reflective
-  // accessor exists in any of these connectors' public API to read a
-  // catalog plugin's own network endpoint without a compile-time
-  // dependency this module deliberately doesn't take). This means a
-  // contract declaring `catalog.location` against a Delta/Iceberg/JDBC
-  // output can never be verified today - only `technology`/`catalogName`/
-  // `namespace`/`table` are actually checked for those. Confirmed here
-  // rather than left as an assumption: declaring a location the actual
-  // write plainly does NOT satisfy still passes cleanly, because the
-  // location sub-field is never compared when the actual side is None -
-  // same "no false rejection on unknown information" rule format/saveMode
-  // already follow.
-  test("known limitation: a Delta output's declared catalog.location is never checked (DSv2 catalogs report no location at all)") {
-    val loc = extScratchDir("catalog_location_delta_unchecked")
-    df().write.format("delta").option("path", loc).saveAsTable("delta_catalog_location_unchecked_tbl") // new table, no contract active yet
+  // The disclosed, real counterpart to the Hive tests above - narrower
+  // than it first looked. `location` is `None` for a genuinely separate
+  // DSv2 catalog service (Iceberg/JDBC/a non-default Delta catalog) -
+  // `CatalogIdentitySupport.fromV2`'s own doc explains why (no reflective
+  // accessor exists in those connectors' public API to read a catalog
+  // plugin's own network endpoint without a compile-time dependency this
+  // module deliberately doesn't take). But Delta, installed the way this
+  // suite (and essentially every real deployment) installs it - as
+  // `spark.sql.catalog.spark_catalog` - is a real, confirmed exception:
+  // see `CatalogIdentitySupport.deltaSessionCatalogMetastoreLocation`'s
+  // own doc for why this specific case is safe. The three tests below pin
+  // down the exact boundary: still unresolvable for a brand-new table
+  // (verified before it exists), but real and checked for every write
+  // after that - the same "wrong metastore" protection Hive tables get.
 
+  test("known limitation: a Delta output's declared catalog.location can't be checked on the FIRST write that creates the table") {
+    val loc = extScratchDir("catalog_location_delta_new_table")
+    // A brand-new table's CTAS resolves the outer `location` to its
+    // qualified identifier, not its physical path - the same pre-existing,
+    // Hive-independent limitation the sibling "known limitation (shared
+    // with the default in-memory catalog...)" test above documents. This
+    // test's contract declares that identifier so it isolates the ONE
+    // thing actually under test here: whether catalog.location gets
+    // checked on this first write, not that unrelated limitation.
     val yaml =
       s"""id: enforcement_demo
          |version: "1.0.0"
          |outputs:
          |  - name: out
-         |    location: ${loc.stripPrefix("file:")}
+         |    location: spark_catalog.default.delta_catalog_location_new_table_tbl
          |    catalog:
          |      required: true
          |      technology: delta
-         |      location: this-value-is-never-actually-checked-for-delta
+         |      location: this-value-is-never-checked-for-a-not-yet-existing-table
          |    schema:
          |      fields:
          |        - name: id
@@ -1448,9 +1454,78 @@ class HiveConnectorSpec extends ConnectorSpecBase {
          |""".stripMargin
 
     withContract(yaml) {
-      df().write.format("delta").mode("append").saveAsTable("delta_catalog_location_unchecked_tbl") // must not throw
+      df().write.format("delta").option("path", loc).saveAsTable("delta_catalog_location_new_table_tbl") // must not throw - table doesn't exist yet
+    }
+    assert(spark.read.format("delta").load(loc).count() == 2)
+  }
+
+  test("PASS: a Delta append onto an EXISTING table, registered via spark_catalog, is checked against the real Hive metastore location") {
+    val loc = extScratchDir("catalog_location_delta_pass")
+    df().write.format("delta").option("path", loc).saveAsTable("delta_catalog_location_pass_tbl") // new table, no contract active yet
+
+    val realMetastoreLocation = CatalogIdentitySupport.hiveMetastoreLocation
+      .getOrElse(fail("expected this test session to report a real Hive metastore location (embedded or thrift)"))
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: delta
+         |      location: $realMetastoreLocation
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      df().write.format("delta").mode("append").saveAsTable("delta_catalog_location_pass_tbl") // must not throw
     }
     assert(spark.read.format("delta").load(loc).count() == 4)
+  }
+
+  test("FAIL: a Delta append through the wrong Hive metastore location is rejected (OUTPUT_CATALOG_MISMATCH names 'location')") {
+    val loc = extScratchDir("catalog_location_delta_fail")
+    df().write.format("delta").option("path", loc).saveAsTable("delta_catalog_location_fail_tbl") // new table, no contract active yet
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: ${loc.stripPrefix("file:")}
+         |    catalog:
+         |      required: true
+         |      technology: delta
+         |      location: thrift://not-the-real-metastore.example.com:9083
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |""".stripMargin
+
+    withContract(yaml) {
+      val ex = intercept[ContractViolationException] {
+        df().write.format("delta").mode("append").saveAsTable("delta_catalog_location_fail_tbl")
+      }
+      val violation = ex.result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
+        .getOrElse(fail(s"expected an OUTPUT_CATALOG_MISMATCH violation, got: ${ex.result.violations}"))
+      assert(violation.expected.exists(_.contains("location=thrift://not-the-real-metastore.example.com:9083")))
+      assert(!violation.actual.exists(_.contains("thrift://not-the-real-metastore.example.com:9083")), "the actual side must report this session's REAL metastore location, not echo the wrong declared one")
+    }
+    assert(spark.read.format("delta").load(loc).count() == 2, "a rejected append must never have committed")
   }
 
   test("PASS: a real Hive-registered input satisfies a contract requiring input-side catalog registration") {
@@ -1698,6 +1773,148 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     capturedB.validationLines.foreach(l => println(s"[B ContractValidationEvent] $l"))
     capturedB.writeLines.foreach(l => println(s"[B WriteEvent] $l"))
     // scalastyle:on println
+  }
+
+  // --- Direct comparison: .saveAsTable() vs. its literal SQL equivalent --
+  //
+  // The comparison above deliberately does NOT compare .saveAsTable()
+  // against CREATE TABLE ... AS SELECT (calling that pairing "less
+  // realistic" - a real ETL job choosing between the DataFrame API and
+  // raw SQL for the exact same operation isn't the same scenario as
+  // "write files now, register them later"). But a platform team that
+  // genuinely does choose between the two APIs for the same operation
+  // needs exactly this: proof they resolve the same catalog identity and
+  // get checked the same way, not just "both eventually pass some test
+  // somewhere." These four tests build twin tables via each path and
+  // compare directly - a brand-new table (.saveAsTable() vs CREATE TABLE
+  // ... AS SELECT) and an append onto an existing one (.saveAsTable()
+  // vs INSERT INTO ... SELECT) - for both Parquet and Delta.
+
+  private def catalogOf(result: TranslationResult, path: String): com.invaract.ir.CatalogIdentity =
+    result.plan match {
+      case com.invaract.ir.Write(_, _, _, _, Some(catalog)) => catalog
+      case com.invaract.ir.Write(_, _, _, _, None) => fail(s"$path resolved no catalog identity at all")
+      case other => fail(s"$path: expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
+    }
+
+  private def assertSameCatalogIdentity(dfCatalog: com.invaract.ir.CatalogIdentity, sqlCatalog: com.invaract.ir.CatalogIdentity): Unit = {
+    assert(dfCatalog.technology == sqlCatalog.technology, s"technology differs: ${dfCatalog.technology} (DataFrame API) vs ${sqlCatalog.technology} (SQL)")
+    assert(dfCatalog.catalogName == sqlCatalog.catalogName, s"catalogName differs: ${dfCatalog.catalogName} (DataFrame API) vs ${sqlCatalog.catalogName} (SQL)")
+    assert(dfCatalog.location == sqlCatalog.location, s"location differs: ${dfCatalog.location} (DataFrame API) vs ${sqlCatalog.location} (SQL)")
+    assert(dfCatalog.namespace == sqlCatalog.namespace, s"namespace differs: ${dfCatalog.namespace} (DataFrame API) vs ${sqlCatalog.namespace} (SQL)")
+  }
+
+  /** Same "wrong technology" contract run against both tables from a
+    * parity test above - proves the two paths aren't just recording the
+    * same identity data, but are actually run through the same
+    * `StructuralVerifier` check with the same outcome.
+    */
+  private def assertBothRejectedForWrongTechnology(dfTable: String, sqlTable: String, insert: String => Unit): Unit = {
+    val yaml =
+      """id: enforcement_demo
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: irrelevant-to-this-check
+        |    catalog:
+        |      required: true
+        |      technology: iceberg
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: long
+        |          required: true
+        |        - name: value
+        |          type: long
+        |          required: true
+        |""".stripMargin
+    withContract(yaml) {
+      Seq(dfTable, sqlTable).foreach { table =>
+        val ex = intercept[ContractViolationException](insert(table))
+        assert(
+          ex.result.violations.exists(_.violationType == ViolationType.OutputCatalogMismatch),
+          s"expected $table to be rejected with OUTPUT_CATALOG_MISMATCH, got: ${ex.result.violations}"
+        )
+      }
+    }
+  }
+
+  test("PARITY (new table): .saveAsTable() and CREATE TABLE ... AS SELECT resolve identical catalog identity and validate identically - Parquet") {
+    val listenerDf = new SparkAdapterListener
+    spark.listenerManager.register(listenerDf)
+    df().write.format("parquet").saveAsTable("parity_new_parquet_df_tbl")
+    val dfCatalog = catalogOf(awaitWriteTo(listenerDf, "parity_new_parquet_df_tbl", _.catalog.isDefined), ".saveAsTable()")
+
+    val listenerSql = new SparkAdapterListener
+    spark.listenerManager.register(listenerSql)
+    spark.sql("CREATE TABLE parity_new_parquet_sql_tbl USING PARQUET AS SELECT * FROM parity_new_parquet_df_tbl")
+    val sqlCatalog = catalogOf(awaitWriteTo(listenerSql, "parity_new_parquet_sql_tbl", _.catalog.isDefined), "CREATE TABLE ... AS SELECT")
+
+    assertSameCatalogIdentity(dfCatalog, sqlCatalog)
+    assertBothRejectedForWrongTechnology(
+      "parity_new_parquet_df_tbl", "parity_new_parquet_sql_tbl",
+      table => spark.sql(s"INSERT INTO $table SELECT 1, 10")
+    )
+  }
+
+  test("PARITY (new table): .saveAsTable() and CREATE TABLE ... AS SELECT resolve identical catalog identity and validate identically - Delta") {
+    val listenerDf = new SparkAdapterListener
+    spark.listenerManager.register(listenerDf)
+    df().write.format("delta").saveAsTable("parity_new_delta_df_tbl")
+    val dfCatalog = catalogOf(awaitWriteTo(listenerDf, "parity_new_delta_df_tbl", _.catalog.isDefined), ".saveAsTable()")
+
+    val listenerSql = new SparkAdapterListener
+    spark.listenerManager.register(listenerSql)
+    spark.sql("CREATE TABLE parity_new_delta_sql_tbl USING DELTA AS SELECT * FROM parity_new_delta_df_tbl")
+    val sqlCatalog = catalogOf(awaitWriteTo(listenerSql, "parity_new_delta_sql_tbl", _.catalog.isDefined), "CREATE TABLE ... AS SELECT")
+
+    assertSameCatalogIdentity(dfCatalog, sqlCatalog)
+    assertBothRejectedForWrongTechnology(
+      "parity_new_delta_df_tbl", "parity_new_delta_sql_tbl",
+      table => spark.sql(s"INSERT INTO $table SELECT 1, 10")
+    )
+  }
+
+  test("PARITY (append): .saveAsTable() and INSERT INTO ... SELECT resolve identical catalog identity and validate identically - Parquet") {
+    spark.sql("CREATE TABLE parity_append_parquet_df_tbl (id BIGINT, value BIGINT) USING PARQUET")
+    spark.sql("CREATE TABLE parity_append_parquet_sql_tbl (id BIGINT, value BIGINT) USING PARQUET")
+
+    val listenerDf = new SparkAdapterListener
+    spark.listenerManager.register(listenerDf)
+    df().write.mode("append").saveAsTable("parity_append_parquet_df_tbl")
+    val dfCatalog = catalogOf(awaitWriteTo(listenerDf, "parity_append_parquet_df_tbl", _.catalog.isDefined), ".saveAsTable() append")
+
+    val listenerSql = new SparkAdapterListener
+    spark.listenerManager.register(listenerSql)
+    spark.sql("INSERT INTO parity_append_parquet_sql_tbl SELECT 1, 10")
+    val sqlCatalog = catalogOf(awaitWriteTo(listenerSql, "parity_append_parquet_sql_tbl", _.catalog.isDefined), "INSERT INTO ... SELECT")
+
+    assertSameCatalogIdentity(dfCatalog, sqlCatalog)
+    assertBothRejectedForWrongTechnology(
+      "parity_append_parquet_df_tbl", "parity_append_parquet_sql_tbl",
+      table => spark.sql(s"INSERT INTO $table SELECT 1, 10")
+    )
+  }
+
+  test("PARITY (append): .saveAsTable() and INSERT INTO ... SELECT resolve identical catalog identity and validate identically - Delta") {
+    spark.sql("CREATE TABLE parity_append_delta_df_tbl (id BIGINT, value BIGINT) USING DELTA")
+    spark.sql("CREATE TABLE parity_append_delta_sql_tbl (id BIGINT, value BIGINT) USING DELTA")
+
+    val listenerDf = new SparkAdapterListener
+    spark.listenerManager.register(listenerDf)
+    df().write.format("delta").mode("append").saveAsTable("parity_append_delta_df_tbl")
+    val dfCatalog = catalogOf(awaitWriteTo(listenerDf, "parity_append_delta_df_tbl", _.catalog.isDefined), ".saveAsTable() append")
+
+    val listenerSql = new SparkAdapterListener
+    spark.listenerManager.register(listenerSql)
+    spark.sql("INSERT INTO parity_append_delta_sql_tbl SELECT 1, 10")
+    val sqlCatalog = catalogOf(awaitWriteTo(listenerSql, "parity_append_delta_sql_tbl", _.catalog.isDefined), "INSERT INTO ... SELECT")
+
+    assertSameCatalogIdentity(dfCatalog, sqlCatalog)
+    assertBothRejectedForWrongTechnology(
+      "parity_append_delta_df_tbl", "parity_append_delta_sql_tbl",
+      table => spark.sql(s"INSERT INTO $table SELECT 1, 10")
+    )
   }
 
   // A path under scratchDir but a SIBLING of "warehouse" (not nested under

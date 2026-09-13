@@ -109,8 +109,9 @@ private[sparkadapter] object CatalogIdentitySupport {
     * is some catalog implementation Invaract doesn't have a friendly name
     * for yet," not silence.
     *
-    * `location` is deliberately `None` - confirmed (not assumed) that no
-    * existing reflective accessor in this module can read a DSv2 catalog's
+    * `location` is `None` for every DSv2 catalog except one confirmed
+    * exception - see `deltaSessionCatalogMetastoreLocation`'s own doc.
+    * No other reflective accessor in this module can read a DSv2 catalog's
     * own network endpoint (Iceberg's `SparkCatalog`, for one, doesn't
     * expose its underlying `org.apache.iceberg.catalog.Catalog`'s
     * `properties()`/URI through any public method this module could call
@@ -118,14 +119,64 @@ private[sparkadapter] object CatalogIdentitySupport {
     * see docs/connectors/hive.md's catalog-registration coverage ledger -
     * not something to fabricate a value for.
     */
-  private[sparkadapter] def fromV2(catalog: CatalogPlugin, identifier: Identifier): CatalogIdentity =
+  private[sparkadapter] def fromV2(catalog: CatalogPlugin, identifier: Identifier): CatalogIdentity = {
+    val technology = technologyOfCatalogPlugin(catalog)
     CatalogIdentity(
-      technology = Some(technologyOfCatalogPlugin(catalog)),
+      technology = Some(technology),
       catalogName = Some(catalog.name),
-      location = None,
+      location = deltaSessionCatalogMetastoreLocation(catalog, technology, identifier),
       namespace = identifier.namespace.toList,
       table = Some(identifier.name)
     )
+  }
+
+  /** The one confirmed exception to "a DSv2 catalog never reports a
+    * location": Delta's own `DeltaCatalog`, when installed as
+    * `spark.sql.catalog.spark_catalog` - the way essentially every real
+    * deployment configures it (see docs/connectors/delta.md's own worked
+    * example) - doesn't run a separate metadata service the way Iceberg's
+    * catalog implementations do. It registers a Delta table as an
+    * ordinary `CatalogTable` (`provider = "delta"`) in whichever catalog
+    * `spark.sql.catalogImplementation` names, confirmed empirically, not
+    * assumed: `HiveConnectorSpec`'s own "a Delta EXTERNAL table registered
+    * in the Hive metastore" test independently reads the very same table
+    * back via `spark.sessionState.catalog.getTableMetadata` and gets a
+    * real `CatalogTableType.EXTERNAL`/`provider.contains("delta")` result.
+    * That means a Delta table really can be registered through "the wrong
+    * Hive metastore" the exact same way a Parquet one can - so once the
+    * table already exists there, its metastore location is just as
+    * resolvable and just as worth checking.
+    *
+    * Two conditions keep this narrow and honest rather than a guess:
+    *
+    *   - `catalog.name == "spark_catalog"` - the literal name Spark gives
+    *     the session/default catalog. `sessionState.catalog` (a V1
+    *     `SessionCatalog`) only ever tracks *that one* catalog's own
+    *     tables; a second, independently-named Delta catalog instance
+    *     (`spark.sql.catalog.other = DeltaCatalog`, unusual but possible)
+    *     has no guaranteed relationship to it, so this only fires for the
+    *     one case actually proven safe.
+    *   - the table must already exist in that catalog. A brand-new
+    *     `ReplaceTableAsSelect`/`CreateTableAsSelect` (the first write
+    *     that creates the table) is verified *before* the table exists,
+    *     so `getTableMetadata` genuinely can't find it yet - the same
+    *     "physical location untrusted before commit" limitation this
+    *     module's own `StagedTable` handling already documents elsewhere.
+    *     `location` correctly stays `None` for that first write, and
+    *     resolves once the table exists for every write after.
+    *
+    * Iceberg is deliberately NOT given the same treatment: even its "Hive"
+    * catalog flavor talks to the metastore through Iceberg's own thrift
+    * client, entirely bypassing `spark.sessionState.catalog` - so the same
+    * lookup would either find nothing or, worse, find an unrelated table,
+    * and neither has been confirmed empirically the way Delta's has.
+    */
+  private def deltaSessionCatalogMetastoreLocation(catalog: CatalogPlugin, technology: String, identifier: Identifier): Option[String] =
+    if (technology != "delta" || catalog.name != "spark_catalog" || !sessionCatalogTechnology.contains("hive")) None
+    else activeSession.flatMap { session =>
+      val tableIdentifier = new org.apache.spark.sql.catalyst.TableIdentifier(identifier.name, identifier.namespace.lastOption)
+      scala.util.Try(session.sessionState.catalog.getTableMetadata(tableIdentifier)).toOption.flatMap(_ => hiveMetastoreLocation)
+    }
 
   /** Same as `fromV2`, for the read-side shapes (`DataSourceV2Relation`/
     * `StreamingRelationV2`) whose `catalog`/`identifier` are each

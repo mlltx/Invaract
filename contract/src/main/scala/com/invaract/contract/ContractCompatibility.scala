@@ -132,9 +132,61 @@ object ContractCompatibility {
             ))
           else Nil
 
-        locationChange ++ diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
+        locationChange ++
+          diffOptionalConstraint(s"$kind.$n.format", "format", prevDs.format, nextDs.format) ++
+          diffOptionalConstraint(s"$kind.$n.saveMode", "saveMode", prevDs.saveMode, nextDs.saveMode) ++
+          diffCatalog(s"$kind.$n.catalog", prevDs.catalog, nextDs.catalog) ++
+          diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
       }
     )
+
+  /** `format`/`saveMode` are both "declaring this at all is a new
+    * constraint a real write must match" fields (`StructuralVerifier`
+    * only compares them when BOTH the contract and the actual write have
+    * a value - see its own "unknown information" doc) - so they follow
+    * the same asymmetric-tightening-only philosophy `diffSchema`'s own
+    * required/nullable checks already use: newly declaring one, or
+    * changing its value, can turn an existing valid producer's write
+    * invalid (BREAKING); *removing* the declaration only loosens what's
+    * checked, so it isn't flagged (a PATCH, the same as a field going
+    * from required to optional going unflagged today).
+    */
+  private def diffOptionalConstraint(path: String, fieldName: String, previous: Option[String], next: Option[String]): List[CompatibilityChange] =
+    (previous, next) match {
+      case (None, Some(v)) =>
+        List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"'$fieldName' is now required to be '$v'"))
+      case (Some(p), Some(n)) if p != n =>
+        List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"'$fieldName' changed from '$p' to '$n'"))
+      case _ => Nil
+    }
+
+  /** Same tightening-only philosophy as `diffOptionalConstraint`, applied
+    * to the whole `catalog` block rather than a single scalar - see
+    * docs/CONTRACT_MODEL.md's "Version Compatibility" section for the
+    * worked examples this mirrors.
+    */
+  private def diffCatalog(path: String, previous: Option[CatalogRequirement], next: Option[CatalogRequirement]): List[CompatibilityChange] = {
+    def isEnforcing(req: CatalogRequirement): Boolean = req.required
+
+    (previous.filter(isEnforcing), next.filter(isEnforcing)) match {
+      case (None, Some(_)) =>
+        List(CompatibilityChange(CompatibilityLevel.Breaking, path, "Catalog registration is now required"))
+      case (Some(p), Some(n)) if p != n =>
+        val fields = List(
+          if (p.technology != n.technology) Some("technology") else None,
+          if (p.catalogName != n.catalogName) Some("catalogName") else None,
+          if (p.location != n.location) Some("location") else None,
+          if (p.namespace != n.namespace) Some("namespace") else None,
+          if (p.table != n.table) Some("table") else None
+        ).flatten
+        List(CompatibilityChange(
+          CompatibilityLevel.Breaking,
+          path,
+          s"Catalog requirement changed (${fields.mkString(", ")}); an existing write that satisfied the old requirement may no longer satisfy the new one"
+        ))
+      case _ => Nil
+    }
+  }
 
   private def diffSchema(path: String, previous: Schema, next: Schema): List[CompatibilityChange] =
     diffByName(previous.fields, next.fields)(

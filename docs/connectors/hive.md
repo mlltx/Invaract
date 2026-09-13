@@ -508,26 +508,69 @@ accepted.
 
 **A real gap, and a real bug it caused, found while proving the above for
 DSv2 connectors.** `ir.CatalogIdentity.location` is `None` for every DSv2
-catalog (Delta/Iceberg/JDBC) — confirmed, not assumed: no reflective
-accessor exists in any of these connectors' public API to read a catalog
-plugin's own network endpoint without a compile-time dependency this
-module deliberately doesn't take (see `CatalogIdentitySupport.fromV2`'s
-own doc). The first version of the mismatch check compared a declared
+catalog by default — confirmed, not assumed: no reflective accessor
+exists in most of these connectors' public API to read a catalog plugin's
+own network endpoint without a compile-time dependency this module
+deliberately doesn't take (see `CatalogIdentitySupport.fromV2`'s own
+doc). The first version of the mismatch check compared a declared
 `location` unconditionally once the contract declared it — which meant
-declaring `catalog.location` against *any* Delta/Iceberg/JDBC output
-would never be satisfiable, regardless of the value chosen, since the
-actual side is permanently `None` there. A real Delta enforcement test
-(reused from this document's own external-table fixtures) caught this
-immediately: a `.saveAsTable()` append that should have passed cleanly
-was rejected instead. Fixed in `StructuralVerifier.catalogFieldMismatches`
-to treat an unknown *actual* sub-field the same way `formatViolation`'s
-own doc already treats an unknown actual format — no comparison, no
-violation — so declaring `catalog.location` against a DSv2 output is
-accepted as a no-op today (only `technology`/`catalogName`/`namespace`/
-`table` are actually checked for those), not a permanent, un-fixable
-rejection. `HiveConnectorSpec`'s "known limitation: a Delta output's
-declared catalog.location is never checked" test and a dedicated
-`StructuralVerifierSpec` regression test both pin this down directly.
+declaring `catalog.location` against *any* DSv2 output would never be
+satisfiable, regardless of the value chosen, since the actual side is
+permanently `None` there. A real Delta enforcement test (reused from this
+document's own external-table fixtures) caught this immediately: a
+`.saveAsTable()` append that should have passed cleanly was rejected
+instead. Fixed in `StructuralVerifier.catalogFieldMismatches` to treat an
+unknown *actual* sub-field the same way `formatViolation`'s own doc
+already treats an unknown actual format — no comparison, no violation —
+so declaring `catalog.location` against a DSv2 output whose location
+genuinely can't be resolved is accepted as a no-op, not a permanent,
+un-fixable rejection.
+
+**Narrower than first described: Delta is a real, confirmed exception.**
+Delta's own `DeltaCatalog`, installed as `spark.sql.catalog.spark_catalog`
+the way this suite (and essentially every real deployment) configures it,
+doesn't run a separate metadata service the way Iceberg's catalog
+implementations do — it registers a Delta table as an ordinary
+`CatalogTable` (`provider = "delta"`) in whichever catalog
+`spark.sql.catalogImplementation` names, confirmed empirically: this
+document's own "a Delta EXTERNAL table registered in the Hive metastore"
+test independently reads the very same table back via
+`spark.sessionState.catalog.getTableMetadata`. That means a Delta table
+really can be registered through "the wrong Hive metastore" the exact
+same way a Parquet one can, and `CatalogIdentitySupport.fromV2` now
+resolves it — see `deltaSessionCatalogMetastoreLocation`'s own doc for the
+two conditions that keep this narrow (`catalog.name == "spark_catalog"`,
+and the table must already exist — a brand-new `CreateTableAsSelect`/
+`ReplaceTableAsSelect` is still verified *before* the table exists, so its
+location genuinely isn't resolvable yet, same as `StagedTable`'s own
+documented limitation elsewhere). Three `HiveConnectorSpec` tests pin this
+down: "known limitation: ... can't be checked on the FIRST write," "PASS:
+... checked against the real Hive metastore location," and "FAIL: ...
+through the wrong Hive metastore location is rejected" — the same
+PASS/FAIL pair Hive itself gets, for a Delta table once it exists.
+
+Iceberg is deliberately NOT given the same treatment: even its "Hive"
+catalog flavor talks to the metastore through Iceberg's own thrift
+client, entirely bypassing `spark.sessionState.catalog` — so the same
+lookup technique isn't known to be safe there, and `technology`/
+`catalogName`/`namespace`/`table` remain the only checked sub-fields for
+Iceberg/JDBC/a non-default Delta catalog instance.
+
+**`.saveAsTable()` and its literal SQL equivalent produce identical
+results.** A separate question from the location work above: does the
+DataFrame API and raw SQL resolve to the same catalog identity for the
+same operation? Four `PARITY` tests answer this directly (not just "both
+eventually pass some other test") — `.saveAsTable()` vs. `CREATE TABLE
+... AS SELECT` for a new table, and `.saveAsTable()` append vs. `INSERT
+INTO ... SELECT` for an existing one, each run for both Parquet and
+Delta. Each builds twin tables via both paths, asserts the resolved
+`ir.CatalogIdentity` matches field-for-field, and confirms a shared
+"wrong technology" contract rejects both the same way. A real
+confirmation along the way: both paths emit **two** nested `WriteEvent`s
+per call (one before the catalog registration lands, one after) — the
+same asymmetry the "write-then-register vs. saveAsTable" comparison above
+already found for event *counts*; these tests filter specifically for
+`_.catalog.isDefined` to avoid a race between the two.
 
 ## `.writeTo()` and streaming writes — N/A, confirmed by Spark itself
 
@@ -572,7 +615,8 @@ provider(hive)` — Hive isn't a valid streaming sink format at all.
 | EXTERNAL tables (Hive SerDe and datasource-provider Parquet/Delta, both `LOCATION`-via-raw-SQL and `.option("path", ...)`-via-`.saveAsTable()`) | ✅ Confirmed — no gap, with one pre-existing DSv2 limitation reconfirmed | Every write shape an external table produces was already a recognized `WriteCommandSupport` case; notification publishing (`ContractValidationEvent`/`WriteEvent`) is correct for the same reason, confirmed with real captured JSON. One caveat, not new to external tables: a NEW Delta table's `CreateTableAsSelect` still resolves to the qualified catalog identifier, not the physical path, `.option("path", ...)` or not — the same `StagedTable` behavior `docs/connectors/delta.md` already documents for the default in-memory catalog. See "External tables" above; `HiveConnectorSpec`'s 10 new tests. |
 | `DROP TABLE` on an EXTERNAL table | ✅ Confirmed — deliberate, accepted false rejection | Data survives a real `DROP TABLE` on an EXTERNAL table, but Invaract rejects it anyway (not in `FailClosedCommands`' safe list, table type isn't inspected) — working as designed per that list's own safe-vs-unsafe asymmetry, not a bug. `HiveConnectorSpec`'s test confirms both halves. |
 | Notification publishing (`ContractValidationEvent`/`WriteEvent`) against an external table | ✅ Confirmed — real messages captured, not asserted from the code | A real `FileNotificationSink` receives a correctly-populated `ContractValidationEvent` (status, contract ref) and `WriteEvent` (the real external `location`, format, row/byte/file counts) for an external-table write — real JSON captured and quoted in "External tables" above. `HiveConnectorSpec`'s test. |
-| Catalog registration checks (`catalog:` on a contract dataset) | 🔧 **Found and fixed, with one disclosed non-Hive limitation** | Real Hive metastore identity (technology/catalogName/location/namespace/table) extracted and checked for real — including a genuine "wrong metastore" rejection, the specific concern this feature exists to close. A real bug was found and fixed along the way: the mismatch check originally compared `location` unconditionally, which would have made declaring `catalog.location` against any DSv2 (Delta/Iceberg/JDBC) output permanently unsatisfiable, since those connectors report no location at all — caught by a real Delta enforcement test, not inspection. See "Catalog registration checks" above; 7 new `HiveConnectorSpec` tests plus a dedicated `StructuralVerifierSpec` regression test. |
+| Catalog registration checks (`catalog:` on a contract dataset) | 🔧 **Found and fixed, with one disclosed limitation narrowed to Iceberg/JDBC** | Real Hive metastore identity (technology/catalogName/location/namespace/table) extracted and checked for real — including a genuine "wrong metastore" rejection, the specific concern this feature exists to close. A real bug was found and fixed along the way: the mismatch check originally compared `location` unconditionally, which would have made declaring `catalog.location` against any DSv2 output permanently unsatisfiable, since those connectors report no location at all — caught by a real Delta enforcement test, not inspection. A follow-up pass confirmed Delta is a real exception once installed as `spark_catalog`: it shares the Hive metastore rather than running a separate one, so it now gets the same PASS/FAIL "wrong metastore" pair Hive tables do (once the table already exists — still unresolvable on the first, table-creating write). Iceberg/JDBC/a non-default Delta catalog remain the genuinely unresolvable case. See "Catalog registration checks" above; 7 `HiveConnectorSpec` tests plus a dedicated `StructuralVerifierSpec` regression test, plus 3 more for the Delta-via-`spark_catalog` follow-up. |
+| `.saveAsTable()` vs. its literal SQL equivalent | ✅ Confirmed — identical catalog identity, identical validation | Not the same pairing as "write-then-register (raw SQL) vs. saveAsTable()" above (that one is deliberately two different *operations*) — this directly compares `.saveAsTable()` against `CREATE TABLE ... AS SELECT` (new table) and `INSERT INTO ... SELECT` (append onto an existing one), for both Parquet and Delta. A real, confirmed nuance along the way: both paths emit two nested `WriteEvent`s per call, not one — tests disambiguate by filtering for `_.catalog.isDefined` rather than relying on write order. 4 new `PARITY` tests in `HiveConnectorSpec`. |
 
 Net assessment: Hive is not "100% supported," the same honest framing
 every other connector in this document gets — but every operation-surface
@@ -596,6 +640,10 @@ proving the org-wide "every job needs a real catalog entry" policy is
 actually enforceable — including a genuine wrong-metastore rejection —
 and found and fixed a real bug of its own along the way (an
 unconditional `location` comparison that would have made the check
-permanently unsatisfiable for every DSv2 connector). `HiveConnectorSpec`:
-43 tests.
+permanently unsatisfiable for every DSv2 connector). A final follow-up
+pass narrowed that limitation further (Delta via `spark_catalog` now gets
+real "wrong metastore" protection too — 3 more tests) and directly
+confirmed `.saveAsTable()`/SQL parity for both Parquet and Delta, a
+question the earlier notification-comparison test had explicitly left
+open (4 more `PARITY` tests). `HiveConnectorSpec`: 49 tests.
 

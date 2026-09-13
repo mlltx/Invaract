@@ -273,15 +273,27 @@ report.changes          // every detected change, each tagged with a level and p
 | Field changed optional → required | Breaking |
 | Field changed nullable → non-nullable | Breaking |
 | Contract `id` changed | Breaking |
+| `format` newly declared, or changed to a different value | Breaking |
+| `format` declaration removed | Not flagged (loosening) |
+| `saveMode` newly declared, or changed to a different value | Breaking |
+| `saveMode` declaration removed | Not flagged (loosening) |
+| Catalog registration newly made `required: true` | Breaking |
+| An already-`required: true` catalog block's `technology`/`catalogName`/`location`/`namespace`/`table` changed | Breaking |
+| Catalog block removed, or relaxed to `required: false` | Not flagged (loosening) |
+| Catalog block added with `required: false` (informational only) | Not flagged |
 
-**Known gap, not a deliberate design choice**: `Dataset.format`,
-`Dataset.saveMode`, and `Dataset.catalog` are not compared at all today —
-`diffDatasets` only ever looks at `location` and recurses into `schema`.
-A contract that changes only its declared format, save mode, or catalog
-requirement produces zero `CompatibilityChange` entries and is silently
-invisible to `verifyVersionBump`. This predates `catalog` (it was already
-true of `format`/`saveMode`) and isn't specific to it — noted here rather
-than silently left undocumented.
+`format`/`saveMode`/`catalog` all follow the same asymmetric philosophy the
+schema checks above already use: `StructuralVerifier` only ever compares one
+of these against a real write when *both* the contract and the actual write
+have a value for it (see its own "unknown information" doc) — so newly
+*declaring* one, or changing its value, is exactly like adding a required
+field: a producer that previously passed can now fail. *Removing* a
+declaration only loosens what gets checked, so — like a field changing from
+required to optional — it isn't flagged. A `catalog` block's own `required:
+false` case is a third state, not just "some declaration": it's accepted by
+`ContractValidator` as informational only (see its own warning above) and
+gates nothing during verification, so it never counts as a real
+requirement change either way.
 
 `ContractCompatibility.verifyVersionBump(previous, next)` checks that the
 *declared* version bump matches the *actual* scope of change, and returns

@@ -1614,6 +1614,70 @@ docs/connectors/hive.md's "Catalog registration checks" section; user
 guide: docs-site's [Require Catalog
 Registration](docs-site/src/content/docs/guides/requiring-catalog-registration.mdx).
 
+**Addendum: closing three pre-existing gaps surfaced by the catalog
+registration work above (done).** Three follow-ups, none scoped to
+catalog registration itself but all surfaced while working on it:
+
+1. **`ContractCompatibility` now compares `format`/`saveMode`/`catalog`.**
+   Previously a documented, unaddressed gap (`docs/CONTRACT_MODEL.md`'s
+   own "Known gap, not a deliberate design choice" note): a contract that
+   changed only its declared format, save mode, or catalog requirement
+   produced zero `CompatibilityChange` entries and was silently invisible
+   to `verifyVersionBump`. Closed with the same asymmetric philosophy the
+   schema diff already uses: newly declaring a constraint (or changing
+   its value) is BREAKING (an existing producer can now fail validation
+   it didn't fail before); removing one only loosens what's checked, so
+   it's not flagged — the same treatment a field going from required to
+   optional already gets. `catalog.required: false` is its own third
+   state (informational only, gates nothing per `ContractValidator`'s own
+   warning), never counted as a requirement change either way. 11 new
+   `ContractCompatibilityTest` cases; `mimaReportBinaryIssues` clean (only
+   new `private` methods).
+2. **Delta registered via a Hive-backed `spark_catalog` gets the same
+   "wrong metastore" protection Hive tables already had.** The DSv2
+   `catalog.location` limitation documented above turned out to be
+   narrower than first described: confirmed empirically (not assumed)
+   that Delta's own `DeltaCatalog`, installed as `spark.sql.catalog.
+   spark_catalog` the way essentially every real deployment configures
+   it, registers a Delta table as an ordinary `CatalogTable` in whichever
+   catalog `spark.sql.catalogImplementation` names — the same mechanism
+   Parquet uses, not a separate metadata service the way Iceberg's own
+   catalog implementations are. `CatalogIdentitySupport.fromV2` now
+   resolves a real Hive metastore `location` for exactly this case (once
+   the table already exists — a brand-new `CreateTableAsSelect`/
+   `ReplaceTableAsSelect` still can't, the same "physical location
+   untrusted before commit" limitation `StagedTable` handling already
+   has), while staying `None` for Iceberg (whose "Hive" catalog flavor
+   talks to the metastore through its own thrift client, confirmed to
+   bypass `spark.sessionState.catalog` entirely — not given the same
+   treatment without equivalent proof). Three `HiveConnectorSpec` tests
+   replace the old blanket "Delta location is never checked" test:
+   first-write-can't-check, PASS against the real metastore location, and
+   FAIL against a wrong one — mirroring Hive's own pair exactly.
+3. **`.saveAsTable()` and its literal SQL equivalent proven to resolve
+   identical catalog identity and validate identically.** A prior
+   comparison test in this file explicitly noted it was NOT testing this
+   pairing (calling `.saveAsTable()` vs. "write-then-register" "the more
+   realistic" one) — leaving the more direct question unanswered. Four
+   new `PARITY` tests build twin tables via each path (`.saveAsTable()`
+   vs. `CREATE TABLE ... AS SELECT` for a new table; `.saveAsTable()`
+   append vs. `INSERT INTO ... SELECT` for an existing one, both for
+   Parquet and Delta) and assert directly on the resolved
+   `ir.CatalogIdentity` plus a shared "wrong technology" contract
+   rejecting both the same way. Confirmed along the way, not assumed: both
+   paths emit two nested `WriteEvent`s per call (one before the catalog
+   registration lands, one after) — `awaitWriteTo`'s plain location filter
+   can race and catch either one, so these tests filter specifically for
+   `_.catalog.isDefined`, the same disambiguation technique this file's
+   own multi-nested-write tests already use elsewhere.
+
+Also fixed in the same pass: `CLAUDE.md`'s own text describing
+`fingerprint` as "not yet wired into CI" was stale — the mutation-testing
+and `api-compatibility` wiring documented as `[x]` done in this file's own
+fingerprinting sub-phase had already landed; only Maven Central publishing
+(the `[ ]` item just above) is still genuinely open. Updated to stop
+describing a closed gap as open.
+
 #### Sub-phase: Avro connector support (done)
 
 Sixth connector onboarded. `spark-avro` added as the first real

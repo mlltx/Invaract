@@ -184,14 +184,27 @@ write through a different Hive metastore than the one the contract declares?** N
 connected to the wrong metastore reports that metastore's real address, which disagrees
 with the contract's declared one and is rejected, exactly like the example above.
 
-**Delta / Iceberg / JDBC: not checked, honestly.** No DSv2 catalog implementation exposes
-its own network endpoint through a public API this module can read without taking on a
-compile-time dependency on that connector — so `location` is always absent for these
-today. Declaring `catalog.location` against a Delta/Iceberg/JDBC output is accepted as a
-no-op (not an error, and never a permanent, unsatisfiable rejection) — only
+**Delta, installed as `spark_catalog`: also a real, durable check.** Delta's own
+`DeltaCatalog`, installed the way most real deployments configure it — as
+`spark.sql.catalog.spark_catalog` — doesn't run a separate metadata service. It registers
+a Delta table as an ordinary catalog entry in whichever catalog `spark.sql.catalogImplementation`
+names, confirmed empirically (not assumed): the table is independently readable back via
+Spark's own session catalog API. That means a Delta table can be registered through "the
+wrong Hive metastore" the exact same way a Parquet one can, and `location` now catches it
+— once the table already exists. A brand-new table's *first*, table-creating write is
+still checked *before* that table exists, so its location genuinely isn't resolvable yet
+on that one write; every write after it is checked the same way Hive's own are.
+
+**Iceberg / JDBC / a non-default Delta catalog: not checked, honestly.** These DSv2
+catalog implementations don't expose their own network endpoint through a public API this
+module can read without taking on a compile-time dependency on that connector — Iceberg's
+own "Hive" catalog flavor, notably, talks to the metastore through its own thrift client,
+bypassing the mechanism that makes Delta's case safe. So `location` stays absent for these
+today. Declaring `catalog.location` against one of these outputs is accepted as a no-op
+(not an error, and never a permanent, unsatisfiable rejection) — only
 `technology`/`catalogName`/`namespace`/`table` are actually verified for those. If you
-need to pin down *which* Delta/Iceberg catalog instance a job talks to, that's not
-something this check can do yet.
+need to pin down *which* Iceberg catalog instance a job talks to, that's not something
+this check can do yet.
 
 ## Trying it yourself
 
@@ -324,10 +337,12 @@ the mismatch is left for the reader to reconstruct by hand.
 
 And, independent of scenario — the honest limitation from
 ["What `location` can and can't check"](#what-location-can-and-cant-check) above still
-applies: `technology`/`catalogName`/`namespace`/`table` are checked for Delta, Iceberg,
-and JDBC outputs too, but `catalog.location` is accepted as a no-op for all three — there
-is no equivalent "wrong metastore" proof for a non-Hive catalog today, because no DSv2
-catalog exposes its own network endpoint through an API this module can read.
+applies: `technology`/`catalogName`/`namespace`/`table` are checked for Delta, Iceberg, and
+JDBC outputs too, and `location` now gets the same "wrong metastore" proof for Delta once
+it's installed as `spark_catalog` and the table already exists. Iceberg, JDBC, and a
+non-default Delta catalog are the ones where `catalog.location` is still accepted as a
+no-op — no DSv2 catalog *service* of that kind exposes its own network endpoint through an
+API this module can read.
 
 ## What's next
 
