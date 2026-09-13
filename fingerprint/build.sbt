@@ -16,27 +16,24 @@ organization := "com.invaract"
 // FOLLOW-UP, once it is: add sonatype.sbt/pgp.sbt (mirroring ir's own).
 //
 // API compatibility (MiMa) IS wired up below, same as contract/ir/
-// spark-adapter. The 0.1.0 -> 0.2.0 bump above (this file's version) is
-// this module's first real one, and its motivation is a real bug found via
-// a genuine CI failure, not a break in this module's own public API
-// surface: this PR's catalog-registration feature bumped `ir`'s own
-// version (0.3.0 -> 0.4.0) and updated the `invaract-ir` dependency below
-// to match, but left this module's own version at 0.1.0 - meaning
-// "fingerprint 0.1.0 depending on ir 0.3.0" (already published locally/in
-// CI caches from before this PR) and "fingerprint 0.1.0 depending on ir
-// 0.4.0" (this PR's own state) both claim the exact same coordinate,
-// which is exactly what CI's api-compatibility job hit: an Ivy "version
-// conflict... suspected to be binary incompatible" resolving spark-adapter's
-// base-ref build (which needs ir 0.3.0) against an already-cached
-// fingerprint:0.1.0 that itself resolves to ir 0.4.0. The fix is the
-// coordinate bump itself, not a MiMa filter - this module's own compiled
-// classes (Canonicalizer's internal Read/Write pattern-match arity aside,
-// which is source-only, not part of any public signature) didn't change
-// shape, so `mimaPreviousArtifacts` stays at the pre-bump 0.1.0 baseline
-// with nothing to filter, the same "no filters needed right now" outcome
-// spark-adapter's own 0.2.0 -> 0.3.0 bump documented for an unrelated
-// reason.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.1.0")
+// spark-adapter - see contract/build.sbt's comment for the general
+// invariant this has to satisfy (must always track base-ref's own live
+// `version` above, since CI's api-compatibility job runs `sbt publishLocal`
+// against base-ref's own build.sbt and then resolves exactly this
+// coordinate against it).
+//
+// The 0.1.0 -> 0.2.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.1.0 baseline - the same "FOLLOW-UP: flip this once that PR lands"
+// pattern contract/ir/spark-adapter's own version bumps already went
+// through (see ir/build.sbt's matching comment). That PR has now landed
+// (base-ref itself publishes 0.2.0, not 0.1.0, confirmed the hard way:
+// CI's api-compatibility job failed with a real "Not found" resolving
+// 0.1.0), so this is that follow-up flip. There were no
+// `mimaBinaryIssueFilters` to remove here - this module's own compiled
+// classes didn't change public shape across that bump (see git history
+// for the original 0.1.0 -> 0.2.0 comment's own reasoning).
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.2.0")
 
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
 // spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so

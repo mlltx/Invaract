@@ -1006,39 +1006,18 @@ strykerThresholdsBreak := 70
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment. That PR has now landed (base-ref itself publishes
-// 0.3.0, not 0.2.0, confirmed the hard way: CI's api-compatibility job
-// failed with a real "Not found" resolving 0.2.0), so this is that
-// follow-up flip - the same one contract/ir's own 0.2.0 -> 0.3.0 bumps
-// already went through (see ir/build.sbt's matching comment).
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.3.0")
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
-// that new version and add filters for whatever real break motivated the
-// bump, mirroring this section's own history - do not make that flip in
-// the PR doing the bump itself (base-ref won't have it yet).
-//
-// The 0.3.0 -> 0.4.0 bump (this file's version above) is this module's own
-// next deliberate break: notification.WriteEvent gained a trailing
-// `catalog: Option[notification.CatalogInfo]` constructor parameter (see
-// contract/build.sbt's and ir/build.sbt's matching comments for the
-// identical reasoning - source-compatible, not binary-compatible, since
-// Scala's case-class codegen has exactly one apply/copy/constructor per
-// class). Filtered per MiMa's own suggested exclusions for exactly this
-// break:
-import com.typesafe.tools.mima.core._
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.WriteEvent$")
-)
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and remove
-// the filters above once base-ref itself publishes 0.4.0 (mirroring this
-// section's own history) - do not make that flip in the PR doing the bump
-// itself (base-ref won't have it yet).
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern contract/ir's own 0.2.0 -> 0.3.0 bumps already went
+// through (see ir/build.sbt's matching comment). That PR has now landed
+// (base-ref itself publishes 0.4.0, not 0.3.0, confirmed the hard way:
+// CI's api-compatibility job failed with a real "Not found" resolving
+// 0.3.0), so this is that follow-up flip. The `mimaBinaryIssueFilters`
+// entries this section previously carried for the 0.3.0 -> 0.4.0 break
+// (notification.WriteEvent gaining a trailing
+// `catalog: Option[notification.CatalogInfo]` constructor parameter) are
+// removed along with it: now that the baseline itself is 0.4.0, that
+// break is inside the baseline on both sides of the comparison and no
+// longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.4.0")
