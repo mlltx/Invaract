@@ -11,6 +11,8 @@ import org.scalatest.BeforeAndAfterEach
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.nio.file.Files
+
 /** Direct unit coverage for `CatalogIdentitySupport`'s Hive-metastore-URI
   * resolution and technology-gated location lookup. `HiveConnectorSpec`/
   * `StructuralVerifierSpec` already exercise this class indirectly, through
@@ -24,11 +26,27 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
   private var spark: SparkSession = _
 
   override def beforeAll(): Unit = {
+    // A unique, per-run embedded Derby metastore - the same convention
+    // HiveConnectorSpec already uses, and for the same reason: embedded
+    // Derby holds an exclusive lock on its database directory, so two
+    // JVMs both defaulting to Spark's shared `./metastore_db` path (as
+    // this suite did before adding the real `CREATE TABLE` calls below)
+    // can collide. Confirmed the hard way: Stryker4s's own "2
+    // test-runners" run this suite in separate JVM processes for its
+    // initial coverage pass, and without this, that collision hung the
+    // whole run until a socket-level timeout killed it - reproducible
+    // locally and in CI alike, unrelated to any --timeout/--timeout-factor
+    // setting, since the hang was never inside Stryker's own timeout logic.
+    val scratchDir = Files.createTempDirectory("invaract-catalog-identity-support-test")
+    System.setProperty("derby.stream.error.file", scratchDir.resolve("derby.log").toString)
+
     spark = SparkSession
       .builder()
       .master("local[*]")
       .appName("CatalogIdentitySupportSpec")
       .config("spark.sql.catalogImplementation", "hive")
+      .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
+      .config("javax.jdo.option.ConnectionURL", s"jdbc:derby:;databaseName=${scratchDir.resolve("metastore_db")};create=true")
       .config("spark.ui.enabled", "false")
       .enableHiveSupport()
       .getOrCreate()
@@ -45,6 +63,7 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
   override def afterEach(): Unit = {
     spark.sparkContext.hadoopConfiguration.unset("hive.metastore.uris")
     spark.sparkContext.hadoopConfiguration.unset("javax.jdo.option.ConnectionURL")
+    spark.conf.unset("javax.jdo.option.ConnectionURL")
   }
 
   private def tableIn(db: String, name: String): CatalogTable =
@@ -63,7 +82,17 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
     // treated exactly like "unset" - fall through to the embedded
     // connection URL - never returned as-is.
     spark.sparkContext.hadoopConfiguration.set("hive.metastore.uris", "")
-    spark.sparkContext.hadoopConfiguration.set("javax.jdo.option.ConnectionURL", "jdbc:derby:memory:catalogIdentitySupportSpec;create=true")
+    // beforeAll's own javax.jdo.option.ConnectionURL (needed so a real
+    // CREATE TABLE elsewhere in this suite doesn't collide with another
+    // JVM's default embedded metastore - see beforeAll's own doc) is set
+    // via the SparkSession builder, which registers it in the session's
+    // SQLConf - `newHadoopConf()`'s merge overlays every currently-set
+    // SQLConf key on top of a fresh sparkContext.hadoopConfiguration copy,
+    // so overriding it here for this one test must go through the same
+    // SQLConf-level setter (spark.conf.set), not hadoopConfiguration.set,
+    // or the suite-wide default silently wins instead - confirmed the
+    // hard way when this test failed after beforeAll gained that default.
+    spark.conf.set("javax.jdo.option.ConnectionURL", "jdbc:derby:memory:catalogIdentitySupportSpec;create=true")
 
     val location = CatalogIdentitySupport.hiveMetastoreLocation
 
