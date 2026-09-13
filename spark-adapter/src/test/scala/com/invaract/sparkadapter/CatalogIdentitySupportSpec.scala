@@ -24,6 +24,7 @@ import java.nio.file.Files
   */
 class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with BeforeAndAfterEach {
   private var spark: SparkSession = _
+  private var defaultConnectionUrl: String = _
 
   override def beforeAll(): Unit = {
     // A unique, per-run embedded Derby metastore - the same convention
@@ -39,6 +40,7 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
     // setting, since the hang was never inside Stryker's own timeout logic.
     val scratchDir = Files.createTempDirectory("invaract-catalog-identity-support-test")
     System.setProperty("derby.stream.error.file", scratchDir.resolve("derby.log").toString)
+    defaultConnectionUrl = s"jdbc:derby:;databaseName=${scratchDir.resolve("metastore_db")};create=true"
 
     spark = SparkSession
       .builder()
@@ -46,7 +48,7 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
       .appName("CatalogIdentitySupportSpec")
       .config("spark.sql.catalogImplementation", "hive")
       .config("spark.sql.warehouse.dir", scratchDir.resolve("warehouse").toString)
-      .config("javax.jdo.option.ConnectionURL", s"jdbc:derby:;databaseName=${scratchDir.resolve("metastore_db")};create=true")
+      .config("javax.jdo.option.ConnectionURL", defaultConnectionUrl)
       .config("spark.ui.enabled", "false")
       .enableHiveSupport()
       .getOrCreate()
@@ -60,10 +62,21 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
   // reads `sessionState.newHadoopConf()`, a fresh copy of
   // `sparkContext.hadoopConfiguration` taken on every call, so a direct
   // mutation of the latter here is visible to the very next call.
+  //
+  // javax.jdo.option.ConnectionURL specifically is *restored* to
+  // beforeAll's own per-run default, not unset - it was registered via
+  // the SparkSession builder (SQLConf-level, not just hadoopConf), so
+  // there is no separate "builder default" layer underneath a runtime
+  // spark.conf.set/unset to fall back to. A plain unset here would
+  // permanently erase that default the first time any test overrides it
+  // via spark.conf.set, breaking every later test that relies on the
+  // real per-run metastore path (confirmed the hard way: exactly this
+  // bug silently made a later test's "real lookup" branch always resolve
+  // to None, masking what it was meant to prove).
   override def afterEach(): Unit = {
     spark.sparkContext.hadoopConfiguration.unset("hive.metastore.uris")
     spark.sparkContext.hadoopConfiguration.unset("javax.jdo.option.ConnectionURL")
-    spark.conf.unset("javax.jdo.option.ConnectionURL")
+    spark.conf.set("javax.jdo.option.ConnectionURL", defaultConnectionUrl)
   }
 
   private def tableIn(db: String, name: String): CatalogTable =
