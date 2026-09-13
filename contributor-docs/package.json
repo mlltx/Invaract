@@ -1,0 +1,25 @@
+{
+  "name": "invaract-contributor-docs",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs",
+    "predev": "npm run sync",
+    "prebuild": "npm run sync",
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.10",
+    "astro": "^7.2.9",
+    "sharp": "^0.35.4",
+    "unist-util-visit": "^5.1.0"
+  }
+}
