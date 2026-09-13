@@ -1,0 +1,595 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Delta Lake support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-54/connectors/delta/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-54/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-54/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="Delta Lake support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-54/connectors/delta/"/><meta property="og:locale" content="en"/><meta property="og:description" content="← Back to Spark Adapter"/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="← Back to Spark Adapter"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-54/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-54/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-54/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-54/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-54/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/Search.astro_astro_type_script_index_0_lang.CRPcQpds.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="0cdwho3" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/delta/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-lake-reads" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta Lake reads</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-lake-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta Lake operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#read" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Read</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#write" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Write</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-shared-pitfall-atomic-ctasrtas-issues-a-second-nested-write" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A shared pitfall: atomic CTAS/RTAS issues a second, nested write</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-second-shared-pitfall-plancollect-doesnt-reach-a-leaf-commands-own-fields" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A second shared pitfall: plan.collect doesn’t reach a leaf command’s own fields</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-feature-by-feature-confidence-pass" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta feature-by-feature confidence pass</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#version-compatibility" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Version compatibility</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-lake-reads" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta Lake reads</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-lake-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta Lake operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#read" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Read</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#write" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Write</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-shared-pitfall-atomic-ctasrtas-issues-a-second-nested-write" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A shared pitfall: atomic CTAS/RTAS issues a second, nested write</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-second-shared-pitfall-plancollect-doesnt-reach-a-leaf-commands-own-fields" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A second shared pitfall: plan.collect doesn’t reach a leaf command’s own fields</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#delta-feature-by-feature-confidence-pass" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Delta feature-by-feature confidence pass</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#version-compatibility" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Version compatibility</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">Delta Lake support</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/connectors/delta.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p><a href="/Invaract/contributor-pr-preview/pr-54/design/spark-adapter/#connector-support">← Back to Spark Adapter</a></p>
+<p>Delta writes are translated via <code dir="auto">SaveIntoDataSourceCommand</code> (see
+“Translation coverage” above) — added after investigating what a real
+Delta write actually analyzes to, empirically, not assumed: a fresh
+Delta-enabled <code dir="auto">SparkSession</code>
+(<code dir="auto">spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension</code>,
+<code dir="auto">spark.sql.catalog.spark_catalog=...DeltaCatalog</code>), a real
+<code dir="auto">df.write.format("delta").save(path)</code>, and a <code dir="auto">QueryExecutionListener</code>
+logging every analyzed plan Spark produced along the way. The write’s
+final analyzed plan was <code dir="auto">SaveIntoDataSourceCommand</code>, not a Delta-specific
+class at all — Spark’s own generic command for any
+<code dir="auto">CreatableRelationProvider</code>-based <code dir="auto">.save(...)</code> write, the non-<code dir="auto">FileFormat</code>
+counterpart to <code dir="auto">InsertIntoHadoopFsRelationCommand</code>.</p>
+<p><strong>No Delta dependency, compile-time or runtime, is needed to translate
+this.</strong> <code dir="auto">SaveIntoDataSourceCommand</code> and <code dir="auto">DataSourceRegister</code> are both
+plain, public <code dir="auto">org.apache.spark.sql</code> classes already on this module’s
+existing <code dir="auto">provided</code> Spark dependency; Delta’s <code dir="auto">DeltaDataSource</code> was
+confirmed (same investigation) to implement <code dir="auto">DataSourceRegister</code> with
+<code dir="auto">shortName() == "delta"</code>, exactly the mechanism <code dir="auto">formatOf</code> already used
+for built-in file formats — so <code dir="auto">formatOf</code>’s parameter type was simply
+widened from <code dir="auto">FileFormat</code> to <code dir="auto">AnyRef</code> and reused as-is, rather than
+writing Delta-specific translation code. <code dir="auto">delta-spark</code> appears only as a
+<code dir="auto">% "test"</code> dependency — its only job is spinning up a real Delta session
+to test against, the same role <code dir="auto">com.h2database</code> plays for the JDBC
+precedent, never something the main translation code imports or needs
+present at runtime for a non-Delta job to run.</p>
+<p>Originally pinned to 3.2.0 (not the latest 3.2.x at the time) because a
+confirmed real bug in 3.2.1 affected exactly the Scala 2.12 + Spark 3.5.1
+combination — see
+<a href="https://github.com/delta-io/delta/issues/3737">delta-io/delta#3737</a>.
+Later moved to 3.3.3 as part of the CVE-driven Spark 3.5.1 → 3.5.7 bump
+(see <code dir="auto">spark-adapter/build.sbt</code>’s comment above <code dir="auto">deltaVersion</code> and
+docs/CVE_REMEDIATION.md for the full detail): staying on 3.2.0 while
+Spark moved to 3.5.7 broke <code dir="auto">ContractEnforcementRuleSpec</code>’s
+<code dir="auto">.format("delta").saveAsTable()</code> coverage, because delta-spark 3.2.0
+predates the Spark DSv2 write-path behavior 3.5.7 exercises. 3.3.3 is
+delta-io/delta’s own closest published release to Spark 3.5.7 (its
+<code dir="auto">LATEST_RELEASED_SPARK_VERSION</code> build.sbt setting was 3.5.6 at that tag)
+and is well past Spark 3.5.3, the version #3737’s own thread named as a
+workaround for the original 3.2.1 bug — so this move doesn’t reopen it.</p>
+<p>This is also why the single assembled <code dir="auto">spark-adapter</code> jar (see
+CLAUDE.md’s “What’s the product, and what’s the test harness” and
+ARCHITECTURE.md) needs no Delta-specific variant: nothing about Delta
+support depends on Delta being bundled in, or even present, unless a
+user’s own job actually writes Delta — confirmed directly, not assumed,
+by inspecting the assembled jar after adding this support and finding
+zero Delta classes in it, same size as before.</p>
+<p>An initial attempt at this feature assumed Delta’s own command classes
+would need recognizing directly, which would have required a real
+<code dir="auto">delta-spark</code> compile dependency (<code dir="auto">provided</code>, to keep it out of the
+assembled jar) and Delta-specific pattern-matching code — abandoned once
+the actual analyzed plan turned out to already be a generic Spark class,
+making that unnecessary entirely.</p>
+<p>Two real bugs surfaced fixing this, neither about translation itself:</p>
+<ul>
+<li><strong><code dir="auto">ContractEnforcementRule.verifyOrThrow</code>’s output-schema derivation</strong>
+only special-cased <code dir="auto">InsertIntoHadoopFsRelationCommand</code>; for any other
+plan (including the new <code dir="auto">SaveIntoDataSourceCommand</code> case) it fell back
+to the command node’s <em>own</em> <code dir="auto">.schema</code> — empty, since <code dir="auto">Command</code> nodes
+don’t produce rows — rather than the schema of the query being written.
+A real Delta write, correctly matching every field its contract
+declared, still failed with <code dir="auto">MISSING_OUTPUT_FIELD</code> on every one of
+them, because the schema being checked against was always empty
+regardless of what was actually written. Fixed by adding the same
+<code dir="auto">cmd.query.schema</code> case <code dir="auto">SaveIntoDataSourceCommand</code> needs.</li>
+<li><strong><code dir="auto">SparkAdapterListener.onSuccess</code></strong> has its own independent “is this a
+write” check, entirely separate from <code dir="auto">SparkPlanAdapter.translatePlan</code>’s
+and <code dir="auto">ContractEnforcementRule.verifyOrThrow</code>’s — also hardcoded to only
+<code dir="auto">InsertIntoHadoopFsRelationCommand</code>. A Delta write correctly translated
+and correctly enforced, yet the listener-based report
+(<code dir="auto">demo/output/report.json</code>’s <code dir="auto">transformationIR</code> section) never
+captured it. Fixed the same way, in a third, separate location — three
+independent places recognizing “is this a write command” was, at the
+time, left as a noted design smell rather than fixed. It has since been
+fixed — see “Write command recognition: a single registry” below.</li>
+</ul>
+<p>Both were caught by a real, real-Spark integration test failing (the new
+Delta PASS/FAIL pair in <code dir="auto">ContractEnforcementRuleSpec</code> and the translation
+test in <code dir="auto">SparkPlanAdapterSpec</code>), not by inspection — consistent with this
+module’s general testing philosophy.</p>
+<p><strong>Known limitation (current, not the original one — see the operation-surface
+ledger below for the full picture):</strong> every write shape in the ledger below
+is ✅ covered structurally — <code dir="auto">.saveAsTable(...)</code>, <code dir="auto">.writeTo(...)</code>’s DSv2
+sub-ops, and <code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code> all translate and get checked against
+the contract’s declared output. <code dir="auto">rules</code>-based DML verification (contract
+types <code dir="auto">merge_condition</code>/<code dir="auto">forbid_unconditional_delete</code>/<code dir="auto">allowed_update_columns</code>,
+interpreted by <code dir="auto">RuleVerifier</code> against <code dir="auto">RowMutationSupport.classifyDelta</code>’s
+extracted facts) <em>is</em> wired up for Delta — real <code dir="auto">merge_condition</code> predicate-
+equality-pairing, <code dir="auto">forbid_unconditional_delete</code>, and <code dir="auto">allowed_update_columns</code>
+(via <code dir="auto">UpdateExpressionsSupport</code>-grounded column-change detection) all check
+against a live Delta MERGE/UPDATE/DELETE, not just Iceberg’s. What’s still
+genuinely open is <em>beyond</em> those three rule types: which specific <strong>rows</strong>
+an UPDATE touches (row-level predicate targeting, not just column-level),
+and whether a DELETE’s predicate is trivially satisfiable rather than merely
+present. Tracked as deliberate future work in ROADMAP.md’s “Full semantic
+DML verification” item, not a silent gap — see the operation-surface
+ledger’s “Format-specific DML” row and the “Interpreting <code dir="auto">rules</code>”/
+“Predicate-logic <code dir="auto">merge_condition</code>” sub-phases for the exact boundary of
+what is and isn’t checked today.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="delta-lake-reads">Delta Lake reads</h2><a class="sl-anchor-link" href="#delta-lake-reads"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Delta Lake reads”</span></a></div>
+<p>Everything above is the write side; Delta as a contract <em>input</em> was a
+separate, previously unexplored question, prompted directly by asking
+whether read recognition had the same “recognition duplicated across
+independent match sites” problem the write side did before “Write command
+recognition: a single registry” fixed it.</p>
+<p><strong>Investigated empirically, not assumed — and the answer turned out to be
+simpler than expected.</strong> A real Delta-enabled session with an
+<code dir="auto">injectCheckRule</code> probe (the same mechanism <code dir="auto">ContractEnforcementRule</code>
+actually uses) was run against both <code dir="auto">.load(path)</code> and a catalog table
+reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM tbl</code>/<code dir="auto">SELECT * FROM delta.\</code>path`<code dir="auto">). Both produce a </code>LogicalRelation<code dir="auto">wrapping</code>org.apache.spark.sql.delta.DeltaLog$$anon$2<code dir="auto">— and that class is an **anonymous subclass of Spark's own</code>HadoopFsRelation<code dir="auto">**, not a distinct relation type the way it first appeared. </code>locationOf<code dir="auto">'s existing </code>case h: HadoopFsRelation => h.location.rootPaths…<code dir="auto">branch (and the identical guard in</code>translatePlan<code dir="auto">'s </code>LogicalRelation<code dir="auto">case) already matches it through ordinary Scala subtyping, and already extracts the precise physical path — for</code>.load(path)<code dir="auto">*and* for a catalog table reference alike, confirmed by checking</code>catalogTable.storage.locationUri<code dir="auto">against what</code>locationOf` actually returns.</p>
+<p><strong>Net result: zero new code.</strong> No new <code dir="auto">translatePlan</code> case, no location
+fallback to improve, and — directly answering the motivating question —
+<strong>no registry consolidation needed on the read side.</strong> The write side’s
+duplication bug was real and specific: three sites recognized <em>different</em>
+concrete <code dir="auto">Command</code> classes, so one could add support for a class the
+others didn’t know about. Reads have no analogous risk today: both
+consumer sites (<code dir="auto">SparkPlanAdapter.translatePlan</code>’s <code dir="auto">LogicalRelation</code> case
+and <code dir="auto">ContractEnforcementRule.verifyOrThrow</code>’s <code dir="auto">plan.collect { case lr: LogicalRelation => ... }</code>
+for input-schema collection) gate on the <em>same</em> single Spark type, so
+they cannot disagree with each other by construction — and Delta’s read
+relation turned out to already be that type, by inheritance, not a
+second type needing its own case.</p>
+<p>This does <strong>not</strong> mean the read side can never have the write side’s
+problem — it means it doesn’t have it <em>today</em>, for <em>this</em> connector. A
+future connector whose read genuinely produces something other than
+<code dir="auto">LogicalRelation</code> (a <code dir="auto">DataSourceV2Relation</code>, most plausibly — the same
+“Known limitations” gap already noted for DataSourceV2 catalog writes)
+would need a real second case added in both of those sites, and <em>that</em>
+would reintroduce the write side’s exact risk unless done as a shared
+mechanism from the start. Treat that as the trigger for a
+<code dir="auto">ReadRelationSupport</code>-style registry, not a reason to build one now for a
+shape that doesn’t exist yet — see docs/ADDING_A_SPARK_CONNECTOR.md.</p>
+<p><strong>Verified through real enforcement, not just translation in isolation:</strong>
+a translation test (<code dir="auto">SparkPlanAdapterSpec</code>) confirms both read shapes
+produce a precise <code dir="auto">ir.Read</code> with no fallback diagnostic, and a PASS/FAIL
+enforcement pair (<code dir="auto">ContractEnforcementRuleSpec</code>) confirms a contract’s
+declared input schema is genuinely checked against a real Delta read’s
+actual schema — including a real, incidental finding along the way: Delta
+reports every column nullable on read-back regardless of what was
+written, a genuine Delta behavior (not a bug here) that the FAIL test’s
+contract works around the same way a real contract author would need to.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="delta-lake-operation-surface-coverage-ledger">Delta Lake operation-surface coverage ledger</h2><a class="sl-anchor-link" href="#delta-lake-operation-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Delta Lake operation-surface coverage ledger”</span></a></div>
+<p><code dir="auto">add-spark-connector</code> was run for Delta twice — once for writes, once for
+reads — and each time declared its narrower scope done without stating
+what was still untouched. That gap (see
+docs/ADDING_A_SPARK_CONNECTOR.md’s “coverage ledger” requirement, added
+directly because of it) is what this section closes: every row of the
+canonical operation surface, investigated empirically against a real
+Delta-enabled <code dir="auto">SparkSession</code> via <code dir="auto">injectCheckRule</code> — the exact mechanism
+<code dir="auto">ContractEnforcementRule</code> uses — with one of three dispositions per row.
+”❓ Not investigated” would be a legitimate answer for a row; a missing
+row is not, so every row below has one. <strong>Every 🚫 row also carries a
+next step, not just a citation</strong> — see
+docs/ADDING_A_SPARK_CONNECTOR.md’s “What ‘fails closed’ means (and
+doesn’t)”: fail-closed is a safety net for an operation not yet
+translated, not a verdict that it shouldn’t be. A row landing on 🚫 here
+is future work, unless stated otherwise.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="read">Read</h2><a class="sl-anchor-link" href="#read"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Read”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.read.format("delta").load(path)</code></td><td>✅ Covered</td><td><code dir="auto">LogicalRelation</code> wraps <code dir="auto">DeltaLog$$anon$2</code>, an anonymous <code dir="auto">HadoopFsRelation</code> subclass matched by ordinary subtyping — see “Delta Lake reads” above. <code dir="auto">SparkPlanAdapterSpec</code>, <code dir="auto">ContractEnforcementRuleSpec</code> PASS/FAIL pair.</td></tr><tr><td>Catalog table reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM tbl</code>)</td><td>✅ Covered</td><td>Same relation shape as above, confirmed for both forms — see “Delta Lake reads” above.</td></tr><tr><td>Time travel / snapshot reads (<code dir="auto">versionAsOf</code>/<code dir="auto">timestampAsOf</code>)</td><td>✅ Covered</td><td>Probed empirically: produces the identical <code dir="auto">LogicalRelation(relation=HadoopFsRelation)</code> shape as a plain read. Zero new code needed.</td></tr><tr><td>Streaming read (as a contract-declared <em>input</em>)</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Previously a real false-positive gap: neither <code dir="auto">StreamingRelation</code> (the legacy V1 path Delta itself uses — <code dir="auto">.readStream.format("delta").load(path)</code> analyzes to this, not <code dir="auto">StreamingRelationV2</code>) nor <code dir="auto">StreamingRelationV2</code> (the modern DataSourceV2 path, used by <code dir="auto">rate</code>/Kafka/similar) is a <code dir="auto">LogicalRelation</code>, so <code dir="auto">ContractEnforcementRule.verifyOrThrow</code>’s input-schema collection never saw either, and a contract declaring a streaming source as a required <code dir="auto">input</code> always reported <code dir="auto">MISSING_INPUT</code> even though data was genuinely being read. Closed by teaching both <code dir="auto">SparkPlanAdapter</code>’s translation and <code dir="auto">ContractEnforcementRule</code>’s input-schema collection to recognize both shapes, via two shared, non-duplicated helpers (<code dir="auto">streamingRelationLocationOf</code>/<code dir="auto">streamingRelationV2LocationOf</code>) rather than two independent matches — the exact duplication risk this module’s write side already learned from. <code dir="auto">StreamingRelation.dataSource.options("path")</code> and <code dir="auto">sourceName</code> give location/format with no reflection needed (both are plain public spark-sql classes, unlike <code dir="auto">WriteToStream</code>’s sink); <code dir="auto">StreamingRelationV2.table</code> reuses the same <code dir="auto">Table.properties()</code> lookup <code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code> use below. Verified through real enforcement: a PASS/FAIL pair in <code dir="auto">ContractEnforcementRuleSpec</code> proving a contract’s declared input schema is genuinely checked against a real streaming Delta source.</td></tr><tr><td>Change-data-feed / incremental read (<code dir="auto">readChangeFeed</code>)</td><td>✅ Covered (with a precision caveat)</td><td>Probed empirically: produces <code dir="auto">LogicalRelation(relation=CDCReader$$DeltaCDFRelation)</code>, a class distinct from <code dir="auto">HadoopFsRelation</code> — but <code dir="auto">translatePlan</code>’s generic <code dir="auto">LogicalRelation</code> case (not the <code dir="auto">HadoopFsRelation</code>-specific branch) already handles any relation type, producing a correct <code dir="auto">ir.Read</code>. Because this relation has no populated <code dir="auto">catalogTable</code> for a path-based read, it takes the existing “fallback” branch and reports a location diagnostic — the location string is the relation’s <code dir="auto">toString()</code>, not a clean physical path. Schema verification is unaffected; only location precision is reduced. <strong>Next step:</strong> none required for correctness; a future enhancement could special-case <code dir="auto">DeltaCDFRelation</code> for a cleaner location string.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="write">Write</h2><a class="sl-anchor-link" href="#write"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Write”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.save(path)</code>, all save modes</td><td>✅ Covered</td><td><code dir="auto">SaveIntoDataSourceCommand</code> — see “Delta Lake support” above.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, new table</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Non-Delta: <code dir="auto">CreateDataSourceTableAsSelectCommand</code>, translated (see “Translation coverage” above). Delta: <code dir="auto">.format("delta").saveAsTable(...)</code> on a <em>new</em> table analyzes to the V2 <code dir="auto">ReplaceTableAsSelect</code>, now a real <code dir="auto">WriteCommandSupport</code> entry. <code dir="auto">tableSpec.provider</code> gives format directly; location is the target’s qualified catalog identifier (<code dir="auto">"spark_catalog.default.&#x3C;table>"</code>), since a not-yet-existing table has no physical path to resolve at analysis time. Verified via a PASS/FAIL pair in <code dir="auto">ContractEnforcementRuleSpec</code>.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, existing table (append)</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Analyzes to <code dir="auto">AppendData</code>, now a real <code dir="auto">WriteCommandSupport</code> entry. Location prefers the resolved <code dir="auto">DataSourceV2Relation</code>’s <code dir="auto">Table.properties()["location"]</code> (the physical warehouse path, confirmed empirically) over its qualified identifier. Verified via a PASS/FAIL pair.</td></tr><tr><td><code dir="auto">.insertInto(...)</code></td><td>✅ <strong>Covered — closed this pass</strong></td><td>Same <code dir="auto">AppendData</code> shape, same <code dir="auto">WriteCommandSupport</code> entry, same test.</td></tr><tr><td><code dir="auto">.writeTo(...)</code> (DataFrameWriterV2), all sub-ops</td><td>✅ <strong>Covered — closed this pass</strong></td><td><code dir="auto">.append()</code> → <code dir="auto">AppendData</code>; <code dir="auto">.overwrite(cond)</code> → <code dir="auto">OverwriteByExpression</code>, mapped to the contract’s <code dir="auto">saveMode: overwrite</code> uniformly (the delete predicate itself isn’t modeled — <code dir="auto">StructuralVerifier</code>’s save-mode check doesn’t need it, so no IR extension was needed, contrary to what was first assumed); <code dir="auto">.createOrReplace()</code> → <code dir="auto">ReplaceTableAsSelect</code>, same entry as the new-table <code dir="auto">.saveAsTable()</code> row above. All verified via the same PASS/FAIL pairs.</td></tr><tr><td>Format-specific DML (<code dir="auto">MERGE INTO</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>)</td><td>✅ <strong>Covered — structurally and, for three specific rule types, semantically</strong></td><td>All three (<code dir="auto">MergeIntoCommand</code>/<code dir="auto">UpdateCommand</code>/<code dir="auto">DeleteCommand</code>) confirmed empirically to be Delta-internal classes, matched by reflection (public <code dir="auto">target()</code>/<code dir="auto">catalogTable()</code>/<code dir="auto">source()</code> methods, no compile-time Delta dependency) and recognized as real <code dir="auto">WriteCommandSupport</code> entries. <strong>Structural check:</strong> the operation’s <em>target</em> against the contract’s declared output location and current schema (catching the wrong-table mistake and schema drift) — MERGE’s <code dir="auto">source</code> is additionally checked as a contract input. <strong>Rule-based semantic check (added by the “Interpreting <code dir="auto">rules</code>” / “Predicate-logic <code dir="auto">merge_condition</code>” sub-phases):</strong> <code dir="auto">RowMutationSupport.classifyDelta</code> extracts the merge condition, updated columns, and delete predicate; <code dir="auto">RuleVerifier</code> checks them against a contract’s <code dir="auto">merge_condition</code> (genuine equality-pairing, not just “referenced anywhere”), <code dir="auto">forbid_unconditional_delete</code>, and <code dir="auto">allowed_update_columns</code> rules when declared. <strong>What’s still open:</strong> row-level targeting (which specific <em>rows</em> an UPDATE touches, not just which columns) and DELETE-predicate satisfiability beyond mere presence, plus any rule vocabulary beyond these three types. Verified through real enforcement: PASS/FAIL pairs for all three DML shapes, including a FAIL proving the target-schema check, a separate FAIL proving the source-as-input check, and real PASS/FAIL pairs per rule type against a live Delta session. The remaining, narrower gap is tracked as deliberate future work in ROADMAP.md’s “Full semantic DML verification” item, not attempted here — see docs/ADDING_A_SPARK_CONNECTOR.md’s “What ‘fails closed’ means” for why building further verification ahead of a real need would be premature.</td></tr><tr><td>Streaming write</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Previously the most serious gap found: <code dir="auto">WriteToStream</code> (the streaming write’s top-level plan) isn’t <code dir="auto">Command</code>-shaped, so <code dir="auto">ContractEnforcementRule</code>’s fail-closed policy — which only gates <code dir="auto">Command</code>-shaped plans — never saw it at all. Confirmed empirically (not assumed): a probe found zero of the plans <code dir="auto">injectCheckRule</code> saw during a real streaming Delta write were <code dir="auto">Command</code>-shaped, and <code dir="auto">javap</code> on Spark’s catalyst jar confirmed <code dir="auto">WriteToStream</code> doesn’t implement <code dir="auto">Command</code>. This was categorically worse than every other row here: not “fails closed but unverified,” but genuinely unenforced — a streaming write committed silently, with no contract check at all. <strong>Closed by adding <code dir="auto">WriteToStream</code> as a real <code dir="auto">WriteCommandSupport</code> entry</strong> (see “Write command recognition: a single registry” below) rather than special-casing it in the fail-closed check: <code dir="auto">WriteToStream.inputQuery</code> gives the schema being written; location comes from a resolved <code dir="auto">catalogTable</code> (<code dir="auto">.toTable(...)</code>, confirmed to carry <code dir="auto">storage.locationUri</code>/<code dir="auto">provider</code>), or from the sink’s <code dir="auto">name()</code> when that doesn’t throw (a genuine V2 sink), or — since Delta’s <code dir="auto">DeltaSink</code> is a legacy V1 <code dir="auto">Sink</code> wrapper whose <code dir="auto">name()</code>/<code dir="auto">schema()</code> unconditionally throw, confirmed empirically — a reflective call to its public <code dir="auto">path()</code> accessor, the same reflection-over-a-class-this-module-has-no-compile-time-dependency-on technique <code dir="auto">jdbcLocationOf</code> already uses for <code dir="auto">JDBCRelation</code>. Verified through real enforcement: a PASS/FAIL pair for <code dir="auto">.start(path)</code>, a PASS test for <code dir="auto">.toTable(...)</code> (the <code dir="auto">catalogTable</code>-populated path), and a test confirming a streaming write to a location unrelated to the active contract is correctly rejected (<code dir="auto">OUTPUT_LOCATION_MISMATCH</code>) — the same behavior batch writes have always had, not special-cased for streaming. All in <code dir="auto">ContractEnforcementRuleSpec</code>.</td></tr><tr><td>Maintenance operations that touch data (<code dir="auto">OPTIMIZE</code>/<code dir="auto">VACUUM</code>/<code dir="auto">RESTORE</code>/<code dir="auto">CLONE</code>/<code dir="auto">CONVERT TO DELTA</code>)</td><td>✅ Covered by policy classification</td><td><code dir="auto">FailClosedCommands.scala</code>’s <code dir="auto">knownSafe</code> set already includes <code dir="auto">VacuumTableCommand</code>/<code dir="auto">OptimizeTableCommand</code> (rewrites/removes files, doesn’t change a table’s committed row content) and deliberately excludes <code dir="auto">RestoreTableCommand</code>/<code dir="auto">CloneTableCommand</code>/<code dir="auto">ConvertToDeltaCommand</code> (row-content-changing) — built from a class-by-class enumeration of all 164 <code dir="auto">Command</code> subclasses across Spark 3.5.1 + Delta 3.2.0, reasoned and documented in that file’s header comment. Not re-probed individually this pass (the classification predates it); if any one of these is ever doubted, a targeted probe test is cheap to add.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="a-shared-pitfall-atomic-ctasrtas-issues-a-second-nested-write">A shared pitfall: atomic CTAS/RTAS issues a second, nested write</h2><a class="sl-anchor-link" href="#a-shared-pitfall-atomic-ctasrtas-issues-a-second-nested-write"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “A shared pitfall: atomic CTAS/RTAS issues a second, nested write”</span></a></div>
+<p>Closing the <code dir="auto">ReplaceTableAsSelect</code>/<code dir="auto">AppendData</code> rows above surfaced a real
+correctness trap, worth documenting for whichever row a future connector
+adds next: a <em>single</em> <code dir="auto">.saveAsTable(...)</code> call on a brand-new table
+produces <strong>two</strong> separate write-shaped plans through <code dir="auto">injectCheckRule</code>,
+confirmed empirically — the top-level <code dir="auto">ReplaceTableAsSelect</code> the user’s
+code actually wrote, <em>and</em> an internal, nested <code dir="auto">AppendData</code> against a
+<code dir="auto">StagedTable</code> (Spark’s own public 2-phase-commit protocol for atomic
+CTAS/RTAS — Delta’s <code dir="auto">StagedDeltaTableV2</code> implements it). Both are
+genuinely visible to <code dir="auto">ContractEnforcementRule.verifyOrThrow</code>, meaning it
+runs <em>twice</em> for what’s one logical write.</p>
+<p>The trap: a <code dir="auto">StagedTable</code>’s <code dir="auto">Table.properties()</code> has no <code dir="auto">"location"</code> yet
+(the table doesn’t physically exist until commit), so a naive
+<code dir="auto">AppendData</code> translation would fall back to the table’s bare, unqualified
+<code dir="auto">name()</code> — a <em>different</em> string than <code dir="auto">ReplaceTableAsSelect</code>’s qualified
+catalog identifier for the exact same destination. Whichever one a
+contract’s declared location happened to match, the other invocation
+would report <code dir="auto">OUTPUT_LOCATION_MISMATCH</code> and abort an otherwise
+contract-satisfying write — caught by a real test failure, not by
+inspection. Fixed by having <code dir="auto">WriteCommandSupport</code>’s <code dir="auto">AppendData</code>/
+<code dir="auto">OverwriteByExpression</code> case fall back to <code dir="auto">DataSourceV2Relation</code>’s own
+<code dir="auto">catalog</code>/<code dir="auto">identifier</code> fields (confirmed populated even for a staged
+table) and compute the <em>same</em> qualified-identifier string
+<code dir="auto">ReplaceTableAsSelect</code>’s case does, via one shared helper
+(<code dir="auto">qualifiedIdentifier</code>) — the two now agree by construction, not by
+coincidence. Any future connector adding a <code dir="auto">WriteCommandSupport</code> case
+for a command that can appear nested inside another (anything using
+Spark’s staging-catalog protocol) should check for this same trap.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="a-second-shared-pitfall-plancollect-doesnt-reach-a-leaf-commands-own-fields">A second shared pitfall: <code dir="auto">plan.collect</code> doesn’t reach a leaf command’s own fields</h2><a class="sl-anchor-link" href="#a-second-shared-pitfall-plancollect-doesnt-reach-a-leaf-commands-own-fields"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “A second shared pitfall: plan.collect doesn’t reach a leaf command’s own fields”</span></a></div>
+<p>Closing the row-level DML row surfaced a second, distinct trap, just as
+worth documenting: <code dir="auto">ContractEnforcementRule.verifyOrThrow</code>’s input-schema
+collection (<code dir="auto">plan.collect { case lr: LogicalRelation => ... }</code>) walks the
+analyzed plan’s <code dir="auto">children</code> — which works for every other write shape here
+because their <code dir="auto">query</code>/<code dir="auto">target</code> are genuine children in the tree. Delta’s
+row-level DML commands are not: <code dir="auto">MergeIntoCommand</code>/<code dir="auto">UpdateCommand</code>/
+<code dir="auto">DeleteCommand</code> are effectively leaf nodes in the tree-traversal sense —
+<code dir="auto">source</code>/<code dir="auto">target</code> are ordinary case-class fields, never exposed via
+<code dir="auto">children</code> — so <code dir="auto">plan.collect</code> on the command itself finds nothing inside
+it, confirmed empirically by a real FAIL test never throwing (asserted
+<code dir="auto">intercept[ContractViolationException]</code>, got none) rather than assumed to
+“just work” the way it does everywhere else. Fixed by having
+<code dir="auto">ContractEnforcementRule.verifyOrThrow</code> also walk <code dir="auto">WriteCommandSupport</code>’s
+already-extracted <code dir="auto">query</code> field (MERGE’s <code dir="auto">source</code>) in addition to the raw
+plan — a real, independently traversable <code dir="auto">LogicalPlan</code> unlike the outer
+command. Any future connector whose write command hides its “real” query
+behind a similarly leaf-shaped node should check for this same trap.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="delta-feature-by-feature-confidence-pass">Delta feature-by-feature confidence pass</h2><a class="sl-anchor-link" href="#delta-feature-by-feature-confidence-pass"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Delta feature-by-feature confidence pass”</span></a></div>
+<p>The row-level DML ledger row above says ”✅ Covered,” but covering the
+<em>write-command shape</em> isn’t the same as having tried every Delta table
+<em>feature</em> against it — those are orthogonal axes (a MERGE is one write
+shape; whether its target has schema evolution, generated columns,
+deletion vectors, column mapping, liquid clustering, or CHECK constraints
+enabled is a property of the target, not the command). Before this pass,
+that gap was implicit: “expected to work, never actually tried.” This
+pass tried each one against a real Delta table, not assumed from
+documentation — two were real, found-and-fixed false-rejection bugs; four
+are confirmed transparent with a permanent regression test; one is
+confirmed untestable in this environment, not silently skipped.</p>
+<ul>
+<li>
+<p><strong>Schema evolution (<code dir="auto">MERGE</code> + <code dir="auto">spark.databricks.delta.schema.autoMerge.enabled</code>)
+— real bug, fixed.</strong> <code dir="auto">target.schema</code> at analysis time is the
+<em>pre-merge</em> schema — confirmed empirically to not yet include columns
+schema evolution is about to add. A contract requiring a field a
+schema-evolving MERGE would legitimately add was previously rejected
+with <code dir="auto">MISSING_OUTPUT_FIELD</code> for a write that would have satisfied it.
+<code dir="auto">deltaRowLevelDml</code> now checks <code dir="auto">MergeIntoCommand.schemaEvolutionEnabled()</code>
+(public, confirmed via <code dir="auto">javap</code>) and unions the source’s new fields into
+<code dir="auto">target.schema</code> as a best-effort approximation — not a full simulation
+of Delta’s evolution rules (type widening, nested-struct merging,
+column reordering aren’t modeled), with a diagnostic making the
+approximation visible. The same fix also had to distinguish “the
+source legitimately has a field the commit will never write” from “the
+source has an evolved field”: confirmed empirically (not assumed) that
+with <code dir="auto">autoMerge</code> disabled, <code dir="auto">INSERT *</code> silently drops a source column
+the target doesn’t have — the MERGE succeeds, the table’s schema never
+gains it — so <code dir="auto">schemaEvolutionEnabled()</code> being false must keep
+<code dir="auto">outputSchema</code> at <code dir="auto">target.schema</code> alone, not the source’s schema.
+<code dir="auto">ContractEnforcementRuleSpec</code> has PASS tests for both directions: one
+proving the evolving case is no longer falsely rejected, and one
+proving a non-evolving MERGE with a source-only extra column doesn’t
+falsely <em>pass</em> a <code dir="auto">rejectUndeclaredFields: true</code> contract (this second
+test exists specifically because it’s the one that kills the mutant a
+naive <code dir="auto">isMerge</code> check-only implementation would leave alive — see
+“Mutation testing” below).</p>
+</li>
+<li>
+<p><strong>Generated columns (<code dir="auto">GENERATED ALWAYS AS (...)</code>) — real bug, fixed.</strong>
+The same class of false-rejection: a generated column is computed by
+Delta at commit time, never supplied by the writer, so
+<code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>’s <code dir="auto">outputSchema</code> (previously always
+<code dir="auto">cmd.query.schema</code>) never included it. Confirmed empirically, the hard
+way, that this can’t be detected from any DataFrame-facing schema at
+all — not <code dir="auto">spark.read.format("delta").load(path).schema</code>, not
+<code dir="auto">spark.table(name).schema</code>, not even the DSv2 <code dir="auto">Table</code> handle’s own
+<code dir="auto">.schema()</code> (confirmed specifically for <code dir="auto">DeltaTableV2.schema()</code>, the
+exact handle these two write shapes resolve their target to) carries
+<code dir="auto">delta.generationExpression</code> metadata key Delta itself sets on a
+generated column’s <code dir="auto">StructField</code>. Only Delta’s internal
+<code dir="auto">Snapshot.schema()</code> does (reached via <code dir="auto">DeltaTableV2.initialSnapshot()</code>,
+itself reached via the write’s own <code dir="auto">DataSourceV2Relation.table</code>).
+<code dir="auto">outputSchemaWithGeneratedColumns</code>/<code dir="auto">deltaGeneratedFields</code> read that
+reflectively (same no-compile-time-dependency, <code dir="auto">Try</code>-wrapped convention
+as <code dir="auto">deltaRowLevelDml</code>) and union the target’s generated-only columns
+into <code dir="auto">outputSchema</code> — checking the metadata key directly rather than
+reflecting into Delta’s own <code dir="auto">GeneratedColumn.isGeneratedColumn</code> helper,
+since <code dir="auto">StructField.metadata</code> is already a plain public Spark type on
+this module’s main classpath. Verified with a PASS test using the
+<code dir="auto">io.delta.tables.DeltaTable</code> builder API (raw <code dir="auto">CREATE TABLE ... GENERATED ALWAYS AS (...)</code> SQL DDL fails outright in this Spark 3.5.1 +
+Delta 3.2.0 environment with <code dir="auto">[UNSUPPORTED_FEATURE.TABLE_OPERATION]</code>,
+confirmed empirically, even with explicit <code dir="auto">TBLPROPERTIES</code> for
+reader/writer version — the builder API was the only way found to
+actually create one here) — a contract requiring the generated column
+is satisfied by an append that never supplies it.</p>
+<p><strong>Superseded</strong>: <code dir="auto">outputSchemaWithGeneratedColumns</code>/<code dir="auto">deltaGeneratedFields</code>
+above were later replaced by a connector-agnostic, reflection-free
+mechanism once an Iceberg investigation found the same underlying
+situation under a different mechanism — see “Generalizing the
+generated-columns fix” in docs/connectors/iceberg.md. The finding
+stands (this is <em>why</em> the fix was needed); the implementation described
+here no longer exists in the code.</p>
+</li>
+<li>
+<p><strong>Deletion vectors, column mapping mode (<code dir="auto">'name'</code>), liquid clustering
+(<code dir="auto">CLUSTER BY</code>) — confirmed transparent, no fix needed.</strong> Real writes
+and DML against tables with each of these enabled are recognized by
+<code dir="auto">WriteCommandSupport</code> exactly as they would be without the feature —
+correct location, correct schema, no diagnostics. <code dir="auto">ContractEnforcementRuleSpec</code>
+has a permanent PASS test for each, replacing what was previously only
+throwaway probe evidence.</p>
+</li>
+<li>
+<p><strong>CHECK constraints — confirmed orthogonal, no fix needed.</strong> Delta
+enforces these itself, independently, at commit time — Invaract has no
+rule vocabulary for a row-level condition like <code dir="auto">CHECK (id >= 0)</code> (see
+docs/CONTRACT_MODEL.md’s <code dir="auto">rules</code> field). A write violating a CHECK
+constraint is recognized by <code dir="auto">WriteCommandSupport</code> identically to a
+satisfying one (no diagnostic — Invaract’s structural checks simply
+don’t apply here), and is then independently rejected by Delta’s own
+<code dir="auto">DeltaInvariantViolationException</code> before commit — confirmed with a
+permanent test asserting both halves: Invaract raises nothing, Delta
+does.</p>
+</li>
+<li>
+<p><strong>Catalog registration checks (<code dir="auto">catalog:</code> on a contract dataset) —
+confirmed: a Delta table registered via <code dir="auto">spark.sql.catalog.spark_catalog = DeltaCatalog</code> (the config this document’s own read/write tests, and
+essentially every real deployment, already use) gets the same “wrong
+Hive metastore” protection a plain Parquet Hive table does, once the
+table already exists.</strong> <code dir="auto">ir.CatalogIdentity.location</code> is <code dir="auto">None</code> for
+most DSv2 catalogs (no reflective accessor exists to read a catalog
+plugin’s own network endpoint without a compile-time dependency this
+module deliberately avoids — see <code dir="auto">CatalogIdentitySupport.fromV2</code>’s own
+doc) — but Delta is a real, confirmed exception: <code dir="auto">DeltaCatalog</code>
+installed as the session catalog doesn’t run a separate metadata
+service, it registers Delta tables as ordinary <code dir="auto">CatalogTable</code>s in
+whichever catalog <code dir="auto">spark.sql.catalogImplementation</code> names, confirmed by
+independently reading one back via
+<code dir="auto">spark.sessionState.catalog.getTableMetadata</code>. <code dir="auto">CatalogIdentitySupport</code>
+resolves the real Hive metastore location for exactly this case (a
+brand-new table’s first, table-creating write still can’t — verified
+<em>before</em> the table exists — the same limitation <code dir="auto">StagedTable</code> handling
+already has). Full writeup, the real PASS/FAIL tests, and the
+<code dir="auto">.saveAsTable()</code>-vs-SQL parity proof: docs/connectors/hive.md’s
+“Catalog registration checks” section.</p>
+</li>
+<li>
+<p><strong>Identity columns (<code dir="auto">GENERATED ALWAYS AS IDENTITY</code>) — confirmed
+untestable in this environment, not investigated further.</strong> Spark
+3.5.1’s own SQL parser rejects the syntax outright
+(<code dir="auto">[PARSE_SYNTAX_ERROR] ... extra input 'IDENTITY'</code>), confirmed via a
+dedicated probe with no <code dir="auto">try</code>/<code dir="auto">catch</code> that could have masked a
+different failure. This is very likely a Databricks Runtime-only SQL
+extension not present in vanilla OSS Spark 3.5.1’s grammar at all, not
+a Delta or Invaract limitation — there is nothing for
+<code dir="auto">WriteCommandSupport</code> to translate because Spark itself never produces
+an analyzed plan to see. Left as ❓ <strong>Not investigated</strong> rather than
+claimed as covered.</p>
+</li>
+</ul>
+<p><strong>Net assessment:</strong> Delta is not “100% supported” and no single pass makes
+it so — but the gap is now fully enumerated instead of implicit, and every
+row that isn’t ✅ Covered states exactly what would close it, not just
+that it’s currently rejected — and today, every row <em>is</em> ✅ Covered.
+Two rows that were genuine, unenforced holes
+(streaming writes, and streaming reads as a declared input — the
+difference between “fails closed” and “silently unchecked”/“falsely
+rejected” is exactly the distinction this ledger exists to keep visible)
+are now ✅ Covered, alongside every V2 catalog write shape
+(<code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/<code dir="auto">ReplaceTableAsSelect</code>) and
+row-level DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>) — the last of these covered both
+structurally (target/schema, MERGE source-as-input) and, for three
+specific rule types (<code dir="auto">merge_condition</code>/<code dir="auto">forbid_unconditional_delete</code>/
+<code dir="auto">allowed_update_columns</code>), semantically, via the “Interpreting <code dir="auto">rules</code>”
+sub-phase’s <code dir="auto">RuleVerifier</code>/<code dir="auto">RowMutationSupport.classifyDelta</code> pairing —
+see the “Format-specific DML” ledger row above for the exact boundary.
+What’s still open is narrower than a full semantic model: row-level
+targeting (which specific rows an UPDATE touches, not just which
+columns), DELETE-predicate satisfiability beyond mere presence, and any
+rule vocabulary beyond these three types. That’s real, scoped future
+work, tracked explicitly in ROADMAP.md’s “Full semantic DML verification”
+item, not a silent gap.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="version-compatibility">Version compatibility</h2><a class="sl-anchor-link" href="#version-compatibility"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Version compatibility”</span></a></div>
+<p>Everything above was verified against a single pinned <code dir="auto">delta-spark</code> release
+(<code dir="auto">spark-adapter/build.sbt</code>’s <code dir="auto">deltaVersion</code>, currently <code dir="auto">3.3.3</code>) — passing
+tests against one version proves nothing about any other. CI’s
+<code dir="auto">delta-version-matrix</code> job (<code dir="auto">.github/workflows/test.yml</code>) closes that gap
+for the versions this repo claims to support.</p>
+<p><strong>Scope</strong>: the three specs that actually build a Delta-extended session —
+<code dir="auto">ContractEnforcementRuleSpec</code>, <code dir="auto">SparkAdapterListenerSpec</code>,
+<code dir="auto">SparkPlanAdapterSpec</code> — not the full <code dir="auto">spark-adapter</code> suite (Delta has no
+dedicated spec file the way Iceberg does, but these three are the complete
+set that touch it; a full-suite rerun per Delta version would spend most of
+its time on code no Delta-version change can affect).</p>
+<p><strong>Versions tested</strong>: <code dir="auto">3.3.3</code> only — a single-leg matrix, not a
+floor-plus-current pair, and that’s a real finding rather than a design
+choice. <code dir="auto">3.3.0</code> was the original floor candidate; the matrix’s first real
+CI run tried it and hit the <em>identical</em> <code dir="auto">TableCapabilityCheck</code> failure
+(“Table … does not support truncate in batch mode”) that excluded
+<code dir="auto">3.2.x</code> in the first place (see “Why 3.2.0 → 3.3.3” above). Checked
+delta-io/delta’s own <code dir="auto">LATEST_RELEASED_SPARK_VERSION</code> constant directly at
+each <code dir="auto">3.3.x</code> tag rather than assuming a shared floor across a minor line:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Tag</th><th><code dir="auto">LATEST_RELEASED_SPARK_VERSION</code></th></tr></thead><tbody><tr><td><code dir="auto">v3.3.0</code></td><td><code dir="auto">3.5.3</code></td></tr><tr><td><code dir="auto">v3.3.1</code></td><td><code dir="auto">3.5.3</code></td></tr><tr><td><code dir="auto">v3.3.2</code></td><td><code dir="auto">3.5.3</code></td></tr><tr><td><code dir="auto">v3.3.3</code></td><td><code dir="auto">3.5.6</code></td></tr></tbody></table>
+<p>Only <code dir="auto">3.3.3</code> moved to <code dir="auto">3.5.6</code> — the Spark version this repo’s own floor
+(<code dir="auto">docs/SPARK_ADAPTER.md</code>’s “Spark version compatibility” section) already
+requires. So <code dir="auto">3.3.3</code> isn’t just the current pin, it’s currently the
+<strong>only</strong> <code dir="auto">delta-spark</code> release compatible with this repo’s supported Spark
+range at all, and (confirmed via <code dir="auto">delta-spark_2.12</code>’s own
+<code dir="auto">maven-metadata.xml</code>) also the latest published release — there is neither
+a working floor below it nor a newer release above it to test today. The
+<code dir="auto">delta-version-matrix</code> CI job is still kept as its own job rather than
+folded away, so it picks up a second leg for free the moment delta-io
+publishes a release that also targets Spark 3.5.6+.</p>
+<p><strong>Mechanism</strong>: <code dir="auto">deltaVersion</code> reads an <code dir="auto">INVARACT_TEST_DELTA_VERSION</code>
+environment variable, falling back to <code dir="auto">3.3.3</code> when unset, so a plain local
+<code dir="auto">sbt test</code> is unaffected:</p>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-54/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/ec.0vx5m.js"></script><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">cd</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">spark-adapter</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">INVARACT_TEST_DELTA_VERSION</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#ECC48D;--1:#3B61B0">3.3.3</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">sbt</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec</span><span style="--0:#D9F5DD;--1:#111111">"</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="cd spark-adapterINVARACT_TEST_DELTA_VERSION=3.3.3 sbt &#x22;testOnly *ContractEnforcementRuleSpec *SparkAdapterListenerSpec *SparkPlanAdapterSpec&#x22;"><div></div></button></div></figure></div>
+<p><strong>If a leg fails for real</strong>: per <code dir="auto">docs/ADDING_A_SPARK_CONNECTOR.md</code>’s
+“verify, don’t assert” step and the precedent set by both the Spark-version
+matrix’s own 3.5.1→3.5.6 floor correction and this section’s own 3.3.0
+finding above, the failure gets root-caused before the matrix’s version
+list is adjusted — not just swapped to a version that happens to pass. A
+few places in this module’s own code already anticipate this kind of drift
+rather than assume it can’t happen: <code dir="auto">WriteCommandSupport.deltaRowLevelDml</code>
+wraps its Delta-command-class matching in <code dir="auto">Try</code>, and
+<code dir="auto">RowMutationSupport.scala</code>’s own comment flags “a future Delta version
+renaming/removing” one of those classes as a live risk, not a hypothetical
+one.</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/connectors/delta.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-54/design/adding-a-spark-connector/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Adding a Spark Connector</span></span></a><a href="/Invaract/contributor-pr-preview/pr-54/connectors/iceberg/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Iceberg</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>

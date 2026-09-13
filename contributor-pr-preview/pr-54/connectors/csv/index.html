@@ -1,0 +1,297 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>CSV support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-54/connectors/csv/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-54/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-54/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="CSV support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-54/connectors/csv/"/><meta property="og:locale" content="en"/><meta property="og:description" content="← Back to Spark Adapter"/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="← Back to Spark Adapter"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-54/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-54/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-54/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-54/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-54/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/Search.astro_astro_type_script_index_0_lang.CRPcQpds.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="0cdwho3" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/csv/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-54/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#csv-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">CSV operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#csv-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">CSV feature-surface coverage ledger</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#csv-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">CSV operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#csv-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">CSV feature-surface coverage ledger</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-54/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">CSV support</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/connectors/csv.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p><a href="/Invaract/contributor-pr-preview/pr-54/design/spark-adapter/#connector-support">← Back to Spark Adapter</a></p>
+<p>Fourth connector onboarded via the <code dir="auto">add-spark-connector</code> skill’s process
+(docs/ADDING_A_SPARK_CONNECTOR.md). Like Parquet, CSV is not a separate
+connector library at all: <code dir="auto">org.apache.spark.sql.execution.datasources.csv.CSVFileFormat</code>
+is Spark’s own built-in <code dir="auto">FileFormat</code>, already on this module’s <code dir="auto">provided</code>
+<code dir="auto">spark-sql</code> dependency — nothing added to <code dir="auto">build.sbt</code>, not even as a
+<code dir="auto">% "test"</code> dependency. It shares Parquet’s exact operation-surface
+architecture (default <code dir="auto">spark_catalog</code>, no catalog of its own, no
+row-level DML, no versioning, no SQL-extension <code dir="auto">Command</code> classes, the
+same <code dir="auto">FileStreamSink</code> streaming-sink class), so this pass empirically
+confirmed — not assumed by analogy — that every operation-surface row
+routes through the exact same generic mechanisms Parquet’s pass already
+proved out (<code dir="auto">InsertIntoHadoopFsRelationCommand</code>,
+<code dir="auto">CreateDataSourceTableAsSelectCommand</code>, <code dir="auto">WriteToStream</code>/<code dir="auto">FileStreamSink</code>,
+including the private-field-reflection fix from Parquet’s pass — a real
+direct-construction test confirms it generalizes to <code dir="auto">CSVFileFormat</code>
+specifically, not just assumed connector-agnostic from its own doc
+comment). <strong>No bugs found, no new structural patterns, zero
+<code dir="auto">src/main/scala</code> changes</strong> — this pass is a pure confirmatory audit of
+the operation surface plus real, substantive new ground on the feature
+surface, since CSV — unlike Parquet — is a plain text format with no
+native schema.</p>
+<p><strong>What’s genuinely new for CSV: the feature surface, not the operation
+surface.</strong> CSV has real, CSV-specific behaviors with no Parquet analog,
+each confirmed with a real probe and codified into a permanent test:</p>
+<ul>
+<li><strong>Schema inference default.</strong> Without <code dir="auto">inferSchema=true</code> (or an
+explicit schema), every column reads back as <code dir="auto">StringType</code> — confirmed
+directly, and confirmed to have the correct practical consequence: a
+contract declaring a numeric type for a field sourced from a plain
+(no-inferSchema) CSV read is correctly rejected as
+<code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code>, not silently passed. With
+<code dir="auto">inferSchema=true</code>, real types (<code dir="auto">IntegerType</code> for small whole numbers,
+not <code dir="auto">LongType</code> — a real gotcha this pass’s own tests initially got
+wrong, see below) are resolved and satisfy a contract declaring them.</li>
+<li><strong>Header handling.</strong> <code dir="auto">header=true</code>/<code dir="auto">header=false</code> is transparent:
+without a header, CSV falls back to positional <code dir="auto">_c0</code>/<code dir="auto">_c1</code>/… column
+names, which are just ordinary column names as far as translation and
+verification are concerned — a contract can declare and satisfy them
+like any other field name.</li>
+<li><strong>Malformed-record modes.</strong> <code dir="auto">FAILFAST</code> confirmed to fail only at
+execution (task/job failure reading the bad record), never at
+analysis — the same “orthogonal to Invaract’s structural check”
+pattern already confirmed for Parquet’s corrupt-file case.
+<code dir="auto">DROPMALFORMED</code> confirmed to silently exclude bad rows from what’s
+written, with the analyzed schema unaffected, so a contract is
+satisfied against the remaining good rows.</li>
+<li><strong><code dir="auto">columnNameOfCorruptRecord</code>.</strong> Confirmed to be transparent: declaring
+it just adds an ordinary extra <code dir="auto">StringType</code> column to the analyzed
+schema — Invaract sees it like any other field, no special handling
+needed, and a contract that declares it is satisfied normally.</li>
+<li><strong>Nullability on read-back.</strong> Every field reports <code dir="auto">nullable = true</code>
+after a CSV write+read round-trip, regardless of the original schema’s
+nullability — confirmed independently for CSV specifically (not
+inherited from Parquet’s reader the way Delta’s/Iceberg’s own version
+of this finding was, since CSV is a genuinely separate text-based
+reader, not built on Parquet under the hood). Same practical
+consequence for contract authors as Parquet’s/Delta’s/Iceberg’s own
+version of this finding.</li>
+<li><strong>Date/timestamp parsing with a custom <code dir="auto">dateFormat</code>.</strong> Confirmed
+transparent under <code dir="auto">PERMISSIVE</code> mode: an unparseable date becomes
+<code dir="auto">null</code> in the row, not a thrown exception or an analysis-time failure —
+the schema stays <code dir="auto">DateType</code> either way, and a contract declaring it is
+satisfied.</li>
+</ul>
+<p><strong>A real test-writing bug, caught and fixed before landing, not a product
+bug.</strong> The first draft of this pass’s two streaming tests declared
+<code dir="auto">type: long</code> in their contracts for fields sourced from an
+<code dir="auto">inferSchema=true</code> CSV read — but CSV’s schema inference resolves small
+whole numbers to <code dir="auto">IntegerType</code>, not <code dir="auto">LongType</code> (confirmed directly by
+the dedicated inferSchema test, which correctly declares <code dir="auto">type: integer</code>). Both streaming tests failed on first run with a real
+<code dir="auto">ContractViolationException</code> (<code dir="auto">INPUT_FIELD_TYPE_MISMATCH</code>/
+<code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code>, expected <code dir="auto">integer</code> got <code dir="auto">long</code>) — correctly
+caught by the engine doing its job, not a false pass. Fixed by declaring
+<code dir="auto">type: integer</code> in both tests’ contracts, matching what CSV’s real
+inferred schema actually produces.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="csv-operation-surface-coverage-ledger">CSV operation-surface coverage ledger</h2><a class="sl-anchor-link" href="#csv-operation-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “CSV operation-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.read.format("csv").load(path)</code>/<code dir="auto">.csv(path)</code></td><td>✅ Covered</td><td>Same generic <code dir="auto">LogicalRelation</code>+<code dir="auto">HadoopFsRelation</code> handling as Parquet, confirmed for CSV specifically. <code dir="auto">SparkPlanAdapterSpec</code>’s existing CSV read-format test; <code dir="auto">CsvConnectorSpec</code>’s tests throughout exercise real CSV reads.</td></tr><tr><td>Catalog table reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>)</td><td>✅ Covered</td><td>Same <code dir="auto">LogicalRelation</code> shape via the default <code dir="auto">spark_catalog</code>, confirmed via <code dir="auto">injectCheckRule</code> probe and <code dir="auto">CsvConnectorSpec</code>’s <code dir="auto">.insertInto()</code> test (which reads the target table back through the catalog).</td></tr><tr><td>Time travel / snapshot reads</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>Plain CSV (<code dir="auto">USING csv</code>, no table-format layer) has no versioning concept at all — the same architectural constraint as Parquet. Nothing to translate.</td></tr><tr><td>Streaming read (<code dir="auto">readStream</code>)</td><td>✅ Covered</td><td>Generic <code dir="auto">StreamingRelation</code>/<code dir="auto">FileSource</code> handling, confirmed empirically for CSV. <code dir="auto">CsvConnectorSpec</code>’s “PASS: a streaming CSV source satisfies a contract’s declared input schema.”</td></tr><tr><td>Change-data-feed / incremental read</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>No CDC mechanism exists for plain CSV — a table-format-only feature, the same constraint as Parquet. Nothing to translate.</td></tr><tr><td><code dir="auto">.save(path)</code>, all four save modes</td><td>✅ Covered</td><td><code dir="auto">InsertIntoHadoopFsRelationCommand</code>, confirmed for CSV via real probe (all four modes: <code dir="auto">append</code>/<code dir="auto">overwrite</code>/<code dir="auto">ignore</code>/<code dir="auto">error</code>) during Phase 3’s operation-surface probe.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, new table</td><td>✅ Covered</td><td><code dir="auto">CreateDataSourceTableAsSelectCommand</code>, <code dir="auto">table.provider = "csv"</code>. Confirmed via probe; exercised throughout <code dir="auto">CsvConnectorSpec</code>’s setup code.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, existing table (append)</td><td>✅ Covered</td><td>Same nested-double-write pattern Parquet’s pass documented (<code dir="auto">CreateDataSourceTableAsSelectCommand</code> delegating to a nested <code dir="auto">InsertIntoHadoopFsRelationCommand</code>), confirmed independently for CSV via a real PASS/FAIL pair — not assumed to generalize from Parquet. <code dir="auto">CsvConnectorSpec</code>’s PASS/FAIL pair (the FAIL half also asserts the nested insert never ran).</td></tr><tr><td><code dir="auto">.insertInto(...)</code></td><td>✅ Covered</td><td>Same <code dir="auto">InsertIntoHadoopFsRelationCommand</code> shape. <code dir="auto">CsvConnectorSpec</code>’s translation test via <code dir="auto">SparkAdapterListener</code>.</td></tr><tr><td><code dir="auto">.writeTo(...)</code> (DataFrameWriterV2) — <code dir="auto">.append()</code>/<code dir="auto">.overwrite(cond)</code> against an <em>existing</em> table</td><td>🚫 <strong>N/A — rejected by Spark itself, not an Invaract gap</strong></td><td>Confirmed empirically for CSV specifically: <code dir="auto">AnalysisException: Cannot write into v1 table</code> — the same V1/V2 architectural constraint as Parquet (plain CSV never implements the V2 <code dir="auto">SupportsWrite</code> capability under the default <code dir="auto">useV1SourceList</code>). <code dir="auto">CsvConnectorSpec</code>’s test proving rejection and zero committed rows.</td></tr><tr><td><code dir="auto">.writeTo(...).create()</code>, new table</td><td>✅ Covered</td><td>With the format made explicit (<code dir="auto">.using("csv")</code>), reuses the exact same <code dir="auto">CreateDataSourceTableAsSelectCommand</code> path <code dir="auto">.saveAsTable()</code> already uses — confirmed via <code dir="auto">injectCheckRule</code>, no new plan shape. <code dir="auto">CsvConnectorSpec</code>’s translation test.</td></tr><tr><td><code dir="auto">.writeTo(...).createOrReplace()</code>/<code dir="auto">.replace()</code></td><td>🚫 <strong>N/A — rejected by Spark itself, not an Invaract gap</strong></td><td>Confirmed empirically for CSV, for both new and existing tables, format made explicit: <code dir="auto">AnalysisException: ... does not support REPLACE TABLE AS SELECT</code> — the default <code dir="auto">spark_catalog</code> is not a <code dir="auto">StagingTableCatalog</code> for V1-provider-backed tables. Unlike Parquet’s pass (which only confirmed this via probe), <code dir="auto">CsvConnectorSpec</code> has a dedicated permanent test for this row.</td></tr><tr><td>Format-specific DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>)</td><td>🚫 <strong>N/A — not a CSV capability at all</strong></td><td>Confirmed empirically: Spark itself rejects all three against a plain CSV table, the same messages as Parquet’s (<code dir="auto">MERGE INTO TABLE is not supported temporarily</code>/<code dir="auto">UPDATE TABLE is not supported temporarily</code>/<code dir="auto">AnalysisException</code> for <code dir="auto">DELETE</code>). <code dir="auto">CsvConnectorSpec</code>’s regression test proving rejection and an unchanged row count.</td></tr><tr><td>Streaming write</td><td>✅ Covered</td><td><code dir="auto">WriteToStream</code>/<code dir="auto">FileStreamSink</code>, using the exact fix Parquet’s pass made to <code dir="auto">WriteCommandSupport.reflectiveSinkPath</code>/<code dir="auto">streamSinkFormatOf</code> — confirmed to generalize to CSV specifically via a direct-construction test (<code dir="auto">FileStreamSink</code> built with a real <code dir="auto">CSVFileFormat</code>, translated synchronously), not assumed from the fix’s own “connector-agnostic” doc comment. <code dir="auto">CsvConnectorSpec</code>’s direct-construction test plus its streaming PASS/FAIL pair.</td></tr><tr><td>Maintenance operations that touch data</td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>Plain CSV has no connector-level maintenance command, the same constraint as Parquet. Nothing to classify.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="csv-feature-surface-coverage-ledger">CSV feature-surface coverage ledger</h2><a class="sl-anchor-link" href="#csv-feature-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “CSV feature-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Feature</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td>Schema inference default (no <code dir="auto">inferSchema</code>, no explicit schema)</td><td>✅ Confirmed — genuinely CSV-specific</td><td>Every column defaults to <code dir="auto">StringType</code> when <code dir="auto">inferSchema</code> is left off — a real gotcha with no Parquet analog (Parquet is self-describing). Confirmed a contract declaring a numeric type against such a read is correctly rejected as <code dir="auto">OUTPUT_FIELD_TYPE_MISMATCH</code>. <code dir="auto">CsvConnectorSpec</code>’s two tests (StringType default + rejection; <code dir="auto">inferSchema=true</code> resolving real types and satisfying a typed contract).</td></tr><tr><td>Header handling (<code dir="auto">header=true</code>/<code dir="auto">false</code>)</td><td>✅ Confirmed transparent</td><td>Without a header, CSV falls back to positional <code dir="auto">_c0</code>/<code dir="auto">_c1</code>/… names — ordinary column names as far as translation/verification are concerned, no special handling needed. <code dir="auto">CsvConnectorSpec</code>’s test.</td></tr><tr><td>Malformed-record modes (<code dir="auto">PERMISSIVE</code>/<code dir="auto">DROPMALFORMED</code>/<code dir="auto">FAILFAST</code>)</td><td>✅ Confirmed orthogonal</td><td><code dir="auto">FAILFAST</code> fails only at execution, never at analysis — the same pattern as Parquet’s corrupt-file case. <code dir="auto">DROPMALFORMED</code> silently excludes bad rows; the analyzed schema is unaffected, and a contract is satisfied against the remaining rows. <code dir="auto">CsvConnectorSpec</code>’s two tests.</td></tr><tr><td><code dir="auto">columnNameOfCorruptRecord</code></td><td>✅ Confirmed transparent</td><td>An ordinary extra <code dir="auto">StringType</code> column in the analyzed schema — no special handling needed, a contract declaring it is satisfied normally. <code dir="auto">CsvConnectorSpec</code>’s test.</td></tr><tr><td>Nullability on read-back</td><td>✅ Confirmed — independently, not inherited from Parquet</td><td>Every field reports <code dir="auto">nullable = true</code> after a CSV write+read round-trip regardless of declared nullability — confirmed directly for CSV’s own (non-Parquet-based) reader, the same practical consequence as Parquet’s/Delta’s/Iceberg’s own version of this finding. <code dir="auto">CsvConnectorSpec</code>’s test.</td></tr><tr><td>Date/timestamp parsing with a custom <code dir="auto">dateFormat</code></td><td>✅ Confirmed transparent</td><td>An unparseable date under <code dir="auto">PERMISSIVE</code> mode becomes <code dir="auto">null</code> in the row, not a thrown exception or analysis-time failure — schema stays <code dir="auto">DateType</code>, contract satisfied. <code dir="auto">CsvConnectorSpec</code>’s test.</td></tr></tbody></table>
+<p>Net assessment: like Parquet, CSV’s operation surface is fully enumerated
+with no ❓ rows — every row is either ✅ Covered (via mechanisms Parquet’s
+pass already proved out and this pass independently confirmed generalize
+to CSV) or a genuinely reasoned 🚫 N/A, the second connector where the
+whole row-level-DML and DataSourceV2-catalog-write axes are
+architecturally inapplicable rather than future work. No bugs found and
+no <code dir="auto">src/main/scala</code> changes were needed — CLAUDE.md’s mutation-testing
+requirement (scoped to changed/added <code dir="auto">src/main/scala</code> files) doesn’t
+apply to this pass. The real substance was on the feature surface: six
+CSV-specific behaviors (schema-inference default, header handling,
+malformed-record modes, the corrupt-record column, nullability, and
+date parsing), each confirmed with a real probe and codified into a
+permanent test, plus one <code dir="auto">createOrReplace()</code>/<code dir="auto">.replace()</code> row given a
+dedicated permanent test where Parquet’s own pass had only probed it.
+<code dir="auto">CsvConnectorSpec</code>: 19 tests.</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/connectors/csv.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-54/connectors/avro/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Avro</span></span></a><a href="/Invaract/contributor-pr-preview/pr-54/connectors/clickhouse/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">ClickHouse</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
