@@ -54,7 +54,8 @@ object NotificationJson {
         "applicationId" -> e.applicationId,
         "deltaVersion" -> e.deltaVersion,
         "icebergSnapshotId" -> e.icebergSnapshotId,
-        "operation" -> e.operation
+        "operation" -> e.operation,
+        "catalog" -> e.catalog.map(_.toMap)
       )
     case e: JobSummaryEvent =>
       Map(

@@ -13,7 +13,7 @@ name := "invaract-ir"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -82,7 +82,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.3.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.4.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -108,26 +108,17 @@ strykerThresholdsBreak := 50
 // contract/build.sbt's matching comment for the general invariant this
 // has to satisfy).
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment. That PR has now landed (base-ref itself publishes
-// 0.3.0, not 0.2.0, confirmed the hard way: CI's api-compatibility job
-// failed with a real "Not found" resolving 0.2.0), so this is that
-// follow-up flip.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.3.0")
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
-// that new version and add filters for whatever real break motivated the
-// bump, mirroring this section's own history - do not make that flip in
-// the PR doing the bump itself (base-ref won't have it yet).
-//
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - both breaks that motivated the 0.2.0 -> 0.3.0 bump (the
-// expression-algebra rework splitting FunctionCall/renaming Unsupported*/
-// adding ColumnRef.id, and the lineage rework replacing ColumnLineage's
-// aggregated: Boolean with derivation/aggregations) are now baked into
-// both sides of the comparison. The ~20 filter lines that documented them
-// against the old 0.2.0 baseline were removed here rather than left as
-// dead entries with nothing left to match.
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
+// for prior revisions of this section). That PR has now landed (base-ref
+// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
+// api-compatibility job failed with a real "Not found" resolving 0.3.0),
+// so this is that follow-up flip. The `mimaBinaryIssueFilters` entries
+// this section previously carried for the 0.3.0 -> 0.4.0 break (Read and
+// Write each gaining a trailing `catalog: Option[CatalogIdentity]`
+// constructor parameter) are removed along with it: now that the baseline
+// itself is 0.4.0, that break is inside the baseline on both sides of the
+// comparison and no longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.4.0")

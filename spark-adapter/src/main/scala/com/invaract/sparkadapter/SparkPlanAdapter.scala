@@ -509,7 +509,7 @@ private[sparkadapter] object SparkPlanAdapter {
       // touches this method — it touches WriteCommandSupport instead.
       case Some(info) =>
         info.diagnostic.foreach(d => report(d.nodeType, d.message))
-        ir.Write(ir.DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode)
+        ir.Write(ir.DatasetRef(info.location), translatePlan(info.query), info.format, info.saveMode, info.catalogIdentity)
 
       case None => translateNonWritePlan(plan)
     }
@@ -539,7 +539,11 @@ private[sparkadapter] object SparkPlanAdapter {
             s"Could not determine a precise location for relation ${lr.relation.getClass.getSimpleName}; using its toString as a best-effort location"
           )
         val lrLocation = SparkPlanAdapter.locationOf(lr)
-        ir.Read(ir.DatasetRef(lrLocation), bareLeafAliasOf(lrLocation, lr.output))
+        ir.Read(
+          ir.DatasetRef(lrLocation),
+          bareLeafAliasOf(lrLocation, lr.output),
+          lr.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
+        )
 
       // A real Hive-format catalog table read - confirmed empirically (a
       // real embedded-Derby Hive session, not assumed) to be a genuine,
@@ -565,7 +569,11 @@ private[sparkadapter] object SparkPlanAdapter {
             s"No storage location on Hive table '${htr.tableMeta.identifier}'; using its table identifier as a best-effort location"
           )
         val htrLocation = SparkPlanAdapter.hiveTableRelationLocationOf(htr)
-        ir.Read(ir.DatasetRef(htrLocation), bareLeafAliasOf(htrLocation, htr.output))
+        ir.Read(
+          ir.DatasetRef(htrLocation),
+          bareLeafAliasOf(htrLocation, htr.output),
+          Some(CatalogIdentitySupport.fromCatalogTable(htr.tableMeta))
+        )
 
       // A streaming source's top-level plan - confirmed empirically (not
       // assumed) to be one of two shapes depending on whether the
@@ -598,7 +606,11 @@ private[sparkadapter] object SparkPlanAdapter {
             s"No 'location' property on a '${sr2.sourceName}' streaming source's table; using its source name as a best-effort location"
           )
         val sr2Location = SparkPlanAdapter.streamingRelationV2LocationOf(sr2)
-        ir.Read(ir.DatasetRef(sr2Location), bareLeafAliasOf(sr2Location, sr2.output))
+        ir.Read(
+          ir.DatasetRef(sr2Location),
+          bareLeafAliasOf(sr2Location, sr2.output),
+          CatalogIdentitySupport.fromV2Option(sr2.catalog, sr2.identifier)
+        )
 
       // A batch DataSourceV2 catalog read - confirmed empirically (a real
       // Iceberg-enabled session, not assumed) to be the read-side shape
@@ -622,7 +634,11 @@ private[sparkadapter] object SparkPlanAdapter {
             s"No 'location' property on read target '${dsv2.name}'; using its name() as a best-effort location"
           )
         val dsv2Location = SparkPlanAdapter.tableLocationAndFormat(dsv2.table)._1.getOrElse(dsv2.name)
-        ir.Read(ir.DatasetRef(dsv2Location), bareLeafAliasOf(dsv2Location, dsv2.output))
+        ir.Read(
+          ir.DatasetRef(dsv2Location),
+          bareLeafAliasOf(dsv2Location, dsv2.output),
+          CatalogIdentitySupport.fromV2Option(dsv2.catalog, dsv2.identifier)
+        )
 
       case p: Project =>
         ir.Project(translatePlan(p.child), p.projectList.map(translateNamed).toList)

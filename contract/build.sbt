@@ -15,7 +15,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -91,7 +91,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.3.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.4.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -119,25 +119,18 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment - the same pattern the rebrand itself used (see git
-// history for both prior revisions). That PR has now landed (base-ref
-// itself publishes 0.3.0, not 0.2.0, confirmed the hard way: CI's
-// api-compatibility job failed with a real "Not found" resolving 0.2.0,
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
+// for prior revisions of this section). That PR has now landed (base-ref
+// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
+// api-compatibility job failed with a real "Not found" resolving 0.3.0,
 // since base-ref never publishes that coordinate once its own `version`
-// moved past it), so this is that follow-up flip.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.3.0")
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
-// that new version and add filters for whatever real break motivated the
-// bump, mirroring this section's own history - do not make that flip in
-// the PR doing the bump itself (base-ref won't have it yet).
-//
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - the sensitivityTags-on-Field break that motivated the 0.2.0 ->
-// 0.3.0 bump is now baked into both sides of the comparison. The filters
-// that documented it against the old 0.2.0 baseline were removed here
-// rather than left as dead entries with nothing left to match.
+// moved past it), so this is that follow-up flip. The `mimaBinaryIssueFilters`
+// entries this section previously carried for the 0.3.0 -> 0.4.0 Dataset
+// break (a sixth constructor parameter, `catalog: Option[CatalogRequirement]`)
+// are removed along with it: now that the baseline itself is 0.4.0, that
+// break is inside the baseline on both sides of the comparison and no
+// longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.4.0")

@@ -1,0 +1,36 @@
+id: catalog_registration_demo
+version: "1.0.0"
+status: active
+
+inputs:
+  - name: orders
+    location: raw.orders
+    format: table
+    catalog:
+      required: true
+      technology: hive
+    schema:
+      fields:
+        - name: order_id
+          type: string
+          required: true
+          nullable: false
+
+outputs:
+  - name: sales
+    location: gold.sales
+    format: table
+    saveMode: overwrite
+    catalog:
+      required: true
+      technology: hive
+      catalogName: spark_catalog
+      location: thrift://metastore1.example.com:9083
+      namespace: [default]
+      table: sales
+    schema:
+      fields:
+        - name: id
+          type: string
+          required: true
+          nullable: false

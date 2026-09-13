@@ -79,8 +79,8 @@ object PlanPrinter {
   }
 
   private def label(plan: Plan): String = plan match {
-    case Read(dataset, alias) => s"Read(${dataset.location}${alias.map(a => s" AS $a").getOrElse("")})"
-    case Write(dataset, _, format, saveMode) =>
+    case Read(dataset, alias, _) => s"Read(${dataset.location}${alias.map(a => s" AS $a").getOrElse("")})"
+    case Write(dataset, _, format, saveMode, _) =>
       val details = format.map(f => s", format=$f").getOrElse("") + saveMode.map(m => s", saveMode=$m").getOrElse("")
       s"Write(${dataset.location}$details)"
     case Project(_, _)        => "Project"

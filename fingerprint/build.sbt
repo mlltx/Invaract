@@ -1,5 +1,5 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.1.0"
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -16,16 +16,24 @@ organization := "com.invaract"
 // FOLLOW-UP, once it is: add sonatype.sbt/pgp.sbt (mirroring ir's own).
 //
 // API compatibility (MiMa) IS wired up below, same as contract/ir/
-// spark-adapter, and in the same state their own very first introducing PR
-// left them in: `mimaPreviousArtifacts` points at this module's own current
-// coordinate, but this is the PR that first adds `fingerprint/` to the
-// repository at all, so CI's api-compatibility job (.github/workflows/
-// test.yml) will find no `base-ref/fingerprint` to compare against and skip
-// this module gracefully this one time (see CLAUDE.md's API Compatibility
-// Requirement: "A module that doesn't exist yet at the base commit is
-// skipped gracefully"). Starting with the next PR that touches this module,
-// the check runs for real.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.1.0")
+// spark-adapter - see contract/build.sbt's comment for the general
+// invariant this has to satisfy (must always track base-ref's own live
+// `version` above, since CI's api-compatibility job runs `sbt publishLocal`
+// against base-ref's own build.sbt and then resolves exactly this
+// coordinate against it).
+//
+// The 0.1.0 -> 0.2.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.1.0 baseline - the same "FOLLOW-UP: flip this once that PR lands"
+// pattern contract/ir/spark-adapter's own version bumps already went
+// through (see ir/build.sbt's matching comment). That PR has now landed
+// (base-ref itself publishes 0.2.0, not 0.1.0, confirmed the hard way:
+// CI's api-compatibility job failed with a real "Not found" resolving
+// 0.1.0), so this is that follow-up flip. There were no
+// `mimaBinaryIssueFilters` to remove here - this module's own compiled
+// classes didn't change public shape across that bump (see git history
+// for the original 0.1.0 -> 0.2.0 comment's own reasoning).
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.2.0")
 
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
 // spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
@@ -33,7 +41,7 @@ mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.1.0")
 versionScheme := Some("early-semver")
 
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.3.0",
+  "com.invaract" %% "invaract-ir" % "0.4.0",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test"
 )
@@ -60,7 +68,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.1.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.2.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the

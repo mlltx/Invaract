@@ -68,6 +68,7 @@ extensions:
 | `location` | yes | Physical location (table name, path, topic) — see [location matching](#location-matching) below. |
 | `format` | no | Storage/serialization format (e.g. `csv`, `parquet`, `delta`). |
 | `saveMode` | no | Expected write behavior toward existing data (`append`/`overwrite`/`ignore`/`error`). Outputs only; checked against the plan's actual write mode when both are known. |
+| `catalog` | no | Expected data-catalog registration — see [Catalog registration](#catalog-registration) below. Meaningful for both inputs and outputs. |
 | `schema.fields` | yes | List of fields (at least one). |
 
 ## Field fields
@@ -136,6 +137,38 @@ transformation, not enforcement: a tagged field never causes `StructuralVerifier
 reject a write on its own — there is no "forbid this tag from reaching that output"
 rule type yet (see [What isn't part of the contract format](#what-isnt-part-of-the-contract-format)
 below).
+
+## Catalog registration
+
+```yaml
+outputs:
+  - name: sales
+    location: /warehouse/sales
+    format: parquet
+    catalog:
+      required: true
+      technology: hive
+      catalogName: spark_catalog
+      location: thrift://metastore1.example.com:9083
+      namespace: [default]
+      table: sales
+```
+
+| Key | Required | Meaning |
+|---|---|---|
+| `required` | yes (within a present `catalog:` block) | Whether this dataset must be registered in a catalog at all. `false` records an expected shape without gating anything — `ContractValidator` warns on this combination. |
+| `technology` | no | The catalog implementation, e.g. `hive`, `delta`, `iceberg`. Open vocabulary, not a closed enum. |
+| `catalogName` | no | The Spark-level catalog plugin/session-catalog name, e.g. `spark_catalog` — a local alias. |
+| `location` | no | The catalog *service's* own address (e.g. a Hive metastore's `thrift://host:port` URI) — real and checked for Hive; always unset (and never compared) for Delta/Iceberg/JDBC today, since no reflective accessor exists for those catalogs' own network endpoints. See [Require Catalog Registration](/guides/requiring-catalog-registration/#what-location-can-and-cant-check) for the full explanation. |
+| `namespace` | no | The database/schema path within the catalog, as an ordered list, e.g. `[default]`. |
+| `table` | no | The table name within that namespace. |
+
+`catalog:` is opt-in per dataset and orthogonal to `format`/`saveMode` — a dataset that
+omits it behaves exactly as it did before this field existed. Every sub-field beyond
+`required` is compared only when declared, and only when the actual side has a real value
+to compare against (an unset actual sub-field is treated as "unknown," never a mismatch —
+see [Require Catalog Registration](/guides/requiring-catalog-registration/) for the full
+guide, including a real captured mismatch violation).
 
 ## Location matching
 

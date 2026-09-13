@@ -61,7 +61,7 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .insertInto() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode, _) =>
         assert(location.contains("parquet_insert_into_tbl"))
         assert(format.contains("parquet"))
         assert(saveMode.contains("append"))
@@ -197,7 +197,7 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .writeTo().create() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(_, _, format, _) => assert(format.contains("parquet"))
+      case com.invaract.ir.Write(_, _, format, _, _) => assert(format.contains("parquet"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
     assert(spark.table("writeto_create_tbl").count() == 2)
@@ -318,7 +318,7 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
 
     val result = SparkPlanAdapter.translate(writeToStream)
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, _, _) =>
         assert(location == outPath, s"expected the real physical path, got '$location' (the pre-fix bug reported FileStreamSink's descriptive name() instead)")
         assert(format.contains("parquet"), s"expected format Some(parquet), got $format")
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")

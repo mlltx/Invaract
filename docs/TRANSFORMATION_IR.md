@@ -128,8 +128,8 @@ the plan, not a different kind of expression.
 
 | Node | Represents |
 |---|---|
-| `Read(dataset, alias)` | Source: reads a dataset in its entirety. No declared schema — columns come into existence when referenced downstream. `alias` supports self-joins. |
-| `Write(dataset, input, format, saveMode)` | Sink: always the root of a complete pipeline. `format` ("parquet", "csv", ...) and `saveMode` ("append", "overwrite", "ignore", "error") are populated when the adapter that produced this node could determine them; `None` otherwise, not "no format"/"no save mode." |
+| `Read(dataset, alias, catalog)` | Source: reads a dataset in its entirety. No declared schema — columns come into existence when referenced downstream. `alias` supports self-joins. `catalog` is the data-catalog identity this read actually resolved to (technology/catalogName/location/namespace/table), when the adapter could determine one — `None` means confirmed *not* catalog-registered (e.g. a bare path read), not "unknown." |
+| `Write(dataset, input, format, saveMode, catalog)` | Sink: always the root of a complete pipeline. `format` ("parquet", "csv", ...) and `saveMode` ("append", "overwrite", "ignore", "error") are populated when the adapter that produced this node could determine them; `None` otherwise, not "no format"/"no save mode." `catalog` is the same `CatalogIdentity` concept as `Read.catalog`, for this write's target. |
 | `Project(input, columns)` | Narrows/computes the output column set. `columns` is always the *complete* output schema — no implicit `SELECT *` passthrough. |
 | `Filter(input, condition)` | Restricts rows; column set unchanged. |
 | `Join(left, right, joinType, condition)` | Combines two datasets row-wise. Both sides' columns appear in the output. |
@@ -147,6 +147,17 @@ ad hoc per-node-type walk of the tree structure (only of the type-specific
 
 `JoinType` is `Inner | LeftOuter | RightOuter | FullOuter | LeftSemi |
 LeftAnti | Cross`.
+
+`CatalogIdentity(technology, catalogName, location, namespace, table)` —
+every field `Option`/`List`-valued and independently optional — is the
+observed-reality counterpart to `contract.CatalogRequirement` (a
+contract's *expectation*; see docs/CONTRACT_MODEL.md). `technology` is
+the catalog implementation (`"hive"`, `"delta"`, `"iceberg"`, ...);
+`catalogName` the engine-level catalog plugin/session-catalog name;
+`location` the catalog *service's* own address (e.g. a Hive metastore's
+`thrift://host:port` URI); `namespace`/`table` the database path and
+table name. `ir` has no dependency on `contract` (or vice versa), so this
+is a small, deliberately duplicated shape, not a shared type.
 
 ### A note on `Aggregate.groupBy`
 

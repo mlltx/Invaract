@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory
   * spark-submit \
   *   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   *   --conf spark.invaract.contract=/path/to/contract.yaml \
-  *   --jars invaract-spark-adapter-0.3.0.jar \
+  *   --jars invaract-spark-adapter-0.4.0.jar \
   *   my-job.jar
   * }}}
   *

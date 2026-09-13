@@ -63,7 +63,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(df.queryExecution.analyzed)
 
     result.plan match {
-      case Read(DatasetRef(location), None) => assert(location.contains("sample.csv"))
+      case Read(DatasetRef(location), None, _) => assert(location.contains("sample.csv"))
       case other                            => fail(s"expected a bare Read, got $other")
     }
     assert(result.diagnostics.isEmpty)
@@ -85,7 +85,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(lifetimeValue.sources.exists(_.name == "value"))
 
     result.plan match {
-      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None), List(ColumnReference(_)), aggregates), format, saveMode) =>
+      case Write(DatasetRef("gold.customer_orders"), Aggregate(Read(_, None, _), List(ColumnReference(_)), aggregates), format, saveMode, _) =>
         assert(aggregates.map(_.name) == List("id", "lifetime_value"))
         // translateAsWrite wraps a bare (never actually written) plan as a
         // Write for convenience — there's no real format or save mode to
@@ -127,7 +127,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(joined.queryExecution.analyzed)
 
     result.plan match {
-      case Project(Join(Read(_, Some("cur")), Read(_, Some("arch")), JoinType.Inner, Some(_)), _) => // expected
+      case Project(Join(Read(_, Some("cur"), _), Read(_, Some("arch"), _), JoinType.Inner, Some(_)), _) => // expected
       case other => fail(s"unexpected shape: ${PlanPrinter.render(other)}")
     }
   }
@@ -438,7 +438,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(limited.queryExecution.analyzed)
 
     result.plan match {
-      case Limit(Read(DatasetRef(location), None), 2, 0) => assert(location.contains("sample.csv"))
+      case Limit(Read(DatasetRef(location), None, _), 2, 0) => assert(location.contains("sample.csv"))
       case other => fail(s"expected an explicit Limit(2) node, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.isEmpty)
@@ -451,7 +451,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(deduped.queryExecution.analyzed)
 
     result.plan match {
-      case Project(Read(DatasetRef(location), None), _) => assert(location.contains("sample.csv"))
+      case Project(Read(DatasetRef(location), None, _), _) => assert(location.contains("sample.csv"))
       case other                                          => fail(s"expected Distinct to be transparent to translation, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.isEmpty)
@@ -463,7 +463,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     def assertTransparent(transformed: org.apache.spark.sql.DataFrame, label: String): Unit = {
       val result = SparkPlanAdapter.translate(transformed.queryExecution.analyzed)
       result.plan match {
-        case Read(DatasetRef(location), None) => assert(location.contains("sample.csv"), s"$label: unexpected location")
+        case Read(DatasetRef(location), None, _) => assert(location.contains("sample.csv"), s"$label: unexpected location")
         case other                            => fail(s"$label: expected a transparent pass-through, got ${PlanPrinter.render(other)}")
       }
       assert(result.diagnostics.isEmpty, s"$label: should not need a diagnostic")
@@ -491,7 +491,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     results.foreach { case (format, result) =>
       result.plan match {
-        case Read(DatasetRef(location), None) => assert(location.nonEmpty, s"$format: expected a non-empty location")
+        case Read(DatasetRef(location), None, _) => assert(location.nonEmpty, s"$format: expected a non-empty location")
         case other                            => fail(s"$format: expected a bare Read regardless of source format, got ${PlanPrinter.render(other)}")
       }
       assert(result.diagnostics.isEmpty, s"$format: a plain relation read should not need a diagnostic")
@@ -529,7 +529,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
       val result = SparkPlanAdapter.translate(df.queryExecution.analyzed)
 
       result.plan match {
-        case Read(DatasetRef(location), None) =>
+        case Read(DatasetRef(location), None, _) =>
           assert(location.contains(jdbcUrl), s"expected the JDBC url in the location, got '$location'")
           assert(location.contains("ORDERS") || location.contains("orders"), s"expected the table name in the location, got '$location'")
         case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
@@ -562,7 +562,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(relation)
 
     result.plan match {
-      case Read(DatasetRef(location), None) => assert(location == "fake_v2_table")
+      case Read(DatasetRef(location), None, _) => assert(location == "fake_v2_table")
       case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
     }
     assert(result.diagnostics.nonEmpty, "a Table with no location property should report a fallback diagnostic")
@@ -593,7 +593,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     result.plan match {
-      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+      case Write(DatasetRef(location), Read(_, None, _), format, saveMode, _) =>
         assert(location.contains(outputPath), s"expected the Delta table path in the location, got '$location'")
         assert(format.contains("delta"), s"expected format 'delta' via DataSourceRegister.shortName(), got $format")
         assert(saveMode.contains("overwrite"))
@@ -624,7 +624,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     result.plan match {
-      case Write(DatasetRef(location), Read(_, None), format, saveMode) =>
+      case Write(DatasetRef(location), Read(_, None, _), format, saveMode, _) =>
         // The filename only, not the full native outputPath: Spark
         // normalizes a catalog table's storage location into a
         // forward-slash file: URI regardless of platform, so on Windows
@@ -657,7 +657,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     val loadResult = SparkPlanAdapter.translate(spark.read.format("delta").load(path).queryExecution.analyzed)
     loadResult.plan match {
-      case Read(DatasetRef(location), None) =>
+      case Read(DatasetRef(location), None, _) =>
         // Filename only, not the full native path - see the .saveAsTable()
         // test above for why (Windows path-separator mismatch against
         // Spark's normalized file: URIs).
@@ -674,7 +674,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     spark.sql(s"CREATE TABLE IF NOT EXISTS spark_plan_adapter_delta_read_tbl USING delta LOCATION '${path.replace('\\', '/')}'")
     val catalogResult = SparkPlanAdapter.translate(spark.table("spark_plan_adapter_delta_read_tbl").queryExecution.analyzed)
     catalogResult.plan match {
-      case Read(DatasetRef(location), Some("spark_plan_adapter_delta_read_tbl")) =>
+      case Read(DatasetRef(location), Some("spark_plan_adapter_delta_read_tbl"), _) =>
         assert(location.contains("delta_read_test"), s"expected the same physical path via catalogTable.storage, got '$location'")
       case other => fail(s"expected an aliased Read, got ${PlanPrinter.render(other)}")
     }
@@ -698,7 +698,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     val result = SparkPlanAdapter.translate(spark.readStream.format("delta").load(path).queryExecution.analyzed)
     result.plan match {
-      case Read(DatasetRef(location), None) =>
+      case Read(DatasetRef(location), None, _) =>
         assert(location.contains("streaming_read_translation_test"), s"expected the Delta source's physical path in the location, got '$location'")
       case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
     }
@@ -708,7 +708,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("translates a streaming rate read (no path option) via the fallback branch, with a diagnostic naming the source") {
     val result = SparkPlanAdapter.translate(spark.readStream.format("rate").load().queryExecution.analyzed)
     result.plan match {
-      case Read(DatasetRef(location), None) =>
+      case Read(DatasetRef(location), None, _) =>
         assert(location == "rate", s"expected the source name as a best-effort location for a source with no physical location, got '$location'")
       case other => fail(s"expected a bare Read, got ${PlanPrinter.render(other)}")
     }
@@ -734,7 +734,7 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
         listener.lastWrite.getOrElse(fail("listener has not captured a write yet"))
       }
       result.plan match {
-        case Write(DatasetRef(location), Aggregate(Read(_, None), _, aggregates), format, saveMode) =>
+        case Write(DatasetRef(location), Aggregate(Read(_, None, _), _, aggregates), format, saveMode, _) =>
           assert(location.contains("customer_orders.parquet"))
           assert(aggregates.map(_.name) == List("id", "lifetime_value"))
           // A real write via spark-submit-style DataFrame.write.parquet(...)

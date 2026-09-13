@@ -91,7 +91,9 @@ outputs:
 ```
 
 `saveMode` (`append`/`overwrite`/`ignore`/`error`) is checked against the write's actual
-save mode when both are known.
+save mode when both are known. A dataset can also declare `catalog: { required: true, ... }`
+to require it be registered in a real data catalog, not just written to a bare path — see
+[Require Catalog Registration](/guides/requiring-catalog-registration/).
 
 ## Field semantics
 

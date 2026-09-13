@@ -15,7 +15,7 @@ name := "invaract-spark-adapter"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -851,8 +851,8 @@ excludeDependencies ++= Seq(
 // exactly, the same invariant this module's mimaPreviousArtifacts
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.3.0",
-  "com.invaract" %% "invaract-contract" % "0.3.0",
+  "com.invaract" %% "invaract-ir" % "0.4.0",
+  "com.invaract" %% "invaract-contract" % "0.4.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning
@@ -860,10 +860,10 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.1.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.2.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.3.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.4.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1006,26 +1006,18 @@ strykerThresholdsBreak := 70
 // compares against the PR's own base branch instead) and
 // docs/SPARK_ADAPTER.md's "API compatibility" section.
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment. That PR has now landed (base-ref itself publishes
-// 0.3.0, not 0.2.0, confirmed the hard way: CI's api-compatibility job
-// failed with a real "Not found" resolving 0.2.0), so this is that
-// follow-up flip - the same one contract/ir's own 0.2.0 -> 0.3.0 bumps
-// already went through (see ir/build.sbt's matching comment).
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.3.0")
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
-// that new version and add filters for whatever real break motivated the
-// bump, mirroring this section's own history - do not make that flip in
-// the PR doing the bump itself (base-ref won't have it yet).
-//
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - the one break that motivated the 0.2.0 -> 0.3.0 bump
-// (`computeFingerprint` added to `VerificationOptions`, `fingerprints`
-// added to `VerificationResult`/`notification.ContractValidationEvent`)
-// is now baked into both sides of the comparison. The 12 filter lines
-// that documented it against the old 0.2.0 baseline were removed here
-// rather than left as dead entries with nothing left to match.
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern contract/ir's own 0.2.0 -> 0.3.0 bumps already went
+// through (see ir/build.sbt's matching comment). That PR has now landed
+// (base-ref itself publishes 0.4.0, not 0.3.0, confirmed the hard way:
+// CI's api-compatibility job failed with a real "Not found" resolving
+// 0.3.0), so this is that follow-up flip. The `mimaBinaryIssueFilters`
+// entries this section previously carried for the 0.3.0 -> 0.4.0 break
+// (notification.WriteEvent gaining a trailing
+// `catalog: Option[notification.CatalogInfo]` constructor parameter) are
+// removed along with it: now that the baseline itself is 0.4.0, that
+// break is inside the baseline on both sides of the comparison and no
+// longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.4.0")

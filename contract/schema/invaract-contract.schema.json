@@ -69,7 +69,41 @@
           "type": "string",
           "description": "Optional expected write behavior for an output dataset, e.g. \"append\", \"overwrite\", \"ignore\", \"error\". Meaningless for an input dataset; only checked by StructuralVerifier against a plan's Write node. Not a closed set."
         },
+        "catalog": { "$ref": "#/$defs/catalog" },
         "schema": { "$ref": "#/$defs/schema" }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "required": ["required"],
+      "additionalProperties": true,
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "description": "Whether this dataset must be registered in a catalog at all. `false` records an expected shape without gating anything (ContractValidator warns if other catalog sub-fields are also declared). This is a ContractParser hard requirement within a present 'catalog' block, mirroring 'schema.fields' being required within a dataset."
+        },
+        "technology": {
+          "type": "string",
+          "description": "Optional catalog implementation, e.g. \"hive\", \"delta\", \"iceberg\". Not a closed set - any value is accepted."
+        },
+        "catalogName": {
+          "type": "string",
+          "description": "Optional Spark-level catalog plugin/session-catalog name, e.g. \"spark_catalog\" - a local alias, not necessarily unique across an organization."
+        },
+        "location": {
+          "type": "string",
+          "description": "Optional catalog service's own network address, e.g. a Hive metastore's \"thrift://host:port\" URI - the durable, technology-specific answer to \"which Hive\", distinct from catalogName's local alias. Only ever compared for Hive-backed datasets; always unset (and never compared) for Delta/Iceberg/JDBC today, since no reflective accessor exists for those catalogs' own network endpoints."
+        },
+        "namespace": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "The database/schema path within the catalog, as an ordered list, e.g. [\"default\"]."
+        },
+        "table": {
+          "type": "string",
+          "description": "Optional table name within the declared namespace."
+        }
       }
     },
     "schema": {

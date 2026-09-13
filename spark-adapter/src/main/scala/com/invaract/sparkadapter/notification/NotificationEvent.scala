@@ -82,6 +82,42 @@ case class ContractValidationEvent(
   */
 case class WriteFieldInfo(name: String, dataType: String, nullable: Boolean)
 
+/** A write's actual catalog registration, if any — a deliberately minimal
+  * mirror of `ir.CatalogIdentity`'s shape (same five fields, same
+  * meaning), kept as its own package-local case class the same way
+  * `WriteFieldInfo` mirrors `StructField`: this is a notification-package
+  * type in its own right, with a stable JSON shape a `NotificationSink`
+  * can rely on independent of whatever internal shape `ir.CatalogIdentity`
+  * evolves into, not merely a type alias for it.
+  *
+  * `None` on `WriteEvent.catalog` (not an absent field) means "this write
+  * has no catalog entry" — an explicit, honest signal a downstream
+  * consumer can act on directly (e.g. "flag this job's output as
+  * undiscoverable"), not something indistinguishable from "catalog
+  * identity wasn't checked at all." See docs/CONTRACT_MODEL.md's
+  * `catalog` field and ROADMAP.md's catalog-registration addendum for the
+  * org-wide policy this supports.
+  */
+case class CatalogInfo(
+  technology: Option[String] = None,
+  catalogName: Option[String] = None,
+  location: Option[String] = None,
+  namespace: List[String] = Nil,
+  table: Option[String] = None
+) {
+  def toMap: Map[String, Any] =
+    Map("namespace" -> namespace) ++
+      technology.map("technology" -> _) ++
+      catalogName.map("catalogName" -> _) ++
+      location.map("location" -> _) ++
+      table.map("table" -> _)
+}
+
+object CatalogInfo {
+  def from(identity: com.invaract.ir.CatalogIdentity): CatalogInfo =
+    CatalogInfo(identity.technology, identity.catalogName, identity.location, identity.namespace, identity.table)
+}
+
 /** A write Spark actually executed successfully — `contract` is `None` only
   * when the session that captured this write was never given a contract at
   * all (dry-run mode); a write rejected by `ContractEnforcementRule` never
@@ -156,7 +192,8 @@ case class WriteEvent(
   applicationId: Option[String] = None,
   deltaVersion: Option[Long] = None,
   icebergSnapshotId: Option[Long] = None,
-  operation: Option[String] = None
+  operation: Option[String] = None,
+  catalog: Option[CatalogInfo] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }

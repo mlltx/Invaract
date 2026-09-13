@@ -30,6 +30,8 @@ flag in the same case class, the identical way).
 | `UNDECLARED_INPUT_COLUMN` | The actual input schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
 | `INPUT_FIELD_TYPE_MISMATCH` | An input field's actual type doesn't match the contract's declared type. |
 | `INPUT_FIELD_NULLABILITY_MISMATCH` | The contract requires an input field to be non-null, but the actual schema permits nulls. |
+| `MISSING_INPUT_CATALOG_REGISTRATION` | The contract's input declares `catalog: { required: true }`, but the actual read has no catalog registration at all. |
+| `INPUT_CATALOG_MISMATCH` | The input is catalog-registered, but a declared `catalog` sub-field (`technology`/`catalogName`/`location`/`namespace`/`table`) disagrees with the actual registration. |
 
 ## Structural violations — outputs
 
@@ -43,6 +45,8 @@ flag in the same case class, the identical way).
 | `UNDECLARED_OUTPUT_COLUMN` | The actual output schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
 | `OUTPUT_FIELD_TYPE_MISMATCH` | An output field's actual type doesn't match the contract's declared type. |
 | `OUTPUT_FIELD_NULLABILITY_MISMATCH` | The contract requires an output field to be non-null, but the actual schema permits nulls. |
+| `MISSING_OUTPUT_CATALOG_REGISTRATION` | The contract's output declares `catalog: { required: true }`, but the actual write has no catalog registration at all. |
+| `OUTPUT_CATALOG_MISMATCH` | The output is catalog-registered, but a declared `catalog` sub-field (`technology`/`catalogName`/`location`/`namespace`/`table`) disagrees with the actual registration — e.g. the write went through a different Hive metastore than the contract declares. |
 
 ## DML rule violations
 
@@ -73,3 +77,5 @@ verified write is structurally wrong. See
   a run's output
 - [Reference → Contract Format](/reference/contract-format/) — the validator
   checks that keep a contract from reaching `INVALID_CONTRACT` in the first place
+- [Require Catalog Registration](/guides/requiring-catalog-registration/) — the full
+  guide behind the four `*_CATALOG_*` types above

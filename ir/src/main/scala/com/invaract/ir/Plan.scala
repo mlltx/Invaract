@@ -24,14 +24,43 @@ sealed trait Plan {
   def children: List[Plan]
 }
 
+/** The catalog identity a `Read`/`Write` was actually observed to resolve
+  * to — engine-reported reality, as opposed to `contract.CatalogRequirement`
+  * (a contract's *expectation*, in the separate `contract` module this one
+  * has no dependency on). `None` on `Read`/`Write` means "confirmed not
+  * catalog-registered" (e.g. a bare path read/write), the same "`None`
+  * means unknown-or-absent, never guessed" convention `Write.format`/
+  * `saveMode` already use.
+  *
+  * @param technology the catalog implementation, e.g. `"hive"`, `"delta"`,
+  *   `"iceberg"`.
+  * @param catalogName the engine-level catalog plugin/session-catalog
+  *   name, e.g. `"spark_catalog"`.
+  * @param location the catalog *service's* own address (e.g. a Hive
+  *   metastore's `thrift://host:port` URI), when the front-end could
+  *   determine one.
+  * @param namespace the database/schema path within the catalog.
+  * @param table the table name within `namespace`.
+  */
+case class CatalogIdentity(
+  technology: Option[String] = None,
+  catalogName: Option[String] = None,
+  location: Option[String] = None,
+  namespace: List[String] = Nil,
+  table: Option[String] = None
+)
+
 /** The source of a transformation: a dataset read in its entirety.
   * `Read` declares no schema — the IR is not a full type system, and a
   * Read's columns come into existence the moment something downstream
   * references them (see `Lineage`). `alias` lets the same dataset be read
   * twice in one plan (a self-join) with each occurrence individually
   * addressable via `ColumnRef.qualifier`.
+  *
+  * @param catalog the data-catalog identity this read actually resolved
+  *   to, when the front-end could determine one — see `CatalogIdentity`.
   */
-case class Read(dataset: DatasetRef, alias: Option[String] = None) extends Plan {
+case class Read(dataset: DatasetRef, alias: Option[String] = None, catalog: Option[CatalogIdentity] = None) extends Plan {
   def children: List[Plan] = Nil
 }
 
@@ -48,8 +77,16 @@ case class Read(dataset: DatasetRef, alias: Option[String] = None) extends Plan 
   *   ("append", "overwrite", "ignore", "error"), normalized from the
   *   engine's own mode enum, when determinable — same "`None` means
   *   unknown, not unset" convention as `format`.
+  * @param catalog the data-catalog identity this write actually resolved
+  *   to, when the front-end could determine one — see `CatalogIdentity`.
   */
-case class Write(dataset: DatasetRef, input: Plan, format: Option[String] = None, saveMode: Option[String] = None) extends Plan {
+case class Write(
+  dataset: DatasetRef,
+  input: Plan,
+  format: Option[String] = None,
+  saveMode: Option[String] = None,
+  catalog: Option[CatalogIdentity] = None
+) extends Plan {
   def children: List[Plan] = List(input)
 }
 

@@ -139,8 +139,8 @@ object Lineage {
 
   def trace(plan: Plan): List[ColumnLineage] =
     (plan match {
-      case Write(_, input, _, _) => outputsOfT(input)
-      case other                 => outputsOfT(other)
+      case Write(_, input, _, _, _) => outputsOfT(input)
+      case other                    => outputsOfT(other)
     }).result
 
   /** An expression's fully resolved provenance: which Read columns it
@@ -191,11 +191,11 @@ object Lineage {
         l <- tailcall(outputsOfT(left))
         r <- tailcall(outputsOfT(right))
       } yield l ++ r
-    case Write(_, input, _, _) => tailcall(outputsOfT(input))
+    case Write(_, input, _, _, _) => tailcall(outputsOfT(input))
 
     // A bare Read declares no output list of its own (see Plan.scala) —
     // there is nothing to trace until something downstream projects it.
-    case Read(_, _) => done(Nil)
+    case Read(_, _, _) => done(Nil)
 
     // An untranslated construct declares no known output list either —
     // there is nothing to trace past it.
@@ -320,7 +320,7 @@ object Lineage {
     * qualified reference to the wrong side).
     */
   private def resolveInScopeT(ref: ColumnRef, plan: Plan): TailRec[Option[Provenance]] = plan match {
-    case Read(dataset, alias) =>
+    case Read(dataset, alias, _) =>
       val scope = alias.getOrElse(dataset.location)
       done(
         if (ref.qualifier.forall(_ == scope))
@@ -382,7 +382,7 @@ object Lineage {
         case (None, None)         => None
       }
 
-    case Write(_, input, _, _) => tailcall(resolveInScopeT(ref, input))
+    case Write(_, input, _, _, _) => tailcall(resolveInScopeT(ref, input))
 
     case UnknownPlan(_, _, _) => done(None)
   }

@@ -1,0 +1,15 @@
+id: catalog_missing_required
+version: "1.0.0"
+status: active
+
+outputs:
+  - name: sales
+    location: gold.sales
+    catalog:
+      technology: hive
+    schema:
+      fields:
+        - name: id
+          type: string
+          required: true
+          nullable: false

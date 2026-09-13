@@ -65,7 +65,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .save() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode, _) =>
         // Spark resolves the raw path through Hadoop's Path/FileSystem
         // machinery, which prepends the local filesystem's "file:" scheme
         // and always uses forward slashes - `p` is `scratchDir.resolve(...)
@@ -145,7 +145,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .insertInto() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode) =>
+      case com.invaract.ir.Write(com.invaract.ir.DatasetRef(location), _, format, saveMode, _) =>
         assert(location.contains("avro_insert_into_tbl"))
         assert(format.contains("avro"))
         assert(saveMode.contains("append"))
@@ -327,7 +327,7 @@ class AvroConnectorSpec extends ConnectorSpecBase {
       listener.lastWrite.getOrElse(fail("listener has not captured the .writeTo().create() write yet"))
     }
     result.plan match {
-      case com.invaract.ir.Write(_, _, format, _) => assert(format.contains("avro"))
+      case com.invaract.ir.Write(_, _, format, _, _) => assert(format.contains("avro"))
       case other => fail(s"expected a Write, got ${com.invaract.ir.PlanPrinter.render(other)}")
     }
     assert(spark.table("avro_writeto_create_tbl").count() == 2)
