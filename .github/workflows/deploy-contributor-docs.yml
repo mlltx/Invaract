@@ -1,0 +1,68 @@
+name: Deploy Contributor Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contributor-docs/**"
+      - "ROADMAP.md"
+      - "ARCHITECTURE.md"
+      - "docs/**"
+      - ".github/workflows/deploy-contributor-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Only one production deploy of this site at a time; a newer push cancels an
+# in-flight one rather than racing it. A separate group from docs-site's own
+# "docs-production-deploy" — the two sites publish into different subfolders
+# of the same gh-pages branch (see the Publish step below and
+# deploy-docs.yml's clean-exclude) and can safely run concurrently.
+concurrency:
+  group: "contributor-docs-production-deploy"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contributor-docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: contributor-docs/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Regenerates src/content/docs/{project,design,connectors,process}/**
+      # from ROADMAP.md/ARCHITECTURE.md/docs/** — also runs automatically as
+      # `npm run build`'s own prebuild step; done here explicitly so a stale
+      # sync never gets built by accident. See scripts/sync-docs.mjs.
+      - name: Build
+        run: npm run build
+
+      # Publishes into the contributor/ subfolder of the gh-pages branch
+      # docs-site's own deploy-docs.yml publishes to the root of — the two
+      # sites share one GitHub Pages deployment but stay in separate
+      # subtrees. With target-folder set, this action only cleans stale
+      # files within contributor/ itself, so it never touches docs-site's
+      # content or pr-preview/; docs-site's own deploy still needs
+      # contributor/ added to its clean-exclude so its root-level clean
+      # doesn't wipe this out.
+      - name: Publish to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: contributor-docs/dist
+          branch: gh-pages
+          target-folder: contributor
+          force: false

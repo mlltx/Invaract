@@ -1,0 +1,161 @@
+name: Deploy PR contributor-docs preview
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    paths:
+      - "contributor-docs/**"
+      - "ROADMAP.md"
+      - "ARCHITECTURE.md"
+      - "docs/**"
+      - ".github/workflows/preview-contributor-docs.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# One preview deploy per PR at a time; a newer push to the same PR
+# supersedes an in-flight preview build for it rather than racing it. A
+# distinct group from docs-preview-<n> (preview-docs.yml) — the two sites
+# preview independently and can both be building for the same PR at once.
+concurrency:
+  group: contributor-docs-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build and deploy PR preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history, so "List changed source docs" below can diff
+          # against the PR's base branch (a shallow clone only has HEAD).
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: contributor-docs/package-lock.json
+
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        working-directory: contributor-docs
+        run: npm ci
+
+      # Built with a base path scoped to this PR's own preview subfolder
+      # (/Invaract/contributor-pr-preview/pr-<number>/), not the production
+      # base — see astro.config.mjs and remark-base-links.mjs. This is what
+      # makes every link inside the preview (sidebar, pagination, and links
+      # sync-docs.mjs rewrites into page content) stay inside the preview
+      # instead of pointing back at production. `npm run build`'s own
+      # prebuild step regenerates src/content/docs/** from this PR's actual
+      # ROADMAP.md/ARCHITECTURE.md/docs/** before building, so the preview
+      # reflects the PR's real content changes, not main's.
+      - name: Build
+        if: github.event.action != 'closed'
+        working-directory: contributor-docs
+        env:
+          CONTRIBUTOR_DOCS_BASE_PATH: /Invaract/contributor-pr-preview/pr-${{ github.event.number }}
+        run: npm run build
+
+      # action: auto deploys the preview on opened/synchronize and removes
+      # it on closed (merged or not) — one step handles both, per
+      # https://github.com/rossjrw/pr-preview-action. A distinct
+      # umbrella-dir from docs-site's own preview (pr-preview/) — sharing
+      # one would deploy both sites' previews to the same
+      # pr-preview/pr-<n>/ path on gh-pages and overwrite each other.
+      #
+      # pages-base-url/pages-base-path are deliberately left unset: this
+      # action computes them itself from the repository name (correctly
+      # producing mlltx.github.io/Invaract, with no protocol prefix, for a
+      # project-pages repo) and prepends https:// on its own — passing an
+      # explicit https://... value here double-prefixes the protocol, and
+      # passing an unrelated path here gets silently ignored (with a
+      # warning) since it doesn't match the umbrella-dir prefix the action
+      # expects. Its own sticky comment is disabled (comment: false) in
+      # favor of the custom one below, which names this as a
+      # contributor-docs preview (a different header from docs-preview, so
+      # the two comments coexist on a PR that touches both sites) and
+      # points at what changed.
+      - name: Deploy preview
+        id: preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: contributor-docs/dist
+          preview-branch: gh-pages
+          umbrella-dir: contributor-pr-preview
+          action: auto
+          comment: "false"
+          qr-code: "false"
+
+      # GitHub Pages only honors .nojekyll at the branch ROOT — Jekyll's
+      # default processing otherwise silently drops any file/folder
+      # starting with an underscore, which is exactly where Astro puts
+      # every CSS/JS bundle (_astro/), leaving the page unstyled. The copy
+      # that ships in contributor-docs/public/ only ever lands under
+      # contributor-pr-preview/pr-<n>/.nojekyll (correct for the production
+      # deploy, which publishes into contributor/ at the branch root, but
+      # not for a preview, nested under umbrella-dir). deploy-docs.yml and
+      # deploy-contributor-docs.yml keep this present once main has ever
+      # deployed either site; this step makes preview deploys not depend on
+      # that having happened yet, and re-asserts it defensively on every
+      # preview build. clean: false is required — this must never touch
+      # anything else already at the root.
+      - name: Ensure .nojekyll exists at the Pages root
+        if: github.event.action != 'closed'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nojekyll-root"
+          touch "$RUNNER_TEMP/nojekyll-root/.nojekyll"
+      - uses: JamesIves/github-pages-deploy-action@v4
+        if: github.event.action != 'closed'
+        with:
+          folder: ${{ runner.temp }}/nojekyll-root
+          branch: gh-pages
+          clean: false
+
+      - name: List changed source docs
+        if: github.event.action != 'closed'
+        id: changed
+        env:
+          # See preview-docs.yml's own identical step for why this diffs
+          # the PR's base/head SHAs directly rather than a symbolic ref,
+          # and why set -o pipefail matters here.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- ROADMAP.md ARCHITECTURE.md docs contributor-docs | sed 's/^/- `/; s/$/`/')
+          {
+            echo "list<<PREVIEW_CHANGED_EOF"
+            if [ -n "$changed" ]; then
+              echo "$changed"
+            else
+              echo "_No contributor-docs source files changed in this push._"
+            fi
+            echo "PREVIEW_CHANGED_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: github.event.action != 'closed'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: contributor-docs-preview
+          message: |
+            ### 🛠️ Contributor-docs preview
+
+            🔗 **[View the contributor-docs preview](${{ steps.preview.outputs.preview-url }})**
+
+            **Changed source files in this PR:**
+            ${{ steps.changed.outputs.list }}
+
+      - name: Remove comment when preview is closed
+        if: github.event.action == 'closed'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: contributor-docs-preview
+          delete: true

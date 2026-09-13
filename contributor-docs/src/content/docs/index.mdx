@@ -1,0 +1,55 @@
+---
+title: Invaract — Contributor Docs
+description: Roadmap, architecture, and design docs for people building Invaract itself — not for users of the verification engine.
+template: splash
+hero:
+  tagline: The plan, the design decisions, and the per-module internals — for whoever is working on Invaract's own codebase.
+  actions:
+    - text: Read the Roadmap
+      link: /Invaract/contributor/project/roadmap/
+      icon: right-arrow
+      variant: primary
+    - text: Architecture
+      link: /Invaract/contributor/project/architecture/
+      icon: rocket
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Not the user docs
+
+This site is for **contributors to Invaract's own codebase** — project status, architecture
+decisions, and per-module design docs. If you're looking for how to *use* Invaract (writing a
+contract, installing the enforcement rule, running the demo harness), that's the
+[user documentation site](https://mlltx.github.io/Invaract/) instead.
+
+Every page here is generated straight from the same Markdown files contributors already read in
+the repository (`ROADMAP.md`, `ARCHITECTURE.md`, `docs/**`) — this site only changes how they're
+*read*, not what they say. Edit the source file, not a page here.
+
+<CardGrid stagger>
+	<Card title="Project" icon="rocket">
+		Where Invaract is going, and why it's built the way it is: the [Roadmap](/project/roadmap/)
+		and [Architecture](/project/architecture/) docs.
+	</Card>
+	<Card title="Design Docs" icon="document">
+		Module-level design for the verification engine itself: [contract model](/design/contract-model/),
+		[transformation IR](/design/transformation-ir/), [Spark adapter](/design/spark-adapter/),
+		[fingerprinting](/design/semantic-lineage-fingerprinting/), and the
+		[connector-adding process](/design/adding-a-spark-connector/).
+	</Card>
+	<Card title="Connectors" icon="puzzle">
+		Empirical, per-connector coverage notes for every data source `spark-adapter` supports —
+		[Delta Lake](/connectors/delta/), [Iceberg](/connectors/iceberg/),
+		[Hive](/connectors/hive/), [Parquet](/connectors/parquet/),
+		[Avro](/connectors/avro/), [CSV](/connectors/csv/), and
+		[ClickHouse](/connectors/clickhouse/).
+	</Card>
+	<Card title="Process" icon="setting">
+		How the project is run: [versioning](/process/versioning/),
+		[binary compatibility](/process/compatibility/), [releasing](/process/releasing/),
+		[governance](/process/governance/), and
+		[CVE remediation](/process/cve-remediation/).
+	</Card>
+</CardGrid>
