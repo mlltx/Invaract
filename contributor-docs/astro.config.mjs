@@ -4,10 +4,11 @@ import starlight from '@astrojs/starlight';
 import { remarkBaseLinks } from './remark-base-links.mjs';
 
 // Overridable for the same reason docs-site/astro.config.mjs's DOCS_BASE_PATH
-// is: so a future PR-preview build could deploy this site to its own
-// sub-path without changing content. Deployed in production as a subfolder
-// of the same GitHub Pages site docs-site/ uses (see
-// .github/workflows/deploy-contributor-docs.yml), not a separate Pages site.
+// is: so a PR-preview build (see .github/workflows/preview-contributor-docs.yml)
+// can deploy this site to its own sub-path without changing content.
+// Deployed in production as a subfolder of the same GitHub Pages site
+// docs-site/ uses (see .github/workflows/deploy-contributor-docs.yml), not
+// a separate Pages site.
 const base = process.env.CONTRIBUTOR_DOCS_BASE_PATH ?? '/Invaract/contributor';
 
 export default defineConfig({

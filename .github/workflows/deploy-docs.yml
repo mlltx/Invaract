@@ -46,9 +46,12 @@ jobs:
       # branch) actually serves. clean-exclude protects pr-preview/, which
       # preview-docs.yml maintains on this same branch — without it, every
       # production deploy would wipe out every currently-open PR's preview.
-      # contributor/ is protected the same way: it's deploy-contributor-docs.yml's
-      # own target-folder on this branch, a separate site (see CLAUDE.md's
-      # "Documentation Policy"), not something this job's build produces.
+      # contributor/ and contributor-pr-preview/ are protected the same
+      # way: they belong to contributor-docs/'s own production
+      # (deploy-contributor-docs.yml) and PR-preview
+      # (preview-contributor-docs.yml) deploys — a separate site (see
+      # CLAUDE.md's "Documentation Policy") — not something this job's
+      # build produces.
       - name: Publish to gh-pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
@@ -57,4 +60,5 @@ jobs:
           clean-exclude: |
             pr-preview/
             contributor/
+            contributor-pr-preview/
           force: false
