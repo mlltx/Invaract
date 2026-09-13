@@ -92,4 +92,26 @@ class CatalogIdentitySupportSpec extends AnyFunSuite with BeforeAndAfterAll with
     assert(identity.namespace == List("default"))
     assert(identity.table.contains("some_table"))
   }
+
+  // `getClass.getSimpleName` is how `technologyOfCatalogPlugin` recognizes
+  // Delta - a real, named class (not an anonymous one, whose
+  // `getSimpleName` isn't reliably predictable) called literally
+  // `NotDeltaCatalog` gives a real, controllable "definitely not delta"
+  // technology without needing a real DSv2 connector dependency.
+  private class NotDeltaCatalog(pluginName: String) extends org.apache.spark.sql.connector.catalog.CatalogPlugin {
+    override def initialize(name: String, options: org.apache.spark.sql.util.CaseInsensitiveStringMap): Unit = ()
+    override def name(): String = pluginName
+  }
+
+  test("fromV2 never resolves a location when the resolved technology isn't delta, even under spark_catalog on a Hive session") {
+    // A real table registered exactly where deltaSessionCatalogMetastoreLocation
+    // would look, so a bug that skips the technology check would find it
+    // and wrongly return a location instead of None.
+    spark.sql("CREATE TABLE catalog_identity_probe_not_delta (id INT) USING PARQUET")
+    val identifier = org.apache.spark.sql.connector.catalog.Identifier.of(Array("default"), "catalog_identity_probe_not_delta")
+
+    val identity = CatalogIdentitySupport.fromV2(new NotDeltaCatalog("spark_catalog"), identifier)
+
+    assert(identity.location.isEmpty, s"a non-Delta technology must never resolve a Hive metastore location, got ${identity.location}")
+  }
 }

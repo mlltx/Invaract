@@ -51,4 +51,29 @@ class CatalogIdentitySupportNonHiveSpec extends AnyFunSuite with BeforeAndAfterA
     assert(identity.technology.contains("in-memory"))
     assert(identity.location.isEmpty, s"a non-Hive session catalog must never report a Hive metastore location, got ${identity.location}")
   }
+
+  // A real, named class (not `org.apache.spark.sql.delta.catalog.DeltaCatalog`
+  // itself - no compile-time Delta dependency here) whose `getClass.getSimpleName`
+  // is literally "DeltaCatalog", the same reflective match
+  // `technologyOfCatalogPlugin` uses - lets `fromV2`'s technology == "delta"
+  // branch be exercised without a real Delta session.
+  private class DeltaCatalog(pluginName: String) extends org.apache.spark.sql.connector.catalog.CatalogPlugin {
+    override def initialize(name: String, options: org.apache.spark.sql.util.CaseInsensitiveStringMap): Unit = ()
+    override def name(): String = pluginName
+  }
+
+  test("fromV2 never resolves a location for a Delta catalog under spark_catalog on a non-Hive session") {
+    // A leftover/residual hive.metastore.uris value AND a real table at the
+    // exact identifier deltaSessionCatalogMetastoreLocation would look up -
+    // so a bug that skips the "session is actually Hive" check would find a
+    // real table and wrongly return a location instead of None.
+    spark.sparkContext.hadoopConfiguration.set("hive.metastore.uris", "thrift://leftover-config-not-actually-in-use:9083")
+    spark.sql("CREATE TABLE catalog_identity_probe_delta_non_hive (id INT) USING PARQUET")
+    val identifier = org.apache.spark.sql.connector.catalog.Identifier.of(Array("default"), "catalog_identity_probe_delta_non_hive")
+
+    val identity = CatalogIdentitySupport.fromV2(new DeltaCatalog("spark_catalog"), identifier)
+
+    assert(identity.technology.contains("delta"))
+    assert(identity.location.isEmpty, s"a non-Hive session catalog must never report a Hive metastore location for Delta either, got ${identity.location}")
+  }
 }
