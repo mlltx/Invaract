@@ -119,41 +119,18 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment - the same pattern the rebrand itself used (see git
-// history for both prior revisions). That PR has now landed (base-ref
-// itself publishes 0.3.0, not 0.2.0, confirmed the hard way: CI's
-// api-compatibility job failed with a real "Not found" resolving 0.2.0,
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
+// for prior revisions of this section). That PR has now landed (base-ref
+// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
+// api-compatibility job failed with a real "Not found" resolving 0.3.0,
 // since base-ref never publishes that coordinate once its own `version`
-// moved past it), so this is that follow-up flip.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.3.0")
-
-import com.typesafe.tools.mima.core._
-
-// The 0.3.0 -> 0.4.0 bump (this file's version above) is this module's own
-// next deliberate break, the same class as the sensitivityTags-on-Field
-// one this section's own history already documents: Dataset gained a
-// sixth constructor parameter, `catalog: Option[CatalogRequirement]`,
-// appended at the end with a default value - source-compatible (every
-// existing positional/named `Dataset(...)` call site keeps compiling
-// unchanged), but *not* binary-compatible, confirmed directly by a real
-// `mimaReportBinaryIssues` run against the 0.3.0 baseline still pointed to
-// below: Scala's case-class codegen has exactly one `apply`/`copy`/
-// constructor per class (defaults are applied via separate `$default$N`
-// methods invoked at call sites, not by keeping a shorter overload around),
-// so appending a field changes those methods' own signatures outright.
-// Filtered per MiMa's own suggested exclusions for exactly this break:
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Dataset$")
-)
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and remove
-// the filters above once base-ref itself publishes 0.4.0 (mirroring this
-// section's own history) - do not make that flip in the PR doing the bump
-// itself (base-ref won't have it yet).
+// moved past it), so this is that follow-up flip. The `mimaBinaryIssueFilters`
+// entries this section previously carried for the 0.3.0 -> 0.4.0 Dataset
+// break (a sixth constructor parameter, `catalog: Option[CatalogRequirement]`)
+// are removed along with it: now that the baseline itself is 0.4.0, that
+// break is inside the baseline on both sides of the comparison and no
+// longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.4.0")

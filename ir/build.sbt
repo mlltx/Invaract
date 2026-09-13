@@ -108,41 +108,17 @@ strykerThresholdsBreak := 50
 // contract/build.sbt's matching comment for the general invariant this
 // has to satisfy).
 //
-// The 0.2.0 -> 0.3.0 bump (this file's version comment above) landed on
-// the base branch in its own PR, which left this pointing at the
-// now-superseded 0.2.0 baseline with a "FOLLOW-UP: flip this once that PR
-// lands" comment. That PR has now landed (base-ref itself publishes
-// 0.3.0, not 0.2.0, confirmed the hard way: CI's api-compatibility job
-// failed with a real "Not found" resolving 0.2.0), so this is that
-// follow-up flip.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.3.0")
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip this to
-// that new version and add filters for whatever real break motivated the
-// bump, mirroring this section's own history - do not make that flip in
-// the PR doing the bump itself (base-ref won't have it yet).
-//
-// The 0.3.0 -> 0.4.0 bump (this file's version above) is this module's own
-// next deliberate break: Read and Write each gained a trailing
-// `catalog: Option[CatalogIdentity]` constructor parameter (see
-// contract/build.sbt's matching comment for the identical reasoning -
-// source-compatible, not binary-compatible, since Scala's case-class
-// codegen has exactly one apply/copy/constructor per class). Filtered per
-// MiMa's own suggested exclusions for exactly this break:
-import com.typesafe.tools.mima.core._
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Read.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.Read$"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.Write.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.Write$")
-)
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and remove
-// the filters above once base-ref itself publishes 0.4.0 (mirroring this
-// section's own history) - do not make that flip in the PR doing the bump
-// itself (base-ref won't have it yet).
+// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
+// branch in its own PR, which left this pointing at the now-superseded
+// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
+// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
+// for prior revisions of this section). That PR has now landed (base-ref
+// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
+// api-compatibility job failed with a real "Not found" resolving 0.3.0),
+// so this is that follow-up flip. The `mimaBinaryIssueFilters` entries
+// this section previously carried for the 0.3.0 -> 0.4.0 break (Read and
+// Write each gaining a trailing `catalog: Option[CatalogIdentity]`
+// constructor parameter) are removed along with it: now that the baseline
+// itself is 0.4.0, that break is inside the baseline on both sides of the
+// comparison and no longer shows up as a difference to filter.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.4.0")
