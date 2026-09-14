@@ -1,0 +1,13 @@
+version: "1.0"
+policies:
+  - id: restricted-namespace-for-pii
+    type: require_catalog
+    scope: outputs
+    when:
+      sensitivityTag: pii
+    mode: warn
+inject:
+  rules:
+    - type: forbid_unconditional_delete
+  minVerificationOptions:
+    rejectUndeclaredFields: true

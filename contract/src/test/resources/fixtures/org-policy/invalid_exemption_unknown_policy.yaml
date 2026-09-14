@@ -1,0 +1,8 @@
+version: "1.0"
+policies:
+  - id: catalog-required
+    type: require_catalog
+exemptions:
+  - contractId: foo
+    policyIds: [does-not-exist]
+    reason: "test"

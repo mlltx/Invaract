@@ -1,0 +1,14 @@
+version: "1.0"
+policies:
+  - id: catalog-required
+    type: require_catalog
+    technology: hive
+    scope: outputs
+    description: "All outputs must be registered in a discoverable catalog."
+  - id: pii-flag-required
+    type: require_field
+    name: pii_reviewed
+    scope: outputs
+  - id: snake-case-fields
+    type: field_naming_convention
+    pattern: "^[a-z][a-z0-9_]*$"

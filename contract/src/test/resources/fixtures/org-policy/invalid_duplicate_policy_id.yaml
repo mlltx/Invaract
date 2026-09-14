@@ -1,0 +1,7 @@
+version: "1.0"
+policies:
+  - id: dup
+    type: require_catalog
+  - id: dup
+    type: field_naming_convention
+    pattern: "^[a-z]+$"
