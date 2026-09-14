@@ -74,13 +74,13 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
   }
 
   test("require_field: type pin is checked case-insensitively") {
-    val rule = PolicyRule("typed", PolicyType.RequireField, Map("name" -> "id", "type" -> "STRING"), scope = PolicyScope.Outputs)
+    val rule = PolicyRule("typed", PolicyType.RequireField, Map("name" -> "id", "fieldType" -> "STRING"), scope = PolicyScope.Outputs)
     val c = contract(outputs = List(dataset("out", fields = List(field("id")))))
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
   }
 
   test("require_field: type pin violated on mismatch") {
-    val rule = PolicyRule("typed", PolicyType.RequireField, Map("name" -> "id", "type" -> "integer"), scope = PolicyScope.Outputs)
+    val rule = PolicyRule("typed", PolicyType.RequireField, Map("name" -> "id", "fieldType" -> "integer"), scope = PolicyScope.Outputs)
     val c = contract(outputs = List(dataset("out", fields = List(field("id")))))
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
   }

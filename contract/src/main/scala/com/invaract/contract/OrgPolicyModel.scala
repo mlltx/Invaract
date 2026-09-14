@@ -116,8 +116,18 @@ case class PolicyRule(
     case PolicyType.RequireCatalog =>
       Some(InterpretedPolicy.RequireCatalog(properties.get("technology").map(String.valueOf)))
     case PolicyType.RequireField =>
+      // Deliberately "fieldType", not "type": a policy rule's own YAML
+      // mapping already has a top-level 'type' key naming *this* ruleType
+      // ("require_field") - a same-named sub-property would collide with
+      // it at the same mapping level. SnakeYAML doesn't reject a document
+      // with two 'type:' keys; it silently keeps only the *last* one,
+      // which would overwrite the intended ruleType itself (corrupting it
+      // into whatever field type was named) rather than raising anything -
+      // confirmed empirically, not assumed, the same "Norway problem"-style
+      // caution ContractRule.interpret's own 'columns', not 'on', decision
+      // documents for an unrelated but structurally identical YAML pitfall.
       properties.get("name").map(String.valueOf).map { name =>
-        InterpretedPolicy.RequireField(name, properties.get("type").map(String.valueOf))
+        InterpretedPolicy.RequireField(name, properties.get("fieldType").map(String.valueOf))
       }
     case PolicyType.FieldNamingConvention =>
       properties.get("pattern").map(String.valueOf).filter(PolicyRule.isValidRegex).map(InterpretedPolicy.FieldNamingConvention)

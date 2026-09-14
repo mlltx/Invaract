@@ -163,6 +163,50 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     }
   }
 
+  // A real, full-path regression test for the require_field fieldType-pin
+  // bug (see docs/CONTRACT_MODEL.md's "Organizational Policy" section):
+  // proves the fix through the exact real path a platform would use
+  // (spark.invaract.orgPolicy -> OrgPolicyParser -> ContractEnforcementRule),
+  // not just contract's own parser-level test.
+  test("require_field with a fieldType pin: satisfied when the field exists with a matching type") {
+    val contract = parseContract(noCatalogContractYaml) // declares 'id: long'
+    val policyPath = writePolicy(
+      "require_field_type_pin_satisfied.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: id-must-be-long
+        |    type: require_field
+        |    name: id
+        |    fieldType: long
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    withOrgPolicyConf(policyPath) {
+      rule(spark) // must not throw
+    }
+  }
+
+  test("require_field with a fieldType pin: violated when the field's type disagrees") {
+    val contract = parseContract(noCatalogContractYaml) // declares 'id: long'
+    val policyPath = writePolicy(
+      "require_field_type_pin_violated.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: id-must-be-string
+        |    type: require_field
+        |    name: id
+        |    fieldType: string
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    val ex = withOrgPolicyConf(policyPath) {
+      intercept[ContractViolationException] { rule(spark) }
+    }
+    assert(ex.result.violations.exists(v => v.violationType == ViolationType.OrgPolicyViolation && v.message.contains("id-must-be-string")))
+  }
+
   test("enforce mode: an unexpired exemption suppresses the violation, real conf-driven end to end") {
     val contract = parseContract(noCatalogContractYaml)
     val policyPath = writePolicy(
@@ -317,6 +361,28 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     // whatever the caller's own VerificationOptions already had.
     assert(!governedOptions.rejectUndeclaredInputs)
     assert(!governedOptions.computeFingerprint)
+  }
+
+  test("enforceOrgPolicy rejects an unrecognized inject.minVerificationOptions key rather than silently ignoring it") {
+    val contract = parseContract(catalogRegisteredContractYaml)
+    // A real typo shape - missing the 'e' in 'Undeclared' - not a
+    // hypothetical: this is exactly the class of mistake a platform team
+    // could make when hand-writing YAML, and it must fail loudly rather
+    // than silently leaving rejectUndeclaredFields at its default.
+    val policyPath = writePolicy(
+      "inject_options_typo.yaml",
+      """version: "1.0"
+        |inject:
+        |  minVerificationOptions:
+        |    rejectUndeclredFields: true
+        |""".stripMargin
+    )
+    val ex = withOrgPolicyConf(policyPath) {
+      intercept[OrgPolicyParseException] {
+        ContractEnforcementRule.enforceOrgPolicy(contract, VerificationOptions(), spark, None, None)
+      }
+    }
+    assert(ex.getMessage.contains("rejectUndeclredFields"))
   }
 
   test("enforceOrgPolicy never weakens a flag the caller already set true") {

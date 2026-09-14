@@ -41,7 +41,7 @@ how every job runs today. Everything below only applies once a platform attaches
    | Type | Properties | Checks |
    |---|---|---|
    | `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally pinned to a specific `technology` (e.g. `hive`). |
-   | `require_field` | `name` (required), `type` (optional) | The dataset's schema declares a top-level field named `name`, optionally of `type`. |
+   | `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name`, optionally of `fieldType`. |
    | `field_naming_convention` | `pattern` (required) | Every field name — including nested struct fields — fully matches the regular expression `pattern`. |
 
    ```yaml
@@ -52,11 +52,20 @@ how every job runs today. Everything below only applies once a platform attaches
      - id: pii-flag-required
        type: require_field
        name: pii_reviewed
+       fieldType: boolean
        scope: outputs
      - id: snake-case-fields
        type: field_naming_convention
        pattern: "^[a-z][a-z0-9_]*$"
    ```
+
+   <Aside type="caution" title="fieldType, not type">
+   A policy rule's own kind (`require_field`, in this example) is itself spelled `type:`.
+   Naming the field-type pin `type:` too would collide with it at the same YAML mapping
+   level — SnakeYAML doesn't reject a document with two `type:` keys, it silently keeps
+   only the last one, so `require_field`'s type pin uses the distinct key `fieldType`
+   instead.
+   </Aside>
 
 3. Each rule's `scope` (`inputs`/`outputs`/`all`, default `all`) says which of a contract's
    datasets it applies to. An optional `when` narrows it further, to only datasets with at

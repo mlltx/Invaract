@@ -25,6 +25,7 @@ policies:
   - id: pii-flag-required
     type: require_field
     name: pii_reviewed
+    fieldType: boolean
     scope: outputs
   - id: snake-case-fields
     type: field_naming_convention
@@ -72,7 +73,7 @@ contract's own `rules:` entries work.
 | Type | Properties | Checks |
 |---|---|---|
 | `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally matching a specific `technology`. |
-| `require_field` | `name` (required), `type` (optional) | The dataset's schema declares a top-level field named `name` — not recursive into nested structs — optionally of `type` (checked case-insensitively). |
+| `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name` — not recursive into nested structs — optionally of `fieldType` (checked case-insensitively). |
 | `field_naming_convention` | `pattern` (required) | Every field name in the dataset's schema — recursing into nested struct `properties` — fully matches the regular expression `pattern`. A partial match doesn't satisfy it. |
 
 A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
@@ -80,12 +81,19 @@ the same permissive behavior an unrecognized contract `rules[].type` already has
 type with malformed or missing properties for its shape (e.g. `require_field` with no
 `name`) is an `OrgPolicyValidator` Error, not silently ignored.
 
+<Aside type="caution" title="require_field's type pin is fieldType, not type">
+A policy rule's own kind (`require_field`) is itself spelled `type:` at the same mapping
+level. SnakeYAML doesn't reject a document with two `type:` keys — it silently keeps only
+the last one, which would overwrite the rule's own kind rather than raise anything. The
+type pin therefore uses the distinct key `fieldType`.
+</Aside>
+
 ## `inject.rules`/`inject.minVerificationOptions`
 
 | Key | Meaning |
 |---|---|
 | `inject.rules` | A list of ordinary [DML rule](/guides/enforcing-dml-rules/) entries (`{type, ...properties}`, the same shape a contract's own `rules:` uses) merged into every governed contract's `rules` before verification runs. A rule the contract already declares isn't duplicated. |
-| `inject.minVerificationOptions` | A map of `VerificationOptions` flag name (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, `computeFingerprint`) to `true` — ORed onto a job's own options. A flag a job left `false` can be forced `true` by policy; the reverse never happens. |
+| `inject.minVerificationOptions` | A map of `VerificationOptions` flag name (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, `computeFingerprint`) to `true` — ORed onto a job's own options. A flag a job left `false` can be forced `true` by policy; the reverse never happens. An unrecognized key (e.g. a typo) is rejected — `ContractEnforcementRule` fails loudly rather than silently ignoring it. |
 
 ## Exemptions
 

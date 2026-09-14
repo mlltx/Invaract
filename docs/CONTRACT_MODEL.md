@@ -493,10 +493,19 @@ language:
 - **`require_catalog`** (optional `technology`) — a dataset must declare
   `catalog.required: true`, optionally pinning `technology` (e.g.
   `"hive"`) to a specific implementation.
-- **`require_field`** (required `name`, optional `type`) — a dataset's
+- **`require_field`** (required `name`, optional `fieldType`) — a dataset's
   schema must declare a top-level field named `name` (`Schema.field`'s
   own lookup semantics — not recursive into nested structs), optionally
-  of the declared `type`, checked case-insensitively.
+  of the declared `fieldType`, checked case-insensitively. Deliberately
+  `fieldType`, not `type`: a policy rule's own kind is itself spelled
+  `type:` at the same YAML mapping level, and SnakeYAML doesn't reject a
+  document with two `type:` keys — it silently keeps only the last one,
+  which would corrupt `ruleType` itself into whatever field type was
+  named rather than raise anything. Confirmed the hard way by a real
+  failing round-trip through `OrgPolicyParser.parse` before this was
+  caught — every unit test covering the type pin had constructed
+  `PolicyRule` directly in Scala, bypassing the parser entirely, so none
+  of them could have caught it.
 - **`field_naming_convention`** (required `pattern`) — every field name in
   a dataset's schema — recursing into nested struct `properties` — must
   *fully* match the regular expression `pattern` (`Matcher.matches()`,
@@ -532,7 +541,14 @@ a second evaluator for behavioral concerns:
   `false` can still be forced `true` by policy; never the reverse. A
   plain `Map[String, Boolean]`, not a typed `VerificationOptions`, since
   that type is `spark-adapter`-specific and this module has no Spark
-  dependency to spend on it.
+  dependency to spend on it — which also means this module can't itself
+  validate a key against the real flag set. `spark-adapter`'s
+  `ContractEnforcementRule.requireKnownMinVerificationOptionKeys` does
+  that check instead, right where the three real flag names
+  (`rejectUndeclaredInputs`/`rejectUndeclaredFields`/`computeFingerprint`)
+  are already known, throwing `OrgPolicyParseException` on an
+  unrecognized key rather than silently no-op'ing a typo a platform team
+  would otherwise believe was actually enforced.
 
 ### Exemptions
 

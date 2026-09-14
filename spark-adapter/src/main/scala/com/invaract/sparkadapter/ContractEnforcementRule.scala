@@ -234,12 +234,13 @@ object ContractEnforcementRule {
     *      plan-check function to install. A non-compliant contract can't
     *      even finish installing.
     *
-    * Throws `OrgPolicyParseException` (from parsing or from
-    * `OrgPolicyValidator` finding the policy document itself malformed —
-    * e.g. an exemption referencing an unknown policy id) rather than
-    * silently ignoring a broken policy document, the same "fail loudly, not
-    * quietly," principle `ContractParser`/`ContractValidator` apply to a
-    * malformed contract.
+    * Throws `OrgPolicyParseException` (from parsing, from `OrgPolicyValidator`
+    * finding the policy document itself malformed — e.g. an exemption
+    * referencing an unknown policy id — or from
+    * `requireKnownMinVerificationOptionKeys` rejecting an unrecognized
+    * `inject.minVerificationOptions` key) rather than silently ignoring a
+    * broken policy document, the same "fail loudly, not quietly," principle
+    * `ContractParser`/`ContractValidator` apply to a malformed contract.
     */
   private[sparkadapter] def enforceOrgPolicy(
       contract: Contract,
@@ -258,6 +259,7 @@ object ContractEnforcementRule {
               policyValidation.errors.mkString("; ")
           )
         }
+        requireKnownMinVerificationOptionKeys(policy, session)
 
         val governedContract = OrgPolicyEvaluator.applyInjectedRules(contract, policy)
         val governedOptions = applyMinVerificationOptions(options, policy)
@@ -289,12 +291,44 @@ object ContractEnforcementRule {
         (governedContract, governedOptions)
     }
 
+  /** The only `inject.minVerificationOptions` keys `applyMinVerificationOptions`
+    * actually reads — `VerificationOptions`'s three flag names. Kept as its
+    * own named set (rather than inlined) so `requireKnownMinVerificationOptionKeys`
+    * can validate against exactly the same list `applyMinVerificationOptions`
+    * consults, with no risk of the two drifting apart.
+    */
+  private val KnownMinVerificationOptionKeys = Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint")
+
+  /** Fails loudly on a `policy.inject.minVerificationOptions` key outside
+    * `KnownMinVerificationOptionKeys` — a typo (e.g.
+    * `rejectUndeclredFields`) would otherwise be silently ignored by
+    * `applyMinVerificationOptions`'s plain `getOrElse(key, false)` lookup,
+    * leaving a platform team believing a flag is enforced org-wide when it
+    * genuinely isn't. `contract` itself can't run this check (it has no
+    * `VerificationOptions` to validate against), so it lives here, next to
+    * the one place that actually knows the real flag names.
+    */
+  private[sparkadapter] def requireKnownMinVerificationOptionKeys(policy: OrgPolicy, session: SparkSession): Unit = {
+    val unknownKeys = policy.inject.minVerificationOptions.keySet -- KnownMinVerificationOptionKeys
+    if (unknownKeys.nonEmpty) {
+      throw new com.invaract.contract.OrgPolicyParseException(
+        s"Organizational policy at '${session.conf.get(OrgPolicyConfKey)}' declares unrecognized " +
+          s"inject.minVerificationOptions key(s): ${unknownKeys.toList.sorted.mkString(", ")} " +
+          s"(known keys: ${KnownMinVerificationOptionKeys.toList.sorted.mkString(", ")})"
+      )
+    }
+  }
+
   /** ORs `policy.inject.minVerificationOptions` floors onto `options` — a
     * flag a job's own `VerificationOptions` left `false` can still be forced
     * `true` by policy; the reverse never happens (a job can't use policy to
     * weaken a flag it already opted into). Keyed by option name, since
     * `InjectedDefaults.minVerificationOptions` is a plain `Map[String,
-    * Boolean]` (`contract` cannot depend on this Spark-specific type).
+    * Boolean]` (`contract` cannot depend on this Spark-specific type). Safe
+    * to call with an unrecognized key still present (an unknown key's value
+    * is simply never consulted) — `enforceOrgPolicy` calls
+    * `requireKnownMinVerificationOptionKeys` first specifically so that
+    * case never reaches here silently.
     */
   private[sparkadapter] def applyMinVerificationOptions(options: VerificationOptions, policy: OrgPolicy): VerificationOptions = {
     def floor(key: String, current: Boolean): Boolean =

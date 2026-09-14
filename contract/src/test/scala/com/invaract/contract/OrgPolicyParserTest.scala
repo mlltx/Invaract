@@ -34,6 +34,30 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(namingRule.interpret.contains(InterpretedPolicy.FieldNamingConvention("^[a-z][a-z0-9_]*$")))
   }
 
+  // A real regression test for a real bug: require_field's optional
+  // type-pin property collided with the policy rule's own 'type'
+  // discriminator key when both were spelled 'type' at the same YAML
+  // mapping level - SnakeYAML doesn't reject the duplicate key, it
+  // silently keeps only the last one, corrupting ruleType itself into
+  // whatever field type was named rather than raising anything. Every
+  // other test exercising RequireField's type pin constructed PolicyRule
+  // directly in Scala, bypassing OrgPolicyParser entirely, so none of
+  // them could have caught this - only a real parse of real YAML can.
+  test("parse should correctly decode require_field's fieldType pin through a real YAML round-trip") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: typed-field
+        |    type: require_field
+        |    name: id
+        |    fieldType: string
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    val rule = policy.policies.head
+    assert(rule.ruleType == PolicyType.RequireField, "the ruleType must not be clobbered by the fieldType sub-property")
+    assert(rule.interpret.contains(InterpretedPolicy.RequireField("id", Some("string"))))
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 
