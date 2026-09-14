@@ -788,6 +788,12 @@ alongside the contracts it governs (a real bug found and fixed while
 writing this CLI’s tests — see <code dir="auto">OrgPolicyLintCliTest</code>). Meant for a
 contracts repository’s own CI/pre-commit gate: an author gets policy
 feedback at authoring time, not only the next time a job runs.</p>
+<p>Also reports, on every run, any exemption whose <code dir="auto">reviewBy</code> falls within
+the next <code dir="auto">--warn-expiring-within-days</code> days (default 30, backed by
+<code dir="auto">OrgPolicyEvaluator.expiringExemptions</code>) — a proactive look-ahead a
+platform team can act on before an exemption lapses, rather than
+<code dir="auto">OrgPolicyValidator</code>’s Warning, which only fires once it already has.
+Never affects the exit code: the exemption named is still fully active.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="json-schema-and-fixtures">JSON Schema and fixtures</h3><a class="sl-anchor-link" href="#json-schema-and-fixtures"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “JSON Schema and fixtures”</span></a></div>
 <p><code dir="auto">contract/schema/invaract-org-policy.schema.json</code> (Draft 2020-12) is the
 org-policy document’s own standalone schema, the same role
