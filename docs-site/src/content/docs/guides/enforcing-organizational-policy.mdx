@@ -42,13 +42,14 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Three policy types are interpreted today:
+2. Four policy types are interpreted today:
 
    | Type | Properties | Checks |
    |---|---|---|
    | `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally pinned to a specific `technology` (e.g. `hive`). |
    | `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name`, optionally of `fieldType`. |
    | `field_naming_convention` | `pattern` (required) | Every field name — including nested struct fields — fully matches the regular expression `pattern`. |
+   | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
 
    ```yaml
    policies:
@@ -63,7 +64,25 @@ how every job runs today. Everything below only applies once a platform attaches
      - id: snake-case-fields
        type: field_naming_convention
        pattern: "^[a-z][a-z0-9_]*$"
+     - id: owner-required
+       type: require_extension
+       key: owner
+       description: "Every contract must declare an owning team."
    ```
+
+   A contract satisfies `owner-required` by declaring the extension at its own top level:
+
+   ```yaml
+   # some_contract.yaml
+   id: customer_orders
+   extensions:
+     owner: data-platform-team
+   # ...
+   ```
+
+   The same pattern covers other org-wide "every contract must carry X" requirements — an
+   `owner`, a `costCenter`, a `dataClassification` — anything a platform wants recorded on
+   every contract regardless of what that contract's own `rules:` check.
 
    <Aside type="caution" title="fieldType, not type">
    A policy rule's own kind (`require_field`, in this example) is itself spelled `type:`.
@@ -85,6 +104,10 @@ how every job runs today. Everything below only applies once a platform attaches
        when:
          sensitivityTag: pii
    ```
+
+   `require_extension` is the one exception: it checks the contract document as a whole,
+   not any one dataset, so `scope`/`when` don't apply to it — setting either on a
+   `require_extension` rule produces a lint warning, not an error.
 
 </Steps>
 

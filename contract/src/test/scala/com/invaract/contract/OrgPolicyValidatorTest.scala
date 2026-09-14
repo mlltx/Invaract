@@ -49,6 +49,48 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(result.isValid)
   }
 
+  test("require_extension with no 'key' property is an Error, not silently accepted") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtension, Map.empty)))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_extension with a 'key' property is valid") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_extension with a non-default scope is a Warning, since scope has no effect on it") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"), scope = PolicyScope.Outputs))
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid, "a Warning, not an Error - the rule still evaluates correctly")
+    assert(result.warnings.exists(_.message.contains("no effect on require_extension")))
+  }
+
+  test("require_extension with a 'when' condition is also a Warning, for the same reason as scope") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"), when = Some(PolicyCondition("pii"))))
+    )
+    assert(OrgPolicyValidator.validate(policy).warnings.exists(_.message.contains("no effect on require_extension")))
+  }
+
+  test("require_extension with the default scope (All) and no 'when' triggers no warning") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
+    assert(OrgPolicyValidator.validate(policy).warnings.isEmpty)
+  }
+
+  test("the scope/when warning is specific to require_extension - an ordinary dataset-scoped rule triggers nothing") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("catalog-required", PolicyType.RequireCatalog, Map.empty, scope = PolicyScope.Outputs))
+    )
+    assert(OrgPolicyValidator.validate(policy).warnings.isEmpty)
+  }
+
   test("duplicate policy ids are an Error") {
     val policy = OrgPolicy(
       "1.0",

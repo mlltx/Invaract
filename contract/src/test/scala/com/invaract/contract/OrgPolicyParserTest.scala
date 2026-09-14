@@ -58,6 +58,23 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(rule.interpret.contains(InterpretedPolicy.RequireField("id", Some("string"))))
   }
 
+  test("parse should correctly decode require_extension, with and without a value pin") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: owner-required
+        |    type: require_extension
+        |    key: owner
+        |  - id: status-active
+        |    type: require_extension
+        |    key: status
+        |    value: active
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies(0).interpret.contains(InterpretedPolicy.RequireExtension("owner", None)))
+    assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireExtension("status", Some("active"))))
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 

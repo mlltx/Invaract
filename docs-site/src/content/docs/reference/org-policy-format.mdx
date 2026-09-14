@@ -32,6 +32,10 @@ policies:
     type: field_naming_convention
     pattern: "^[a-z][a-z0-9_]*$"
     mode: warn
+  - id: owner-required
+    type: require_extension
+    key: owner
+    description: "Every contract must declare an owning team."
 
 inject:
   rules:
@@ -76,6 +80,7 @@ contract's own `rules:` entries work.
 | `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally matching a specific `technology`. |
 | `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name` — not recursive into nested structs — optionally of `fieldType` (checked case-insensitively). |
 | `field_naming_convention` | `pattern` (required) | Every field name in the dataset's schema — recursing into nested struct `properties` — fully matches the regular expression `pattern`. A partial match doesn't satisfy it. |
+| `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
 
 A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
 the same permissive behavior an unrecognized contract `rules[].type` already has. A known
@@ -87,6 +92,14 @@ A policy rule's own kind (`require_field`) is itself spelled `type:` at the same
 level. SnakeYAML doesn't reject a document with two `type:` keys — it silently keeps only
 the last one, which would overwrite the rule's own kind rather than raise anything. The
 type pin therefore uses the distinct key `fieldType`.
+</Aside>
+
+<Aside type="note" title="require_extension checks the whole contract, not a dataset">
+`require_catalog`, `require_field`, and `field_naming_convention` each check one dataset at
+a time, honoring `scope`/`when`. `require_extension` is different: it checks the contract
+document as a whole, exactly once, so `scope`/`when` have no effect on it — setting either
+produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates correctly),
+since it's likely not what the author intended.
 </Aside>
 
 ## `inject.rules`/`inject.minVerificationOptions`

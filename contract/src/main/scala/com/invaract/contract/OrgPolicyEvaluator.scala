@@ -5,9 +5,10 @@ package com.invaract.contract
 
 import java.time.LocalDate
 
-/** One policy rule's violation against one dataset (or the contract as a
-  * whole, for a future policy type with no single offending dataset —
-  * `dataset` is `None` in that case). `policyId`/`ruleType` let a caller
+/** One policy rule's violation against one dataset, or against the
+  * contract as a whole for a `ContractPolicy` type like `RequireExtension`
+  * with no single offending dataset — `dataset` is `None` in that case.
+  * `policyId`/`ruleType` let a caller
   * attribute the failure to a specific, named policy rule; `mode` is
   * `rule.mode` at evaluation time, so a caller can decide what "Enforce" vs.
   * "Warn" means for it without re-consulting the originating `PolicyRule`.
@@ -98,9 +99,11 @@ object OrgPolicyEvaluator {
     else
       rule.interpret match {
         case None => Nil // unrecognized or malformed policy type - OrgPolicyValidator's job to flag this, not ours to crash on
-        case Some(interpreted) =>
+        case Some(InterpretedPolicy.RequireExtension(key, value)) =>
+          checkRequireExtension(rule, contract, key, value)
+        case Some(datasetPolicy: InterpretedPolicy.DatasetPolicy) =>
           val datasets = datasetsInScope(contract, rule.scope).filter(matchesCondition(_, rule.when))
-          interpreted match {
+          datasetPolicy match {
             case InterpretedPolicy.RequireCatalog(technology) =>
               datasets.flatMap(checkRequireCatalog(rule, _, technology))
             case InterpretedPolicy.RequireField(name, fieldType) =>
@@ -187,6 +190,34 @@ object OrgPolicyEvaluator {
             s"${if (plural) "do" else "does"} not.",
           s"Rename ${if (plural) "these fields" else "this field"} to match the pattern '$pattern', or adjust " +
             s"the policy (e.g. an exemption) if this is intentional."
+        )
+      )
+    }
+  }
+
+  /** Checked once against `contract` as a whole - see
+    * `InterpretedPolicy.ContractPolicy`'s doc for why this doesn't go
+    * through `datasetsInScope` the way the three dataset-level checks do.
+    * A key present but mapped to YAML `null` (`extensions: { owner: }`)
+    * is treated the same as the key being absent entirely - present-but-
+    * blank isn't a real declaration.
+    */
+  private def checkRequireExtension(rule: PolicyRule, contract: Contract, key: String, value: Option[String]): List[PolicyViolation] = {
+    val actual = contract.extensions.get(key).filter(_ != null)
+    val satisfies = actual.exists(v => value.forall(pinned => String.valueOf(v) == pinned))
+    if (satisfies) Nil
+    else {
+      val valueSuffix = value.map(v => s" with value '$v'").getOrElse("")
+      val actualSuffix = actual.map(v => s" (currently '$v')").getOrElse("")
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          dataset = None,
+          s"organizational policy '${rule.id}'${describe(rule)} requires contract '${contract.id}' to declare " +
+            s"extensions.$key$valueSuffix, but it does not$actualSuffix.",
+          s"Add 'extensions: { $key: ${value.getOrElse("<value>")} }' to the contract."
         )
       )
     }

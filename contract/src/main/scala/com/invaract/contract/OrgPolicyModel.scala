@@ -65,18 +65,50 @@ object PolicyType {
     */
   val FieldNamingConvention = "field_naming_convention"
 
-  val All: Set[String] = Set(RequireCatalog, RequireField, FieldNamingConvention)
+  /** The contract itself (not any one dataset) must declare `key` in
+    * `extensions` — optionally pinning its `value` — e.g. every contract
+    * must carry `extensions: { owner: ... }`. Unlike the three types
+    * above, this checks the contract as a whole exactly once, not once
+    * per dataset in scope — `PolicyRule.scope`/`.when` have no effect on
+    * it (see `InterpretedPolicy.ContractPolicy`).
+    */
+  val RequireExtension = "require_extension"
+
+  val All: Set[String] = Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension)
 }
 
 /** A `PolicyRule`, decoded into one of the shapes Invaract currently knows
-  * how to evaluate. Deliberately narrow, mirroring `PolicyType`'s three
-  * members — not a general policy-expression language.
+  * how to evaluate. Deliberately narrow, mirroring `PolicyType`'s members —
+  * not a general policy-expression language.
+  *
+  * Split into two sub-traits by what a rule is checked *against* —
+  * `OrgPolicyEvaluator.evaluateRule` dispatches on this split directly,
+  * rather than a per-case-class special case, so a future contract-level
+  * type (e.g. requiring something of `Contract.status`) has a natural,
+  * already-exhaustive-checked home alongside `RequireExtension`:
+  *
+  *   - `DatasetPolicy` — checked once per dataset in `PolicyRule.scope`
+  *     that also matches `.when`, if set.
+  *   - `ContractPolicy` — checked once against the contract as a whole;
+  *     `scope`/`when` don't apply (there's no per-dataset dimension to
+  *     narrow).
   */
 sealed trait InterpretedPolicy
 object InterpretedPolicy {
-  case class RequireCatalog(technology: Option[String]) extends InterpretedPolicy
-  case class RequireField(name: String, fieldType: Option[String]) extends InterpretedPolicy
-  case class FieldNamingConvention(pattern: String) extends InterpretedPolicy
+  sealed trait DatasetPolicy extends InterpretedPolicy
+  sealed trait ContractPolicy extends InterpretedPolicy
+
+  case class RequireCatalog(technology: Option[String]) extends DatasetPolicy
+  case class RequireField(name: String, fieldType: Option[String]) extends DatasetPolicy
+  case class FieldNamingConvention(pattern: String) extends DatasetPolicy
+
+  /** @param value if set, `extensions(key)` must equal this exact string
+    *   (compared via `String.valueOf`, case-sensitive — extensions values
+    *   are free-form, unlike `RequireField.fieldType`'s closed type-name
+    *   vocabulary, so no case-folding is applied); if unset, any non-null
+    *   value for `key` satisfies the rule.
+    */
+  case class RequireExtension(key: String, value: Option[String]) extends ContractPolicy
 }
 
 /** One organizational policy rule. `id` is required and must be unique
@@ -131,6 +163,10 @@ case class PolicyRule(
       }
     case PolicyType.FieldNamingConvention =>
       properties.get("pattern").map(String.valueOf).filter(PolicyRule.isValidRegex).map(InterpretedPolicy.FieldNamingConvention)
+    case PolicyType.RequireExtension =>
+      properties.get("key").map(String.valueOf).map { key =>
+        InterpretedPolicy.RequireExtension(key, properties.get("value").map(String.valueOf))
+      }
     case _ => None
   }
 }

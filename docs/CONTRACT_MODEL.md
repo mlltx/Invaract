@@ -513,15 +513,47 @@ language:
   `None` for a `pattern` that doesn't even compile as a regex, the same
   "malformed known type" treatment `OrgPolicyValidator` reports as an
   Error.
+- **`require_extension`** (required `key`, optional `value`) — the
+  contract *itself* must declare `key` in its top-level `extensions` map
+  (e.g. `extensions: { owner: data-platform-team }`), optionally pinning
+  it to an exact `value` (case-sensitive string equality). A key present
+  but mapped to YAML `null` (`extensions: { owner: }`) is treated as
+  absent — present-but-blank isn't a real declaration. Unlike the three
+  types above, this checks the *contract as a whole*, once, not once per
+  dataset in scope — see "`DatasetPolicy` vs. `ContractPolicy`" below.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these three shapes — `None` for an unrecognized `ruleType`
+into one of these four shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
 `OrgPolicyValidator` hasn't checked (though a real caller should still
 validate first, so a malformed policy surfaces as a clear, named error
 rather than a silent no-op).
+
+#### `DatasetPolicy` vs. `ContractPolicy`
+
+`InterpretedPolicy` is split into two sub-traits, reflecting the two
+different granularities a policy rule can check at:
+
+- **`DatasetPolicy`** — `require_catalog`, `require_field`, and
+  `field_naming_convention`. `OrgPolicyEvaluator` narrows to
+  `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
+  checks each dataset independently, producing a `PolicyViolation` with
+  `dataset = Some(name)` per offending dataset.
+- **`ContractPolicy`** — `require_extension`. Checked exactly once
+  against `contract` as a whole; `PolicyRule.scope`/`.when` have no
+  effect on it at all (`OrgPolicyEvaluator` never even inspects them for
+  this `ruleType`), and its `PolicyViolation` always carries
+  `dataset = None`. `OrgPolicyValidator` warns — not errors, since the
+  rule still evaluates correctly — if `scope`/`when` are set on a
+  `require_extension` rule anyway, since declaring either is silently
+  inert rather than a mistake the evaluator itself can catch.
+
+A future contract-level check (e.g. a hypothetical `require_status`)
+would join `ContractPolicy`, not `DatasetPolicy` — the split exists so
+adding one doesn't force a dataset-shaped evaluation path onto a check
+that was never about any one dataset.
 
 ### Rule/option injection
 

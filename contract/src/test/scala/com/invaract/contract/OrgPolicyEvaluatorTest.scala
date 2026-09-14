@@ -19,8 +19,13 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
   ): Dataset =
     Dataset(name, s"loc/$name", format = Some("parquet"), schema = Schema(fields), catalog = catalog)
 
-  private def contract(inputs: List[Dataset] = Nil, outputs: List[Dataset] = List(dataset("out")), rules: List[ContractRule] = Nil): Contract =
-    Contract("test_contract", ContractVersion(1, 0, 0), "active", inputs, outputs, rules, Map.empty)
+  private def contract(
+      inputs: List[Dataset] = Nil,
+      outputs: List[Dataset] = List(dataset("out")),
+      rules: List[ContractRule] = Nil,
+      extensions: Map[String, Any] = Map.empty
+  ): Contract =
+    Contract("test_contract", ContractVersion(1, 0, 0), "active", inputs, outputs, rules, extensions)
 
   private val now = LocalDate.of(2026, 1, 1)
 
@@ -205,6 +210,63 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     )
     val c = contract(outputs = List(dataset("out", fields = List(field("amount", tags = Set("financial"))))))
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  // -- require_extension ----------------------------------------------------
+
+  test("require_extension: satisfied when the contract declares the key with any value") {
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val c = contract(extensions = Map("owner" -> "data-platform-team"))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_extension: violated when the contract's extensions don't declare the key at all") {
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val c = contract(extensions = Map.empty)
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.isEmpty, "a contract-level violation names no specific dataset")
+    assert(violations.head.message.contains("owner"))
+  }
+
+  test("require_extension: a key present but mapped to YAML null is treated as not declared") {
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val c = contract(extensions = Map("owner" -> null))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("require_extension: an unrelated extensions key does not satisfy the rule") {
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val c = contract(extensions = Map("team" -> "data-platform"))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("require_extension: value pin satisfied only on an exact, case-sensitive match") {
+    val rule = PolicyRule("status-active", PolicyType.RequireExtension, Map("key" -> "status", "value" -> "active"))
+    val matching = contract(extensions = Map("status" -> "active"))
+    val mismatching = contract(extensions = Map("status" -> "Active"))
+
+    assert(OrgPolicyEvaluator.evaluate(matching, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+    assert(OrgPolicyEvaluator.evaluate(mismatching, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("require_extension: is checked once against the contract, not once per dataset - scope has no effect") {
+    // Two outputs, zero inputs - if this were mistakenly routed through the
+    // per-dataset path (datasetsInScope), scope: outputs would still see 2
+    // datasets and could produce 2 violations, or scope: inputs would see
+    // zero datasets and vacuously produce none. Either would be wrong: this
+    // must always produce exactly one violation, from the contract itself.
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"), scope = PolicyScope.Inputs)
+    val c = contract(outputs = List(dataset("out1"), dataset("out2")), extensions = Map.empty)
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+  }
+
+  test("require_extension: an exemption still suppresses it, the same as any other policy type") {
+    val rule = PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val c = contract(extensions = Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), exemptions = List(PolicyExemption("test_contract", List("owner-required"), "legacy")))
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
   }
 
   // -- mode -------------------------------------------------------------------

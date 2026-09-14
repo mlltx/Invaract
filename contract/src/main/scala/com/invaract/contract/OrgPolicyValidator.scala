@@ -35,6 +35,20 @@ object OrgPolicyValidator {
           s"Policy type '${rule.ruleType}' has malformed or missing properties for its shape" + ruleHint(rule.ruleType)
         )
       }
+      // require_extension checks the contract as a whole (ContractPolicy),
+      // not one dataset at a time - scope/when only ever narrow *which
+      // datasets* a DatasetPolicy rule applies to, so declaring either here
+      // is silently inert rather than a mistake OrgPolicyEvaluator itself
+      // can catch (it never even inspects them for this ruleType). Flagged
+      // as a Warning, not an Error: the rule still evaluates correctly,
+      // just not the way scope/when might make an author expect.
+      if (rule.ruleType == PolicyType.RequireExtension && (rule.scope != PolicyScope.All || rule.when.isDefined)) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          "'scope'/'when' have no effect on require_extension - it checks the contract as a whole, not individual datasets"
+        )
+      }
     }
 
     duplicateNames(policy.policies.map(_.id)).foreach { id =>
@@ -71,6 +85,7 @@ object OrgPolicyValidator {
   private def ruleHint(ruleType: String): String = ruleType match {
     case PolicyType.RequireField           => " (expected a non-empty 'name' property)"
     case PolicyType.FieldNamingConvention  => " (expected a 'pattern' property that compiles as a valid regex)"
+    case PolicyType.RequireExtension       => " (expected a non-empty 'key' property)"
     case _                                 => ""
   }
 
