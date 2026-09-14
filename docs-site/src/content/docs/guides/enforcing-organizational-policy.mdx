@@ -28,6 +28,7 @@ how every job runs today. Everything below only applies once a platform attaches
 
    ```yaml
    # org-policy.yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-org-policy.schema.json
    version: "1.0"
    policies:
      - id: catalog-required
@@ -35,6 +36,11 @@ how every job runs today. Everything below only applies once a platform attaches
        scope: outputs
        description: "All outputs must be registered in a discoverable catalog."
    ```
+
+   The `$schema` comment gives live validation and autocomplete in any editor with the
+   [YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
+   extension — the same convention Invaract's own demo contracts use for
+   `invaract-contract.schema.json`.
 
 2. Three policy types are interpreted today:
 
@@ -114,7 +120,7 @@ What the contract expects:
   output 'sales' at /warehouse/sales: id: long
 
 What the plan contains:
-  UnknownPlan((organizational policy violation - rejected before any plan was checked))
+  UnknownPlan(no transformation plan exists yet - rejected by organizational policy before any plan was analyzed)
 
 Why it violates the contract (1 violation):
   1. [ORG_POLICY_VIOLATION] organizational policy 'catalog-required' (All outputs must be registered in a discoverable catalog.) requires dataset 'sales' to declare catalog.required=true, but it does not.
@@ -202,6 +208,77 @@ prints but never fails the run), `1` on any violation, an unparseable contract, 
 policy document, or no contract files found, `2` on a usage error. The policy file itself
 is excluded from the scan even when it lives in the same directory as the contracts it
 governs.
+
+## Get advance notice before an exemption lapses
+
+An exemption stops applying the moment its `reviewBy` date passes — the violation it was
+suppressing simply re-surfaces, silently, the next time that job runs. `OrgPolicyLintCli`
+reports any exemption expiring soon *before* that happens, by default within the next 30
+days, on every run — no flag needed:
+
+```
+[WARN] exemption for contract 'legacy_orders' (policies: catalog-required) expires 2026-09-26 (in 12 days): predates policy; migration tracked in JIRA-1234
+[ OK ] contracts/legacy_orders.yaml
+```
+
+Real, unedited output — the exact dates and day count will differ depending on when you
+run it, since they're relative to today. Never affects the exit code: the exemption is
+still fully in force, this is a look-ahead, not a violation. Widen or narrow the window
+with `--warn-expiring-within-days`:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --warn-expiring-within-days 14 org-policy.yaml contracts/"
+```
+
+## Test your own policy before deploying it
+
+`OrgPolicyParser`/`OrgPolicyEvaluator` are ordinary public Scala API — nothing about them
+requires going through the CLI or a real Spark job. Writing a small test suite against your
+own policy file, the same way you'd test any other config that gates production behavior,
+lets you evolve it with the same confidence Invaract's own fixtures give its contributors.
+
+Add `com.invaract:invaract-contract` as a test (or compile) dependency in your own policy
+repository's `build.sbt`, then assert directly against representative contracts — real ones
+from your repo, or ones built inline for a specific case you want to pin down:
+
+```scala
+import com.invaract.contract._
+import org.scalatest.funsuite.AnyFunSuite
+
+class OrgPolicyComplianceTest extends AnyFunSuite {
+  private val policy = OrgPolicyParser.parseFile("org-policy.yaml")
+
+  test("a compliant contract satisfies catalog-required") {
+    val contract = ContractParser.parseFile("contracts/customer_orders.yaml")
+    val evaluation = OrgPolicyEvaluator.evaluate(contract, policy)
+    assert(!evaluation.hasBlockingViolations, evaluation.enforceViolations.mkString("\n"))
+  }
+
+  test("a contract missing catalog registration is rejected by catalog-required") {
+    val contract = ContractParser.parse(
+      """id: no_catalog_example
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /tmp/no-catalog
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: long
+        |""".stripMargin)
+    val evaluation = OrgPolicyEvaluator.evaluate(contract, policy)
+    assert(evaluation.enforceViolations.exists(_.policyId == "catalog-required"))
+  }
+}
+```
+
+Verified against a real run before publishing this example — both assertions pass exactly
+as shown. This is also the right place to pin down a rule's *boundary* the same way
+Invaract's own test suite does for `OrgPolicyEvaluator` itself: a dataset with no fields
+carrying a `when: sensitivityTag`, a `scope: inputs` rule against a contract with no
+inputs, an exemption exactly on its `reviewBy` date versus one day past it — the cases
+most likely to surprise you later are the ones worth asserting on now, while the fix is a
+one-line YAML edit instead of a failed production job.
 
 ## What's next
 

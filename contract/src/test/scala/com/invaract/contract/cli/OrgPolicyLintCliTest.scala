@@ -201,4 +201,77 @@ class OrgPolicyLintCliTest extends AnyFunSuite {
     assert(code == 0)
     assert(out.contains("[ OK ]"))
   }
+
+  // -- exemption expiry look-ahead -----------------------------------------
+
+  private def policyWithExemptionExpiring(daysFromNow: Int): String =
+    s"""version: "1.0"
+       |policies:
+       |  - id: catalog-required
+       |    type: require_catalog
+       |    scope: outputs
+       |exemptions:
+       |  - contractId: violating
+       |    policyIds: [catalog-required]
+       |    reason: "migration pending"
+       |    reviewBy: "${java.time.LocalDate.now().plusDays(daysFromNow.toLong)}"
+       |""".stripMargin
+
+  test("an exemption expiring within the default 30-day window is reported, without affecting the exit code") {
+    val dir = tempDir()
+    val policyPath = writeFile(dir, "policy.yaml", policyWithExemptionExpiring(10))
+    writeFile(dir, "violating.yaml", violatingContract)
+    val (code, out, _) = runCapturing(Array(policyPath.toString, dir.toString))
+    assert(code == 0, "a look-ahead warning must never fail the run - the exemption is still fully active")
+    assert(out.contains("expires"))
+    assert(out.contains("contract 'violating'"))
+    assert(out.contains("catalog-required"))
+    assert(out.contains("migration pending"))
+  }
+
+  test("an exemption expiring well outside the default window is not reported") {
+    val dir = tempDir()
+    val policyPath = writeFile(dir, "policy.yaml", policyWithExemptionExpiring(90))
+    writeFile(dir, "violating.yaml", violatingContract)
+    val (_, out, _) = runCapturing(Array(policyPath.toString, dir.toString))
+    assert(!out.contains("expires"))
+  }
+
+  test("--warn-expiring-within-days widens the window to catch an exemption the default would miss") {
+    val dir = tempDir()
+    val policyPath = writeFile(dir, "policy.yaml", policyWithExemptionExpiring(90))
+    writeFile(dir, "violating.yaml", violatingContract)
+    val (code, out, _) = runCapturing(Array("--warn-expiring-within-days", "120", policyPath.toString, dir.toString))
+    assert(code == 0)
+    assert(out.contains("expires"))
+  }
+
+  test("--warn-expiring-within-days works regardless of where it appears among the other arguments") {
+    val dir = tempDir()
+    val policyPath = writeFile(dir, "policy.yaml", policyWithExemptionExpiring(90))
+    writeFile(dir, "violating.yaml", violatingContract)
+    val (_, out, _) = runCapturing(Array(policyPath.toString, dir.toString, "--warn-expiring-within-days", "120"))
+    assert(out.contains("expires"))
+  }
+
+  test("--warn-expiring-within-days with a non-integer value is a usage error, exit code 2") {
+    val (code, _, err) = runCapturing(Array("--warn-expiring-within-days", "soon", "policy.yaml", "contracts/"))
+    assert(code == 2)
+    assert(err.contains("--warn-expiring-within-days"))
+  }
+
+  test("--warn-expiring-within-days with no following value is a usage error, exit code 2") {
+    val (code, _, err) = runCapturing(Array("policy.yaml", "contracts/", "--warn-expiring-within-days"))
+    assert(code == 2)
+    assert(err.contains("--warn-expiring-within-days"))
+  }
+
+  test("no exemptions at all: no expiry warning, ordinary run unaffected") {
+    val dir = tempDir()
+    val policyPath = writeFile(dir, "policy.yaml", requireCatalogPolicy)
+    writeFile(dir, "compliant.yaml", compliantContract)
+    val (code, out, _) = runCapturing(Array(policyPath.toString, dir.toString))
+    assert(code == 0)
+    assert(!out.contains("expires"))
+  }
 }

@@ -632,6 +632,13 @@ writing this CLI's tests — see `OrgPolicyLintCliTest`). Meant for a
 contracts repository's own CI/pre-commit gate: an author gets policy
 feedback at authoring time, not only the next time a job runs.
 
+Also reports, on every run, any exemption whose `reviewBy` falls within
+the next `--warn-expiring-within-days` days (default 30, backed by
+`OrgPolicyEvaluator.expiringExemptions`) — a proactive look-ahead a
+platform team can act on before an exemption lapses, rather than
+`OrgPolicyValidator`'s Warning, which only fires once it already has.
+Never affects the exit code: the exemption named is still fully active.
+
 ### JSON Schema and fixtures
 
 `contract/schema/invaract-org-policy.schema.json` (Draft 2020-12) is the

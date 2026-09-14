@@ -66,6 +66,28 @@ object OrgPolicyEvaluator {
     if (policy.inject.rules.isEmpty) contract
     else contract.copy(rules = contract.rules ++ policy.inject.rules.filterNot(contract.rules.contains))
 
+  /** Every exemption in `policy` whose `reviewBy` falls within the next
+    * `withinDays` days of `now` — still active (an already-expired one is
+    * `OrgPolicyValidator`'s Warning to report, a different, past-tense
+    * concern), but due to lapse soon. An exemption with no `reviewBy` at
+    * all never appears here, since it never expires. Ordered by `reviewBy`
+    * ascending, so the soonest-to-lapse exemption is always first — the
+    * one a platform team most needs to act on.
+    *
+    * Meant for a proactive look-ahead (e.g. `OrgPolicyLintCli`'s
+    * `--warn-expiring-within-days`), run *before* an exemption becomes
+    * `OrgPolicyValidator`'s after-the-fact Warning — the difference
+    * between a platform team choosing to renew or retire an exemption on
+    * their own schedule, and finding out only once a job has already
+    * started failing.
+    */
+  def expiringExemptions(policy: OrgPolicy, withinDays: Int, now: LocalDate = LocalDate.now()): List[PolicyExemption] = {
+    val horizon = now.plusDays(withinDays.toLong)
+    policy.exemptions
+      .filter(_.reviewBy.exists(d => !d.isBefore(now) && !d.isAfter(horizon)))
+      .sortBy(_.reviewBy.get.toEpochDay)
+  }
+
   private def evaluateRule(
       contract: Contract,
       rule: PolicyRule,

@@ -316,4 +316,46 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     val result = OrgPolicyEvaluator.applyInjectedRules(c, policy)
     assert(result.rules == List(ContractRule("forbid_unconditional_delete", Map.empty)))
   }
+
+  // -- expiringExemptions --------------------------------------------------
+
+  private def exemption(contractId: String, reviewBy: Option[LocalDate]): PolicyExemption =
+    PolicyExemption(contractId, List("some-policy"), "reason", reviewBy)
+
+  test("expiringExemptions: empty when the policy has no exemptions at all") {
+    assert(OrgPolicyEvaluator.expiringExemptions(OrgPolicy("1.0"), withinDays = 30, now).isEmpty)
+  }
+
+  test("expiringExemptions: an exemption with no reviewBy never appears, however wide the window") {
+    val policy = OrgPolicy("1.0", exemptions = List(exemption("c", None)))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 36500, now).isEmpty)
+  }
+
+  test("expiringExemptions: an already-past-due exemption does not appear (that's OrgPolicyValidator's Warning, not a look-ahead)") {
+    val policy = OrgPolicy("1.0", exemptions = List(exemption("c", Some(now.minusDays(1)))))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 30, now).isEmpty)
+  }
+
+  test("expiringExemptions: an exemption expiring exactly today is included at the lower boundary") {
+    val policy = OrgPolicy("1.0", exemptions = List(exemption("c", Some(now))))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 0, now) == List(policy.exemptions.head))
+  }
+
+  test("expiringExemptions: an exemption expiring exactly on the horizon is included at the upper boundary") {
+    val policy = OrgPolicy("1.0", exemptions = List(exemption("c", Some(now.plusDays(30)))))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 30, now) == List(policy.exemptions.head))
+  }
+
+  test("expiringExemptions: an exemption expiring one day past the horizon is excluded") {
+    val policy = OrgPolicy("1.0", exemptions = List(exemption("c", Some(now.plusDays(31)))))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 30, now).isEmpty)
+  }
+
+  test("expiringExemptions: results are ordered by reviewBy ascending, soonest first") {
+    val soon = exemption("a", Some(now.plusDays(5)))
+    val sooner = exemption("b", Some(now.plusDays(1)))
+    val later = exemption("c", Some(now.plusDays(20)))
+    val policy = OrgPolicy("1.0", exemptions = List(soon, later, sooner))
+    assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 30, now) == List(sooner, soon, later))
+  }
 }

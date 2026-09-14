@@ -269,8 +269,15 @@ object ContractEnforcementRule {
           val violations = evaluation.enforceViolations.map(toViolation)
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
           publishValidation(governedContract, result, sink, applicationId)
-          val describedPlan =
-            com.invaract.ir.UnknownPlan("(organizational policy violation - rejected before any plan was checked)")
+          // No parenthesized fragment here: PlanPrinter renders UnknownPlan
+          // as "UnknownPlan(<description>)" verbatim - wrapping the
+          // description in its own parens too (an earlier version of this
+          // message did) produced a confusing doubled "((...))" that read
+          // like a rendering bug on first encounter, rather than the true,
+          // simple fact that no plan exists yet to show.
+          val describedPlan = com.invaract.ir.UnknownPlan(
+            "no transformation plan exists yet - rejected by organizational policy before any plan was analyzed"
+          )
           throw new ContractViolationException(result, explain(governedContract, describedPlan, result))
         } else if (evaluation.warnViolations.nonEmpty) {
           // Never blocks - published (if a sink is configured) so a
@@ -651,7 +658,12 @@ object ContractEnforcementRule {
       }
       val result = VerificationResult.of(contractRef, violations)
       publishValidation(contract, result, sink, applicationId)
-      val describedPlan = com.invaract.ir.UnknownPlan("(contract validation failed before any plan was checked)")
+      // See enforceOrgPolicy's identical describedPlan for why this reads
+      // as a plain sentence rather than a parenthesized fragment: PlanPrinter
+      // already wraps it as "UnknownPlan(<description>)", so an inner
+      // "(...)" too would render as a confusing doubled "((...))".
+      val describedPlan =
+        com.invaract.ir.UnknownPlan("no transformation plan exists yet - contract validation failed before any plan was checked")
       throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
   }
