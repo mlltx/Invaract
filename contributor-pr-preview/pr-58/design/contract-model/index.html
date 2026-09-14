@@ -682,15 +682,45 @@ not <code dir="auto">find()</code>: a partial match doesn’t satisfy it). <code
 <code dir="auto">None</code> for a <code dir="auto">pattern</code> that doesn’t even compile as a regex, the same
 “malformed known type” treatment <code dir="auto">OrgPolicyValidator</code> reports as an
 Error.</li>
+<li><strong><code dir="auto">require_extension</code></strong> (required <code dir="auto">key</code>, optional <code dir="auto">value</code>) — the
+contract <em>itself</em> must declare <code dir="auto">key</code> in its top-level <code dir="auto">extensions</code> map
+(e.g. <code dir="auto">extensions: { owner: data-platform-team }</code>), optionally pinning
+it to an exact <code dir="auto">value</code> (case-sensitive string equality). A key present
+but mapped to YAML <code dir="auto">null</code> (<code dir="auto">extensions: { owner: }</code>) is treated as
+absent — present-but-blank isn’t a real declaration. Unlike the three
+types above, this checks the <em>contract as a whole</em>, once, not once per
+dataset in scope — see “<code dir="auto">DatasetPolicy</code> vs. <code dir="auto">ContractPolicy</code>” below.</li>
 </ul>
 <p><code dir="auto">PolicyRule.interpret: Option[InterpretedPolicy]</code> decodes <code dir="auto">properties</code>
-into one of these three shapes — <code dir="auto">None</code> for an unrecognized <code dir="auto">ruleType</code>
+into one of these four shapes — <code dir="auto">None</code> for an unrecognized <code dir="auto">ruleType</code>
 <em>or</em> malformed properties for a recognized one, the identical
 total/safe design <code dir="auto">ContractRule.interpret</code> already documents; this is
 what lets <code dir="auto">OrgPolicyEvaluator.evaluate</code> run safely even against a policy
 <code dir="auto">OrgPolicyValidator</code> hasn’t checked (though a real caller should still
 validate first, so a malformed policy surfaces as a clear, named error
 rather than a silent no-op).</p>
+<div class="sl-heading-wrapper level-h4"><h4 id="datasetpolicy-vs-contractpolicy"><code dir="auto">DatasetPolicy</code> vs. <code dir="auto">ContractPolicy</code></h4><a class="sl-anchor-link" href="#datasetpolicy-vs-contractpolicy"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “DatasetPolicy vs. ContractPolicy”</span></a></div>
+<p><code dir="auto">InterpretedPolicy</code> is split into two sub-traits, reflecting the two
+different granularities a policy rule can check at:</p>
+<ul>
+<li><strong><code dir="auto">DatasetPolicy</code></strong> — <code dir="auto">require_catalog</code>, <code dir="auto">require_field</code>, and
+<code dir="auto">field_naming_convention</code>. <code dir="auto">OrgPolicyEvaluator</code> narrows to
+<code dir="auto">datasetsInScope(contract, rule.scope)</code> (honoring <code dir="auto">scope</code>/<code dir="auto">when</code>) and
+checks each dataset independently, producing a <code dir="auto">PolicyViolation</code> with
+<code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
+<li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code>. Checked exactly once
+against <code dir="auto">contract</code> as a whole; <code dir="auto">PolicyRule.scope</code>/<code dir="auto">.when</code> have no
+effect on it at all (<code dir="auto">OrgPolicyEvaluator</code> never even inspects them for
+this <code dir="auto">ruleType</code>), and its <code dir="auto">PolicyViolation</code> always carries
+<code dir="auto">dataset = None</code>. <code dir="auto">OrgPolicyValidator</code> warns — not errors, since the
+rule still evaluates correctly — if <code dir="auto">scope</code>/<code dir="auto">when</code> are set on a
+<code dir="auto">require_extension</code> rule anyway, since declaring either is silently
+inert rather than a mistake the evaluator itself can catch.</li>
+</ul>
+<p>A future contract-level check (e.g. a hypothetical <code dir="auto">require_status</code>)
+would join <code dir="auto">ContractPolicy</code>, not <code dir="auto">DatasetPolicy</code> — the split exists so
+adding one doesn’t force a dataset-shaped evaluation path onto a check
+that was never about any one dataset.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="ruleoption-injection">Rule/option injection</h3><a class="sl-anchor-link" href="#ruleoption-injection"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Rule/option injection”</span></a></div>
 <p>Beyond the three policy types above (which check the contract <em>document’s
 declared shape</em>), <code dir="auto">OrgPolicy.inject</code> lets a policy contribute to what’s
