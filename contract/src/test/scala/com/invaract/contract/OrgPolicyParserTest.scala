@@ -75,6 +75,22 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireExtension("status", Some("active"))))
   }
 
+  test("parse should correctly decode require_format, both a scalar and a list of formats") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: delta-only
+        |    type: require_format
+        |    formats: delta
+        |  - id: lakehouse-only
+        |    type: require_format
+        |    formats: [delta, iceberg]
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies(0).interpret.contains(InterpretedPolicy.RequireFormat(List("delta"))))
+    assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireFormat(List("delta", "iceberg"))))
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 

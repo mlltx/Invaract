@@ -86,6 +86,7 @@ object OrgPolicyValidator {
     case PolicyType.RequireField           => " (expected a non-empty 'name' property)"
     case PolicyType.FieldNamingConvention  => " (expected a 'pattern' property that compiles as a valid regex)"
     case PolicyType.RequireExtension       => " (expected a non-empty 'key' property)"
+    case PolicyType.RequireFormat          => " (expected a non-empty 'formats' property - a single format or a list)"
     case _                                 => ""
   }
 

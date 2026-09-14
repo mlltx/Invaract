@@ -136,6 +136,52 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
   }
 
+  // -- require_format ---------------------------------------------------------
+
+  test("require_format: satisfied when the dataset's format matches, single scalar shorthand") {
+    val rule = PolicyRule("delta-only", PolicyType.RequireFormat, Map("formats" -> "delta"), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(format = Some("delta"))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_format: satisfied when the dataset's format matches any entry in a list") {
+    val rule =
+      PolicyRule("lakehouse-only", PolicyType.RequireFormat, Map("formats" -> List("delta", "iceberg")), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(format = Some("iceberg"))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_format: matched case-insensitively") {
+    val rule = PolicyRule("delta-only", PolicyType.RequireFormat, Map("formats" -> "Delta"), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(format = Some("DELTA"))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_format: violated when the dataset's format is not in the allowed list") {
+    val rule =
+      PolicyRule("lakehouse-only", PolicyType.RequireFormat, Map("formats" -> List("delta", "iceberg")), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(format = Some("parquet"))))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("parquet"))
+    assert(violations.head.dataset.contains("out"))
+  }
+
+  test("require_format: violated when the dataset declares no format at all") {
+    val rule = PolicyRule("delta-only", PolicyType.RequireFormat, Map("formats" -> "delta"), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(format = None)))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("no format declared at all"))
+  }
+
+  test("require_format: an empty formats list is malformed - interpret returns None, no violation raised") {
+    val rule = PolicyRule("empty-list", PolicyType.RequireFormat, Map("formats" -> List.empty[String]), scope = PolicyScope.Outputs)
+    assert(rule.interpret.isEmpty)
+    val c = contract(outputs = List(dataset("out").copy(format = None)))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

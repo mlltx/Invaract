@@ -42,7 +42,7 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Four policy types are interpreted today:
+2. Five policy types are interpreted today:
 
    | Type | Properties | Checks |
    |---|---|---|
@@ -50,6 +50,7 @@ how every job runs today. Everything below only applies once a platform attaches
    | `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name`, optionally of `fieldType`. |
    | `field_naming_convention` | `pattern` (required) | Every field name — including nested struct fields — fully matches the regular expression `pattern`. |
    | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
+   | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` (a string or a list), matched case-insensitively. |
 
    ```yaml
    policies:
@@ -302,6 +303,87 @@ carrying a `when: sensitivityTag`, a `scope: inputs` rule against a contract wit
 inputs, an exemption exactly on its `reviewBy` date versus one day past it — the cases
 most likely to surprise you later are the ones worth asserting on now, while the fix is a
 one-line YAML edit instead of a failed production job.
+
+## Common organizational policy patterns
+
+The five policy types above compose into most standardization an organization actually
+wants to enforce. A few real-world patterns, each a complete, working rule:
+
+**Cost attribution.** Every contract must be attributable to a cost center, so nothing
+ships without someone paying for it:
+
+```yaml
+- id: cost-center-required
+  type: require_extension
+  key: costCenter
+  description: "Every contract must declare a cost center for chargeback."
+```
+
+**Data retention.** Every contract must state how long its data lives, rather than
+leaving that decision undocumented until a storage bill or an audit forces the question:
+
+```yaml
+- id: retention-declared
+  type: require_extension
+  key: retentionDays
+  description: "Every contract must declare its data's retention period, in days."
+```
+
+**Regulatory basis.** Every contract must record the legal basis it relies on to process
+its data:
+
+```yaml
+- id: legal-basis-required
+  type: require_extension
+  key: gdprBasis
+  description: "Every contract must declare its GDPR processing basis."
+```
+
+<Aside type="caution" title="require_extension can't be conditioned on a dataset's own tags">
+This rule applies to *every* contract in the document, not only ones that actually
+handle personal data — `require_extension` is a `ContractPolicy` (see
+[Reference → Organizational Policy Format](/reference/org-policy-format/)), and `when` has
+no effect on it. If you only want this enforced on contracts carrying `pii`-tagged fields,
+today's options are a separate policy document scoped to just those contracts, or waiting
+for genuine conditional-policy support (an open idea, not yet built).
+</Aside>
+
+**On-call and escalation routing.** Every contract must name where a rejected write's
+first responder should be paged, so an enforcement failure in production has a known
+audience, not just a stack trace in a log nobody's watching:
+
+```yaml
+- id: escalation-channel-required
+  type: require_extension
+  key: slackChannel
+  description: "Every contract must name the Slack channel to page on enforcement failure."
+```
+
+**Storage format standardization.** Every output must be written in an approved
+lakehouse format, never raw `parquet` or `csv`:
+
+```yaml
+- id: lakehouse-formats-only
+  type: require_format
+  formats: [delta, iceberg]
+  scope: outputs
+  description: "Outputs must use an approved lakehouse format."
+```
+
+**PII field hygiene.** Every dataset carrying a `pii`-tagged field must also carry an
+explicit `pii_reviewed` flag — combining `require_field` with `when` so the check only
+applies where it's actually relevant:
+
+```yaml
+- id: pii-review-flag-required
+  type: require_field
+  name: pii_reviewed
+  fieldType: boolean
+  scope: outputs
+  when:
+    sensitivityTag: pii
+  description: "Any output carrying PII must carry an explicit review flag."
+```
 
 ## What's next
 

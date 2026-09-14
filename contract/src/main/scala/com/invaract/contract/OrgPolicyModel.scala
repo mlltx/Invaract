@@ -4,6 +4,7 @@
 package com.invaract.contract
 
 import java.time.LocalDate
+import scala.collection.JavaConverters._
 
 /** Raised when an organizational policy document cannot be parsed into the
   * object model. See `ContractParseException`'s analogous role for
@@ -74,7 +75,16 @@ object PolicyType {
     */
   val RequireExtension = "require_extension"
 
-  val All: Set[String] = Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension)
+  /** A dataset must declare `format` as one of `formats` — e.g. only
+    * `delta`/`iceberg`, never raw `parquet`/`csv` in production outputs.
+    * Checked case-insensitively against `Dataset.format`, which must
+    * itself be present (an output with no declared format at all doesn't
+    * satisfy this, the same as any other required-but-absent check in
+    * this file).
+    */
+  val RequireFormat = "require_format"
+
+  val All: Set[String] = Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension, RequireFormat)
 }
 
 /** A `PolicyRule`, decoded into one of the shapes Invaract currently knows
@@ -109,6 +119,11 @@ object InterpretedPolicy {
     *   value for `key` satisfies the rule.
     */
   case class RequireExtension(key: String, value: Option[String]) extends ContractPolicy
+
+  /** @param formats at least one allowed format name (e.g. `"delta"`),
+    *   matched case-insensitively against `Dataset.format`.
+    */
+  case class RequireFormat(formats: List[String]) extends DatasetPolicy
 }
 
 /** One organizational policy rule. `id` is required and must be unique
@@ -167,6 +182,8 @@ case class PolicyRule(
       properties.get("key").map(String.valueOf).map { key =>
         InterpretedPolicy.RequireExtension(key, properties.get("value").map(String.valueOf))
       }
+    case PolicyType.RequireFormat =>
+      PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case _ => None
   }
 }
@@ -179,6 +196,22 @@ object PolicyRule {
     } catch {
       case _: java.util.regex.PatternSyntaxException => false
     }
+
+  /** Coerces `require_format`'s `formats` property, accepting either a YAML
+    * list (`formats: [delta, iceberg]`, decoded by SnakeYAML as a
+    * `java.util.List`) or a bare scalar (`formats: delta`) as shorthand for
+    * a single-element list — every other `PolicyRule` property is a single
+    * scalar, so this is the one place properties needs list coercion at
+    * all. `None` when the property is absent; an empty list is possible
+    * (e.g. `formats: []`) and is filtered out by the caller, the same
+    * "empty means malformed" treatment `pattern`/`name` already get.
+    */
+  private[contract] def parseFormats(raw: Option[Any]): Option[List[String]] = raw match {
+    case Some(list: java.util.List[_]) => Some(list.asScala.toList.map(String.valueOf).filter(_.nonEmpty))
+    case Some(list: Seq[_])            => Some(list.toList.map(String.valueOf).filter(_.nonEmpty))
+    case Some(scalar)                  => Some(List(String.valueOf(scalar)).filter(_.nonEmpty))
+    case None                          => None
+  }
 }
 
 /** A platform-controlled exception to one or more policy rules, for one

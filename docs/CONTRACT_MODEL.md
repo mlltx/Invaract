@@ -518,12 +518,21 @@ language:
   (e.g. `extensions: { owner: data-platform-team }`), optionally pinning
   it to an exact `value` (case-sensitive string equality). A key present
   but mapped to YAML `null` (`extensions: { owner: }`) is treated as
-  absent — present-but-blank isn't a real declaration. Unlike the three
-  types above, this checks the *contract as a whole*, once, not once per
+  absent — present-but-blank isn't a real declaration. Unlike the other
+  types, this checks the *contract as a whole*, once, not once per
   dataset in scope — see "`DatasetPolicy` vs. `ContractPolicy`" below.
+- **`require_format`** (required `formats`) — a dataset must declare
+  `format` as one of `formats`, matched case-insensitively (e.g. every
+  output must be `"delta"` or `"iceberg"`, never raw `"parquet"`/`"csv"`).
+  `formats` accepts either a single scalar (`formats: delta`) or a YAML
+  list (`formats: [delta, iceberg]`) — the one property in this file that
+  needs list coercion at all, handled by `PolicyRule.parseFormats`. A
+  dataset with no `format` declared at all does not satisfy this, the
+  same "required but absent" treatment every other check in this section
+  gives.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these four shapes — `None` for an unrecognized `ruleType`
+into one of these five shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -536,8 +545,9 @@ rather than a silent no-op).
 `InterpretedPolicy` is split into two sub-traits, reflecting the two
 different granularities a policy rule can check at:
 
-- **`DatasetPolicy`** — `require_catalog`, `require_field`, and
-  `field_naming_convention`. `OrgPolicyEvaluator` narrows to
+- **`DatasetPolicy`** — `require_catalog`, `require_field`,
+  `field_naming_convention`, and `require_format`. `OrgPolicyEvaluator`
+  narrows to
   `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
   checks each dataset independently, producing a `PolicyViolation` with
   `dataset = Some(name)` per offending dataset.
@@ -557,7 +567,7 @@ that was never about any one dataset.
 
 ### Rule/option injection
 
-Beyond the three policy types above (which check the contract *document's
+Beyond the policy types above (which check the contract *document's
 declared shape*), `OrgPolicy.inject` lets a policy contribute to what's
 already checked, reusing the existing engine wholesale instead of needing
 a second evaluator for behavioral concerns:

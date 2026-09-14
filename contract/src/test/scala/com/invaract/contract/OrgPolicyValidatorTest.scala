@@ -91,6 +91,23 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(OrgPolicyValidator.validate(policy).warnings.isEmpty)
   }
 
+  test("require_format with no 'formats' property is an Error, not silently accepted") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireFormat, Map.empty)))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_format with an empty 'formats' list is an Error") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireFormat, Map("formats" -> List.empty[String]))))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_format with a 'formats' property is valid") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("delta-only", PolicyType.RequireFormat, Map("formats" -> "delta"))))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
   test("duplicate policy ids are an Error") {
     val policy = OrgPolicy(
       "1.0",

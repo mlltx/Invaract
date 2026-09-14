@@ -110,6 +110,8 @@ object OrgPolicyEvaluator {
               datasets.flatMap(checkRequireField(rule, _, name, fieldType))
             case InterpretedPolicy.FieldNamingConvention(pattern) =>
               datasets.flatMap(checkFieldNamingConvention(rule, _, pattern))
+            case InterpretedPolicy.RequireFormat(formats) =>
+              datasets.flatMap(checkRequireFormat(rule, _, formats))
           }
       }
   }
@@ -190,6 +192,26 @@ object OrgPolicyEvaluator {
             s"${if (plural) "do" else "does"} not.",
           s"Rename ${if (plural) "these fields" else "this field"} to match the pattern '$pattern', or adjust " +
             s"the policy (e.g. an exemption) if this is intentional."
+        )
+      )
+    }
+  }
+
+  private def checkRequireFormat(rule: PolicyRule, dataset: Dataset, formats: List[String]): List[PolicyViolation] = {
+    val satisfies = dataset.format.exists(f => formats.exists(_.equalsIgnoreCase(f)))
+    if (satisfies) Nil
+    else {
+      val allowedList = formats.mkString(", ")
+      val actualSuffix = dataset.format.map(f => s" (currently '$f')").getOrElse(" (no format declared at all)")
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare " +
+            s"a format of one of [$allowedList], but it does not$actualSuffix.",
+          s"Set dataset '${dataset.name}''s format to one of: $allowedList."
         )
       )
     }
