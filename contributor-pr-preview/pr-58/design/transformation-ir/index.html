@@ -1,0 +1,663 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Transformation Intermediate Representation | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/design/transformation-ir/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-58/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-58/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="Transformation Intermediate Representation"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/design/transformation-ir/"/><meta property="og:locale" content="en"/><meta property="og:description" content="This document describes the Invaract transformation IR delivered in Phase 2: an engine-independent representation of a data transformation, precise enou..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="This document describes the Invaract transformation IR delivered in Phase 2: an engine-independent representation of a data transformation, precise enou..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-58/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/Search.astro_astro_type_script_index_0_lang.Dg49BWmw.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="0b19mdr" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/transformation-ir/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#critical-principle-semantics-not-syntax" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Critical principle: semantics, not syntax</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-ir" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The IR</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#expressions-exprscala--compute-a-value" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Expressions (Expr.scala) — compute a value</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#plans-planscala--transform-datasets" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Plans (Plan.scala) — transform datasets</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#a-note-on-aggregategroupby" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">A note on Aggregate.groupBy</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#row-level-dml-rowmutationscala" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Row-level DML (RowMutation.scala)</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#worked-example" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Worked example</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#lineage-tracing-lineagescala" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Lineage tracing (Lineage.scala)</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#known-limitations" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Known limitations</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#rendering-planprinterscala" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Rendering (PlanPrinter.scala)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#what-phase-2-does-not-do-yet" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">What Phase 2 does not do yet</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#testing" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Testing</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#mutation-testing" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Mutation testing</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#api-compatibility" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">API compatibility</span></a></li></ul></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#critical-principle-semantics-not-syntax" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Critical principle: semantics, not syntax</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-ir" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The IR</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#expressions-exprscala--compute-a-value" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Expressions (Expr.scala) — compute a value</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#plans-planscala--transform-datasets" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Plans (Plan.scala) — transform datasets</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#a-note-on-aggregategroupby" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">A note on Aggregate.groupBy</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#row-level-dml-rowmutationscala" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Row-level DML (RowMutation.scala)</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#worked-example" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Worked example</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#lineage-tracing-lineagescala" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Lineage tracing (Lineage.scala)</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#known-limitations" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Known limitations</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#rendering-planprinterscala" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Rendering (PlanPrinter.scala)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#what-phase-2-does-not-do-yet" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">What Phase 2 does not do yet</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#testing" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Testing</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#mutation-testing" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Mutation testing</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#api-compatibility" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">API compatibility</span></a></li></ul></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">Transformation Intermediate Representation</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/TRANSFORMATION_IR.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>This document describes the Invaract transformation IR delivered in Phase
+2: an engine-independent representation of a data transformation, precise
+enough to establish column-level lineage and, eventually, verify a
+transformation against a <a href="/Invaract/contributor-pr-preview/pr-58/design/contract-model/">contract</a>.</p>
+<p>Code lives in the <code dir="auto">ir/</code> sbt module (<code dir="auto">com.invaract.ir</code> package). It has no
+dependency on Spark, or on the <code dir="auto">contract</code> module — it is pure Scala data
+structures and algorithms over them. That independence is the point: this
+is meant to be the thing a Spark logical plan, a SQL AST, or a dbt model
+graph all get <em>translated into</em>, so that lineage tracing and contract
+verification are written once, against this IR, rather than once per
+engine.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="critical-principle-semantics-not-syntax">Critical principle: semantics, not syntax</h2><a class="sl-anchor-link" href="#critical-principle-semantics-not-syntax"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Critical principle: semantics, not syntax”</span></a></div>
+<p>The instruction that shaped every design decision in this module: <strong>do not
+build an IR that mirrors Spark’s Catalyst classes one-for-one.</strong> Catalyst
+has dozens of <code dir="auto">Expression</code> subclasses (<code dir="auto">Add</code>, <code dir="auto">Subtract</code>, <code dir="auto">EqualTo</code>,
+<code dir="auto">GreaterThan</code>, <code dir="auto">And</code>, <code dir="auto">Or</code>, <code dir="auto">Cast</code>, …), an <code dir="auto">Alias</code> that’s itself an
+expression wrapping any other expression, and attribute resolution via
+globally unique <code dir="auto">exprId</code>s. None of that is <em>transformation semantics</em> on
+its own — it’s implementation machinery for one specific execution
+engine’s optimizer. The IR distinguishes node kinds only where the
+distinction is semantically load-bearing for lineage, contract
+verification, or (eventually) fingerprinting/diffing a transformation’s
+business logic — never merely because Catalyst happens to have a
+dedicated class for it.</p>
+<p>Concrete decisions that follow from that:</p>
+<ol>
+<li>
+<p><strong>Named categories, not one node per Catalyst class — but not one
+node per <em>concept</em> either.</strong> Arithmetic (<code dir="auto">+</code>, <code dir="auto">-</code>, <code dir="auto">*</code>, <code dir="auto">/</code>, <code dir="auto">%</code>, unary
+negation), comparison (<code dir="auto">=</code>, <code dir="auto">&#x3C;=></code>, <code dir="auto">&#x3C;</code>, <code dir="auto">&#x3C;=</code>, <code dir="auto">></code>, <code dir="auto">>=</code>), boolean
+combinators (<code dir="auto">AND</code>/<code dir="auto">OR</code>/<code dir="auto">NOT</code>), casts, and conditionals (<code dir="auto">CASE WHEN</code>)
+each get their own node — <code dir="auto">Arithmetic</code>, <code dir="auto">Comparison</code>, <code dir="auto">BooleanExpr</code>,
+<code dir="auto">Cast</code>, <code dir="auto">Conditional</code> — because a future semantic diff needs to say “a
+filter’s comparison operator flipped” or “an arithmetic operator
+changed,” not just “some function call’s arguments differ.” Everything
+else that computes a scalar value per row — string/date/math functions,
+null checks, non-aggregate window functions (<code dir="auto">RANK</code>, <code dir="auto">ROW_NUMBER</code>,
+<code dir="auto">LAG</code>, …) — still collapses into one catch-all, <code dir="auto">Function(name, args)</code>, exactly as the original single-<code dir="auto">FunctionCall</code> design did: Spark
+alone exposes dozens of these, and enumerating a node type per built-in
+function would defeat the point of a small IR. <code dir="auto">AggregateCall</code> remains
+its own category too, because aggregation changes something
+semantically load-bearing no other category does — cardinality (many
+input rows collapse into one output value) — which lineage tracing must
+be able to detect. (Named <code dir="auto">AggregateCall</code> rather than <code dir="auto">Aggregate</code> to
+avoid colliding with the <code dir="auto">Aggregate</code> <em>plan</em> node in the same Scala
+package; <code dir="auto">BooleanExpr</code> rather than <code dir="auto">Boolean</code> for the same reason against
+<code dir="auto">scala.Boolean</code>.)</p>
+</li>
+<li>
+<p><strong><code dir="auto">UDF</code> is not <code dir="auto">Function</code>.</strong> A <code dir="auto">Function</code> node is a claim that this IR
+understands what a named operation computes. A user-defined function’s
+body is opaque — Scala/Java/Python/Hive UDFs alike — so it gets its own
+node, <code dir="auto">UDF(name, args, engineType)</code>, that never masquerades as a
+built-in. <code dir="auto">name</code> is populated only when the source engine exposes a
+real, non-generic identifier (a <code dir="auto">spark.udf.register(...)</code>-assigned name,
+for instance) — Spark’s own generic placeholder (<code dir="auto">"UDF"</code> for an
+anonymous closure) is treated as “no name available,” not a name.</p>
+</li>
+<li>
+<p><strong><code dir="auto">Alias</code> exists, but only for a <em>nested</em> rename.</strong> In Catalyst, <code dir="auto">Alias</code>
+is itself an <code dir="auto">Expression</code>, so naming can appear nested anywhere in an
+expression tree (e.g. a struct field’s name inside <code dir="auto">struct(col("a").as( "x"))</code>). At a plan’s own output boundary, naming still isn’t a
+computation on values — it’s metadata about how a plan stage exposes a
+value downstream — so <code dir="auto">Project</code>/<code dir="auto">Aggregate</code>/<code dir="auto">Window</code> still declare their
+output columns via <code dir="auto">NamedExpr(name, expr)</code>, which is not itself an
+<code dir="auto">Expr</code>. But a rename that occurs <em>mid</em>-expression (not at that boundary)
+has no other home in the algebra; discarding it (an earlier version of
+both this IR and its Spark translator did exactly that) silently drops
+real information. <code dir="auto">Alias(name, expr)</code> — a genuine <code dir="auto">Expr</code> — exists for
+exactly that case, and only that case: a top-level Catalyst <code dir="auto">Alias</code> a
+translator finds at a <code dir="auto">Project</code>/<code dir="auto">Aggregate</code>/<code dir="auto">Window</code> output list is
+still unwrapped straight into <code dir="auto">NamedExpr</code>, never double-wrapped.</p>
+</li>
+<li>
+<p><strong>Column identity stays name/qualifier-based, with one narrow, optional
+exception.</strong> Catalyst binds every attribute reference to its producer
+via a globally unique <code dir="auto">exprId</code>, resolved by an analysis pass. This IR
+still has no analysis pass of its own: a <code dir="auto">ColumnRef</code> is a name plus an
+optional qualifier (<code dir="auto">customer_id</code> from <code dir="auto">raw.orders</code>), and <code dir="auto">Lineage</code>
+resolves bare names by walking the plan structurally (see below) — the
+qualifier (a <code dir="auto">Read</code>’s dataset or <code dir="auto">alias</code>) is what disambiguates a
+self-join’s two occurrences of the same source, which is the case that
+actually matters in practice (Spark itself requires distinct aliases for
+a self-join to analyze at all). <code dir="auto">ColumnRef</code> additionally carries an
+optional <code dir="auto">id: Option[Long]</code> a front end may populate from real
+per-attribute identity when it has one (Spark’s <code dir="auto">exprId.id</code>, exposed as
+a plain, opaque number — never a Catalyst type) — a narrow strengthening
+for the rare case name/qualifier alone can’t tell apart, never a
+replacement for the qualifier-based scheme, and inert (<code dir="auto">None</code>) for
+hand-constructed IR and any front end that doesn’t have one.</p>
+</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-ir">The IR</h2><a class="sl-anchor-link" href="#the-ir"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The IR”</span></a></div>
+<p>Two small algebras, following the classic logical-plan / expression split
+(the one part of the design that <em>is</em> shared with virtually every SQL
+engine, because it reflects relational algebra itself, not Spark
+specifically):</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="expressions-exprscala--compute-a-value">Expressions (<code dir="auto">Expr.scala</code>) — compute a value</h3><a class="sl-anchor-link" href="#expressions-exprscala--compute-a-value"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Expressions (Expr.scala) — compute a value”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Node</th><th>Represents</th></tr></thead><tbody><tr><td><code dir="auto">ColumnReference(ref: ColumnRef)</code></td><td>Reads one column.</td></tr><tr><td><code dir="auto">Literal(value, literalType)</code></td><td>A constant. <code dir="auto">literalType</code> uses the same logical-type vocabulary as a contract field’s <code dir="auto">type</code>. <code dir="auto">value == null</code> (type still populated) is a typed SQL <code dir="auto">NULL</code> — fully understood, not <code dir="auto">UnknownExpression</code>.</td></tr><tr><td><code dir="auto">Alias(name, expr)</code></td><td>A rename occurring <em>mid</em>-expression (e.g. a struct field’s name) — not the plan-boundary <code dir="auto">NamedExpr</code> below.</td></tr><tr><td><code dir="auto">Cast(expr, targetType)</code></td><td>An explicit type conversion. <code dir="auto">targetType</code> uses the same logical-type vocabulary as <code dir="auto">Literal.literalType</code>.</td></tr><tr><td><code dir="auto">Arithmetic(operator, operands)</code></td><td>A numeric operator: <code dir="auto">+</code>, <code dir="auto">-</code>, <code dir="auto">*</code>, <code dir="auto">/</code>, <code dir="auto">%</code>, or unary <code dir="auto">NEGATE</code>. <code dir="auto">operands</code> has one entry for a unary operator, two for binary.</td></tr><tr><td><code dir="auto">Comparison(operator, left, right)</code></td><td>A binary comparison: <code dir="auto">=</code>, <code dir="auto">&#x3C;=></code>, <code dir="auto">&#x3C;</code>, <code dir="auto">&#x3C;=</code>, <code dir="auto">></code>, <code dir="auto">>=</code>.</td></tr><tr><td><code dir="auto">BooleanExpr(operator, operands)</code></td><td>A boolean combinator: <code dir="auto">AND</code>/<code dir="auto">OR</code> (two operands) or <code dir="auto">NOT</code> (one).</td></tr><tr><td><code dir="auto">Conditional(branches, elseValue)</code></td><td><code dir="auto">CASE WHEN ... THEN ... [ELSE ...] END</code>, or a two-way <code dir="auto">IF</code> (a single-branch <code dir="auto">Conditional</code> with an <code dir="auto">elseValue</code>).</td></tr><tr><td><code dir="auto">Function(name, args)</code></td><td>The catch-all for any other scalar function: string/date/math functions, null checks, non-aggregate window functions (<code dir="auto">RANK</code>, <code dir="auto">ROW_NUMBER</code>, …).</td></tr><tr><td><code dir="auto">UDF(name, args, engineType)</code></td><td>A user-defined function whose body is opaque to this IR — never conflated with <code dir="auto">Function</code>. <code dir="auto">name</code> is <code dir="auto">None</code> when the engine exposes no real (non-generic) identifier.</td></tr><tr><td><code dir="auto">AggregateCall(function, arg, distinct)</code></td><td>An aggregate function (SUM, COUNT, AVG, MIN, MAX, …). The one expression that changes cardinality.</td></tr><tr><td><code dir="auto">UnknownExpression(description, sourceType, children)</code></td><td>A construct a front-end translator couldn’t represent — always paired with a diagnostic, never silently dropped.</td></tr><tr><td><code dir="auto">NamedExpr(name, expr)</code></td><td>Binds a name to a computed expression — how a plan stage declares an output column. Not an <code dir="auto">Expr</code>.</td></tr><tr><td><code dir="auto">SortOrder(expr, ascending, nullsFirst)</code></td><td>One key of a <code dir="auto">Sort</code> or <code dir="auto">Window</code> ordering.</td></tr></tbody></table>
+<p><code dir="auto">AggregateCall</code> is reused unchanged whether it sits under an <code dir="auto">Aggregate</code>
+plan node (grouped aggregation) or a <code dir="auto">Window</code> plan node (running/partitioned
+aggregation) — windowing is a property of <em>where</em> the expression sits in
+the plan, not a different kind of expression.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="plans-planscala--transform-datasets">Plans (<code dir="auto">Plan.scala</code>) — transform datasets</h3><a class="sl-anchor-link" href="#plans-planscala--transform-datasets"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Plans (Plan.scala) — transform datasets”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Node</th><th>Represents</th></tr></thead><tbody><tr><td><code dir="auto">Read(dataset, alias, catalog)</code></td><td>Source: reads a dataset in its entirety. No declared schema — columns come into existence when referenced downstream. <code dir="auto">alias</code> supports self-joins. <code dir="auto">catalog</code> is the data-catalog identity this read actually resolved to (technology/catalogName/location/namespace/table), when the adapter could determine one — <code dir="auto">None</code> means confirmed <em>not</em> catalog-registered (e.g. a bare path read), not “unknown.”</td></tr><tr><td><code dir="auto">Write(dataset, input, format, saveMode, catalog)</code></td><td>Sink: always the root of a complete pipeline. <code dir="auto">format</code> (“parquet”, “csv”, …) and <code dir="auto">saveMode</code> (“append”, “overwrite”, “ignore”, “error”) are populated when the adapter that produced this node could determine them; <code dir="auto">None</code> otherwise, not “no format”/“no save mode.” <code dir="auto">catalog</code> is the same <code dir="auto">CatalogIdentity</code> concept as <code dir="auto">Read.catalog</code>, for this write’s target.</td></tr><tr><td><code dir="auto">Project(input, columns)</code></td><td>Narrows/computes the output column set. <code dir="auto">columns</code> is always the <em>complete</em> output schema — no implicit <code dir="auto">SELECT *</code> passthrough.</td></tr><tr><td><code dir="auto">Filter(input, condition)</code></td><td>Restricts rows; column set unchanged.</td></tr><tr><td><code dir="auto">Join(left, right, joinType, condition)</code></td><td>Combines two datasets row-wise. Both sides’ columns appear in the output.</td></tr><tr><td><code dir="auto">Aggregate(input, groupBy, aggregates)</code></td><td>Groups by <code dir="auto">groupBy</code>, collapses each group via <code dir="auto">aggregates</code>. <code dir="auto">aggregates</code> is the complete output schema — <code dir="auto">groupBy</code> contributes no output columns of its own (see below).</td></tr><tr><td><code dir="auto">Union(inputs)</code></td><td>Concatenates rows from multiple same-shaped plans. Output names follow the first branch.</td></tr><tr><td><code dir="auto">Sort(input, order)</code></td><td>Orders rows; column set unchanged.</td></tr><tr><td><code dir="auto">Limit(input, limit, offset)</code></td><td>Restricts the number of rows; column set unchanged. <code dir="auto">offset</code> is <code dir="auto">0</code> when the source plan has none.</td></tr><tr><td><code dir="auto">Window(input, windowExprs, partitionBy, orderBy)</code></td><td>Adds columns computed over a window of related rows, without collapsing row count. Input columns pass through unchanged.</td></tr><tr><td><code dir="auto">UnknownPlan(description, sourceType, children)</code></td><td>A plan node a front-end translator couldn’t represent — always paired with a diagnostic, never silently dropped.</td></tr></tbody></table>
+<p>Every <code dir="auto">Plan</code> exposes <code dir="auto">children: List[Plan]</code>, the one generic traversal
+mechanism used by both <code dir="auto">Lineage</code> and <code dir="auto">PlanPrinter</code> — neither needs its own
+ad hoc per-node-type walk of the tree structure (only of the type-specific
+<em>content</em>, which genuinely differs per operator).</p>
+<p><code dir="auto">JoinType</code> is <code dir="auto">Inner | LeftOuter | RightOuter | FullOuter | LeftSemi | LeftAnti | Cross</code>.</p>
+<p><code dir="auto">CatalogIdentity(technology, catalogName, location, namespace, table)</code> —
+every field <code dir="auto">Option</code>/<code dir="auto">List</code>-valued and independently optional — is the
+observed-reality counterpart to <code dir="auto">contract.CatalogRequirement</code> (a
+contract’s <em>expectation</em>; see docs/CONTRACT_MODEL.md). <code dir="auto">technology</code> is
+the catalog implementation (<code dir="auto">"hive"</code>, <code dir="auto">"delta"</code>, <code dir="auto">"iceberg"</code>, …);
+<code dir="auto">catalogName</code> the engine-level catalog plugin/session-catalog name;
+<code dir="auto">location</code> the catalog <em>service’s</em> own address (e.g. a Hive metastore’s
+<code dir="auto">thrift://host:port</code> URI); <code dir="auto">namespace</code>/<code dir="auto">table</code> the database path and
+table name. <code dir="auto">ir</code> has no dependency on <code dir="auto">contract</code> (or vice versa), so this
+is a small, deliberately duplicated shape, not a shared type.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="a-note-on-aggregategroupby">A note on <code dir="auto">Aggregate.groupBy</code></h3><a class="sl-anchor-link" href="#a-note-on-aggregategroupby"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “A note on Aggregate.groupBy”</span></a></div>
+<p>This one is worth calling out because it wasn’t obvious on the first pass.
+An early version of <code dir="auto">Lineage</code> treated a plain-column <code dir="auto">groupBy</code> key as
+automatically producing an output column with that name — mirroring the
+intuition that “you grouped by it, so it’s in the result.” That’s wrong,
+and the test suite caught it: writing the natural IR for <code dir="auto">SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id</code> produced two
+<code dir="auto">customer_id</code> output entries, because the grouping key and the identical
+<code dir="auto">SELECT</code>-list entry were both treated as independent output declarations.</p>
+<p>The fix follows the same rule already applied to <code dir="auto">Project</code>: <code dir="auto">aggregates</code> is
+the <em>complete</em> output schema, full stop. <code dir="auto">groupBy</code> is pure partitioning
+metadata. A grouping key that should appear in the output needs its own
+<code dir="auto">NamedExpr</code> in <code dir="auto">aggregates</code> — exactly as SQL requires the grouping column to
+also appear in the <code dir="auto">SELECT</code> list.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="row-level-dml-rowmutationscala">Row-level DML (<code dir="auto">RowMutation.scala</code>)</h3><a class="sl-anchor-link" href="#row-level-dml-rowmutationscala"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Row-level DML (RowMutation.scala)”</span></a></div>
+<p><code dir="auto">Write</code>’s “replace/append the output of a query” shape has no vocabulary
+for a row-level DML operation — MERGE, UPDATE, DELETE — since those
+mutate existing rows in place rather than producing a fresh output
+dataset. <code dir="auto">RowMutation(matchCondition, delete, updatedColumns)</code> captures
+exactly the structural facts a contract’s DML rules need (see
+docs/CONTRACT_MODEL.md’s “Interpreted rules”): a MERGE’s <code dir="auto">ON</code> condition
+as a full <code dir="auto">Expr</code> (so a verifier can read the columns it references),
+whether/how an operation deletes rows (<code dir="auto">DeleteScope</code>: <code dir="auto">NotApplicable</code> /
+<code dir="auto">Unconditional</code> / <code dir="auto">Conditional(condition)</code> — a sealed trait rather than
+<code dir="auto">Option[Expr]</code>, since “no delete happens” and “deletes unconditionally”
+are both real states a bare <code dir="auto">Option</code> can’t distinguish), and the column
+names a standalone UPDATE assigns.</p>
+<p>Deliberately <strong>not</strong> a <code dir="auto">Plan</code> node: it doesn’t consume/produce datasets
+the way <code dir="auto">Plan</code>’s <code dir="auto">children: List[Plan]</code> traversal assumes, and adding a
+field to the existing <code dir="auto">Write</code> case class to carry it would have broken
+binary compatibility with already-compiled callers (case class
+constructors are exact-arity). It’s a plain, standalone value produced
+by a front-end translator <em>alongside</em> the ordinary <code dir="auto">Write</code> node the same
+command already translates to — <code dir="auto">spark-adapter</code>’s <code dir="auto">RowMutationSupport</code>
+is the Spark-specific extractor; <code dir="auto">RuleVerifier</code> is the consumer. See
+that module’s own docs (docs/SPARK_ADAPTER.md) for the full story,
+including why this deliberately covers only a <em>standalone</em> UPDATE/DELETE/
+MERGE, not a DSv2 <code dir="auto">SupportsRowLevelOperations</code> connector’s rewritten
+<code dir="auto">ReplaceData</code>/<code dir="auto">WriteDelta</code> form.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="worked-example">Worked example</h2><a class="sl-anchor-link" href="#worked-example"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Worked example”</span></a></div>
+<p>The example from this phase’s spec:</p>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="scala"><code><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">val</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C5E478;--1:#3B61B0">orders</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Read</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#FFCB8B;--1:#111111">DatasetRef</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">raw.orders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">))</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">val</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C5E478;--1:#3B61B0">plan</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Write</span><span style="--0:#D6DEEB;--1:#403F53">(</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#FFCB8B;--1:#111111">DatasetRef</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">gold.customer_orders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">),</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#FFCB8B;--1:#111111">Project</span><span style="--0:#D6DEEB;--1:#403F53">(</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">orders,</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#FFCB8B;--1:#111111">List</span><span style="--0:#D6DEEB;--1:#403F53">(</span></div></div><div class="ec-line"><div class="code"><span class="indent">      </span><span style="--0:#FFCB8B;--1:#111111">NamedExpr</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">customer_id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#FFCB8B;--1:#111111">ColumnReference</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#FFCB8B;--1:#111111">ColumnRef</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">customer_id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#FFCB8B;--1:#111111">Some</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">raw.orders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)))),</span></div></div><div class="ec-line"><div class="code"><span class="indent">      </span><span style="--0:#FFCB8B;--1:#111111">NamedExpr</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">lifetime_value</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#FFCB8B;--1:#111111">AggregateCall</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">SUM</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#FFCB8B;--1:#111111">ColumnReference</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#FFCB8B;--1:#111111">ColumnRef</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">amount</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#FFCB8B;--1:#111111">Some</span><span style="--0:#D6DEEB;--1:#403F53">(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">raw.orders</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)))))</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">    </span></span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="val orders = Read(DatasetRef(&#x22;raw.orders&#x22;))val plan = Write(  DatasetRef(&#x22;gold.customer_orders&#x22;),  Project(    orders,    List(      NamedExpr(&#x22;customer_id&#x22;, ColumnReference(ColumnRef(&#x22;customer_id&#x22;, Some(&#x22;raw.orders&#x22;)))),      NamedExpr(&#x22;lifetime_value&#x22;, AggregateCall(&#x22;SUM&#x22;, ColumnReference(ColumnRef(&#x22;amount&#x22;, Some(&#x22;raw.orders&#x22;)))))    )  ))"><div></div></button></div></figure></div>
+<p><code dir="auto">PlanPrinter.render(plan)</code> — actual output, run via <code dir="auto">sbt Test/runMain</code>:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">Write(gold.customer_orders)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">└─ Project</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">├─ Read(raw.orders)</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">├─ customer_id = raw.orders.customer_id</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">   </span></span><span style="--0:#d6deeb;--1:#403f53">└─ lifetime_value = SUM(raw.orders.amount)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="Write(gold.customer_orders)└─ Project   ├─ Read(raw.orders)   ├─ customer_id = raw.orders.customer_id   └─ lifetime_value = SUM(raw.orders.amount)"><div></div></button></div></figure></div>
+<p>This differs slightly from the spec’s illustrative diagram, which shows
+<code dir="auto">Read(raw.orders.customer_id)</code> as a separate leaf under each output column.
+That’s not how the actual object graph is shaped here: <code dir="auto">Read</code> is a single
+shared node (<code dir="auto">Project</code>’s <code dir="auto">input</code>), and per-column provenance is carried by
+the <em>qualified column name</em> in each <code dir="auto">NamedExpr</code>’s rendered expression
+(<code dir="auto">raw.orders.customer_id</code>) rather than by duplicating the Read node once per
+column. The same information is present either way — which Read column each
+output derives from — just represented once structurally instead of
+inlined per branch.</p>
+<p><code dir="auto">Lineage.trace(plan)</code> — actual output:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">ColumnLineage(customer_id, Set(raw.orders.customer_id), Direct, Set())</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">ColumnLineage(lifetime_value, Set(raw.orders.amount), Computed, Set(AggregationDetail(SUM, false)))</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="ColumnLineage(customer_id, Set(raw.orders.customer_id), Direct, Set())ColumnLineage(lifetime_value, Set(raw.orders.amount), Computed, Set(AggregationDetail(SUM, false)))"><div></div></button></div></figure></div>
+<p>This is the semantic content the spec’s diagram is asking for: which source
+column each output column traces to, whether that trace passes through an
+aggregation (and which one), and how directly the output relates to its
+source (a plain passthrough vs. a real computation).</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="lineage-tracing-lineagescala">Lineage tracing (<code dir="auto">Lineage.scala</code>)</h2><a class="sl-anchor-link" href="#lineage-tracing-lineagescala"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Lineage tracing (Lineage.scala)”</span></a></div>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="scala"><code><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">sealed</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">trait</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span></div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53"> {</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Direct</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">extends</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53">    </span><span style="--0:#919F9F;--1:#5D6376">// exactly one source column, possibly renamed</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Constant</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">extends</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53">  </span><span style="--0:#919F9F;--1:#5D6376">// no source columns at all (a literal, or built entirely from literals)</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Computed</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">extends</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53">  </span><span style="--0:#919F9F;--1:#5D6376">// built from real columns using only operations this IR understands</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Opaque</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">extends</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53">    </span><span style="--0:#919F9F;--1:#5D6376">// contains a UDF or UnknownExpression anywhere in the tree</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">class</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">AggregationDetail</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">function</span><span style="--0:#D6DEEB">: </span></span><span style="--0:#FFCB8B;--1:#111111">String</span><span style="--1:#403F53"><span style="--0:#D6DEEB">, </span><span style="--0:#D7DBE0">distinct</span><span style="--0:#D6DEEB">: </span></span><span style="--0:#FFCB8B;--1:#111111">Boolean</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">false</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">case</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">class</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">ColumnLineage</span><span style="--0:#D6DEEB;--1:#403F53">(</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--1:#403F53">  </span></span><span style="--0:#D7DBE0;--1:#403F53">output</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FFCB8B;--1:#111111">ColumnRef</span><span style="--0:#D6DEEB;--1:#403F53">,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--1:#403F53">  </span></span><span style="--0:#D7DBE0;--1:#403F53">sources</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FFCB8B;--1:#111111">Set</span><span style="--0:#D6DEEB;--1:#403F53">[</span><span style="--0:#FFCB8B;--1:#111111">ColumnRef</span><span style="--0:#D6DEEB;--1:#403F53">],</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--1:#403F53">  </span></span><span style="--0:#D7DBE0;--1:#403F53">derivation</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FFCB8B;--1:#111111">DerivationKind</span><span style="--0:#D6DEEB;--1:#403F53">,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--1:#403F53">  </span></span><span style="--0:#D7DBE0;--1:#403F53">aggregations</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FFCB8B;--1:#111111">Set</span><span style="--0:#D6DEEB;--1:#403F53">[</span><span style="--0:#FFCB8B;--1:#111111">AggregationDetail</span><span style="--0:#D6DEEB;--1:#403F53">] </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Set</span><span style="--0:#D6DEEB;--1:#403F53">.empty</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">) {</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">aggregated</span><span style="--0:#7FDBCA;--1:#096E72">:</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Boolean</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D6DEEB;--1:#403F53"> aggregations.nonEmpty</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div><div class="ec-line"><div class="code">
+</div></div><div class="ec-line"><div class="code"><span style="--0:#C792EA;--1:#8844AE">object</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">Lineage</span><span style="--0:#D6DEEB;--1:#403F53"> {</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#C792EA;--1:#8844AE">def</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">trace</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">plan</span><span style="--0:#D6DEEB">: </span></span><span style="--0:#FFCB8B;--1:#111111">Plan</span><span style="--0:#D6DEEB;--1:#403F53">)</span><span style="--0:#7FDBCA;--1:#096E72">:</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#FFCB8B;--1:#111111">List</span><span style="--0:#D6DEEB;--1:#403F53">[</span><span style="--0:#FFCB8B;--1:#111111">ColumnLineage</span><span style="--0:#D6DEEB;--1:#403F53">]</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="sealed trait DerivationKindobject DerivationKind {  case object Direct extends DerivationKind    // exactly one source column, possibly renamed  case object Constant extends DerivationKind  // no source columns at all (a literal, or built entirely from literals)  case object Computed extends DerivationKind  // built from real columns using only operations this IR understands  case object Opaque extends DerivationKind    // contains a UDF or UnknownExpression anywhere in the tree}case class AggregationDetail(function: String, distinct: Boolean = false)case class ColumnLineage(  output: ColumnRef,  sources: Set[ColumnRef],  derivation: DerivationKind,  aggregations: Set[AggregationDetail] = Set.empty) {  def aggregated: Boolean = aggregations.nonEmpty}object Lineage {  def trace(plan: Plan): List[ColumnLineage]}"><div></div></button></div></figure></div>
+<p>This is “verified lineage” in the sense of
+<a href="https://github.com/mlltx/Invaract/blob/main/MISSION.md#5-verified-lineage">MISSION.md §5</a>: derived from the
+transformation plan itself, not observed at runtime and not merely
+declared by metadata.</p>
+<p><strong>Resolution algorithm.</strong> A bare column reference is resolved structurally,
+with no symbol table:</p>
+<ol>
+<li>If the immediate input plan is a <code dir="auto">Project</code>/<code dir="auto">Aggregate</code>/<code dir="auto">Window</code> that
+<em>declares</em> a matching output name, resolve against that declaration
+(recursing into the expression, which may itself reference further
+columns).</li>
+<li>If the immediate input is a pass-through node (<code dir="auto">Filter</code>, <code dir="auto">Sort</code>),
+resolve against its input instead.</li>
+<li>If the immediate input is a <code dir="auto">Read</code>, the reference is a base case: it
+resolves to itself, qualified by that Read’s dataset (or alias).</li>
+<li>If the immediate input is a <code dir="auto">Union</code>, try every branch and union the
+results — any branch could be the one producing a given row.</li>
+<li>If the immediate input is a <code dir="auto">Join</code>, try both branches. A qualified
+reference is ruled out on the side whose scope doesn’t match. An
+unqualified reference that matches on only one side resolves normally;
+one that matches on <strong>both</strong> sides is genuinely ambiguous, and is
+resolved conservatively by unioning both sides’ sources rather than
+guessing or throwing.</li>
+</ol>
+<p><strong>Aggregation detail.</strong> Every <code dir="auto">AggregateCall</code> an output column’s expression
+traces through contributes an <code dir="auto">AggregationDetail(function, distinct)</code> to
+that column’s <code dir="auto">aggregations</code> set — not just a single <code dir="auto">aggregated: Boolean</code>
+flag. An output combining more than one aggregate function
+(<code dir="auto">sum(x) / count(y)</code>) reports both, since collapsing that to one boolean
+loses exactly the detail (which function, over what) a human auditing <em>how</em>
+a column’s meaning changed across a schema-compatible contract revision
+would need. <code dir="auto">aggregated</code> remains available as a convenience for “was this
+aggregated at all,” without inspecting the set.</p>
+<p><strong>Derivation classification.</strong> Alongside <code dir="auto">sources</code>, each <code dir="auto">ColumnLineage</code>
+carries a <code dir="auto">DerivationKind</code> — a coarse, human-auditable summary of <em>how</em> the
+output relates to its sources:</p>
+<ul>
+<li><strong><code dir="auto">Direct</code></strong> — the output is exactly one source column, possibly renamed
+(<code dir="auto">id = id</code>, or a mid-expression <code dir="auto">Alias</code> over a bare reference). No
+computation anywhere along the way.</li>
+<li><strong><code dir="auto">Constant</code></strong> — no source columns whatsoever: a literal, or an
+expression built entirely from literals.</li>
+<li><strong><code dir="auto">Computed</code></strong> — derives from real source columns using only operations
+this IR fully understands (<code dir="auto">Cast</code>/<code dir="auto">Arithmetic</code>/<code dir="auto">Comparison</code>/
+<code dir="auto">BooleanExpr</code>/<code dir="auto">Conditional</code>/<code dir="auto">Function</code>/<code dir="auto">AggregateCall</code>). A <code dir="auto">CASE WHEN</code>
+built from a <code dir="auto">Comparison</code> is the canonical example: every operation
+involved has known, named semantics — auditable, even if it happened
+several plan stages before the column’s final declaration.</li>
+<li><strong><code dir="auto">Opaque</code></strong> — a <code dir="auto">UDF</code> or <code dir="auto">UnknownExpression</code> sits <em>anywhere</em> along the
+resolved computation, even nested arbitrarily deep beneath
+otherwise-understood operations or behind several layers of passthrough.
+A <code dir="auto">CASE WHEN</code> whose result calls a UDF is opaque overall, not “mostly
+computed” — this IR knows what columns the UDF structurally depends on,
+but not what it actually computes from them, and <code dir="auto">Opaque</code> always wins
+over every other classification once it applies anywhere.</li>
+</ul>
+<p>Critically, this is computed <em>through</em> the same resolution <code dir="auto">sources</code> already
+uses, not by inspecting only a column’s outermost declaring expression.
+Because Invaract translates Spark’s <em>analyzed</em> plan rather than the
+optimized one (ADR-002), a chain of <code dir="auto">.withColumn()</code> calls produces <em>nested</em>
+<code dir="auto">Project</code>s — the outermost <code dir="auto">Project</code>’s own declaration for an untouched
+column is frequently nothing more than a bare passthrough reference to an
+inner <code dir="auto">Project</code>’s real computation (<code dir="auto">value_squared = value_squared</code>, where
+the actual <code dir="auto">value * value</code> lives one level down). Classifying only that
+outer syntax would misreport the column <code dir="auto">Direct</code>; <code dir="auto">Lineage</code>’s internal
+<code dir="auto">resolveExpr</code>/<code dir="auto">resolveInScope</code> walk resolves straight through any number of
+such passthrough hops to find the real computation, exactly as it already
+does to find <code dir="auto">sources</code>. An unresolvable reference (e.g. one sitting on an
+<code dir="auto">UnknownPlan</code>) falls back to <code dir="auto">Direct</code> — the honest, syntax-level answer when
+there’s nothing further to resolve into.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="known-limitations">Known limitations</h3><a class="sl-anchor-link" href="#known-limitations"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Known limitations”</span></a></div>
+<ul>
+<li><strong>No schema catalog.</strong> <code dir="auto">Read</code> declares no columns, so <code dir="auto">Lineage.trace</code> on
+a bare <code dir="auto">Read</code> (nothing projected above it) returns an empty list. This
+isn’t a missing feature so much as a consequence of not requiring a full
+type/schema system in the IR (see <code dir="auto">docs/CONTRACT_MODEL.md</code> for where
+schemas <em>are</em> declared — the contract, not the transformation).</li>
+<li><strong>Join ambiguity is resolved conservatively, not precisely.</strong> Without a
+real resolver, an unqualified name present on both sides of a <code dir="auto">Join</code> is
+attributed to both, rather than raising an error or requiring
+disambiguation. This favors “don’t silently miss a source” over
+“reject invalid SQL.”</li>
+<li><strong><code dir="auto">SELECT *</code> isn’t supported.</strong> <code dir="auto">Project.columns</code> and <code dir="auto">Aggregate.aggregates</code>
+are always complete, explicit output lists. A front end translating a
+real engine’s plan (future Phase 1b work) is expected to expand any
+wildcard projection before constructing this IR.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="rendering-planprinterscala">Rendering (<code dir="auto">PlanPrinter.scala</code>)</h2><a class="sl-anchor-link" href="#rendering-planprinterscala"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Rendering (PlanPrinter.scala)”</span></a></div>
+<p><code dir="auto">PlanPrinter.render(plan: Plan): String</code> produces the ASCII tree shown
+above. It is intentionally a separate module from <code dir="auto">Plan.scala</code>/<code dir="auto">Expr.scala</code>
+— the plan and expression algebras carry no display logic of their own, the
+way <code dir="auto">Lineage</code> carries no display logic either. Two independent things
+consume the same <code dir="auto">children</code>-based structure.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="what-phase-2-does-not-do-yet">What Phase 2 does <em>not</em> do yet</h2><a class="sl-anchor-link" href="#what-phase-2-does-not-do-yet"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What Phase 2 does not do yet”</span></a></div>
+<ul>
+<li><strong>No translator from a real Spark logical plan into this IR.</strong> That’s the
+bridge Phase 1b (the verification engine) needs, and is a substantial
+piece of work on its own — walking Catalyst’s <code dir="auto">LogicalPlan</code>/<code dir="auto">Expression</code>
+trees and re-expressing them here.</li>
+<li><strong>No structural verification of lineage against a contract yet.</strong> <code dir="auto">ir</code>
+and <code dir="auto">contract</code> stay independent modules by design (<code dir="auto">ir</code> has no
+dependency on <code dir="auto">contract</code> at all); wiring “does this plan’s
+<code dir="auto">Lineage.trace</code> output satisfy this <code dir="auto">Contract</code>’s declared outputs and
+rules” is still Phase 1b. One narrower bridge does exist today, in
+<code dir="auto">spark-adapter</code> rather than here: <code dir="auto">SensitivityLineage.propagate</code> cross-
+references traced lineage against a contract’s declared input
+<code dir="auto">Field.sensitivityTags</code>, so a governance-tagged input’s labels surface
+on every output column that transitively derives from it (see
+docs/SPARK_ADAPTER.md’s “Sensitivity propagation” section) — but this is
+reporting, not enforcement: it never fails verification, and it says
+nothing about outputs/rules generally, only about propagating a specific
+kind of input-declared metadata forward through the same <code dir="auto">sources</code> this
+module already computes.</li>
+<li><strong>No type inference.</strong> Expressions carry no inferred/declared result
+type; <code dir="auto">Literal.literalType</code> is the only type information in the IR today.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="testing">Testing</h2><a class="sl-anchor-link" href="#testing"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Testing”</span></a></div>
+<div class="expressive-code"><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">cd</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">ir</span></div></div><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">sbt</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">test</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="cd irsbt test"><div></div></button></div></figure></div>
+<p>48 tests across <code dir="auto">PlanSpec</code> (12 — construction, <code dir="auto">children</code> (now including
+<code dir="auto">Limit</code>), <code dir="auto">Expr.references</code>, <code dir="auto">UnknownPlan</code>/<code dir="auto">UnknownExpression</code> carrying
+their <code dir="auto">sourceType</code> and any still-resolvable children), <code dir="auto">LineageSpec</code> (20
+— the worked example verbatim, a full <code dir="auto">GROUP BY</code> stage, <code dir="auto">Filter</code>/<code dir="auto">Sort</code>
+passthrough, <code dir="auto">Join</code> attribution — both unambiguous and ambiguous,
+including mixed aggregation status — <code dir="auto">Window</code>/<code dir="auto">Aggregate</code>/<code dir="auto">Union</code>
+resolution when a <code dir="auto">Project</code> sits directly on top of them, literal- and
+multi-argument-function-derived outputs, and — new for the expression
+algebra rework — <code dir="auto">Cast</code>/<code dir="auto">Alias</code>/<code dir="auto">Arithmetic</code>/<code dir="auto">Comparison</code>/<code dir="auto">BooleanExpr</code>/
+<code dir="auto">Conditional</code>/<code dir="auto">UDF</code> all resolving transparently to their operands’
+sources, a <code dir="auto">Conditional</code>’s branch <em>conditions</em> counting as sources
+alongside its values, and an <code dir="auto">UnknownExpression</code>’s still-resolvable
+children continuing to contribute sources even though the node itself is
+opaque), <code dir="auto">PlanPrinterSpec</code> (13 — rendering of each node kind, exact
+branch/continuation-prefix structure at nested depth, <code dir="auto">DISTINCT</code>, empty
+<code dir="auto">GROUP BY</code>, <code dir="auto">Sort</code> direction, <code dir="auto">Window</code>’s <code dir="auto">PARTITION BY</code>/<code dir="auto">ORDER BY</code>, and
+<code dir="auto">Cast</code>/<code dir="auto">Arithmetic</code>/<code dir="auto">BooleanExpr</code>/<code dir="auto">Conditional</code>/<code dir="auto">UDF</code>/<code dir="auto">Alias</code> rendering in
+their natural infix/prefix forms), and <code dir="auto">RowMutationSpec</code> (4 — default
+shape, <code dir="auto">matchCondition</code> carrying a full <code dir="auto">Expr</code>, <code dir="auto">DeleteScope</code>’s three
+distinct states, <code dir="auto">updatedColumns</code>). All run against real constructed
+plans, not mocks. <code dir="auto">spark-adapter</code>’s own test suite (389 tests, including
+<code dir="auto">ExpressionTranslationSpec</code>) is the other half of this coverage — real
+analyzed Spark plans translated and asserted structurally, not just
+hand-constructed IR; see docs/SPARK_ADAPTER.md.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="mutation-testing">Mutation testing</h3><a class="sl-anchor-link" href="#mutation-testing"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Mutation testing”</span></a></div>
+<p><a href="https://github.com/stryker-mutator/stryker4s">Stryker4s</a> checks whether
+this module’s passing tests actually verify <code dir="auto">Lineage</code>/<code dir="auto">PlanPrinter</code>’s
+logic, not just execute it — see docs/SPARK_ADAPTER.md’s “Mutation
+testing” section for the full explanation of what this catches that
+coverage can’t, and CLAUDE.md’s “Mutation Testing Requirement” for the
+70% bar expected of new/changed code specifically (this module’s
+whole-module score, below, is the separate CI-blocking bar).
+<code dir="auto">build.sbt</code>’s <code dir="auto">strykerMutate</code>/<code dir="auto">strykerThresholds*</code> settings scope this to
+the whole module and gate CI at 50% (<code dir="auto">stryker4s.conf</code>’s equivalent keys
+were observed not to take effect with this sbt/plugin version
+combination). Run it locally with:</p>
+<div class="expressive-code"><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">cd</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">ir</span></div></div><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">sbt</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">stryker</span></div></div><div class="ec-line"><div class="code"><span style="--0:#919F9F;--1:#5F636F"># HTML report: target/stryker4s-report/&#x3C;timestamp>/index.html</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="cd irsbt stryker"><div></div></button></div></figure></div>
+<p>An initial run scoped to just <code dir="auto">Lineage.scala</code> scored 44.4% (8/18 mutants).
+Adding tests for the real survivors — and widening to the whole module,
+which pulled <code dir="auto">PlanPrinter.scala</code> in too — brought it to <strong>86.36%</strong>
+(76/100 mutants killed):</p>
+<ul>
+<li><strong><code dir="auto">l.aggregated || r.aggregated</code> → <code dir="auto">&#x26;&#x26;</code></strong> (<code dir="auto">Join</code>’s ambiguous-both-sides
+resolution) — fixed with a test joining a plain passthrough side against
+an aggregated side on an ambiguous reference, the minimum shape where
+<code dir="auto">||</code> and <code dir="auto">&#x26;&#x26;</code> actually disagree. The aggregation-detail rework (see
+“Aggregation detail” above) later replaced this boolean <code dir="auto">||</code> with a
+<code dir="auto">Set</code> union (<code dir="auto">l.aggregations ++ r.aggregations</code>) — the exact operator
+this bullet names no longer exists in the current code, but the lesson
+(test a mixed aggregating/non-aggregating join side, not just an
+all-or-nothing one) still applies, and the same test still exercises it.</li>
+<li><strong><code dir="auto">columns.find(_.name == ref.name)</code> → <code dir="auto">!=</code></strong> (<code dir="auto">Lineage.scala:97</code>,
+<code dir="auto">Project</code>’s name-matching in <code dir="auto">resolveInScope</code>) — fixed by asserting the
+resolved <em>sources</em>, not just the aggregation flag, on the existing
+windowed-column test (the aggregation flag alone couldn’t distinguish
+“resolved to the right column” from “resolved to some other column that
+happened to satisfy the old assertion anyway”).</li>
+<li><strong><code dir="auto">Aggregate</code>/<code dir="auto">Window</code>/<code dir="auto">Union</code> cases of <code dir="auto">resolveInScope</code></strong> (previously
+entirely uncovered — no test stacked a <code dir="auto">Project</code> directly on any of
+these) — fixed with three new tests doing exactly that.</li>
+<li><strong>Exact branch (<code dir="auto">├─</code>/<code dir="auto">└─</code>) and continuation-prefix (<code dir="auto">│  </code>/<code dir="auto">   </code>)
+correctness</strong> (<code dir="auto">PlanPrinter.scala</code>’s <code dir="auto">renderChildren</code>) — every prior
+test only asserted <code dir="auto">.contains(...)</code> on node <em>content</em>, never on which
+prefix character preceded it, so a bug that swapped which child counts
+as “last” left every substring still present, just under the wrong
+prefix. Fixed with one test asserting a full rendered string, exactly,
+for a nested two-branch tree.</li>
+<li><strong><code dir="auto">DISTINCT</code>, empty <code dir="auto">GROUP BY</code>, <code dir="auto">Sort</code> direction, and <code dir="auto">Window</code>’s
+<code dir="auto">PARTITION BY</code>/<code dir="auto">ORDER BY</code></strong> — none had a test exercising the “true” or
+“false” side of their respective conditionals (e.g. no test ever
+rendered a <code dir="auto">Sort</code> or <code dir="auto">Window</code> node’s label at all). Fixed with four new
+tests.</li>
+</ul>
+<p>What’s left (12/100 undetected) is 11 <code dir="auto">StringLiteral</code> mutants on
+<code dir="auto">PlanPrinter</code>’s pure formatting separators (<code dir="auto">", "</code>, <code dir="auto">"\n"</code>, node-label
+text) — the same low-priority, commonly-excluded category discussed in
+docs/SPARK_ADAPTER.md — plus one genuinely equivalent mutant
+(<code dir="auto">Lineage.scala:113</code>’s <code dir="auto">found.isEmpty</code> forced to <code dir="auto">false</code>: when <code dir="auto">found</code> is
+truly empty, the “wrong” branch computes <code dir="auto">Provenance(Set.empty, false)</code>,
+which is byte-for-byte the same value the correct <code dir="auto">None</code> produces after
+<code dir="auto">resolveExpr</code>’s <code dir="auto">.getOrElse</code> — mathematically unobservable, not a real
+gap).</p>
+<p><strong>Follow-up: the expression-algebra rework</strong> (CLAUDE.md’s per-PR 70% bar,
+scoped to the 5 touched files — <code dir="auto">Expr.scala</code>, <code dir="auto">Plan.scala</code>,
+<code dir="auto">Identifiers.scala</code>, <code dir="auto">Lineage.scala</code>, <code dir="auto">PlanPrinter.scala</code> — not a
+whole-module run; <code dir="auto">RowMutation.scala</code> was untouched by this change and
+excluded from scope):</p>
+<div class="expressive-code"><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#C5E478;--1:#3B61B0">cd</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">ir</span></div></div><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">sbt</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#D9F5DD;--1:#111111">'</span><span style="--0:#ECC48D;--1:#984E4D">set strykerMutate := Seq("src/main/scala/com/example/ir/Expr.scala", "src/main/scala/com/example/ir/Plan.scala", "src/main/scala/com/example/ir/Identifiers.scala", "src/main/scala/com/example/ir/Lineage.scala", "src/main/scala/com/example/ir/PlanPrinter.scala")</span><span style="--0:#D9F5DD;--1:#111111">'</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">stryker</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="cd irsbt &#x27;set strykerMutate := Seq(&#x22;src/main/scala/com/example/ir/Expr.scala&#x22;, &#x22;src/main/scala/com/example/ir/Plan.scala&#x22;, &#x22;src/main/scala/com/example/ir/Identifiers.scala&#x22;, &#x22;src/main/scala/com/example/ir/Lineage.scala&#x22;, &#x22;src/main/scala/com/example/ir/PlanPrinter.scala&#x22;)&#x27; stryker"><div></div></button></div></figure></div>
+<p>First pass (before writing tests for the new <code dir="auto">Cast</code>/<code dir="auto">Arithmetic</code>/
+<code dir="auto">Comparison</code>/<code dir="auto">BooleanExpr</code>/<code dir="auto">Conditional</code>/<code dir="auto">UDF</code>/<code dir="auto">Alias</code>/<code dir="auto">Limit</code>/
+<code dir="auto">UnknownPlan</code>/<code dir="auto">UnknownExpression</code> code specifically): 74.34% (84/113).
+Two real, addressable gaps, both in genuinely new code, not the
+pre-existing 12 above:</p>
+<ul>
+<li><strong><code dir="auto">Limit</code>’s rendering was entirely <code dir="auto">NoCoverage</code></strong> (<code dir="auto">PlanPrinter.scala</code>,
+the <code dir="auto">offset > 0</code> branch and both <code dir="auto">s"Limit(...)"</code> string forms) — no
+test had ever called <code dir="auto">PlanPrinter.render</code> on a <code dir="auto">Limit</code> node at all
+(the one <code dir="auto">Limit</code> test that existed, in <code dir="auto">PlanSpec</code>, only checked
+<code dir="auto">.children</code>). Fixed with a direct <code dir="auto">PlanPrinterSpec</code> test rendering
+<code dir="auto">Limit</code> both with and without a nonzero <code dir="auto">offset</code>.</li>
+<li><strong><code dir="auto">BooleanExpr</code>’s unary (<code dir="auto">NOT</code>) and 3+-operand fallback forms, and
+<code dir="auto">Arithmetic</code>’s 3+-operand fallback form, were untested</strong> — the
+combined “Cast/Arithmetic/BooleanExpr/Conditional/UDF/Alias” test only
+exercised <code dir="auto">AND</code> (2 operands) and the binary arithmetic case. Fixed with
+a dedicated test covering <code dir="auto">NOT</code> and a 3-operand case of each.</li>
+<li>Additionally strengthened <code dir="auto">LineageSpec</code>’s new-node-type test: several
+assertions had a <code dir="auto">Literal</code> on one side of a <code dir="auto">Comparison</code>/<code dir="auto">Arithmetic</code>
+(contributing no sources either way), so a mutant that silently
+dropped one operand’s contribution to <code dir="auto">combine</code>’s <code dir="auto">flatMap</code> wouldn’t
+have been observable. Added three more cases with real columns on
+<em>both</em> sides.</li>
+</ul>
+<p>Second pass, after those fixes: <strong>84.96%</strong> (96/113) — every remaining
+survivor is either the same <code dir="auto">StringLiteral</code>-formatting category as
+above, or the same genuinely-equivalent <code dir="auto">found.isEmpty</code> mutant
+(unchanged by this rework, just at a shifted line number). No whole-module
+rerun was done locally for this follow-up — CI’s own whole-module job
+(50% break threshold, well below both the prior 86.36% baseline and this
+scoped 84.96%) covers that; <code dir="auto">RowMutation.scala</code>’s own coverage is
+untouched by this change.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="api-compatibility">API compatibility</h3><a class="sl-anchor-link" href="#api-compatibility"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “API compatibility”</span></a></div>
+<p><code dir="auto">Plan</code>, <code dir="auto">Expr</code>, every case class in <code dir="auto">Identifiers.scala</code> (<code dir="auto">DatasetRef</code>,
+<code dir="auto">ColumnRef</code>, …), <code dir="auto">RowMutation</code>/<code dir="auto">DeleteScope</code>, plus <code dir="auto">Lineage.trace</code> and
+<code dir="auto">PlanPrinter.render</code>’s signatures, are this module’s binary API surface —
+the engine-independent algebra any future front-end (SQL, dbt) is meant
+to translate into, per this doc’s “Critical principle” above, so keeping
+it stable release-to-release matters more here than almost anywhere else
+in the codebase. Checked by <a href="https://github.com/lightbend/mima">MiMa</a> via
+<code dir="auto">sbt mimaReportBinaryIssues</code>, CI-enforced on every PR — see CLAUDE.md’s
+“API Compatibility Requirement” for the full mechanism. <code dir="auto">RowMutation</code> was
+added as a wholly new, standalone case class rather than a new field on
+the existing <code dir="auto">Write</code> — adding a field to a case class already in the
+0.1.0 baseline changes its constructor’s arity, which breaks every
+already-compiled caller; a new class has no such history to break.</p>
+<p><code dir="auto">ColumnLineage</code> replacing its single <code dir="auto">aggregated: Boolean</code> field with
+<code dir="auto">derivation: DerivationKind</code> and <code dir="auto">aggregations: Set[AggregationDetail]</code>
+(the “Aggregation detail”/“Derivation classification” section above) is a
+real binary-incompatible change to that case class’s constructor. By the
+time this landed, the <code dir="auto">com.example</code> → <code dir="auto">com.invaract</code> rebrand’s own
+transitional <code dir="auto">mimaPreviousArtifacts</code>/wildcard-filter state (which this
+paragraph originally described riding on for free) had already reached
+the base branch — so <code dir="auto">ir/build.sbt</code>’s “FOLLOW-UP” flip to a real
+<code dir="auto">com.invaract:0.2.0</code> baseline happened as part of <em>this</em> change instead of
+a later one, and a real <code dir="auto">sbt mimaReportBinaryIssues</code> run against that
+baseline confirmed the break for real (not assumed): <code dir="auto">ColumnLineage</code>’s and
+<code dir="auto">Lineage</code>’s private <code dir="auto">Provenance</code>’s <code dir="auto">apply</code>/<code dir="auto">copy</code>/<code dir="auto">this</code>/<code dir="auto">copy$default$*</code>
+all changed shape. <code dir="auto">ir/build.sbt</code> now carries the exact filter lines that
+run suggested, and the module version moved to 0.3.0 — the MINOR-digit
+bump docs/VERSIONING.md’s pre-1.0 policy calls for a deliberate break,
+alongside the unrelated expression-algebra rework’s own real MiMa break
+(<code dir="auto">FunctionCall</code>/<code dir="auto">Unsupported</code>/<code dir="auto">UnsupportedExpr</code> removed, <code dir="auto">ColumnRef</code>
+gained a field) that surfaced in the same flip.</p>
+<p>The expression-algebra rework this doc otherwise describes (splitting
+<code dir="auto">FunctionCall</code> into <code dir="auto">Cast</code>/<code dir="auto">Arithmetic</code>/<code dir="auto">Comparison</code>/<code dir="auto">BooleanExpr</code>/
+<code dir="auto">Conditional</code>/<code dir="auto">Function</code>/<code dir="auto">UDF</code>/<code dir="auto">Alias</code>, renaming <code dir="auto">Unsupported</code>/
+<code dir="auto">UnsupportedExpr</code> to <code dir="auto">UnknownPlan</code>/<code dir="auto">UnknownExpression</code>, and adding an <code dir="auto">id</code>
+field to <code dir="auto">ColumnRef</code>) <strong>is</strong> exactly the kind of deliberate, documented
+MAJOR-version break this section warns about — not an exception to it.
+<code dir="auto">ir/build.sbt</code>’s <code dir="auto">mimaBinaryIssueFilters</code> carries the exact
+<code dir="auto">ProblemFilters.exclude[...]</code> lines <code dir="auto">sbt mimaReportBinaryIssues</code> reported
+against a real local <code dir="auto">publishLocal</code> of this module as it stood
+immediately before the change, each with a comment pointing back here,
+per CLAUDE.md’s “the break is deliberate” path (option 2, not a loosened
+<code dir="auto">mimaPreviousArtifacts</code>).</p>
+<hr>
+<p><strong>Last Updated:</strong> 2026-08-28
+<strong>Status:</strong> Phase 2 — Transformation IR, initial implementation</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/TRANSFORMATION_IR.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-58/design/contract-model/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Contract Model</span></span></a><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Spark Adapter</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>

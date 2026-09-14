@@ -1,0 +1,328 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Parquet support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/connectors/parquet/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-58/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-58/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="Parquet support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/connectors/parquet/"/><meta property="og:locale" content="en"/><meta property="og:description" content="← Back to Spark Adapter"/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="← Back to Spark Adapter"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-58/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/Search.astro_astro_type_script_index_0_lang.Dg49BWmw.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="0b19mdr" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/parquet/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#parquet-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Parquet operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#parquet-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Parquet feature-surface coverage ledger</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#parquet-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Parquet operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#parquet-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Parquet feature-surface coverage ledger</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">Parquet support</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/connectors/parquet.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/#connector-support">← Back to Spark Adapter</a></p>
+<p>Added via the <code dir="auto">add-spark-connector</code> skill’s process
+(docs/ADDING_A_SPARK_CONNECTOR.md), but a different shape of investigation
+than Delta/Iceberg: <strong>Parquet is not a separate connector library at
+all.</strong> <code dir="auto">org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat</code>
+is Spark’s own built-in <code dir="auto">FileFormat</code>, already on this module’s <code dir="auto">provided</code>
+<code dir="auto">spark-sql</code> dependency — nothing to add to <code dir="auto">build.sbt</code>, not even as a
+<code dir="auto">% "test"</code> dependency. It registers no catalog of its own (<code dir="auto">.saveAsTable</code>/
+<code dir="auto">spark.table(...)</code>/SQL DDL against a plain <code dir="auto">USING parquet</code> table go
+through Spark’s default <code dir="auto">spark_catalog</code>, the same one CSV/JSON use), has
+no row-level DML, no versioning/time-travel, and — confirmed by the same
+reflective jar-scan technique used for Delta/Iceberg, this time against
+<code dir="auto">spark-sql</code>/<code dir="auto">spark-catalyst</code> themselves with no separate connector jar to
+scan — adds no SQL-extension <code dir="auto">Command</code> classes of its own. Every Parquet
+operation routes through generic Spark commands <code dir="auto">WriteCommandSupport</code>/
+<code dir="auto">FailClosedCommands</code> already recognize (<code dir="auto">InsertIntoHadoopFsRelationCommand</code>,
+<code dir="auto">CreateDataSourceTableAsSelectCommand</code>, <code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/
+<code dir="auto">ReplaceTableAsSelect</code>/<code dir="auto">CreateTableAsSelect</code>, <code dir="auto">WriteToStream</code>) — most of
+them literally <em>because</em> they were built and tested against Parquet
+first (the demo harness’s own <code dir="auto">./dev/test</code> writes Parquet; the original
+<code dir="auto">ContractEnforcementRuleSpec</code> PASS/FAIL pair predates Delta/Iceberg
+entirely).</p>
+<p>So this pass was mostly an audit — real, empirical confirmation that
+those generic mechanisms cover Parquet specifically for every row of “The
+operation surface,” not assumed from the Delta/Iceberg precedent — plus
+two real findings along the way, one a genuine bug.</p>
+<p><strong>A real bug found and fixed: streaming writes to a plain Parquet sink
+resolved to a useless, non-matching location.</strong> <code dir="auto">WriteCommandSupport</code>’s
+<code dir="auto">WriteToStream</code> case (built for Delta) tries, in order: <code dir="auto">sink.name()</code>
+(tier 2), then a reflective call to a public <code dir="auto">path()</code> accessor (tier 3),
+then falls back to the sink’s own <code dir="auto">toString</code>. The first investigation
+attempt assumed Spark’s own built-in <code dir="auto">FileStreamSink</code> — the sink
+<code dir="auto">.writeStream.format("parquet"/"csv"/"json"/"orc"/"text")</code> uses, not
+Parquet-specific — reached tier 2 successfully, since its <code dir="auto">toString()</code>
+renders as a descriptive <code dir="auto">"FileSink[&#x3C;path>]"</code> string; a direct-construction
+probe (constructing a real <code dir="auto">FileStreamSink</code> by hand, no live query needed)
+corrected that: <code dir="auto">FileStreamSink.name()</code> throws the exact same <code dir="auto">Sink</code>-trait
+default <code dir="auto">IllegalStateException</code> <code dir="auto">DeltaSink.name()</code> does — it does <em>not</em>
+override <code dir="auto">name()</code> with a non-throwing implementation, despite <code dir="auto">toString()</code>
+appearing to suggest otherwise. Tier 2 already correctly fails for it, the
+same as for Delta. <strong>The real bug was in tier 3</strong>: <code dir="auto">reflectiveSinkPath</code>
+only ever tried a <em>public method</em> named <code dir="auto">path</code> — exactly what <code dir="auto">DeltaSink</code>
+exposes, but <code dir="auto">FileStreamSink.path</code> (confirmed via <code dir="auto">javap</code>) is a <code dir="auto">private final</code> field with no public accessor at all, so tier 3 found nothing
+either, and every plain <code dir="auto">FileFormat</code>-based streaming write fell all the
+way to the last-resort <code dir="auto">ws.sink.toString</code> — never a contract’s real
+declared physical path, unconditionally. Caught by a real
+<code dir="auto">ParquetConnectorSpec</code> PASS test failing with <code dir="auto">OUTPUT_LOCATION_MISMATCH</code>
+against the write’s own real output directory — not inspection, and the
+first (wrong) root-cause theory was itself caught the same way: a
+manually-applied mutation of the originally-added tier-2 guard produced
+no observable test failure, which is exactly the “equivalent mutant”
+signature — the trigger to re-investigate rather than write a test to
+force a false kill.</p>
+<p>Fixed in <code dir="auto">WriteCommandSupport.reflectiveSinkPath</code> (see that file’s own doc
+comment): extended from “public method” to “declared field” — the same
+no-compile-time-dependency-tolerant convention as everywhere else in this
+file, since <code dir="auto">FileStreamSink</code>, while a plain public class already on this
+module’s <code dir="auto">provided</code> Spark dependency, exposes neither <code dir="auto">path</code> nor
+<code dir="auto">fileFormat</code> as a public method. The format fix is a genuine bonus, not
+just a location fix: <code dir="auto">streamSinkFormatOf</code> previously always returned
+<code dir="auto">None</code> for any non-Delta sink, <code dir="auto">FileStreamSink</code> included — a new branch
+reflects into the private <code dir="auto">fileFormat</code> field and reuses
+<code dir="auto">SparkPlanAdapter.formatOf</code>’s existing <code dir="auto">DataSourceRegister.shortName()</code>
+mechanism, so any <code dir="auto">FileFormat</code>-based streaming write (Parquet, CSV, JSON,
+ORC, text — all share this one sink class) gets a real, precise format
+for free, not just Parquet. Verified via a direct-construction test in
+<code dir="auto">ParquetConnectorSpec</code> (a real <code dir="auto">FileStreamSink</code>/<code dir="auto">WriteToStream</code> built by
+hand and translated synchronously, no live streaming query or
+<code dir="auto">QueryExecutionListener</code> timing involved) asserting both the real
+physical path and <code dir="auto">format = Some("parquet")</code> in one deterministic
+assertion, plus the existing streaming-query-based PASS/FAIL pair, plus
+confirmation the full <code dir="auto">spark-adapter</code> suite (140 tests, all 7 specs
+including the pre-existing Delta streaming-write tests) still passes
+unchanged.</p>
+<p><strong>A genuinely new operation-surface finding, not a bug: <code dir="auto">.saveAsTable()</code>
+append onto an <em>existing</em> plain-Parquet table is a third instance of the
+“one call, two nested Command-shaped plans” pattern</strong> already documented
+above for Delta/Iceberg’s <code dir="auto">StagedTable</code>-based atomic CTAS/RTAS — but via
+a different mechanism. Confirmed empirically:
+<code dir="auto">CreateDataSourceTableAsSelectCommand.run()</code> itself detects the target
+table already exists and, rather than creating a new one, internally
+executes a second, nested <code dir="auto">InsertIntoHadoopFsRelationCommand</code> to perform
+the actual insert — both visible to <code dir="auto">injectCheckRule</code>, meaning
+<code dir="auto">ContractEnforcementRule.verifyOrThrow</code> runs <em>twice</em> for one logical
+write, the same risk profile as the <code dir="auto">StagedTable</code> case. Unlike that case,
+this one needed <strong>no fix</strong>: both plans resolve to the identical physical
+location (the existing table’s real storage path, confirmed via <code dir="auto">cmd.table.storage.locationUri</code>
+on the outer command and <code dir="auto">cmd.outputPath</code> on the nested one), so a
+satisfying write passes both checks and a violating write is rejected at
+the first (outer) command, before the nested insert ever runs — verified
+by a real PASS/FAIL pair (<code dir="auto">ParquetConnectorSpec</code>), the FAIL half
+additionally asserting the target table’s row count is unchanged (proof
+the nested insert genuinely never executed, not just that an exception
+was thrown somewhere). Documented here as a known trap for whichever
+future connector or write shape reaches this pattern next, per the
+existing “shared pitfall” sections’ own stated purpose — a genuinely new
+table created via <code dir="auto">.saveAsTable()</code>/<code dir="auto">.writeTo(...).create()</code> <em>without</em> an
+explicit path option has a related, unresolved version of this same risk
+(the outer command’s location falls back to the qualified catalog
+identifier per the existing “No storage location on new table”
+diagnostic, while the nested insert’s location is the real physical
+path — the two don’t match) — left out of scope for this pass since
+every existing precedent test (Delta’s, Iceberg’s, and this pass’s own)
+sidesteps it with an explicit path, so it was never exercised for real;
+flagged here rather than left implicit.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="parquet-operation-surface-coverage-ledger">Parquet operation-surface coverage ledger</h2><a class="sl-anchor-link" href="#parquet-operation-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Parquet operation-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.read.format("parquet").load(path)</code>/<code dir="auto">.parquet(path)</code></td><td>✅ Covered</td><td>Pre-existing generic <code dir="auto">LogicalRelation</code>+<code dir="auto">HadoopFsRelation</code> handling, in place since before Delta/Iceberg existed. <code dir="auto">SparkPlanAdapterSpec</code>’s CSV/JSON/Parquet read-format test; <code dir="auto">ContractEnforcementRuleSpec</code>’s original Parquet PASS/FAIL pair.</td></tr><tr><td>Catalog table reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>)</td><td>✅ Covered</td><td>Same <code dir="auto">LogicalRelation</code> shape via the default <code dir="auto">spark_catalog</code>, confirmed via <code dir="auto">injectCheckRule</code> probe (<code dir="auto">SubqueryAlias</code> over <code dir="auto">Relation ... parquet</code>). <code dir="auto">ParquetConnectorSpec</code>’s <code dir="auto">.insertInto()</code> test and <code dir="auto">StructuralVerifierSpec</code>’s existing demo-plan tests exercise a catalog table read/write.</td></tr><tr><td>Time travel / snapshot reads</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>Plain Parquet (<code dir="auto">USING parquet</code>, no table-format layer) has no versioning concept at all — no <code dir="auto">VERSION AS OF</code>/<code dir="auto">TIMESTAMP AS OF</code> equivalent exists for it in Spark’s own SQL grammar. Not future work; there is nothing to translate.</td></tr><tr><td>Streaming read (<code dir="auto">readStream</code>)</td><td>✅ Covered</td><td>Generic <code dir="auto">StreamingRelation</code> handling (built for Delta), confirmed empirically for Parquet’s own <code dir="auto">FileSource</code> — a plain public spark-sql class, simpler than Delta’s case (no anonymous-subclass wrinkle). <code dir="auto">ParquetConnectorSpec</code>’s “PASS: a streaming Parquet source satisfies a contract’s declared input schema.”</td></tr><tr><td>Change-data-feed / incremental read</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>No CDC mechanism exists for plain Parquet — this is a table-format feature (Delta’s <code dir="auto">readChangeFeed</code>), not something a bare file format has an equivalent of. Nothing to translate.</td></tr><tr><td><code dir="auto">.save(path)</code>, all four save modes</td><td>✅ Covered</td><td><code dir="auto">InsertIntoHadoopFsRelationCommand</code> — the original, Parquet-first write case (see “Translation coverage” above). Confirmed each mode (<code dir="auto">append</code>/<code dir="auto">overwrite</code>/<code dir="auto">ignore</code>/<code dir="auto">error</code>) produces this same command via a real <code dir="auto">injectCheckRule</code> probe. <code dir="auto">ContractEnforcementRuleSpec</code>’s original PASS/FAIL pair.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, new table</td><td>✅ Covered</td><td><code dir="auto">CreateDataSourceTableAsSelectCommand</code>, <code dir="auto">table.provider</code> defaulting to <code dir="auto">"parquet"</code> — the original test case for this write shape, predating Delta/Iceberg. <code dir="auto">SparkPlanAdapterSpec</code>’s existing <code dir="auto">.saveAsTable()</code> test.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, existing table (append)</td><td>✅ <strong>Covered — closed this pass</strong></td><td>A real, newly-found structural trap (see above): confirmed via <code dir="auto">injectCheckRule</code> to produce two nested <code dir="auto">Command</code>-shaped plans (<code dir="auto">CreateDataSourceTableAsSelectCommand</code> + a nested <code dir="auto">InsertIntoHadoopFsRelationCommand</code>), both independently checked — verified not to cause a false-pass or false-reject. <code dir="auto">ParquetConnectorSpec</code>’s PASS/FAIL pair (the FAIL half also asserts the nested insert never ran).</td></tr><tr><td><code dir="auto">.insertInto(...)</code></td><td>✅ Covered</td><td>Same <code dir="auto">InsertIntoHadoopFsRelationCommand</code> shape as <code dir="auto">.save(path)</code>. <code dir="auto">ParquetConnectorSpec</code>’s translation test via <code dir="auto">SparkAdapterListener</code>.</td></tr><tr><td><code dir="auto">.writeTo(...)</code> (DataFrameWriterV2) — <code dir="auto">.append()</code>/<code dir="auto">.overwrite(cond)</code>/<code dir="auto">.overwritePartitions()</code> against an <em>existing</em> table</td><td>🚫 <strong>N/A — rejected by Spark itself, not an Invaract gap</strong></td><td>Confirmed empirically: Spark’s own analyzer refuses all three with <code dir="auto">AnalysisException: Cannot write into v1 table</code> — a permanent architectural constraint (plain Parquet never implements the V2 <code dir="auto">SupportsWrite</code> capability under the default <code dir="auto">useV1SourceList</code>), independent of Hive support, never reaching an analyzable plan. <code dir="auto">ParquetConnectorSpec</code>’s test proving rejection and zero committed rows.</td></tr><tr><td><code dir="auto">.writeTo(...).create()</code>, new table</td><td>✅ Covered, with a caveat</td><td>With the format made explicit (<code dir="auto">.using("parquet")</code>), reuses the exact same <code dir="auto">CreateDataSourceTableAsSelectCommand</code> path <code dir="auto">.saveAsTable()</code> already uses — confirmed via <code dir="auto">injectCheckRule</code>, no new plan shape. <code dir="auto">ParquetConnectorSpec</code>’s translation test. <strong>Caveat, not a gap</strong>: without <code dir="auto">.using(...)</code>, <code dir="auto">.create()</code> defaults toward Hive-table creation and fails with <code dir="auto">NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT</code> — a genuine, pre-existing Spark limitation of the non-Hive default session catalog, confirmed via a real probe, unrelated to Invaract.</td></tr><tr><td><code dir="auto">.writeTo(...).createOrReplace()</code>/<code dir="auto">.replace()</code></td><td>🚫 <strong>N/A — rejected by Spark itself, not an Invaract gap</strong></td><td>Confirmed empirically, for both new and existing tables, format made explicit or not: <code dir="auto">AnalysisException: ... does not support REPLACE TABLE AS SELECT</code>. The default <code dir="auto">spark_catalog</code> is not a <code dir="auto">StagingTableCatalog</code> for V1-provider-backed tables the way Delta’s/Iceberg’s own catalogs are — never reaches an analyzable plan.</td></tr><tr><td>Format-specific DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>)</td><td>🚫 <strong>N/A — not a Parquet capability at all</strong></td><td>Confirmed empirically: Spark itself rejects all three against a plain Parquet table (<code dir="auto">MERGE INTO TABLE is not supported temporarily</code>/<code dir="auto">UPDATE TABLE is not supported temporarily</code>/<code dir="auto">AnalysisException</code> for <code dir="auto">DELETE</code>) — genuinely different from Delta/Iceberg’s 🚫 rows elsewhere in this document, which are real, connector-supported operations Invaract hasn’t translated yet. Plain Parquet has no row-level-DML capability whatsoever in vanilla Spark; there is nothing to translate. <code dir="auto">ParquetConnectorSpec</code>’s regression test proving rejection and an unchanged row count.</td></tr><tr><td>Streaming write</td><td>✅ <strong>Covered — real bug found and fixed this pass</strong></td><td>See above. <code dir="auto">WriteToStream</code>’s existing case, generic since Delta — but its reflective path lookup (tier 3) only tried a public <code dir="auto">path()</code> method, never finding <code dir="auto">FileStreamSink</code>’s private <code dir="auto">path</code> field, so every plain <code dir="auto">FileFormat</code>-based streaming write fell to a useless <code dir="auto">toString</code>-based location. Fixed in <code dir="auto">WriteCommandSupport.reflectiveSinkPath</code>/<code dir="auto">streamSinkFormatOf</code>. <code dir="auto">ParquetConnectorSpec</code>’s direct-construction translation test plus its PASS/FAIL enforcement pair.</td></tr><tr><td>Maintenance operations that touch data</td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>Plain Parquet has no connector-level maintenance command (no <code dir="auto">OPTIMIZE</code>/<code dir="auto">VACUUM</code>/compaction SQL) — any compaction a user performs is just an ordinary read-and-overwrite job, already covered by the <code dir="auto">.save(path)</code> row above. Nothing to classify.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="parquet-feature-surface-coverage-ledger">Parquet feature-surface coverage ledger</h2><a class="sl-anchor-link" href="#parquet-feature-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Parquet feature-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Feature</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td>Nullability on read-back</td><td>✅ <strong>Confirmed — and reattributed</strong></td><td>Every field reports <code dir="auto">nullable = true</code> after a Parquet write+read round-trip, regardless of the original schema’s nullability — confirmed directly against plain Parquet, no Delta/Iceberg involved. This is the <em>same</em> behavior this document previously described only under “Delta Lake reads” (and separately, independently, under Iceberg’s own ledger) — now confirmed to be inherited from Parquet’s own reader, not something either connector does itself, since both store data as Parquet under the hood. <code dir="auto">ParquetConnectorSpec</code>’s two permanent tests: one confirming the behavior directly (schema comparison pre/post write), one proving a <code dir="auto">required: true</code> field sourced from a Parquet read is correctly rejected as <code dir="auto">OUTPUT_FIELD_NULLABILITY_MISMATCH</code> (the practical contract-authoring consequence).</td></tr><tr><td>Schema merging (<code dir="auto">mergeSchema=true</code> across heterogeneous files)</td><td>✅ Confirmed transparent</td><td>The analyzed plan’s schema genuinely includes the merged (union) column set — confirmed via a real contract that would <code dir="auto">MISSING_OUTPUT_FIELD</code>-reject if the extra column weren’t present. No <code dir="auto">WriteCommandSupport</code>/<code dir="auto">StructuralVerifier</code> change needed. <code dir="auto">ParquetConnectorSpec</code>’s PASS test.</td></tr><tr><td>Partition column discovery (<code dir="auto">partitionBy</code>)</td><td>✅ Confirmed transparent</td><td>Partition columns are genuinely present, with the correct name and type, in both the read-back schema and the write’s own verified schema — no “generated columns”-style gap the way Delta’s onboarding found, since (unlike a Delta generated column) a partition column is always part of <code dir="auto">query.output</code> for a <code dir="auto">FileFormat</code> write: Spark needs its actual value to route each row to the right directory. <code dir="auto">ParquetConnectorSpec</code>’s PASS test.</td></tr><tr><td>Corrupt/malformed file in the read path</td><td>✅ Confirmed orthogonal</td><td>A directory containing a corrupt file fails entirely within Spark’s own Parquet-reading machinery (schema/footer resolution, confirmed to occur at variable points depending on file layout — sometimes during DataFrame construction, sometimes only once a job runs) — never producing an analyzable write-command plan for <code dir="auto">ContractEnforcementRule</code> to see, and never committing output. No fix needed; nothing for Invaract to check here differently. <code dir="auto">ParquetConnectorSpec</code>’s test.</td></tr><tr><td>Legacy timestamp/date rebase mode (<code dir="auto">spark.sql.parquet.datetimeRebaseModeInRead</code>/<code dir="auto">...Write</code>, <code dir="auto">int96RebaseModeIn{Read,Write}</code>)</td><td>✅ <strong>Confirmed — closed as a follow-up</strong></td><td>Real probe (since deleted), then permanent tests: a pre-Gregorian-calendar date/timestamp written under <code dir="auto">LEGACY</code> and read back under <code dir="auto">CORRECTED</code> round-trips with its <code dir="auto">DateType</code>/<code dir="auto">TimestampType</code> schema completely unchanged — rebase mode only ever affects the encoded <em>value</em>, never a field’s declared type or nullability. A write sourced from such a read, under a contract declaring <code dir="auto">date</code>/<code dir="auto">timestamp</code> types, passes cleanly. Also confirmed the strictest setting (<code dir="auto">EXCEPTION</code>) never blocks <em>analysis</em> — schema resolution succeeds regardless of rebase mode; <code dir="auto">EXCEPTION</code> exists to guard genuinely ambiguous files (no rebase metadata tag, i.e. written by pre-2.4.6 Spark), which a modern-Spark-written file never triggers. <code dir="auto">ParquetConnectorSpec</code>’s two new tests.</td></tr><tr><td>Writer-side storage optimizations (bloom filters, dictionary encoding, column statistics)</td><td>✅ <strong>Confirmed — closed as a follow-up</strong></td><td>Real probe (since deleted), then a permanent test: <code dir="auto">parquet.bloom.filter.enabled#&#x3C;col></code>, <code dir="auto">parquet.enable.dictionary</code>, and <code dir="auto">parquet.enable.summary-metadata</code> writer options have zero effect on the analyzed column set, and disabling dictionary encoding specifically doesn’t affect <code dir="auto">streamSinkFormatOf</code>/<code dir="auto">formatOf</code>’s format detection either — these are physical storage-layer decisions Parquet’s reader resolves entirely below the <code dir="auto">LogicalPlan</code> level this adapter translates at, the same reasoning already established for Delta’s/Iceberg’s own storage-layer rows. <code dir="auto">ParquetConnectorSpec</code>’s new test.</td></tr></tbody></table>
+<p>Net assessment: Parquet’s operation surface is fully enumerated, not
+partially covered — every row above is either ✅ Covered or a genuinely
+reasoned 🚫 N/A (a real Spark-level constraint, not “Invaract hasn’t
+gotten to this yet” the way a Delta/Iceberg 🚫 row means), the only
+connector so far where the <em>whole</em> row-level-DML and DataSourceV2-catalog-write
+axes are architecturally inapplicable rather than future work. Two real,
+previously-unknown findings came out of what looked like a purely
+confirmatory pass: a genuine streaming-write location bug (fixed, and
+fixed connector-agnostically — every <code dir="auto">FileFormat</code>-based streaming sink
+benefits, not just Parquet’s), and a documented-but-not-fixed nested-write
+trap for a path-less new-table <code dir="auto">.saveAsTable()</code>/<code dir="auto">.writeTo(...).create()</code>,
+flagged as real future work rather than left implicit. Both feature-surface
+rows left ❓ after the initial pass (rebase mode, storage optimizations)
+were closed in a same-day follow-up — real probes, not assumed transparent
+by analogy to Delta/Iceberg’s own storage-layer rows, each converted to a
+permanent test before its probe was deleted. Every row of both ledgers now
+has a real disposition: no ❓ remaining in either.</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/connectors/parquet.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/hive/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Hive</span></span></a><a href="/Invaract/contributor-pr-preview/pr-58/connectors/avro/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Avro</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>

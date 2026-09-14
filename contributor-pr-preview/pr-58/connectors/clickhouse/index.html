@@ -1,0 +1,523 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>ClickHouse support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/connectors/clickhouse/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-58/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-58/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="ClickHouse support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-58/connectors/clickhouse/"/><meta property="og:locale" content="en"/><meta property="og:description" content="← Back to Spark Adapter"/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="← Back to Spark Adapter"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-58/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-58/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-58/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/Search.astro_astro_type_script_index_0_lang.Dg49BWmw.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="0b19mdr" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/clickhouse/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-58/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#clickhouse-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">ClickHouse operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#clickhouse-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">ClickHouse feature-surface coverage ledger</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#clickhouse-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">ClickHouse operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#clickhouse-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">ClickHouse feature-surface coverage ledger</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-58/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">ClickHouse support</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/connectors/clickhouse.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p><a href="/Invaract/contributor-pr-preview/pr-58/design/spark-adapter/#connector-support">← Back to Spark Adapter</a></p>
+<p>Seventh connector onboarded via the <code dir="auto">add-spark-connector</code> skill’s process.
+Originally scoped as BigQuery; scoped out at Phase 0 before any code was
+written because, unlike every connector this repo has onboarded so far,
+BigQuery has no local/offline testing mode — it requires a real GCP
+project, billing, and credentials, conflicting with this repo’s “real
+Spark execution, no mocking” testing philosophy (ARCHITECTURE.md’s
+ADR-005) and unavailable in the onboarding session. ClickHouse was chosen
+as a substitute specifically because it <em>is</em> genuinely testable without
+a cloud account: <code dir="auto">com.clickhouse.spark %% clickhouse-spark-runtime-3.5 % 0.10.0</code> (confirmed the latest release on Maven Central for exactly this
+Spark 3.5/Scala 2.12 combination at onboarding time; no known blocking
+compatibility issue against it), added to <code dir="auto">spark-adapter/build.sbt</code> as a
+<code dir="auto">% "test"</code> dependency, Linux/macOS-only (excluded on Windows — see below).</p>
+<p><strong>A genuinely new kind of test dependency: a real, separate server
+process, not just a session extension or embedded metastore.</strong>
+<code dir="auto">ClickHouseTestServer</code> (test sources) launches a real, standalone
+<code dir="auto">clickhouse</code> binary as a subprocess — downloaded once from ClickHouse’s
+own GitHub releases and cached locally, started with a per-test
+HTTP/TCP port pair, and torn down in <code dir="auto">afterAll</code>. Confirmed directly
+during Phase 0 investigation (before any test code existed): a real
+<code dir="auto">clickhouse server</code> process starts, binds, and answers real
+<code dir="auto">CREATE TABLE</code>/<code dir="auto">INSERT</code>/<code dir="auto">SELECT</code> queries over HTTP with zero Docker
+dependency. This was a deliberate choice over testcontainers/Docker
+(the connector’s own upstream test suite uses this) — Docker’s daemon
+could not be started in the onboarding session (<code dir="auto">ulimit: error setting limit (Operation not permitted)</code>, a hard container restriction), so any
+testcontainers-based test could only ever be <em>hoped</em> to pass in CI, never
+actually run and confirmed by the person adding it. <strong>Windows scope</strong>:
+ClickHouse has no supported native Windows server build (a hard platform
+constraint, unlike Iceberg’s JDK-version-only exclusion) —
+<code dir="auto">ClickHouseTestServer</code>/<code dir="auto">ClickHouseConnectorSpec.scala</code> and the
+<code dir="auto">clickhouse-spark-runtime</code> dependency itself are excluded on Windows in
+<code dir="auto">build.sbt</code>, the same “exclude the dependency, not just the test class”
+pattern Iceberg’s JDK&#x3C;17 exclusion already established (Spark’s
+ServiceLoader-based <code dir="auto">DataSourceRegister</code> lookup scans every provider on
+the classpath for <em>any</em> format-based read, so a merely-resolvable jar can
+affect unrelated tests). <strong>A real environment-specific caveat, stated
+plainly rather than left implicit</strong>: macOS provisioning
+(<code dir="auto">clickhouse-macos</code>/<code dir="auto">clickhouse-macos-aarch64</code> release assets) is
+implemented and the download URLs confirmed to exist via a direct HTTP
+check, but <strong>not independently runtime-verified by this session</strong> — no
+macOS environment was available to actually start and query a server
+there. Linux (the platform this session ran on) is fully verified: real
+queries against a real started server, both during investigation and via
+<code dir="auto">ClickHouseConnectorSpec</code> itself.</p>
+<p><strong>A second real environment-specific fix, general beyond ClickHouse</strong>:
+a real <code dir="auto">UnsupportedOperationException: sun.misc.Unsafe or java.nio.DirectByteBuffer.&#x3C;init>(long, int) not available</code> surfaced the
+first time any ClickHouse write executed under this sandbox’s JDK 21 —
+confirmed to be a genuine external incompatibility (apache/arrow#35053,
+fixed in Arrow 13.0.0): JDK 21 changed <code dir="auto">DirectByteBuffer</code>’s private
+constructor signature, and Spark 3.5.1 bundles Arrow 12.0.1 (confirmed
+via the resolved test classpath), which predates the fix. ClickHouse’s
+<code dir="auto">.writeTo(...)</code> path is the first connector in this module to actually
+exercise Arrow-based serialization (its own bulk-load mechanism — Delta/
+Iceberg’s <code dir="auto">.writeTo()</code> tests never hit this). Not fixable via
+<code dir="auto">--add-opens</code> (both <code dir="auto">java.base/java.nio</code> and <code dir="auto">jdk.unsupported/sun.misc</code>
+were already open in this module’s <code dir="auto">Test/javaOptions</code>; the failure is a
+missing constructor overload, not a reflective-access denial). Fixed via
+a <code dir="auto">dependencyOverrides</code> entry pinning <code dir="auto">arrow-vector</code>/<code dir="auto">arrow-memory-core</code>/
+<code dir="auto">arrow-memory-netty</code> to 14.0.1 for the <em>test</em> classpath only — confirmed
+compatible with every other spec exercising Arrow-adjacent code paths in
+this suite, and with zero effect on the shipped <code dir="auto">spark-adapter</code> jar
+(Arrow is never a compile/runtime dependency of this module, only pulled
+in transitively by Spark’s own <code dir="auto">provided</code>/test dependencies).</p>
+<p><strong>A real reflective jar scan of <code dir="auto">clickhouse-spark-runtime</code> (6,181
+classes) found zero <code dir="auto">Command</code>-shaped classes</strong> — the second connector
+(after Avro) with no SQL-extension commands at all. The entire operation
+surface routes through Spark’s own generic DSv2 command family:
+<code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/<code dir="auto">CreateTableAsSelect</code>/
+<code dir="auto">ReplaceTableAsSelect</code> were already generic (from Iceberg’s pass) and are
+confirmed here to cover ClickHouse “for free,” including the same
+nested-double-write <code dir="auto">StagedTable</code> pattern Delta/Iceberg’s own new-table
+creates already handle. <code dir="auto">CreateNamespace</code>/<code dir="auto">CreateTable</code>(plain)/
+<code dir="auto">AnalyzeTable</code>/<code dir="auto">ShowTables</code> were already safe-listed generically — zero
+new <code dir="auto">FailClosedCommands</code> entries needed.</p>
+<p><strong>One genuinely new, connector-agnostic <code dir="auto">WriteCommandSupport</code> case:
+<code dir="auto">DeleteFromTable</code>.</strong> Confirmed empirically that a real predicate-based
+<code dir="auto">DELETE FROM ch.db.tbl WHERE id = 1</code> executes successfully against
+ClickHouse — unlike Parquet/CSV/Avro’s plain tables (which reject DELETE
+outright) and structurally different from Iceberg’s row-level DML
+(<code dir="auto">RowLevelWrite</code>/<code dir="auto">ReplaceData</code>/<code dir="auto">WriteDelta</code>, produced by Spark’s
+<code dir="auto">RewriteRowLevelOperation</code> optimizer rule for connectors implementing
+<code dir="auto">SupportsRowLevelOperations</code>). ClickHouse’s connector doesn’t implement
+that interface — it implements plain <code dir="auto">SupportsDelete</code> instead, so the
+<code dir="auto">DeleteFromTable</code> node is never rewritten and reaches
+<code dir="auto">ContractEnforcementRule</code> as-is, a shape no prior connector’s pass had
+ever seen translated. <code dir="auto">DeleteFromTable.table</code> is a plain <code dir="auto">LogicalPlan</code>
+(possibly <code dir="auto">SubqueryAlias</code>-wrapped), not a <code dir="auto">NamedRelation</code> directly, so
+the new case locates the underlying relation via <code dir="auto">collectFirst</code> rather
+than the <code dir="auto">namedRelationLocationAndFormat</code> helper’s direct-parameter form.
+Scope matches Delta/Iceberg’s row-level DML precedent exactly:
+structural only (target location/schema) — the delete predicate itself
+has no IR representation and isn’t checked.</p>
+<p><strong>A real, found-but-deliberately-undebugged finding on <code dir="auto">MERGE INTO</code></strong>:
+confirmed empirically that a <code dir="auto">MERGE INTO</code> statement against ClickHouse
+fails with <code dir="auto">AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION]</code>
+<em>before</em> ever producing a <code dir="auto">Command</code>-shaped analyzable plan at all — a
+genuine analysis-time rejection, consistent with the connector’s own
+documentation stating DML beyond append/overwrite isn’t supported. Not
+investigated further to find the exact root cause (unlike <code dir="auto">UPDATE</code>,
+which cleanly reaches <code dir="auto">UpdateTable</code> and is then rejected by Spark’s own
+generic “not supported temporarily” message) — the practical conclusion
+(MERGE never produces a translatable plan for this connector) is the
+same regardless, and chasing the precise resolver internals was judged
+out of scope for this pass.</p>
+<p><strong>A real, confirmed read/write location-format asymmetry</strong>, general to
+how <code dir="auto">Table.properties()</code> behaves for this connector, not a bug in
+Invaract’s own logic: writes resolve to a computed 3-part qualified
+identifier (<code dir="auto">catalog.namespace.table</code>, e.g. <code dir="auto">ch.probe_db.t</code>) via
+<code dir="auto">WriteCommandSupport</code>’s existing <code dir="auto">qualifiedIdentifier</code> helper, since
+<code dir="auto">ClickHouseTable</code> exposes no <code dir="auto">"location"</code> property either side. Reads go
+through <code dir="auto">DataSourceV2Relation.name</code> (<code dir="auto">ClickHouseTable</code>’s own <code dir="auto">name()</code>
+implementation), confirmed empirically to return a backtick-quoted
+<strong>2-part</strong> <code dir="auto">`namespace`.`table`</code> with no catalog prefix at all —
+genuinely different from the write side’s convention for the identical
+table. A contract’s declared <code dir="auto">location</code> for a ClickHouse <em>input</em> must
+therefore use this quoted 2-part form (<code dir="auto"> "</code>probe_db<code dir="auto">.</code>read_catalog_tbl<code dir="auto">" </code>), not the 3-part form outputs use — confirmed and exercised directly in
+<code dir="auto">ClickHouseConnectorSpec</code>’s read test. <strong>Next step, not attempted this
+pass</strong>: a possible future unification (making the read side also prefer
+a computed qualified identifier over raw <code dir="auto">Table.name()</code>, matching the
+write side’s convention) — a connector-agnostic change affecting every
+DSv2 connector’s read-side location resolution, judged too large a scope
+change for this pass given it works correctly today, just with a
+real quirk contract authors need to know about.</p>
+<p><strong>Feature surface</strong>: ClickHouse’s own <code dir="auto">ORDER BY</code>/sorting-key nullability
+constraint (<code dir="auto">allow_nullable_key</code>) confirmed genuinely orthogonal to
+Invaract — a source DataFrame column can correctly report
+<code dir="auto">nullable = false</code> while <code dir="auto">DataFrameWriterV2</code>’s <code dir="auto">.create()</code> path still
+doesn’t propagate that into the generated ClickHouse DDL, so ClickHouse
+itself rejects a nullable-typed sorting key regardless of what a
+contract declares or what Invaract’s own structural checks see — the
+same “confirmed orthogonal” pattern as Delta’s <code dir="auto">CHECK</code> constraints.
+Invaract neither causes nor can prevent this; a satisfying write (with
+<code dir="auto">settings.allow_nullable_key=1</code> supplied) is unaffected either way,
+confirmed by every other <code dir="auto">.create()</code>/<code dir="auto">.createOrReplace()</code> test in this
+file succeeding once that workaround is applied.</p>
+<p><strong>Follow-up pass closing the 4 remaining ❓ rows.</strong> Zero
+<code dir="auto">spark-adapter/src/main/scala</code> changes — every finding below is either a
+confirmed-transparent behavior or a confirmed, permanent connector
+limitation, not a translation gap (see the ledgers below for the
+disposition each closed to).</p>
+<ul>
+<li><strong>Streaming read</strong>: confirmed rejected outright, the same way streaming
+write already was — both <code dir="auto">spark.readStream.format("clickhouse")...load()</code>
+(<code dir="auto">SparkUnsupportedOperationException: Data source clickhouse does not support streamed reading</code>) and the catalog-based
+<code dir="auto">spark.readStream.table(...)</code> (<code dir="auto">AnalysisException: ... does not support either micro-batch or continuous scan</code>) fail before any Command-shaped
+plan exists. Nothing for <code dir="auto">WriteCommandSupport</code>/<code dir="auto">SparkPlanAdapter</code> to
+translate.</li>
+<li><strong><code dir="auto">.saveAsTable()</code> onto an existing table</strong>: confirmed empirically (not
+assumed from the already-covered <code dir="auto">.insertInto()</code>/<code dir="auto">.writeTo().append()</code>
+shapes) to produce the identical <code dir="auto">AppendData</code> node. No new case needed.</li>
+<li><strong>Maintenance operations</strong> (<code dir="auto">OPTIMIZE</code>, <code dir="auto">ALTER TABLE ... DELETE</code>,
+<code dir="auto">VACUUM</code>): confirmed genuinely unreachable through Spark SQL with this
+connector at all — every attempt fails with a <code dir="auto">ParseException</code> at
+Spark’s own SQL parser, before analysis, because the connector installs
+no <code dir="auto">SparkSessionExtensions</code> parser extension for them (unlike Delta,
+which registers its own parser for <code dir="auto">OPTIMIZE</code>/<code dir="auto">VACUUM</code>). Not a 🚫
+fails-closed row in the usual sense (nothing reaches a Command-shaped
+plan to classify) — a genuine absence of Spark-visible surface, closer
+in kind to the connector’s own already-documented <code dir="auto">.save(path)</code> N/A row.</li>
+<li><strong>Richer type system</strong>: split into three genuinely different findings,
+not one. <strong>Array/Map/Struct</strong> (Spark’s own complex types): confirmed
+fully transparent — <code dir="auto">CREATE TABLE</code>, a real write producing the already-
+known <code dir="auto">AppendData</code> shape, read-back, and contract verification against
+a contract declaring <code dir="auto">array</code>/<code dir="auto">map</code>/<code dir="auto">struct</code> field types all confirmed
+working with a real round-trip test. <strong><code dir="auto">LowCardinality</code></strong>: confirmed
+transparent on read (the connector’s own <code dir="auto">SchemaUtils</code> class, decompiled
+directly rather than assumed from its docs, has no <code dir="auto">LowCardinality</code>
+special-casing at all — the wrapped base type flows through as-is) and
+confirmed <strong>not requestable from the Spark side on write</strong> — two
+plausible-looking <code dir="auto">TBLPROPERTIES</code> mechanisms were tried and both
+silently accepted without applying anything, confirmed against the real
+server’s own <code dir="auto">system.columns</code> (<code dir="auto">Nullable(String)</code>, not
+<code dir="auto">LowCardinality(String)</code>), ruling out “maybe it’s an undocumented
+option” before concluding “no mechanism exists.” <strong><code dir="auto">Nested</code></strong>: a real,
+worth-documenting distinction, not a bug — Spark’s
+<code dir="auto">ARRAY&#x3C;STRUCT&#x3C;...>></code> DDL produces ClickHouse’s <code dir="auto">Array(Tuple(...))</code>
+(confirmed against <code dir="auto">system.columns</code>), a structurally similar but
+distinct type from ClickHouse’s own <code dir="auto">Nested(...)</code> (parallel-arrays/
+sub-column-addressing semantics <code dir="auto">Array(Tuple(...))</code> doesn’t have). A
+contract author should not assume <code dir="auto">ARRAY&#x3C;STRUCT&#x3C;...>></code> gives them true
+<code dir="auto">Nested</code> semantics — it doesn’t, and there’s no Spark-side mechanism to
+request true <code dir="auto">Nested</code> on write either. (The connector’s <code dir="auto">SchemaUtils</code>
+does contain real <em>read</em>-side unwrap logic for a genuinely pre-existing
+<code dir="auto">Nested</code> column, per its <code dir="auto">getNestedColumns</code>/<code dir="auto">nestedCols</code> symbols — not
+independently exercised this pass; noted as the row’s own remaining
+next step below, distinct from the write-side finding above.)</li>
+</ul>
+<p><strong>A real bonus finding, found via this pass but not ClickHouse-specific —
+found and fixed, not left pinned.</strong> Investigating the type-mapping
+contract-verification path with a contract YAML missing its top-level
+<code dir="auto">outputs:</code> key didn’t produce a clean rejection — it crashed
+<code dir="auto">StructuralVerifier.verify</code> with an unguarded
+<code dir="auto">java.util.NoSuchElementException: head of empty list</code> at
+<code dir="auto">contract.outputs.head</code>. Root-caused precisely, not just observed:
+<code dir="auto">ContractParser.parse</code> never calls <code dir="auto">ContractValidator.validate</code> (a
+separate step a caller must invoke explicitly), and nothing on
+<code dir="auto">ContractEnforcementRule</code>’s runtime enforcement path called it either —
+even though <code dir="auto">ContractValidator</code> already had an “outputs must be
+non-empty” check that would catch exactly this. Reproduced with <em>any</em>
+connector, since it was a <code dir="auto">contract</code>/<code dir="auto">spark-adapter</code> boundary gap, not a
+ClickHouse translation issue. <strong>Fixed</strong> by having
+<code dir="auto">ContractEnforcementRule.verifyOrThrow</code> call <code dir="auto">ContractValidator.validate</code>
+before checking a write or state-changing <code dir="auto">CALL</code> against the contract,
+surfacing a clean <code dir="auto">ContractViolationException</code> (a new
+<code dir="auto">ViolationType.InvalidContract</code>) instead of the raw crash. Scoped
+carefully, not applied blanket: <code dir="auto">verifyOrThrow</code> runs for <em>every</em> plan
+<code dir="auto">injectCheckRule</code> sees, not just writes, so validating unconditionally at
+the top of the method broke ordinary reads/transformations the moment an
+invalid contract was merely active — caught by a real test failure
+before landing, not assumed safe. Fixed by moving the guard into just the
+two branches that actually consult the contract (the <code dir="auto">ir.Write</code> case and
+the state-changing-CALL case). Real regression test in
+<code dir="auto">ContractEnforcementRuleSpec</code>, not <code dir="auto">StructuralVerifierSpec</code>
+(<code dir="auto">StructuralVerifier.verify</code> itself still assumes a valid contract by
+design — validating one is <code dir="auto">ContractEnforcementRule</code>’s job).
+Mutation-tested (100%, 45/45 non-excluded mutants killed, both files),
+<code dir="auto">mimaReportBinaryIssues</code> clean, full <code dir="auto">spark-adapter</code> suite and
+<code dir="auto">./dev/build</code>/<code dir="auto">./dev/test</code> all green.</p>
+<p><strong>Second follow-up pass closing the last 3 ❓ feature-surface rows.</strong>
+Zero <code dir="auto">spark-adapter/src/main/scala</code> changes — every finding below is a
+confirmed-transparent behavior or a confirmed real limitation.</p>
+<ul>
+<li><strong><code dir="auto">PARTITION BY</code></strong>: confirmed real and working, but requested through
+Spark’s own native <code dir="auto">PARTITIONED BY (col)</code> DDL clause, not a
+<code dir="auto">TBLPROPERTIES</code> key — confirmed via the real server’s
+<code dir="auto">create_table_query</code>. <code dir="auto">primary_key</code> and <code dir="auto">sample_by</code> (found while
+investigating the same connector-DDL code path, decompiled directly
+from <code dir="auto">ClickHouseCatalog</code> rather than guessed) are both real
+<code dir="auto">TBLPROPERTIES</code> keys that genuinely apply; <code dir="auto">sample_by</code> requires an
+unsigned-integer sampling column in real ClickHouse (a <code dir="auto">cityHash64(id)</code>
+expression, ClickHouse’s own idiom, works around Spark’s <code dir="auto">BIGINT</code> being
+signed) — a real ClickHouse constraint, not an Invaract one.</li>
+<li><strong>Replicated engines</strong>: the connector’s own jar has a dedicated
+<code dir="auto">ReplicatedMergeTreeEngineSpec</code> class (confirmed via decompilation,
+not assumed from the <code dir="auto">engine</code> string alone) — real, first-class
+support, not just an opaque passthrough string. Couldn’t be verified
+end to end in this pass: a real <code dir="auto">CREATE TABLE ... ENGINE = ReplicatedMergeTree(...)</code> against the standalone single-node test
+server fails with <code dir="auto">NO_ELEMENTS_IN_CONFIG</code> (no <code dir="auto">{shard}</code>/<code dir="auto">{replica}</code>
+macros or Keeper coordination configured) — an environment gap, the
+same class as this connector’s own Docker-unavailability constraint,
+not a connector or Invaract limitation.</li>
+<li><strong>Materialized views</strong>: confirmed genuinely unreachable through Spark
+SQL with this connector — <code dir="auto">CREATE MATERIALIZED VIEW</code> fails with
+<code dir="auto">ParseException</code>, the same “no SQL extension registered” pattern
+already established for maintenance operations above.</li>
+<li><strong>TTL-driven expiry</strong>: confirmed not requestable from Spark — a <code dir="auto">ttl</code>
+<code dir="auto">TBLPROPERTIES</code> key is silently accepted without applying anything,
+confirmed against the real server’s <code dir="auto">create_table_query</code> (no <code dir="auto">TTL</code>
+clause appears), the same “accepted but inert” pattern already found
+for <code dir="auto">LowCardinality</code>.</li>
+<li><strong>Compression</strong>: a real, clarifying distinction, not a gap. The
+connector’s <code dir="auto">spark.clickhouse.{read,write}.compression.codec</code> Spark
+session configs (confirmed via its own decompiled <code dir="auto">ClickHouseSQLConf</code>)
+control Spark↔ClickHouse wire-transfer compression only (<code dir="auto">none</code>/<code dir="auto">lz4</code>)
+— confirmed to have zero effect on a column’s real storage-layer codec
+(no <code dir="auto">CODEC(...)</code> clause appears in <code dir="auto">create_table_query</code> either way).
+ClickHouse’s own per-column storage compression codecs aren’t exposed
+by this connector at all, in either direction.</li>
+<li><strong>Reading a genuinely pre-existing <code dir="auto">Nested</code> column</strong>: the row’s last
+remaining ❓, now closed with a real finding, not the transparent
+round-trip the connector’s <code dir="auto">SchemaUtils</code> symbols suggested might exist.
+A true <code dir="auto">Nested(name String, count Int64)</code> column, created via raw SQL
+passthrough (Spark’s own DDL has no syntax to request one at all), is
+read back as <strong>two separate top-level Spark columns literally named
+<code dir="auto">"items.name"</code> and <code dir="auto">"items.count"</code></strong> (dots included), each a plain
+<code dir="auto">ArrayType</code> — not a single <code dir="auto">items</code> column of
+<code dir="auto">ArrayType(StructType(name, count))</code> the way a “real Nested support”
+claim might imply. This is ClickHouse’s own internal representation of
+<code dir="auto">Nested</code> (parallel arrays under dotted names) surfacing through
+unchanged, confirmed against the real server’s <code dir="auto">create_table_query</code>. A
+contract declaring such a column must account for this flattened
+shape.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="clickhouse-operation-surface-coverage-ledger">ClickHouse operation-surface coverage ledger</h2><a class="sl-anchor-link" href="#clickhouse-operation-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “ClickHouse operation-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.read.format("clickhouse").load(...)</code> (TableProvider, no catalog)</td><td>✅ Covered</td><td><code dir="auto">DataSourceV2Relation</code>, same generic case as catalog reads. <code dir="auto">ClickHouseConnectorSpec</code>’s “PASS: TableProvider format-based read/write round-trips real data.”</td></tr><tr><td>Catalog table reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>)</td><td>✅ Covered</td><td><code dir="auto">DataSourceV2Relation</code>, already generic from Iceberg’s pass. <code dir="auto">ClickHouseConnectorSpec</code>’s PASS read test — with the read/write location-format asymmetry above confirmed and worked around.</td></tr><tr><td>Time travel / snapshot reads</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>ClickHouse’s MergeTree engine has no Iceberg/Delta-style snapshot-versioning concept exposed through this connector. Nothing to translate.</td></tr><tr><td>Streaming read (<code dir="auto">readStream</code>)</td><td>🚫 <strong>N/A — connector doesn’t implement <code dir="auto">SupportsRead</code> with any streaming mode</strong></td><td>Confirmed empirically, both <code dir="auto">TableProvider</code>- and catalog-based: <code dir="auto">SparkUnsupportedOperationException</code>/<code dir="auto">AnalysisException</code> before any Command-shaped plan exists. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated rejection test. <strong>Next step</strong>: none — a genuine, permanent connector limitation, the same category as streaming write.</td></tr><tr><td>Change-data-feed / incremental read</td><td>🚫 <strong>N/A, not a real gap</strong></td><td>No CDC mechanism exists for this connector’s plain MergeTree tables. Nothing to translate.</td></tr><tr><td><code dir="auto">.save(path)</code> (path-based, no catalog)</td><td>🚫 <strong>N/A — connector has no path-based write at all</strong></td><td>Confirmed via this connector’s own documentation and empirically: writes are either catalog-based (<code dir="auto">.writeTo(...)</code>) or <code dir="auto">TableProvider</code>-based with explicit <code dir="auto">host</code>/<code dir="auto">database</code>/<code dir="auto">table</code> options, never a bare filesystem path. Not a gap — there is no <code dir="auto">.save(path)</code> shape this connector produces.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, new table</td><td>✅ Covered</td><td>Same <code dir="auto">ReplaceTableAsSelect</code> shape <code dir="auto">.writeTo(...).createOrReplace()</code> uses, confirmed via probe (not exercised as a dedicated permanent test — <code dir="auto">ClickHouseConnectorSpec</code>’s <code dir="auto">createOrReplace()</code> test covers the identical plan shape).</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, existing table (append)</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Confirmed empirically to produce <code dir="auto">AppendData</code>, identical to <code dir="auto">.insertInto()</code>/<code dir="auto">.writeTo().append()</code>. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td><code dir="auto">.insertInto(...)</code></td><td>✅ Covered</td><td><code dir="auto">AppendData</code>, already generic. <code dir="auto">ClickHouseConnectorSpec</code>’s translation test.</td></tr><tr><td><code dir="auto">.writeTo(...)</code>, all sub-ops (<code dir="auto">.append()</code>/<code dir="auto">.overwrite(cond)</code>/<code dir="auto">.create()</code>/<code dir="auto">.createOrReplace()</code>)</td><td>✅ Covered</td><td><code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/<code dir="auto">CreateTableAsSelect</code>/<code dir="auto">ReplaceTableAsSelect</code>, all already generic from Iceberg’s pass, confirmed to cover ClickHouse via real PASS/FAIL pairs (<code dir="auto">.overwritePartitions()</code>, DataFrameWriterV2’s dynamic-partition-overwrite sub-op, not investigated — see next row).</td></tr><tr><td><code dir="auto">.writeTo(...).overwritePartitions()</code></td><td>🚫 <strong>N/A — connector doesn’t support partition-level overwrite</strong></td><td>Confirmed via this connector’s own documented caveat (“The connector doesn’t currently support partition-level overwrite operations”), not independently re-probed this pass. <strong>Next step</strong>: a real probe to confirm the exact rejection mode (Spark-level or connector-level), if ever doubted.</td></tr><tr><td>Format-specific DML — <code dir="auto">DELETE FROM ... WHERE ...</code></td><td>✅ <strong>Covered — closed this pass, genuinely new</strong></td><td><code dir="auto">DeleteFromTable</code>, a new connector-agnostic <code dir="auto">WriteCommandSupport</code> case (see above). PASS/FAIL pair in <code dir="auto">ClickHouseConnectorSpec</code>, structural verification only.</td></tr><tr><td>Format-specific DML — <code dir="auto">UPDATE</code>/<code dir="auto">MERGE INTO</code></td><td>🚫 <strong>N/A — rejected before any write occurs</strong></td><td><code dir="auto">UPDATE</code> reaches <code dir="auto">UpdateTable</code> then is rejected by Spark’s own generic “not supported temporarily” message; <code dir="auto">MERGE</code> fails at analysis time before any Command-shaped plan exists at all. Neither is a real Phase-4 case-3 (data-mutating, unmodeled) operation for this connector — both are N/A the same way Parquet/CSV/Avro’s own DML rejections are. <code dir="auto">ClickHouseConnectorSpec</code>’s combined rejection test, asserting the target table is unchanged.</td></tr><tr><td>Streaming write</td><td>🚫 <strong>N/A — connector doesn’t implement <code dir="auto">SupportsStreamingWrite</code></strong></td><td>Confirmed empirically: <code dir="auto">AnalysisException: Table ... doesn't support streaming write - ClickHouseTable(...)</code>, rejected by Spark itself before any Command-shaped write plan is produced. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated rejection test. <strong>Next step</strong>: none — this is a genuine, permanent connector limitation as of 0.10.0, not something Invaract’s translation could close even in principle without the connector itself adding the capability.</td></tr><tr><td>Maintenance operations that touch data (<code dir="auto">OPTIMIZE</code>, <code dir="auto">ALTER TABLE ... DELETE</code>, <code dir="auto">VACUUM</code>)</td><td>🚫 <strong>N/A — unreachable through Spark SQL with this connector</strong></td><td>Confirmed empirically: every attempt fails with <code dir="auto">ParseException</code> at Spark’s own parser, before analysis — the connector registers no SQL extension for them, unlike Delta’s own <code dir="auto">OPTIMIZE</code>/<code dir="auto">VACUUM</code>. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test. <strong>Next step</strong>: none — would require the connector itself to add a parser extension or <code dir="auto">CALL</code>-style procedure mechanism (it currently has neither). TTL-driven expiry, configured at <code dir="auto">CREATE TABLE</code> time rather than invoked as a separate operation, is confirmed not requestable from Spark at all — see the feature-surface ledger below.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="clickhouse-feature-surface-coverage-ledger">ClickHouse feature-surface coverage ledger</h2><a class="sl-anchor-link" href="#clickhouse-feature-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “ClickHouse feature-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Feature</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">ORDER BY</code>/sorting-key nullability (<code dir="auto">allow_nullable_key</code>)</td><td>✅ Confirmed orthogonal</td><td>A source DataFrame’s correct <code dir="auto">nullable = false</code> isn’t propagated into the generated DDL by <code dir="auto">DataFrameWriterV2.create()</code>; ClickHouse enforces its own constraint independently of Invaract either way. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated feature-surface test.</td></tr><tr><td>Read/write location-format asymmetry (<code dir="auto">Table.properties()</code>/<code dir="auto">Table.name()</code>)</td><td>✅ Confirmed and worked around</td><td>Not a “feature” in the schema-evolution sense, but a real, confirmed connector-specific behavior contract authors must account for. See the write-up above; exercised directly in the read test.</td></tr><tr><td><code dir="auto">PARTITION BY</code></td><td>✅ <strong>Confirmed working — closed this pass</strong></td><td>Spark’s native <code dir="auto">PARTITIONED BY (col)</code> clause, not a <code dir="auto">TBLPROPERTIES</code> key. Confirmed against the real server’s <code dir="auto">create_table_query</code>. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td>Replicated engines</td><td>❓ <strong>Real connector support confirmed, environment-limited — closed as far as this pass can</strong></td><td>A dedicated <code dir="auto">ReplicatedMergeTreeEngineSpec</code> class exists in the connector’s own jar (confirmed via decompilation). Rejected in this environment with <code dir="auto">NO_ELEMENTS_IN_CONFIG</code> — the standalone single-node test server has no <code dir="auto">{shard}</code>/<code dir="auto">{replica}</code> macros or Keeper configured. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test pins this real rejection. <strong>Next step</strong>: a multi-node test environment with Keeper configured, if this connector’s replicated-engine behavior ever needs deeper verification — out of reach of the current single-binary test infrastructure.</td></tr><tr><td>Materialized views</td><td>🚫 <strong>N/A — unreachable through Spark SQL with this connector — closed this pass</strong></td><td><code dir="auto">CREATE MATERIALIZED VIEW</code> fails with <code dir="auto">ParseException</code>, the same pattern as maintenance operations above. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td>Compression/codec options</td><td>✅ <strong>Confirmed and clarified — closed this pass</strong></td><td><code dir="auto">spark.clickhouse.{read,write}.compression.codec</code> (confirmed via the connector’s own decompiled <code dir="auto">ClickHouseSQLConf</code>) controls Spark↔ClickHouse wire-transfer compression only — zero effect on a column’s real storage-layer codec, which this connector doesn’t expose at all. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td>TTL-driven expiry</td><td>✅ <strong>Confirmed not requestable from Spark — closed this pass</strong></td><td>The <code dir="auto">ttl</code> <code dir="auto">TBLPROPERTIES</code> key is silently accepted without applying anything, confirmed against the real server’s <code dir="auto">create_table_query</code> (no <code dir="auto">TTL</code> clause appears) — the same “accepted but inert” pattern as <code dir="auto">LowCardinality</code>. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td>Type mapping — <code dir="auto">Array</code>/<code dir="auto">Map</code>/<code dir="auto">Struct</code> (Spark’s own complex types)</td><td>✅ <strong>Confirmed transparent — closed this pass</strong></td><td>Real round-trip: <code dir="auto">CREATE TABLE</code>, write (<code dir="auto">AppendData</code>, the already-known shape), read-back, and contract verification against a contract declaring <code dir="auto">array</code>/<code dir="auto">map</code>/<code dir="auto">struct</code> field types all pass. <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test.</td></tr><tr><td>Type mapping — <code dir="auto">LowCardinality</code></td><td>✅ <strong>Confirmed transparent on read; confirmed not requestable from Spark on write — closed this pass</strong></td><td>The connector’s own <code dir="auto">SchemaUtils</code> (decompiled directly) has no <code dir="auto">LowCardinality</code> handling at all — the wrapped base type flows through on read. Two plausible <code dir="auto">TBLPROPERTIES</code> mechanisms tried on write, both silently ignored — confirmed against the real server’s <code dir="auto">system.columns</code> (<code dir="auto">Nullable(String)</code>, not <code dir="auto">LowCardinality(String)</code>). <code dir="auto">ClickHouseConnectorSpec</code>’s dedicated test. <strong>Next step</strong>: none — no mechanism exists in this connector version to request it from Spark.</td></tr><tr><td>Type mapping — <code dir="auto">Nested</code></td><td>🔧 <strong>Found a real distinction, not a bug — fully closed</strong></td><td>Spark’s <code dir="auto">ARRAY&#x3C;STRUCT&#x3C;...>></code> produces ClickHouse’s <code dir="auto">Array(Tuple(...))</code>, not true <code dir="auto">Nested(...)</code> — confirmed against <code dir="auto">system.columns</code>. A contract author should not assume <code dir="auto">ARRAY&#x3C;STRUCT&#x3C;...>></code> gives true <code dir="auto">Nested</code> semantics. Reading a genuinely pre-existing <code dir="auto">Nested</code> column (created via raw SQL passthrough) surfaces as <strong>two separate top-level Spark columns literally named <code dir="auto">"items.name"</code>/<code dir="auto">"items.count"</code></strong> (ClickHouse’s own dotted-parallel-array representation, unflattened into a real nested struct) — confirmed against the real server’s <code dir="auto">create_table_query</code>, not the transparent round-trip the connector’s <code dir="auto">SchemaUtils</code> unwrap-logic symbols might have suggested. <code dir="auto">ClickHouseConnectorSpec</code>’s two dedicated tests pin both directions.</td></tr></tbody></table>
+<p>Net assessment: both ledgers are now fully closed — every operation-
+surface row has a ✅/🚫 disposition and every feature-surface row has a
+✅/🔧 disposition, no ❓ remaining anywhere. The one row that isn’t a
+clean “works”/“doesn’t work” — replicated engines — is honestly marked
+as environment-limited rather than forced into a false ✅ or 🚫: the
+connector genuinely supports them (confirmed via decompilation), but
+this pass’s single-node standalone-binary test server has no Keeper/
+shard-macro configuration to verify it end to end, a different class of
+limitation from “not investigated.” Every other row, across both
+follow-up passes, is confirmed empirically against a real server, none
+assumed: the entire core write path (<code dir="auto">AppendData</code>/
+<code dir="auto">OverwriteByExpression</code>/<code dir="auto">CreateTableAsSelect</code>/<code dir="auto">ReplaceTableAsSelect</code>/
+<code dir="auto">DeleteFromTable</code>), the entire core read path including streaming’s
+rejection, maintenance operations’ and materialized views’ absence from
+Spark’s plan machinery, <code dir="auto">PARTITION BY</code>/<code dir="auto">primary_key</code>/<code dir="auto">sample_by</code>, and the
+full richer-type-system findings (<code dir="auto">Array</code>/<code dir="auto">Map</code>/<code dir="auto">Struct</code> transparent,
+<code dir="auto">LowCardinality</code> transparent-but-not-requestable, <code dir="auto">Nested</code> genuinely
+distinct from <code dir="auto">Array(Tuple(...))</code> in both write and read directions,
+compression confirmed wire-transfer-only, TTL confirmed inert).
+<code dir="auto">ClickHouseConnectorSpec</code>: 28 tests, all passing (up from 15 at the
+original onboarding).</p>
+<hr>
+<p><strong>Last Updated:</strong> 2026-08-27 (second follow-up pass — both ledgers fully closed)
+<strong>Status:</strong> Spark adapter — initial implementation (ROADMAP.md Phase 1c, Spark Adapter sub-phase)</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/connectors/clickhouse.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-58/connectors/csv/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">CSV</span></span></a><a href="/Invaract/contributor-pr-preview/pr-58/process/versioning/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Versioning</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
