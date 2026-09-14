@@ -59,6 +59,17 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 | `RULE_UNCONDITIONAL_DELETE` | A `DELETE` (or DSv2 `DeleteFromTable`) removes every row it reaches, with no filtering predicate, under a `forbid_unconditional_delete` rule. |
 | `RULE_DISALLOWED_UPDATE_COLUMN` | A standalone `UPDATE` assigns a column outside an `allowed_update_columns` rule's declared list. |
 
+## Organizational policy violations
+
+Produced when a [`spark.invaract.orgPolicy`-configured organizational
+policy](/guides/enforcing-organizational-policy/) rejects the contract itself, independent
+of any transformation — checked once, eagerly, before any plan is even analyzed, since a
+policy rule depends only on the contract's own declared shape:
+
+| Type | Meaning |
+|---|---|
+| `ORG_POLICY_VIOLATION` | The contract doesn't satisfy an `enforce`-mode organizational policy rule (e.g. every output must be catalog-registered). `message`/`remediation` name the specific policy rule (by `id`) and dataset involved — there's no further sub-vocabulary the way structural violations have one per check, since the policy document's own `id`/`description` already carry that specificity. |
+
 ## Fail-closed violations
 
 Produced when Invaract genuinely can't verify a write or operation, rather than when a
@@ -79,3 +90,5 @@ verified write is structurally wrong. See
   checks that keep a contract from reaching `INVALID_CONTRACT` in the first place
 - [Require Catalog Registration](/guides/requiring-catalog-registration/) — the full
   guide behind the four `*_CATALOG_*` types above
+- [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) — the full
+  guide behind `ORG_POLICY_VIOLATION`

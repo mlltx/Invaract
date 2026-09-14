@@ -1,0 +1,120 @@
+---
+title: Organizational Policy Format
+description: The complete organizational policy document shape, field by field.
+sidebar:
+  order: 6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The full shape `OrgPolicyParser`/`OrgPolicyValidator` accept. See
+[Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) for a guided
+introduction.
+
+## Document shape
+
+```yaml
+version: "1.0"
+
+policies:
+  - id: catalog-required
+    type: require_catalog
+    technology: hive
+    scope: outputs
+    description: "All outputs must be registered in a discoverable catalog."
+  - id: pii-flag-required
+    type: require_field
+    name: pii_reviewed
+    scope: outputs
+  - id: snake-case-fields
+    type: field_naming_convention
+    pattern: "^[a-z][a-z0-9_]*$"
+    mode: warn
+
+inject:
+  rules:
+    - type: forbid_unconditional_delete
+  minVerificationOptions:
+    rejectUndeclaredFields: true
+
+exemptions:
+  - contractId: legacy_customer_orders
+    policyIds: [catalog-required]
+    reason: "predates policy; migration tracked in JIRA-1234"
+    reviewBy: "2026-12-01"
+```
+
+## Top-level fields
+
+| Key | Required | Meaning |
+|---|---|---|
+| `version` | yes | Free-form revision identifier for this document — your own tracking, not compared against a contract's `ContractVersion`. |
+| `policies` | no | The policy rules themselves — see below. |
+| `inject` | no | Rules/options this policy contributes to every governed contract — see [Rule/option injection](#injectrulesinjectminverificationoptions). |
+| `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
+
+## Policy rule fields (`policies[]`)
+
+| Key | Required | Meaning |
+|---|---|---|
+| `id` | yes | Stable identifier, referenced by `exemptions` and shown in violation messages. Must be unique within the document. |
+| `type` | yes | Policy kind — see [Policy types](#policy-types) below. |
+| `description` | no | Human-readable explanation, appended to violation messages for self-service remediation. |
+| `scope` | no | `inputs`, `outputs`, or `all` (default). Which of a contract's datasets this rule applies to. |
+| `when` | no | `{ sensitivityTag: <tag> }` — narrows `scope` further to only datasets with at least one field (recursively) carrying that [sensitivity tag](/reference/contract-format/#sensitivity-tags). |
+| `mode` | no | `enforce` (default) blocks a write before any plan is analyzed. `warn` only publishes a notification event and never blocks — the safe-rollout mechanism for a newly-introduced rule. |
+
+Every other key on a policy rule is type-specific and captured verbatim, the same way a
+contract's own `rules:` entries work.
+
+## Policy types
+
+| Type | Properties | Checks |
+|---|---|---|
+| `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally matching a specific `technology`. |
+| `require_field` | `name` (required), `type` (optional) | The dataset's schema declares a top-level field named `name` — not recursive into nested structs — optionally of `type` (checked case-insensitively). |
+| `field_naming_convention` | `pattern` (required) | Every field name in the dataset's schema — recursing into nested struct `properties` — fully matches the regular expression `pattern`. A partial match doesn't satisfy it. |
+
+A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
+the same permissive behavior an unrecognized contract `rules[].type` already has. A known
+type with malformed or missing properties for its shape (e.g. `require_field` with no
+`name`) is an `OrgPolicyValidator` Error, not silently ignored.
+
+## `inject.rules`/`inject.minVerificationOptions`
+
+| Key | Meaning |
+|---|---|
+| `inject.rules` | A list of ordinary [DML rule](/guides/enforcing-dml-rules/) entries (`{type, ...properties}`, the same shape a contract's own `rules:` uses) merged into every governed contract's `rules` before verification runs. A rule the contract already declares isn't duplicated. |
+| `inject.minVerificationOptions` | A map of `VerificationOptions` flag name (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, `computeFingerprint`) to `true` — ORed onto a job's own options. A flag a job left `false` can be forced `true` by policy; the reverse never happens. |
+
+## Exemptions
+
+| Key | Required | Meaning |
+|---|---|---|
+| `contractId` | yes | The `Contract.id` this exemption covers. |
+| `policyIds` | yes | Which policy rule `id`s (at least one) this exemption suppresses, for this `contractId` only. |
+| `reason` | yes | Why the exemption exists — required, for auditability. |
+| `reviewBy` | no | An ISO-8601 date (`YYYY-MM-DD`). Once passed, the exemption stops applying and the violation it was suppressing re-surfaces. Omitted means it never expires. |
+
+<Aside type="tip" title="Exemptions live in the policy file, not the contract">
+A contract's own author can't grant themselves an exemption — that would defeat the
+purpose of an organization-wide rule. Only whoever owns the policy document can.
+</Aside>
+
+## Enforce mode vs. warn mode
+
+| `mode` | Blocks a write? | Published event |
+|---|---|---|
+| `enforce` (default) | Yes — throws before any plan is analyzed | A `FAILED`-status `ContractValidationEvent`, if a sink is configured |
+| `warn` | Never | A `PASSED`-status `ContractValidationEvent` still carrying the violation, if a sink is configured |
+
+## Attaching a policy
+
+| Mechanism | How |
+|---|---|
+| `spark-submit --conf` | `--conf spark.invaract.orgPolicy=/path/to/org-policy.yaml` — attachable to any job that already installs `ContractEnforcementRule.forContract`, with no change to that job's source. |
+| Standalone lint | `sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"` — no Spark involved, for a contracts repository's own CI/pre-commit gate. |
+
+See [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) for both,
+worked through in full, and [Violation Types](/reference/violation-types/) for
+`ORG_POLICY_VIOLATION`.
