@@ -718,9 +718,23 @@ declare a non-blank <code dir="auto">description</code> (see <code dir="auto">Da
 no properties at all: there’s nothing to configure beyond “this dataset
 must have one,” so unlike every other type here, <code dir="auto">interpret</code> can never
 fail on malformed properties for it.</li>
+<li><strong><code dir="auto">require_extension_if</code></strong> (required <code dir="auto">ifKey</code>/<code dir="auto">thenKey</code>, optional
+<code dir="auto">ifValue</code>/<code dir="auto">thenValue</code>) — a conditional counterpart to <code dir="auto">require_extension</code>:
+only once the contract already satisfies <code dir="auto">ifKey</code> (optionally pinned to
+<code dir="auto">ifValue</code>) must it <em>also</em> satisfy <code dir="auto">thenKey</code> (optionally pinned to
+<code dir="auto">thenValue</code>) — e.g. <code dir="auto">ifKey: status, ifValue: deprecated, thenKey: sunsetDate</code> requires a <code dir="auto">sunsetDate</code> extension only on a contract whose
+<code dir="auto">status</code> extension is already <code dir="auto">deprecated</code>. A contract that doesn’t
+satisfy the <code dir="auto">if</code> condition at all produces no violation — the rule
+simply doesn’t apply to it, not merely “exempted” from it. Like
+<code dir="auto">require_extension</code>, this checks the contract as a whole, once — see
+“<code dir="auto">DatasetPolicy</code> vs. <code dir="auto">ContractPolicy</code>” below. Both <code dir="auto">checkRequireExtension</code>
+and <code dir="auto">checkRequireExtensionIf</code> (<code dir="auto">OrgPolicyEvaluator</code>) share one private
+<code dir="auto">extensionSatisfies(contract, key, value)</code> helper for this “does
+<code dir="auto">extensions</code> declare <code dir="auto">key</code>[<code dir="auto">=value</code>]” test, since <code dir="auto">require_extension_if</code>
+needs it applied twice — once for its <code dir="auto">if</code>, once for its <code dir="auto">then</code>.</li>
 </ul>
 <p><code dir="auto">PolicyRule.interpret: Option[InterpretedPolicy]</code> decodes <code dir="auto">properties</code>
-into one of these six shapes — <code dir="auto">None</code> for an unrecognized <code dir="auto">ruleType</code>
+into one of these seven shapes — <code dir="auto">None</code> for an unrecognized <code dir="auto">ruleType</code>
 <em>or</em> malformed properties for a recognized one, the identical
 total/safe design <code dir="auto">ContractRule.interpret</code> already documents; this is
 what lets <code dir="auto">OrgPolicyEvaluator.evaluate</code> run safely even against a policy
@@ -737,14 +751,17 @@ different granularities a policy rule can check at:</p>
 <code dir="auto">datasetsInScope(contract, rule.scope)</code> (honoring <code dir="auto">scope</code>/<code dir="auto">when</code>) and
 checks each dataset independently, producing a <code dir="auto">PolicyViolation</code> with
 <code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
-<li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code>. Checked exactly once
-against <code dir="auto">contract</code> as a whole; <code dir="auto">PolicyRule.scope</code>/<code dir="auto">.when</code> have no
-effect on it at all (<code dir="auto">OrgPolicyEvaluator</code> never even inspects them for
-this <code dir="auto">ruleType</code>), and its <code dir="auto">PolicyViolation</code> always carries
+<li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code> and <code dir="auto">require_extension_if</code>
+(<code dir="auto">PolicyType.ContractLevelTypes</code>). Checked exactly once against
+<code dir="auto">contract</code> as a whole; <code dir="auto">PolicyRule.scope</code>/<code dir="auto">.when</code> have no effect on
+either at all (<code dir="auto">OrgPolicyEvaluator</code> never even inspects them for a
+<code dir="auto">ContractPolicy</code> <code dir="auto">ruleType</code>), and their <code dir="auto">PolicyViolation</code>s always carry
 <code dir="auto">dataset = None</code>. <code dir="auto">OrgPolicyValidator</code> warns — not errors, since the
-rule still evaluates correctly — if <code dir="auto">scope</code>/<code dir="auto">when</code> are set on a
-<code dir="auto">require_extension</code> rule anyway, since declaring either is silently
-inert rather than a mistake the evaluator itself can catch.</li>
+rule still evaluates correctly — if <code dir="auto">scope</code>/<code dir="auto">when</code> are set on either
+rule type anyway, since declaring either is silently inert rather than
+a mistake the evaluator itself can catch. This warning is keyed off
+<code dir="auto">PolicyType.ContractLevelTypes</code>, not a hardcoded <code dir="auto">ruleType</code> check, so a
+future <code dir="auto">ContractPolicy</code> addition gets it for free.</li>
 </ul>
 <p>A future contract-level check (e.g. a hypothetical <code dir="auto">require_status</code>)
 would join <code dir="auto">ContractPolicy</code>, not <code dir="auto">DatasetPolicy</code> — the split exists so
