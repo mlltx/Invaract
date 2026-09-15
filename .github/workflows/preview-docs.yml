@@ -11,11 +11,18 @@ permissions:
   contents: write
   pull-requests: write
 
-# One preview deploy per PR at a time; a newer push to the same PR
-# supersedes an in-flight preview build for it rather than racing it.
+# Shared with every other workflow that writes to gh-pages (deploy-docs.yml,
+# deploy-contributor-docs.yml, preview-contributor-docs.yml) - see
+# deploy-docs.yml's copy of this comment for why. This does mean a newer
+# push to this PR no longer cancels an in-flight preview build for it (a
+# per-PR group could do that, but not while also being mutually exclusive
+# with every other gh-pages writer - GitHub Actions concurrency is one group
+# per workflow) - each queued build still completes and gh-pages converges
+# on the latest one either way, just with some possible queued-build churn
+# for a PR pushed to repeatedly in quick succession.
 concurrency:
-  group: docs-preview-${{ github.event.number }}
-  cancel-in-progress: true
+  group: "gh-pages-write"
+  cancel-in-progress: false
 
 jobs:
   preview:

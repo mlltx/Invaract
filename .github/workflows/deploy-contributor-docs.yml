@@ -14,14 +14,19 @@ on:
 permissions:
   contents: write
 
-# Only one production deploy of this site at a time; a newer push cancels an
-# in-flight one rather than racing it. A separate group from docs-site's own
-# "docs-production-deploy" — the two sites publish into different subfolders
-# of the same gh-pages branch (see the Publish step below and
-# deploy-docs.yml's clean-exclude) and can safely run concurrently.
+# Shared with every other workflow that writes to gh-pages (deploy-docs.yml,
+# preview-docs.yml, preview-contributor-docs.yml) - see deploy-docs.yml's own
+# copy of this comment for the full reasoning. Publishing into a different
+# subfolder of gh-pages than docs-site's own deploy does NOT make the two
+# safe to run concurrently: JamesIves/github-pages-deploy-action still
+# fetches/commits/pushes the branch as a whole, so two workflows racing for
+# the same ref can still exhaust its retry budget regardless of which
+# subfolder either one touches - confirmed directly when this workflow and
+# deploy-docs.yml both fired for the same main push and deploy-docs.yml lost
+# after 3 rebase-and-retry attempts.
 concurrency:
-  group: "contributor-docs-production-deploy"
-  cancel-in-progress: true
+  group: "gh-pages-write"
+  cancel-in-progress: false
 
 jobs:
   deploy:

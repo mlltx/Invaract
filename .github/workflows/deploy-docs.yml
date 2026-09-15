@@ -11,11 +11,24 @@ on:
 permissions:
   contents: write
 
-# Only one production deploy at a time; a newer push cancels an in-flight
-# one rather than racing it.
+# Shared with every other workflow that writes to gh-pages
+# (deploy-contributor-docs.yml, preview-docs.yml, preview-contributor-docs.yml)
+# - JamesIves/github-pages-deploy-action pushes by fetching gh-pages,
+# committing on top, and pushing, retrying a bounded number of times on a
+# rejected (non-fast-forward) push. Two workflows publishing into different
+# subfolders of the branch can still race for the same ref and exhaust that
+# retry budget - confirmed the hard way (not assumed) when this workflow and
+# deploy-contributor-docs.yml both fired for the same main push and this one
+# lost after 3 rebase-and-retry attempts, leaving production docs-site
+# undeployed. One shared group serializes every gh-pages write across all
+# four workflows instead. cancel-in-progress: false, deliberately not true -
+# with one shared group, "cancel" would mean an unrelated in-flight deploy
+# (a different PR's preview, or the other site's production deploy) gets
+# silently dropped rather than queued; every deploy here should still
+# complete, just possibly after waiting its turn.
 concurrency:
-  group: "docs-production-deploy"
-  cancel-in-progress: true
+  group: "gh-pages-write"
+  cancel-in-progress: false
 
 jobs:
   deploy:
