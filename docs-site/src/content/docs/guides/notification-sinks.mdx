@@ -49,7 +49,7 @@ If your job is installed with [`InvaractSparkSessionExtension`](/guides/installi
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.4.0.jar \
+  --jars invaract-spark-adapter-0.5.0.jar \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   --conf spark.invaract.notifyConfig=/path/to/notify.properties \
@@ -82,7 +82,7 @@ Both event types are plain JSON. A `ContractValidationEvent`, from a passing che
 ...and a `WriteEvent`, once the write completes:
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null}
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null, "catalog": null, "partitionColumns": []}
 ```
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
@@ -122,6 +122,25 @@ Iceberg write (`null` for everything else, Delta included):
 ```json
 {"...": "...", "format": "iceberg", "deltaVersion": null, "icebergSnapshotId": 5964503180593669213}
 ```
+
+`partitionColumns` lists which column(s) the write's target is partitioned by, when
+that's known — `[]` for an unpartitioned target (as in the example above) or a write
+shape this isn't wired up for, never `null`. For a catalog table partitioned by a
+derived transform rather than a plain column (Iceberg's `bucket`/`days`/`years`/`months`
+partitioning, for example), each entry is that transform's own description instead of a
+bare column name:
+
+```json
+{"...": "...", "format": "parquet", "partitionColumns": ["region", "year"]}
+```
+
+```json
+{"...": "...", "format": "iceberg", "partitionColumns": ["bucket(4, id)", "days(event_time)"]}
+```
+
+This reports which columns the target is partitioned *by*, not which specific partition
+values this particular write's own rows happened to touch — Invaract doesn't currently
+surface that.
 
 `operation` distinguishes a MERGE/UPDATE/DELETE from a plain append or overwrite —
 `saveMode` is always `null` for these (in-place mutation isn't append/overwrite/ignore/

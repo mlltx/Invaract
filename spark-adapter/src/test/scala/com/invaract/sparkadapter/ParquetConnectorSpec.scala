@@ -577,6 +577,40 @@ class ParquetConnectorSpec extends ConnectorSpecBase {
     }
   }
 
+  // --- Feature surface: WriteCommandInfo.partitionColumns/WriteEvent's own
+  // published field for a plain file-format write - InsertIntoHadoopFsRelationCommand
+  // carries `partitionColumns: Seq[Attribute]` directly, confirmed empirically
+  // (a real throwaway probe, since deleted) to be `Seq(part)`/`Seq.empty` for a
+  // partitioned/unpartitioned write respectively. ---
+
+  test("feature surface: partitionBy columns are reported via WriteCommandInfo.partitionColumns") {
+    capturedPlans.clear()
+    val dir = scratchDir.resolve("part_columns_feature").toString
+    spark.createDataFrame(Seq((1L, 10L, "a"), (2L, 20L, "b"))).toDF("id", "value", "part")
+      .write.mode("overwrite").partitionBy("part").parquet(dir)
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == List("part"))
+  }
+
+  test("feature surface: an unpartitioned write reports partitionColumns as Nil, not a false positive") {
+    capturedPlans.clear()
+    val dir = scratchDir.resolve("no_part_columns_feature").toString
+    df().write.mode("overwrite").parquet(dir)
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == Nil)
+  }
+
+  test("feature surface: a new V1 table's partitionBy columns are reported via CatalogTable.partitionColumnNames") {
+    capturedPlans.clear()
+    spark.createDataFrame(Seq((1L, 10L, "a"), (2L, 20L, "b"))).toDF("id", "value", "part")
+      .write.mode("overwrite").partitionBy("part").format("parquet").saveAsTable("parquet_part_saveastable_feature")
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == List("part"))
+  }
+
   // --- Feature surface: a corrupt/malformed file in the read path fails
   // entirely within Spark's own Parquet-reading machinery - confirmed
   // empirically to happen at schema-inference (footer-reading) time for a

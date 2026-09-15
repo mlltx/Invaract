@@ -109,7 +109,8 @@ class SparkAdapterListener(
               SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
             },
             operation = info.operation,
-            catalog = info.catalogIdentity.map(CatalogInfo.from)
+            catalog = info.catalogIdentity.map(CatalogInfo.from),
+            partitionColumns = info.partitionColumns
           )
         )
       }

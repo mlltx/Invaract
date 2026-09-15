@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwritePartitionsDynamic}
 import org.apache.spark.sql.functions._
 
 import java.nio.file.{Files, Path}
@@ -260,6 +260,52 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     }
 
     assert(spark.table(tableName).count() == 5, "id=0's partition was overwritten in place, not appended")
+  }
+
+  // --- Feature surface: WriteCommandInfo.partitionColumns for DSv2 catalog
+  // writes - sourced from `Table.partitioning()`, rendered via each
+  // transform's own `.describe()` (confirmed empirically for an identity
+  // transform - a real throwaway probe against a live Delta-catalog
+  // session, since deleted - to render as the bare column name, not
+  // `"identity(part)"`). Covers AppendData/OverwritePartitionsDynamic via
+  // the same shared `partitionColumnsOf` helper CreateTableAsSelect's own
+  // direct `partitioning` field doesn't need. ---
+
+  test("feature surface: AppendData/OverwritePartitionsDynamic against a partitioned Iceberg table report partitionColumns") {
+    val tableName = "local.db.dynpart_part_columns_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg PARTITIONED BY (id)")
+    capturedPlans.clear()
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val appendData = capturedPlans.collectFirst { case p: AppendData => p }
+      .getOrElse(fail("no AppendData plan observed"))
+    assert(WriteCommandSupport.combined.lift(appendData).map(_.partitionColumns).contains(List("id")))
+
+    capturedPlans.clear()
+    spark.range(0, 1).withColumn("doubled", lit(0L)).writeTo(tableName).overwritePartitions()
+    val overwritePartitions = capturedPlans.collectFirst { case p: OverwritePartitionsDynamic => p }
+      .getOrElse(fail("no OverwritePartitionsDynamic plan observed"))
+    assert(WriteCommandSupport.combined.lift(overwritePartitions).map(_.partitionColumns).contains(List("id")))
+  }
+
+  test("feature surface: an unpartitioned Iceberg table's AppendData reports partitionColumns as Nil") {
+    val tableName = "local.db.no_part_columns_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    capturedPlans.clear()
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val appendData = capturedPlans.collectFirst { case p: AppendData => p }
+      .getOrElse(fail("no AppendData plan observed"))
+    assert(WriteCommandSupport.combined.lift(appendData).map(_.partitionColumns).contains(Nil))
+  }
+
+  test("feature surface: a new partitioned Iceberg table via CreateTableAsSelect reports partitionColumns via its own partitioning field") {
+    capturedPlans.clear()
+    spark.sql(
+      "CREATE TABLE local.db.ctas_part_columns_tbl USING iceberg PARTITIONED BY (id) " +
+        "AS SELECT 1L AS id, 2L AS doubled")
+    val ctas = capturedPlans.collectFirst {
+      case p: org.apache.spark.sql.catalyst.plans.logical.CreateTableAsSelect => p
+    }.getOrElse(fail("no CreateTableAsSelect plan observed"))
+    assert(WriteCommandSupport.combined.lift(ctas).map(_.partitionColumns).contains(List("id")))
   }
 
   // --- Write: row-level DML via ReplaceData/WriteDelta (new, connector-agnostic case) ---
