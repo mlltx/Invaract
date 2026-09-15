@@ -119,41 +119,29 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
-// branch in its own PR, which left this pointing at the now-superseded
-// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
-// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
-// for prior revisions of this section). That PR has now landed (base-ref
-// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
-// api-compatibility job failed with a real "Not found" resolving 0.3.0,
-// since base-ref never publishes that coordinate once its own `version`
-// moved past it), so this is that follow-up flip.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.4.0")
-
-import com.typesafe.tools.mima.core._
-
-// The 0.4.0 -> 0.5.0 bump (this file's version above) is this module's own
-// next deliberate break, the same class as the two this section's own
-// history already documents (sensitivityTags-on-Field, catalog-on-Dataset):
-// Dataset gained a seventh constructor parameter, `description:
-// Option[String]`, appended at the end with a default value - source-
-// compatible (every existing positional/named `Dataset(...)` call site
-// keeps compiling unchanged), but *not* binary-compatible, confirmed
-// directly by a real `mimaReportBinaryIssues` run against the 0.4.0
-// baseline still pointed to above: appending a case class field changes
-// the generated `apply`/`copy`/constructor methods' own signatures
-// outright. Filtered per MiMa's own suggested exclusions for exactly this
-// break - the identical four filters the catalog addition needed, since
-// it's structurally the same kind of change to the same class:
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Dataset$")
-)
+// The 0.4.0 -> 0.5.0 bump (this file's version above) landed on the base
+// branch in its own PR (the Dataset.description addition), which left this
+// pointing at the now-superseded 0.4.0 baseline with a "FOLLOW-UP: flip
+// this once that PR lands" comment - the same pattern the 0.2.0 -> 0.3.0
+// and 0.3.0 -> 0.4.0 bumps themselves used (see git history for prior
+// revisions of this section). That PR has now landed (base-ref itself
+// publishes 0.5.0, not 0.4.0, confirmed the hard way: a real CI run's
+// api-compatibility job failed with "Error downloading
+// com.invaract:invaract-contract_2.12:0.4.0 ... not found" resolving
+// 0.4.0, since base-ref never publishes that coordinate once its own
+// `version` moved past it), so this is that follow-up flip.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.5.0")
 
 // FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and remove
-// the filters above once base-ref itself publishes 0.5.0 (mirroring this
-// section's own history) - do not make that flip in the PR doing the bump
+// `mimaPreviousArtifacts` to this module's new current version and add
+// filters for whatever real break motivated the bump, mirroring this
+// section's own history - do not make that flip in the PR doing the bump
 // itself (base-ref won't have it yet).
+//
+// No filters needed right now: mimaPreviousArtifacts above already equals
+// this module's own current version, so there is nothing between them to
+// filter - the Dataset.description break that motivated the 0.4.0 -> 0.5.0
+// bump is now baked into both sides of the comparison. The four filters
+// that documented it against the old 0.4.0 baseline (Dataset.apply/copy/
+// this/companion) were removed here rather than left as dead entries with
+// nothing left to match.
