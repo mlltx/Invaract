@@ -84,7 +84,17 @@ object PolicyType {
     */
   val RequireFormat = "require_format"
 
-  val All: Set[String] = Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension, RequireFormat)
+  /** A dataset must declare a non-blank `description` (see `Dataset`'s own
+    * doc) — e.g. every output must say what it is, for catalog/data-
+    * dictionary discoverability. No properties of its own: unlike every
+    * other type in this object, there's nothing to configure beyond "this
+    * dataset must have one," so `interpret` never fails for malformed
+    * properties the way the others can.
+    */
+  val RequireDatasetDescription = "require_dataset_description"
+
+  val All: Set[String] =
+    Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension, RequireFormat, RequireDatasetDescription)
 }
 
 /** A `PolicyRule`, decoded into one of the shapes Invaract currently knows
@@ -124,6 +134,12 @@ object InterpretedPolicy {
     *   matched case-insensitively against `Dataset.format`.
     */
   case class RequireFormat(formats: List[String]) extends DatasetPolicy
+
+  /** No properties: `Dataset.description` must simply be present and
+    * non-blank. A case object, not a case class, since there's nothing to
+    * configure.
+    */
+  case object RequireDatasetDescription extends DatasetPolicy
 }
 
 /** One organizational policy rule. `id` is required and must be unique
@@ -184,6 +200,8 @@ case class PolicyRule(
       }
     case PolicyType.RequireFormat =>
       PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
+    case PolicyType.RequireDatasetDescription =>
+      Some(InterpretedPolicy.RequireDatasetDescription)
     case _ => None
   }
 }

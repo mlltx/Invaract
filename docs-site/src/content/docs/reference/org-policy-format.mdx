@@ -36,6 +36,8 @@ policies:
     type: require_extension
     key: owner
     description: "Every contract must declare an owning team."
+  - id: dataset-described
+    type: require_dataset_description
 
 inject:
   rules:
@@ -82,6 +84,7 @@ contract's own `rules:` entries work.
 | `field_naming_convention` | `pattern` (required) | Every field name in the dataset's schema — recursing into nested struct `properties` — fully matches the regular expression `pattern`. A partial match doesn't satisfy it. |
 | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
 | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
+| `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
 
 A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
 the same permissive behavior an unrecognized contract `rules[].type` already has. A known

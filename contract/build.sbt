@@ -15,7 +15,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.4.0"
+ThisBuild / version := "0.5.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -91,7 +91,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.4.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.5.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -127,10 +127,33 @@ assembly / assemblyMergeStrategy := {
 // itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
 // api-compatibility job failed with a real "Not found" resolving 0.3.0,
 // since base-ref never publishes that coordinate once its own `version`
-// moved past it), so this is that follow-up flip. The `mimaBinaryIssueFilters`
-// entries this section previously carried for the 0.3.0 -> 0.4.0 Dataset
-// break (a sixth constructor parameter, `catalog: Option[CatalogRequirement]`)
-// are removed along with it: now that the baseline itself is 0.4.0, that
-// break is inside the baseline on both sides of the comparison and no
-// longer shows up as a difference to filter.
+// moved past it), so this is that follow-up flip.
 mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.4.0")
+
+import com.typesafe.tools.mima.core._
+
+// The 0.4.0 -> 0.5.0 bump (this file's version above) is this module's own
+// next deliberate break, the same class as the two this section's own
+// history already documents (sensitivityTags-on-Field, catalog-on-Dataset):
+// Dataset gained a seventh constructor parameter, `description:
+// Option[String]`, appended at the end with a default value - source-
+// compatible (every existing positional/named `Dataset(...)` call site
+// keeps compiling unchanged), but *not* binary-compatible, confirmed
+// directly by a real `mimaReportBinaryIssues` run against the 0.4.0
+// baseline still pointed to above: appending a case class field changes
+// the generated `apply`/`copy`/constructor methods' own signatures
+// outright. Filtered per MiMa's own suggested exclusions for exactly this
+// break - the identical four filters the catalog addition needed, since
+// it's structurally the same kind of change to the same class:
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Dataset$")
+)
+
+// FOLLOW-UP (once a future PR bumps `version` above again): flip
+// `mimaPreviousArtifacts` to this module's new current version and remove
+// the filters above once base-ref itself publishes 0.5.0 (mirroring this
+// section's own history) - do not make that flip in the PR doing the bump
+// itself (base-ref won't have it yet).

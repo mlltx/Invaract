@@ -117,6 +117,7 @@ object ContractParser {
     m.put("schema", schemaToJava(dataset.schema))
     dataset.saveMode.foreach(m.put("saveMode", _))
     dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
+    dataset.description.foreach(m.put("description", _))
     m
   }
 
@@ -194,12 +195,13 @@ object ContractParser {
     val format = optString(raw, "format")
     val saveMode = optString(raw, "saveMode")
     val catalog = parseCatalog(raw, context)
+    val description = optString(raw, "description")
     val schemaRaw = raw.getOrElse(
       "schema",
       throw new ContractParseException(s"Missing 'schema' in $context")
     )
     val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
-    Dataset(name, location, format, schema, saveMode, catalog)
+    Dataset(name, location, format, schema, saveMode, catalog, description)
   }
 
   /** Parses an optional nested `catalog:` block on a dataset — see

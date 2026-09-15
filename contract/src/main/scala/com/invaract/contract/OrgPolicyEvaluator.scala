@@ -112,6 +112,8 @@ object OrgPolicyEvaluator {
               datasets.flatMap(checkFieldNamingConvention(rule, _, pattern))
             case InterpretedPolicy.RequireFormat(formats) =>
               datasets.flatMap(checkRequireFormat(rule, _, formats))
+            case InterpretedPolicy.RequireDatasetDescription =>
+              datasets.flatMap(checkRequireDatasetDescription(rule, _))
           }
       }
   }
@@ -212,6 +214,24 @@ object OrgPolicyEvaluator {
           s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare " +
             s"a format of one of [$allowedList], but it does not$actualSuffix.",
           s"Set dataset '${dataset.name}''s format to one of: $allowedList."
+        )
+      )
+    }
+  }
+
+  private def checkRequireDatasetDescription(rule: PolicyRule, dataset: Dataset): List[PolicyViolation] = {
+    val satisfies = dataset.description.exists(_.trim.nonEmpty)
+    if (satisfies) Nil
+    else {
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare a " +
+            s"non-blank description, but it does not.",
+          s"Add a 'description' to dataset '${dataset.name}' explaining what it is/contains."
         )
       )
     }

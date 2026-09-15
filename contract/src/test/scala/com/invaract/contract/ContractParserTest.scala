@@ -629,4 +629,58 @@ class ContractParserTest extends AnyFunSuite {
     val written = ContractParser.write(ContractParser.parse(yaml))
     assert(!written.contains("catalog"))
   }
+
+  test("parse should capture a dataset's declared description") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    description: "Daily sales fact table."
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    assert(contract.output("out").get.description.contains("Daily sales fact table."))
+  }
+
+  test("write should round-trip a dataset's description") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    description: "Daily sales fact table."
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped == original)
+    assert(roundTripped.output("out").get.description == original.output("out").get.description)
+  }
+
+  test("write should omit the description key entirely for a dataset that declares none") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val written = ContractParser.write(ContractParser.parse(yaml))
+    assert(!written.contains("description"))
+  }
 }

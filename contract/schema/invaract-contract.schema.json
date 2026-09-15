@@ -70,6 +70,10 @@
           "description": "Optional expected write behavior for an output dataset, e.g. \"append\", \"overwrite\", \"ignore\", \"error\". Meaningless for an input dataset; only checked by StructuralVerifier against a plan's Write node. Not a closed set."
         },
         "catalog": { "$ref": "#/$defs/catalog" },
+        "description": {
+          "type": "string",
+          "description": "Optional free-form human-readable explanation of what this dataset is/contains - purely documentary, never checked by RuleVerifier/StructuralVerifier. An organizational policy can require every dataset to declare one (com.invaract.contract.PolicyType.RequireDatasetDescription)."
+        },
         "schema": { "$ref": "#/$defs/schema" }
       }
     },

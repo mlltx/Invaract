@@ -91,6 +91,17 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireFormat(List("delta", "iceberg"))))
   }
 
+  test("parse should correctly decode require_dataset_description, which takes no properties") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: dataset-described
+        |    type: require_dataset_description
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies.head.interpret.contains(InterpretedPolicy.RequireDatasetDescription))
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 

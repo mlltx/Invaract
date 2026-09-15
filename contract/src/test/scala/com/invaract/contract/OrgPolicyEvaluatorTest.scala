@@ -182,6 +182,37 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
   }
 
+  // -- require_dataset_description ---------------------------------------------
+
+  test("require_dataset_description: satisfied when the dataset declares a non-blank description") {
+    val rule = PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(description = Some("Customer order records."))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_description: violated when the dataset declares no description at all") {
+    val rule = PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(description = None)))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.contains("out"))
+  }
+
+  test("require_dataset_description: a blank/whitespace-only description does not satisfy the rule") {
+    val rule = PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(description = Some("   "))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("require_dataset_description: honors scope like any other DatasetPolicy") {
+    val rule = PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      inputs = List(dataset("in")), // no description - would violate if inputs were in scope
+      outputs = List(dataset("out").copy(description = Some("Documented.")))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

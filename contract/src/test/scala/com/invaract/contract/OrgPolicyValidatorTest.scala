@@ -108,6 +108,11 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(OrgPolicyValidator.validate(policy).isValid)
   }
 
+  test("require_dataset_description is valid with no properties at all") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("described", PolicyType.RequireDatasetDescription, Map.empty)))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
   test("duplicate policy ids are an Error") {
     val policy = OrgPolicy(
       "1.0",

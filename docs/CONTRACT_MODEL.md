@@ -105,6 +105,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `format` | no | Storage/serialization format. |
 | `saveMode` | no | Expected write behavior toward existing data at `location` (`append`/`overwrite`/`ignore`/`error`). Meaningful for outputs only; checked against the plan's actual write mode. |
 | `catalog` | no | Expected data-catalog registration — see `CatalogRequirement` below. Unlike `saveMode`, meaningful for both inputs and outputs. Omitted entirely (the default) means no check at all. |
+| `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
 | `schema.fields` | yes | List of fields (at least one). |
 
 A dataset's `catalog` block, when present:
@@ -174,7 +175,8 @@ Dataset
 ├── format: Option[String]
 ├── schema: Schema(fields: List[Field])
 ├── saveMode: Option[String]
-└── catalog: Option[CatalogRequirement]
+├── catalog: Option[CatalogRequirement]
+└── description: Option[String]
 
 CatalogRequirement
 ├── required: Boolean
@@ -281,6 +283,7 @@ report.changes          // every detected change, each tagged with a level and p
 | An already-`required: true` catalog block's `technology`/`catalogName`/`location`/`namespace`/`table` changed | Breaking |
 | Catalog block removed, or relaxed to `required: false` | Not flagged (loosening) |
 | Catalog block added with `required: false` (informational only) | Not flagged |
+| `description` added, changed, or removed | Not flagged (never a constraint) |
 
 `format`/`saveMode`/`catalog` all follow the same asymmetric philosophy the
 schema checks above already use: `StructuralVerifier` only ever compares one
@@ -293,7 +296,11 @@ required to optional — it isn't flagged. A `catalog` block's own `required:
 false` case is a third state, not just "some declaration": it's accepted by
 `ContractValidator` as informational only (see its own warning above) and
 gates nothing during verification, so it never counts as a real
-requirement change either way.
+requirement change either way. `description` is different again: it is
+purely documentary (see the field table above), never compared against a
+real write at all, so `ContractCompatibility.diffDatasets` doesn't diff it
+in either direction — unlike `format`/`saveMode`/`catalog`, there is no
+asymmetry to apply, because there is no constraint.
 
 `ContractCompatibility.verifyVersionBump(previous, next)` checks that the
 *declared* version bump matches the *actual* scope of change, and returns
@@ -530,9 +537,15 @@ language:
   dataset with no `format` declared at all does not satisfy this, the
   same "required but absent" treatment every other check in this section
   gives.
+- **`require_dataset_description`** (no properties) — a dataset must
+  declare a non-blank `description` (see `Dataset`'s own doc in the
+  "Contract Format" section above). The one type in this object that takes
+  no properties at all: there's nothing to configure beyond "this dataset
+  must have one," so unlike every other type here, `interpret` can never
+  fail on malformed properties for it.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these five shapes — `None` for an unrecognized `ruleType`
+into one of these six shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -546,8 +559,8 @@ rather than a silent no-op).
 different granularities a policy rule can check at:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
-  `field_naming_convention`, and `require_format`. `OrgPolicyEvaluator`
-  narrows to
+  `field_naming_convention`, `require_format`, and
+  `require_dataset_description`. `OrgPolicyEvaluator` narrows to
   `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
   checks each dataset independently, producing a `PolicyViolation` with
   `dataset = Some(name)` per offending dataset.

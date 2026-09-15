@@ -132,6 +132,14 @@ object ContractCompatibility {
             ))
           else Nil
 
+        // Dataset.description is deliberately not diffed here: it is
+        // purely documentary (never checked by RuleVerifier/
+        // StructuralVerifier - see Dataset's own doc), so unlike format/
+        // saveMode/catalog it isn't a constraint a real write has to
+        // satisfy, and adding, changing, or removing it can never turn a
+        // previously-valid producer/consumer relationship invalid. Every
+        // other dataset-level field diffed below is, in some direction, a
+        // real constraint on what a write must look like.
         locationChange ++
           diffOptionalConstraint(s"$kind.$n.format", "format", prevDs.format, nextDs.format) ++
           diffOptionalConstraint(s"$kind.$n.saveMode", "saveMode", prevDs.saveMode, nextDs.saveMode) ++
