@@ -101,6 +101,8 @@ object OrgPolicyEvaluator {
         case None => Nil // unrecognized or malformed policy type - OrgPolicyValidator's job to flag this, not ours to crash on
         case Some(InterpretedPolicy.RequireExtension(key, value)) =>
           checkRequireExtension(rule, contract, key, value)
+        case Some(InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
+          checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
         case Some(datasetPolicy: InterpretedPolicy.DatasetPolicy) =>
           val datasets = datasetsInScope(contract, rule.scope).filter(matchesCondition(_, rule.when))
           datasetPolicy match {
@@ -237,20 +239,29 @@ object OrgPolicyEvaluator {
     }
   }
 
+  /** Whether `contract.extensions` declares `key` at all - and, if `value`
+    * is set, that the declared value equals it exactly (case-sensitive:
+    * extensions values are free-form, unlike `RequireField.fieldType`'s
+    * closed type-name vocabulary, so no case-folding is applied). A key
+    * present but mapped to YAML `null` (`extensions: { owner: }`) is
+    * treated the same as the key being absent entirely - present-but-blank
+    * isn't a real declaration. Shared by `checkRequireExtension` and
+    * `checkRequireExtensionIf`, which both need this identical "is this
+    * key/value satisfied" test - once for the rule's own outcome, once for
+    * whether its `if` condition holds at all.
+    */
+  private def extensionSatisfies(contract: Contract, key: String, value: Option[String]): Boolean =
+    contract.extensions.get(key).filter(_ != null).exists(v => value.forall(pinned => String.valueOf(v) == pinned))
+
   /** Checked once against `contract` as a whole - see
     * `InterpretedPolicy.ContractPolicy`'s doc for why this doesn't go
-    * through `datasetsInScope` the way the three dataset-level checks do.
-    * A key present but mapped to YAML `null` (`extensions: { owner: }`)
-    * is treated the same as the key being absent entirely - present-but-
-    * blank isn't a real declaration.
+    * through `datasetsInScope` the way the dataset-level checks do.
     */
   private def checkRequireExtension(rule: PolicyRule, contract: Contract, key: String, value: Option[String]): List[PolicyViolation] = {
-    val actual = contract.extensions.get(key).filter(_ != null)
-    val satisfies = actual.exists(v => value.forall(pinned => String.valueOf(v) == pinned))
-    if (satisfies) Nil
+    if (extensionSatisfies(contract, key, value)) Nil
     else {
       val valueSuffix = value.map(v => s" with value '$v'").getOrElse("")
-      val actualSuffix = actual.map(v => s" (currently '$v')").getOrElse("")
+      val actualSuffix = contract.extensions.get(key).filter(_ != null).map(v => s" (currently '$v')").getOrElse("")
       List(
         PolicyViolation(
           rule.id,
@@ -260,6 +271,41 @@ object OrgPolicyEvaluator {
           s"organizational policy '${rule.id}'${describe(rule)} requires contract '${contract.id}' to declare " +
             s"extensions.$key$valueSuffix, but it does not$actualSuffix.",
           s"Add 'extensions: { $key: ${value.getOrElse("<value>")} }' to the contract."
+        )
+      )
+    }
+  }
+
+  /** Only when `contract` already satisfies `ifKey`/`ifValue` (via
+    * `extensionSatisfies`) does it *also* need to satisfy `thenKey`/
+    * `thenValue` - a contract that doesn't meet the `if` condition at all
+    * produces no violation, since this rule simply doesn't apply to it,
+    * the same as a `DatasetPolicy` rule against a dataset outside its
+    * `scope`.
+    */
+  private def checkRequireExtensionIf(
+      rule: PolicyRule,
+      contract: Contract,
+      ifKey: String,
+      ifValue: Option[String],
+      thenKey: String,
+      thenValue: Option[String]
+  ): List[PolicyViolation] = {
+    if (!extensionSatisfies(contract, ifKey, ifValue)) Nil
+    else if (extensionSatisfies(contract, thenKey, thenValue)) Nil
+    else {
+      val ifValueSuffix = ifValue.map(v => s"='$v'").getOrElse("")
+      val thenValueSuffix = thenValue.map(v => s" with value '$v'").getOrElse("")
+      val actualSuffix = contract.extensions.get(thenKey).filter(_ != null).map(v => s" (currently '$v')").getOrElse("")
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          dataset = None,
+          s"organizational policy '${rule.id}'${describe(rule)} requires contract '${contract.id}' to declare " +
+            s"extensions.$thenKey$thenValueSuffix whenever extensions.$ifKey$ifValueSuffix, but it does not$actualSuffix.",
+          s"Add 'extensions: { $thenKey: ${thenValue.getOrElse("<value>")} }' to the contract."
         )
       )
     }

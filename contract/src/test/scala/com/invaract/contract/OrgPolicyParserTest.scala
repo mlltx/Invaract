@@ -102,6 +102,31 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies.head.interpret.contains(InterpretedPolicy.RequireDatasetDescription))
   }
 
+  test("parse should correctly decode require_extension_if, with and without ifValue/thenValue pins") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: sunset-date-if-deprecated
+        |    type: require_extension_if
+        |    ifKey: status
+        |    ifValue: deprecated
+        |    thenKey: sunsetDate
+        |  - id: fully-pinned
+        |    type: require_extension_if
+        |    ifKey: status
+        |    ifValue: active
+        |    thenKey: reviewStatus
+        |    thenValue: approved
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies(0).interpret.contains(InterpretedPolicy.RequireExtensionIf("status", Some("deprecated"), "sunsetDate", None)))
+    assert(
+      policy.policies(1).interpret.contains(
+        InterpretedPolicy.RequireExtensionIf("status", Some("active"), "reviewStatus", Some("approved"))
+      )
+    )
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 

@@ -543,9 +543,24 @@ language:
   no properties at all: there's nothing to configure beyond "this dataset
   must have one," so unlike every other type here, `interpret` can never
   fail on malformed properties for it.
+- **`require_extension_if`** (required `ifKey`/`thenKey`, optional
+  `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
+  only once the contract already satisfies `ifKey` (optionally pinned to
+  `ifValue`) must it *also* satisfy `thenKey` (optionally pinned to
+  `thenValue`) — e.g. `ifKey: status, ifValue: deprecated, thenKey:
+  sunsetDate` requires a `sunsetDate` extension only on a contract whose
+  `status` extension is already `deprecated`. A contract that doesn't
+  satisfy the `if` condition at all produces no violation — the rule
+  simply doesn't apply to it, not merely "exempted" from it. Like
+  `require_extension`, this checks the contract as a whole, once — see
+  "`DatasetPolicy` vs. `ContractPolicy`" below. Both `checkRequireExtension`
+  and `checkRequireExtensionIf` (`OrgPolicyEvaluator`) share one private
+  `extensionSatisfies(contract, key, value)` helper for this "does
+  `extensions` declare `key`[`=value`]" test, since `require_extension_if`
+  needs it applied twice — once for its `if`, once for its `then`.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these six shapes — `None` for an unrecognized `ruleType`
+into one of these seven shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -564,14 +579,17 @@ different granularities a policy rule can check at:
   `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
   checks each dataset independently, producing a `PolicyViolation` with
   `dataset = Some(name)` per offending dataset.
-- **`ContractPolicy`** — `require_extension`. Checked exactly once
-  against `contract` as a whole; `PolicyRule.scope`/`.when` have no
-  effect on it at all (`OrgPolicyEvaluator` never even inspects them for
-  this `ruleType`), and its `PolicyViolation` always carries
+- **`ContractPolicy`** — `require_extension` and `require_extension_if`
+  (`PolicyType.ContractLevelTypes`). Checked exactly once against
+  `contract` as a whole; `PolicyRule.scope`/`.when` have no effect on
+  either at all (`OrgPolicyEvaluator` never even inspects them for a
+  `ContractPolicy` `ruleType`), and their `PolicyViolation`s always carry
   `dataset = None`. `OrgPolicyValidator` warns — not errors, since the
-  rule still evaluates correctly — if `scope`/`when` are set on a
-  `require_extension` rule anyway, since declaring either is silently
-  inert rather than a mistake the evaluator itself can catch.
+  rule still evaluates correctly — if `scope`/`when` are set on either
+  rule type anyway, since declaring either is silently inert rather than
+  a mistake the evaluator itself can catch. This warning is keyed off
+  `PolicyType.ContractLevelTypes`, not a hardcoded `ruleType` check, so a
+  future `ContractPolicy` addition gets it for free.
 
 A future contract-level check (e.g. a hypothetical `require_status`)
 would join `ContractPolicy`, not `DatasetPolicy` — the split exists so

@@ -346,6 +346,80 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
   }
 
+  // -- require_extension_if --------------------------------------------------
+
+  private def sunsetRule(ifValue: Map[String, Any] = Map("ifValue" -> "deprecated")): PolicyRule =
+    PolicyRule(
+      "sunset-date-if-deprecated",
+      PolicyType.RequireExtensionIf,
+      Map("ifKey" -> "status", "thenKey" -> "sunsetDate") ++ ifValue
+    )
+
+  test("require_extension_if: the 'if' condition not holding at all means no violation, regardless of 'then'") {
+    val rule = sunsetRule()
+    val c = contract(extensions = Map("status" -> "active")) // ifValue mismatch - condition doesn't hold
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_extension_if: 'if' condition absent entirely also means no violation") {
+    val rule = sunsetRule()
+    val c = contract(extensions = Map.empty) // no 'status' key at all
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_extension_if: 'if' holds and 'then' is present - satisfied") {
+    val rule = sunsetRule()
+    val c = contract(extensions = Map("status" -> "deprecated", "sunsetDate" -> "2026-12-01"))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_extension_if: 'if' holds and 'then' is absent - violated, contract-level (no dataset)") {
+    val rule = sunsetRule()
+    val c = contract(extensions = Map("status" -> "deprecated"))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.isEmpty, "a contract-level violation names no specific dataset")
+    assert(violations.head.message.contains("sunsetDate"))
+    assert(violations.head.message.contains("status"))
+  }
+
+  test("require_extension_if: no ifValue means any non-null ifKey value trips the condition") {
+    val rule = sunsetRule(ifValue = Map.empty) // no ifValue - any status at all triggers it
+    val c = contract(extensions = Map("status" -> "anything"))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1, "thenKey (sunsetDate) is still absent, so the condition being met should still violate")
+  }
+
+  test("require_extension_if: thenValue pin is checked exactly, like require_extension's own value pin") {
+    val rule = PolicyRule(
+      "active-requires-reviewed-status",
+      PolicyType.RequireExtensionIf,
+      Map("ifKey" -> "status", "ifValue" -> "active", "thenKey" -> "reviewStatus", "thenValue" -> "approved")
+    )
+    val approved = contract(extensions = Map("status" -> "active", "reviewStatus" -> "approved"))
+    val pending = contract(extensions = Map("status" -> "active", "reviewStatus" -> "pending"))
+    assert(OrgPolicyEvaluator.evaluate(approved, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+    assert(OrgPolicyEvaluator.evaluate(pending, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("require_extension_if: is checked once against the contract, not once per dataset - scope has no effect") {
+    val rule = sunsetRule().copy(scope = PolicyScope.Inputs)
+    val c = contract(outputs = List(dataset("out1"), dataset("out2")), extensions = Map("status" -> "deprecated"))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+  }
+
+  test("require_extension_if: an exemption still suppresses it, the same as any other policy type") {
+    val rule = sunsetRule()
+    val c = contract(extensions = Map("status" -> "deprecated"))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption("test_contract", List("sunset-date-if-deprecated"), "legacy"))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
   // -- mode -------------------------------------------------------------------
 
   test("mode Enforce violations land in enforceViolations, not warnViolations") {

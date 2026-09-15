@@ -113,6 +113,43 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(OrgPolicyValidator.validate(policy).isValid)
   }
 
+  test("require_extension_if with no 'ifKey'/'thenKey' properties is an Error, not silently accepted") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtensionIf, Map.empty)))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_extension_if with only 'ifKey' (missing 'thenKey') is an Error") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtensionIf, Map("ifKey" -> "status"))))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_extension_if with 'ifKey' and 'thenKey' is valid") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("sunset-if-deprecated", PolicyType.RequireExtensionIf, Map("ifKey" -> "status", "thenKey" -> "sunsetDate")))
+    )
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_extension_if with a non-default scope is a Warning, since scope has no effect on it") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(
+        PolicyRule(
+          "sunset-if-deprecated",
+          PolicyType.RequireExtensionIf,
+          Map("ifKey" -> "status", "thenKey" -> "sunsetDate"),
+          scope = PolicyScope.Outputs
+        )
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid, "a Warning, not an Error - the rule still evaluates correctly")
+    assert(result.warnings.exists(_.message.contains("no effect on require_extension_if")))
+  }
+
   test("duplicate policy ids are an Error") {
     val policy = OrgPolicy(
       "1.0",

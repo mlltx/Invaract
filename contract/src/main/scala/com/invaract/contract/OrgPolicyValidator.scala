@@ -35,18 +35,22 @@ object OrgPolicyValidator {
           s"Policy type '${rule.ruleType}' has malformed or missing properties for its shape" + ruleHint(rule.ruleType)
         )
       }
-      // require_extension checks the contract as a whole (ContractPolicy),
-      // not one dataset at a time - scope/when only ever narrow *which
-      // datasets* a DatasetPolicy rule applies to, so declaring either here
-      // is silently inert rather than a mistake OrgPolicyEvaluator itself
-      // can catch (it never even inspects them for this ruleType). Flagged
-      // as a Warning, not an Error: the rule still evaluates correctly,
-      // just not the way scope/when might make an author expect.
-      if (rule.ruleType == PolicyType.RequireExtension && (rule.scope != PolicyScope.All || rule.when.isDefined)) {
+      // A ContractPolicy type (PolicyType.ContractLevelTypes) checks the
+      // contract as a whole, not one dataset at a time - scope/when only
+      // ever narrow *which datasets* a DatasetPolicy rule applies to, so
+      // declaring either here is silently inert rather than a mistake
+      // OrgPolicyEvaluator itself can catch (it never even inspects them
+      // for a ContractPolicy ruleType). Flagged as a Warning, not an
+      // Error: the rule still evaluates correctly, just not the way
+      // scope/when might make an author expect. Checked against the
+      // shared set, not a single hardcoded ruleType, so a future
+      // ContractPolicy addition (require_extension_if included) gets this
+      // warning for free rather than needing its own `||` branch here.
+      if (PolicyType.ContractLevelTypes.contains(rule.ruleType) && (rule.scope != PolicyScope.All || rule.when.isDefined)) {
         issues += ValidationIssue(
           ValidationSeverity.Warning,
           path,
-          "'scope'/'when' have no effect on require_extension - it checks the contract as a whole, not individual datasets"
+          s"'scope'/'when' have no effect on ${rule.ruleType} - it checks the contract as a whole, not individual datasets"
         )
       }
     }
@@ -87,6 +91,7 @@ object OrgPolicyValidator {
     case PolicyType.FieldNamingConvention  => " (expected a 'pattern' property that compiles as a valid regex)"
     case PolicyType.RequireExtension       => " (expected a non-empty 'key' property)"
     case PolicyType.RequireFormat          => " (expected a non-empty 'formats' property - a single format or a list)"
+    case PolicyType.RequireExtensionIf     => " (expected non-empty 'ifKey' and 'thenKey' properties)"
     case _                                 => ""
   }
 

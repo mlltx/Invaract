@@ -38,6 +38,12 @@ policies:
     description: "Every contract must declare an owning team."
   - id: dataset-described
     type: require_dataset_description
+  - id: sunset-date-if-deprecated
+    type: require_extension_if
+    ifKey: status
+    ifValue: deprecated
+    thenKey: sunsetDate
+    description: "A deprecated contract must declare its sunset date."
 
 inject:
   rules:
@@ -85,6 +91,7 @@ contract's own `rules:` entries work.
 | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
 | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+| `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
 A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
 the same permissive behavior an unrecognized contract `rules[].type` already has. A known
@@ -98,13 +105,21 @@ the last one, which would overwrite the rule's own kind rather than raise anythi
 type pin therefore uses the distinct key `fieldType`.
 </Aside>
 
-<Aside type="note" title="require_extension checks the whole contract, not a dataset">
-`require_catalog`, `require_field`, `field_naming_convention`, and `require_format` each
-check one dataset at a time, honoring `scope`/`when`. `require_extension` is different: it
-checks the contract document as a whole, exactly once, so `scope`/`when` have no effect on
-it — setting either produces an `OrgPolicyValidator` Warning (not an Error; the rule still
-evaluates correctly),
-since it's likely not what the author intended.
+<Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
+`require_catalog`, `require_field`, `field_naming_convention`, `require_format`, and
+`require_dataset_description` each check one dataset at a time, honoring `scope`/`when`.
+`require_extension` and `require_extension_if` are different: they check the contract
+document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
+either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
+correctly), since it's likely not what the author intended.
+</Aside>
+
+<Aside type="tip" title="require_extension_if answers 'only if' requirements">
+`require_extension` can require a key to exist, but can't make that requirement depend on
+another key's value. `require_extension_if` fills that gap — e.g. only a contract whose
+`extensions.status` is `deprecated` needs to also declare `extensions.sunsetDate`; a
+contract that isn't deprecated is entirely unaffected by the rule, not merely exempted
+from it.
 </Aside>
 
 ## `inject.rules`/`inject.minVerificationOptions`

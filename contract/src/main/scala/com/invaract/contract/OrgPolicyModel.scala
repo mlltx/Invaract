@@ -93,8 +93,35 @@ object PolicyType {
     */
   val RequireDatasetDescription = "require_dataset_description"
 
-  val All: Set[String] =
-    Set(RequireCatalog, RequireField, FieldNamingConvention, RequireExtension, RequireFormat, RequireDatasetDescription)
+  /** A conditional counterpart to `require_extension`: only when the
+    * contract's `extensions` already satisfies `ifKey` (optionally pinned
+    * to `ifValue`) must it *also* declare `thenKey` (optionally pinned to
+    * `thenValue`) — e.g. "if `status` is `deprecated`, a `sunsetDate` must
+    * be declared too." A contract that doesn't satisfy the `if` condition
+    * at all is unaffected by this rule entirely, not merely exempted from
+    * it. Like `require_extension`, this checks the contract as a whole
+    * exactly once — `PolicyRule.scope`/`.when` have no effect on it (see
+    * `InterpretedPolicy.ContractPolicy`).
+    */
+  val RequireExtensionIf = "require_extension_if"
+
+  val All: Set[String] = Set(
+    RequireCatalog,
+    RequireField,
+    FieldNamingConvention,
+    RequireExtension,
+    RequireFormat,
+    RequireDatasetDescription,
+    RequireExtensionIf
+  )
+
+  /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
+    * rather than a `DatasetPolicy` — i.e. `scope`/`when` are inert on a
+    * rule of this type. `OrgPolicyValidator` uses this to warn when either
+    * is set on one, without hardcoding a per-type check that would need a
+    * new branch for every future contract-level type.
+    */
+  val ContractLevelTypes: Set[String] = Set(RequireExtension, RequireExtensionIf)
 }
 
 /** A `PolicyRule`, decoded into one of the shapes Invaract currently knows
@@ -140,6 +167,17 @@ object InterpretedPolicy {
     * configure.
     */
   case object RequireDatasetDescription extends DatasetPolicy
+
+  /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
+    *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
+    *   `thenValue` to be checked at all. A contract not satisfying this
+    *   condition produces no violation, the same as one this rule simply
+    *   doesn't apply to.
+    * @param thenKey/thenValue checked exactly like `RequireExtension`'s own
+    *   `key`/`value`, only once the `if` condition holds.
+    */
+  case class RequireExtensionIf(ifKey: String, ifValue: Option[String], thenKey: String, thenValue: Option[String])
+      extends ContractPolicy
 }
 
 /** One organizational policy rule. `id` is required and must be unique
@@ -202,6 +240,16 @@ case class PolicyRule(
       PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case PolicyType.RequireDatasetDescription =>
       Some(InterpretedPolicy.RequireDatasetDescription)
+    case PolicyType.RequireExtensionIf =>
+      for {
+        ifKey <- properties.get("ifKey").map(String.valueOf)
+        thenKey <- properties.get("thenKey").map(String.valueOf)
+      } yield InterpretedPolicy.RequireExtensionIf(
+        ifKey,
+        properties.get("ifValue").map(String.valueOf),
+        thenKey,
+        properties.get("thenValue").map(String.valueOf)
+      )
     case _ => None
   }
 }

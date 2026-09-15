@@ -42,7 +42,7 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Six policy types are interpreted today:
+2. Seven policy types are interpreted today:
 
    | Type | Properties | Checks |
    |---|---|---|
@@ -52,6 +52,7 @@ how every job runs today. Everything below only applies once a platform attaches
    | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
    | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` (a string or a list), matched case-insensitively. |
    | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+   | `require_extension_if` | `ifKey`/`thenKey` (required), `ifValue`/`thenValue` (optional) | A conditional `require_extension` — only once the contract satisfies `ifKey` must it also satisfy `thenKey`. See [Conditional requirements](#conditional-requirements-require_extension_if) below. |
 
    ```yaml
    policies:
@@ -307,7 +308,7 @@ one-line YAML edit instead of a failed production job.
 
 ## Common organizational policy patterns
 
-The six policy types above compose into most standardization an organization actually
+The seven policy types above compose into most standardization an organization actually
 wants to enforce. A few real-world patterns, each a complete, working rule:
 
 **Cost attribution.** Every contract must be attributable to a cost center, so nothing
@@ -346,8 +347,50 @@ handle personal data — `require_extension` is a `ContractPolicy` (see
 [Reference → Organizational Policy Format](/reference/org-policy-format/)), and `when` has
 no effect on it. If you only want this enforced on contracts carrying `pii`-tagged fields,
 today's options are a separate policy document scoped to just those contracts, or waiting
-for genuine conditional-policy support (an open idea, not yet built).
+for genuine dataset-tag-conditioned policy support (an open idea, not yet built —
+`require_extension_if` below solves a *different* conditional shape: one extension's
+value gating another, not a dataset's own tags).
 </Aside>
+
+### Conditional requirements (`require_extension_if`)
+
+**Deprecation lifecycle.** A contract marked `deprecated` must also declare when it sunsets
+— but an *active* contract shouldn't be forced to carry a meaningless `sunsetDate`:
+
+```yaml
+- id: sunset-date-if-deprecated
+  type: require_extension_if
+  ifKey: status
+  ifValue: deprecated
+  thenKey: sunsetDate
+  description: "A deprecated contract must declare its sunset date."
+```
+
+A contract with no `status` extension at all, or one whose `status` is anything other than
+`deprecated`, is entirely unaffected by this rule — not merely exempted from it, just
+outside what it checks. Only once `extensions.status: deprecated` is present does
+`extensions.sunsetDate` become required too:
+
+```yaml
+# some_contract.yaml
+extensions:
+  status: deprecated
+  sunsetDate: "2026-12-01"
+```
+
+`ifValue`/`thenValue` are both optional. Omitting `ifValue` means "the `if` condition holds
+whenever `ifKey` is present at all, whatever its value" — useful for "if this contract
+declares an owner, it must also declare a cost center" without caring which owner:
+
+```yaml
+- id: cost-center-if-owned
+  type: require_extension_if
+  ifKey: owner
+  thenKey: costCenter
+```
+
+`require_extension_if` is a `ContractPolicy` too, so the same `scope`/`when`-have-no-effect
+warning applies to it.
 
 **On-call and escalation routing.** Every contract must name where a rejected write's
 first responder should be paged, so an enforcement failure in production has a known
