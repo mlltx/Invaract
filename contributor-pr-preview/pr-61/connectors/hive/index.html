@@ -1,0 +1,743 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Hive support | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-61/connectors/hive/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-61/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-61/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="Hive support"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-61/connectors/hive/"/><meta property="og:locale" content="en"/><meta property="og:description" content="← Back to Spark Adapter"/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="← Back to Spark Adapter"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-61/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-61/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-61/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-61/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-61/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-61/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-61/_astro/Search.astro_astro_type_script_index_0_lang.BR4NF47f.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="02xgenr" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/design/adding-a-spark-connector/" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/hive/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-61/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hivetablerelation-reads--zero-new-dependency-one-real-bug-fixed" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">HiveTableRelation reads — zero new dependency, one real bug fixed</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#write-shapes--three-real-classes-all-newly-translated" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Write shapes — three real classes, all newly translated</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-real-found-and-fixed-false-rejection-bug-static-partition-insert" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A real, found-and-fixed false-rejection bug: static-partition INSERT</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#known-limitation-ctas-with-no-pre-existing-physical-path" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Known limitation: CTAS with no pre-existing physical path</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#feature-surface" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Feature surface</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#fail-closed-policy--confirmed-not-extended" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Fail-closed policy — confirmed, not extended</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#external-tables" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">External tables</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#drop-table-on-an-external-table--a-confirmed-deliberate-false-rejection" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">DROP TABLE on an external table — a confirmed, deliberate false rejection</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#real-notification-messages-write-then-register-vs-saveastable" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Real notification messages: write-then-register vs. .saveAsTable()</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#catalog-registration-checks" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Catalog registration checks</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#writeto-and-streaming-writes--na-confirmed-by-spark-itself" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">.writeTo() and streaming writes — N/A, confirmed by Spark itself</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hive-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Hive operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hive-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Hive feature-surface coverage ledger</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-61/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hivetablerelation-reads--zero-new-dependency-one-real-bug-fixed" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">HiveTableRelation reads — zero new dependency, one real bug fixed</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#write-shapes--three-real-classes-all-newly-translated" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Write shapes — three real classes, all newly translated</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a-real-found-and-fixed-false-rejection-bug-static-partition-insert" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A real, found-and-fixed false-rejection bug: static-partition INSERT</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#known-limitation-ctas-with-no-pre-existing-physical-path" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Known limitation: CTAS with no pre-existing physical path</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#feature-surface" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Feature surface</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#fail-closed-policy--confirmed-not-extended" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Fail-closed policy — confirmed, not extended</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#external-tables" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">External tables</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#drop-table-on-an-external-table--a-confirmed-deliberate-false-rejection" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">DROP TABLE on an external table — a confirmed, deliberate false rejection</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#real-notification-messages-write-then-register-vs-saveastable" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">Real notification messages: write-then-register vs. .saveAsTable()</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#catalog-registration-checks" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Catalog registration checks</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#writeto-and-streaming-writes--na-confirmed-by-spark-itself" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">.writeTo() and streaming writes — N/A, confirmed by Spark itself</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hive-operation-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Hive operation-surface coverage ledger</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#hive-feature-surface-coverage-ledger" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Hive feature-surface coverage ledger</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-61/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">Hive support</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/connectors/hive.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p><a href="/Invaract/contributor-pr-preview/pr-61/design/spark-adapter/#connector-support">← Back to Spark Adapter</a></p>
+<p>Added via the <code dir="auto">add-spark-connector</code> skill’s process
+(docs/ADDING_A_SPARK_CONNECTOR.md), against a real Hive-enabled session —
+<code dir="auto">SparkSession.Builder.enableHiveSupport()</code> with an embedded, per-test
+Derby metastore (<code dir="auto">javax.jdo.option.ConnectionURL</code> pointed at a temp
+directory), no external Hive install or metastore service needed.
+<code dir="auto">org.apache.spark %% spark-hive % 3.5.1</code> was added to <code dir="auto">spark-adapter/build.sbt</code>
+as a <code dir="auto">% "test"</code> dependency only — Spark’s own first-party Hive
+integration module, not an external connector library, but split out of
+<code dir="auto">spark-sql</code> into its own artifact for exactly the reason every other
+connector in this document stays test-scoped: a job that never enables
+Hive support shouldn’t carry its metastore-client dependency footprint.</p>
+<p>Unlike Delta/Iceberg’s onboarding, this pass found the operation surface
+genuinely under-covered rather than confirmed-by-analogy — a reflective
+scan of <code dir="auto">spark-hive</code>’s own jar for <code dir="auto">Command</code> subclasses (the same
+technique that found Delta’s <code dir="auto">MergeIntoCommand</code>) found exactly three
+classes, and Phase 2’s operation-surface probing against a real session
+found a fourth real gap on the <em>read</em> side that predates this pass
+entirely.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="hivetablerelation-reads--zero-new-dependency-one-real-bug-fixed"><code dir="auto">HiveTableRelation</code> reads — zero new dependency, one real bug fixed</h2><a class="sl-anchor-link" href="#hivetablerelation-reads--zero-new-dependency-one-real-bug-fixed"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “HiveTableRelation reads — zero new dependency, one real bug fixed”</span></a></div>
+<p>The single most consequential finding: <code dir="auto">HiveTableRelation</code> (the read-side
+shape for a genuinely Hive-native table — any non-Parquet/ORC SerDe, or a
+Parquet/ORC table with <code dir="auto">spark.sql.hive.convertMetastore{Parquet,Orc}</code>
+explicitly disabled) is <strong>not</strong> <code dir="auto">LogicalRelation</code>-wrapped the way Delta’s
+read shape turned out to be (see “Delta Lake reads” above) — it’s its own
+top-level <code dir="auto">LeafNode</code>, confirmed empirically via a real <code dir="auto">injectCheckRule</code>
+probe’s full <code dir="auto">treeString</code> output, not assumed from the class name. Before
+this pass, <code dir="auto">SparkPlanAdapter.Translator.translatePlan</code> had no case for
+it at all, so it fell all the way through to the generic <code dir="auto">UnknownPlan</code>
+fallback — worse than an imprecise location (the fate of every other
+unrecognized relation kind wrapped in <code dir="auto">LogicalRelation</code>): a Hive-native
+table could never satisfy a contract’s declared input, full stop. This
+corrects this document’s own previous “Known limitations” bullet, which
+described the fallback mechanism slightly wrong (it named the
+<code dir="auto">LogicalRelation</code>/<code dir="auto">catalogTable</code> fallback) while correctly flagging the
+gap as real and untested.</p>
+<p><strong>Zero new dependency needed to fix it.</strong> <code dir="auto">HiveTableRelation</code> itself
+lives in <code dir="auto">org.apache.spark.sql.catalyst.catalog</code> — plain, public
+<code dir="auto">spark-catalyst</code>, already on this module’s <code dir="auto">provided</code> Spark dependency,
+not the separate <code dir="auto">spark-hive</code> artifact. <code dir="auto">SparkPlanAdapter</code> now imports it
+directly and pattern-matches on it like any other Catalyst type, no
+reflection needed (unlike every Hive-specific case on the write side
+below). <code dir="auto">hiveTableRelationLocationOf</code> resolves
+<code dir="auto">tableMeta.storage.locationUri</code>, falling back to the table’s qualified
+identifier with a diagnostic if unset (not observed in practice — every
+real Hive table has a resolved storage location by the time it’s
+readable). <code dir="auto">ContractEnforcementRule.recognizedRead</code> got the matching
+case, so a Hive-native table now also satisfies a contract’s declared
+<code dir="auto">input</code> the same way every other read shape does.</p>
+<p>A Parquet/ORC Hive table with metastore conversion <strong>on</strong> (the default)
+was confirmed, separately, to still resolve to the pre-existing
+<code dir="auto">LogicalRelation</code>/<code dir="auto">HadoopFsRelation</code> case — the conversion setting, not
+the on-disk file format, determines which shape appears; both are tested
+in <code dir="auto">HiveConnectorSpec</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="write-shapes--three-real-classes-all-newly-translated">Write shapes — three real classes, all newly translated</h2><a class="sl-anchor-link" href="#write-shapes--three-real-classes-all-newly-translated"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Write shapes — three real classes, all newly translated”</span></a></div>
+<p>The reflective jar scan found exactly three concrete <code dir="auto">Command</code> subclasses
+in <code dir="auto">spark-hive</code>, all genuinely data-writing, none needing a
+<code dir="auto">FailClosedCommands</code> safe-list entry (they’re translated writes instead —
+see “Write command recognition: a single registry” below):</p>
+<ul>
+<li><strong><code dir="auto">CreateHiveTableAsSelectCommand</code></strong> — <code dir="auto">.format("hive").saveAsTable(...)</code>
+and <code dir="auto">CREATE TABLE ... STORED AS ... AS SELECT ...</code>. Confirmed
+empirically to be used for <em>both</em> a genuinely new table and an append
+onto an existing one (Hive’s own command doesn’t distinguish the two
+the way <code dir="auto">CreateDataSourceTableAsSelectCommand</code> does) — its <code dir="auto">run()</code>
+internally creates or verifies the table, then issues a second, nested
+<code dir="auto">InsertIntoHiveTable</code> to perform the actual write, the same
+“one logical call, two Command-shaped plans” pitfall Parquet/Delta/
+Iceberg’s CTAS already document (see “A shared pitfall” below Delta’s
+ledger). <code dir="auto">format</code> comes from <code dir="auto">tableDesc.provider</code> (<code dir="auto">"hive"</code>); location
+from <code dir="auto">tableDesc.storage.locationUri</code>.</li>
+<li><strong><code dir="auto">InsertIntoHiveTable</code></strong> — <code dir="auto">.insertInto(...)</code>, <code dir="auto">INSERT [OVERWRITE] [INTO] TABLE ...</code> against an existing table, and the nested write the
+command above issues internally. <code dir="auto">overwrite: Boolean</code> maps directly to
+the contract’s <code dir="auto">append</code>/<code dir="auto">overwrite</code> save modes — confirmed via a real
+<code dir="auto">INSERT OVERWRITE</code> test.</li>
+<li><strong><code dir="auto">InsertIntoHiveDirCommand</code></strong> — <code dir="auto">INSERT [OVERWRITE] [LOCAL] DIRECTORY '&#x3C;path>' [ROW FORMAT ...] SELECT ...</code>, Hive’s directory-export write.
+Found <em>only</em> by the reflective scan — it isn’t a catalog-table write at
+all, so none of the standard <code dir="auto">.save</code>/<code dir="auto">.saveAsTable</code>/<code dir="auto">.insertInto</code> probes
+in Phase 2 would ever have triggered it, the same lesson Delta’s
+<code dir="auto">MergeIntoCommand</code> taught the first time this process was run. Writes
+to an arbitrary filesystem path outside the catalog; <code dir="auto">format</code> is
+reported as <code dir="auto">"hive"</code> uniformly (there’s no <code dir="auto">CatalogTable</code> to read a
+provider string from).</li>
+</ul>
+<p>All three are matched by fully-qualified class name and read via public-
+method reflection — the same convention <code dir="auto">WriteCommandSupport.deltaRowLevelDml</code>
+uses, for a related but distinct reason: these three <em>are</em> stable,
+documented Spark classes (not undocumented internals the way Delta’s
+<code dir="auto">MergeIntoCommand</code> is), it’s just that <code dir="auto">spark-hive</code> is a separate,
+optional, and much heavier artifact this module deliberately keeps off
+its <code dir="auto">provided</code>/compile classpath, so a hard import isn’t available.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="a-real-found-and-fixed-false-rejection-bug-static-partition-insert">A real, found-and-fixed false-rejection bug: static-partition INSERT</h2><a class="sl-anchor-link" href="#a-real-found-and-fixed-false-rejection-bug-static-partition-insert"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “A real, found-and-fixed false-rejection bug: static-partition INSERT”</span></a></div>
+<p>The same false-rejection bug class Delta’s generated columns and DSv2’s
+target-only fields already taught this module to watch for, found again
+under a third, independent mechanism: <code dir="auto">INSERT INTO t PARTITION(dt= '2024-01-01') SELECT ...</code> supplies the partition value as a literal in
+the <code dir="auto">PARTITION</code> clause — confirmed empirically (not assumed) that this
+column <strong>never appears in the query’s own schema at all</strong> (<code dir="auto">InsertIntoHiveTable.query.schema</code>
+is missing it entirely, and <code dir="auto">outputColumnNames</code> excludes it too). A
+contract requiring that column would have been falsely rejected with
+<code dir="auto">MISSING_OUTPUT_FIELD</code> for a write that genuinely produces it.</p>
+<p>A <strong>dynamic</strong>-partition insert (<code dir="auto">INSERT INTO t SELECT ..., dt</code>) does
+<em>not</em> have this problem — confirmed separately that the value comes from
+the <code dir="auto">SELECT</code> itself, already part of <code dir="auto">query.schema</code>, so the fix below is
+a no-op there.</p>
+<p>Fixed in <code dir="auto">WriteCommandSupport.insertIntoHiveTable</code> by reusing the
+existing <code dir="auto">unionNewFields</code> helper (previously private to the DSv2 target-
+only-fields fix and Delta’s schema-evolution fix) to union any of
+<code dir="auto">table.schema</code>’s fields not already present in <code dir="auto">query.schema</code> into
+<code dir="auto">outputSchema</code>, with a diagnostic. Safe for the same reason the DSv2 fix
+is safe: by the time this command reaches the check rule at all, Spark’s
+own analyzer has already validated the write’s column count/types
+against the target (a genuinely missing <em>data</em> column fails analysis
+before any plan is produced here) — the union can only ever add a field
+Spark itself has already endorsed as legitimately absent from the query.</p>
+<p>A related, second finding surfaced fixing this: the unioned partition-
+column field comes from <code dir="auto">CatalogTable.schema</code>, whose columns
+(partition columns included) are always reported nullable — Hive’s
+classic DDL has no <code dir="auto">NOT NULL</code> column constraint to preserve in the first
+place, the same “every field nullable” finding independently confirmed
+for Hive’s ordinary data columns below. A contract declaring a static-
+partition column <code dir="auto">required: true</code> would still (correctly) fail
+<code dir="auto">OUTPUT_FIELD_NULLABILITY_MISMATCH</code> — not a bug, a second, orthogonal
+instance of a finding this document already tracks for Parquet/CSV.</p>
+<p>Both directions verified in <code dir="auto">HiveConnectorSpec</code>: a PASS test proving the
+static-partition case is no longer falsely rejected, a second PASS
+proving the (already-correct) dynamic-partition case, and a FAIL test
+proving a genuinely missing <em>data</em> field is still correctly caught
+alongside the partition-column fix.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="known-limitation-ctas-with-no-pre-existing-physical-path">Known limitation: CTAS with no pre-existing physical path</h2><a class="sl-anchor-link" href="#known-limitation-ctas-with-no-pre-existing-physical-path"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Known limitation: CTAS with no pre-existing physical path”</span></a></div>
+<p><strong>Found, not fixed</strong> — the same class of gap Parquet’s own <code dir="auto">.saveAsTable()</code>-
+on-a-brand-new-table test already documents as out of scope, confirmed
+here to also apply to Hive, plus one Hive-specific extension of it.</p>
+<p><code dir="auto">CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri</code> is
+populated with the table’s real physical path only when <strong>appending
+onto an existing table</strong> — the analyzer resolves <code dir="auto">tableDesc</code> by looking
+up the existing catalog entry. It is <code dir="auto">None</code>, falling back to the
+qualified catalog identifier (<code dir="auto">spark_catalog.default.&#x3C;table></code>), both for
+a genuinely <strong>new</strong> table (nothing to look up yet — the same “no explicit
+path given” gap <code dir="auto">CreateDataSourceTableAsSelectCommand</code> has, which
+Parquet’s tests sidestep via <code dir="auto">.option("path", ...)</code>, a knob Hive’s
+<code dir="auto">.saveAsTable()</code> has no equivalent of) <strong>and</strong>, confirmed empirically as
+a real, Hive-specific surprise, for <code dir="auto">.mode("overwrite")</code> onto an
+<strong>existing</strong> table — overwrite is treated as replace-like, so the
+analyzer builds <code dir="auto">tableDesc</code> fresh rather than consulting the existing
+entry, even though the table (and its real location) already exists.</p>
+<p>The nested <code dir="auto">InsertIntoHiveTable</code>, built during <code dir="auto">run()</code> after the table
+has been created or verified, always resolves the real physical path —
+so for both the new-table and overwrite-onto-existing cases, the outer
+and inner commands disagree on location, and a contract targeting the
+real physical path is rejected at the <em>outer</em> check before the inner,
+genuinely-correct one ever runs.</p>
+<p><strong>Append mode is the one case confirmed to agree by construction</strong> — the
+PASS/FAIL pair in <code dir="auto">HiveConnectorSpec</code> for the “two nested Command plans”
+scenario deliberately uses append, matching the one case verified safe.
+The overwrite-mode gap has its own dedicated test
+(<code dir="auto">HiveConnectorSpec</code>’s “known limitation” test) proving the outer
+command’s location really is the qualified identifier, not the physical
+path — a standing regression check on the gap itself, not just a
+disclosed limitation. <strong>Next step, if closed later</strong>: no <code dir="auto">SparkSession</code>
+reference is threaded through <code dir="auto">WriteCommandSupport</code> today (it’s a pure
+<code dir="auto">LogicalPlan → WriteCommandInfo</code> function), so resolving this would need
+either passing one through (a real API shape change) or accepting the
+qualified-identifier form as an equally valid contract <code dir="auto">location</code> for
+this one write shape — neither attempted here, consistent with the
+Parquet precedent of leaving the analogous gap as documented future work
+rather than a scope-widening fix.</p>
+<p><strong>This gap is narrower than it first reads — it does not apply to an
+EXTERNAL table created via <code dir="auto">.option("path", ...)</code>.</strong> Confirmed directly
+(a real probe, then promoted into a permanent test — see “External
+tables” below): when an explicit path is supplied,
+<code dir="auto">CreateHiveTableAsSelectCommand.tableDesc.storage.locationUri</code> is
+populated at analysis time, exactly the same reason
+<code dir="auto">CreateDataSourceTableAsSelectCommand</code>’s own <code dir="auto">.option("path", ...)</code> case
+(see “A shared pitfall” below Delta’s own write-up) doesn’t have this
+problem either — an explicit path never needs <code dir="auto">defaultTablePath</code> guessing
+in the first place. So a genuinely NEW table’s <code dir="auto">.saveAsTable()</code> is fully
+covered <em>when it’s an external table</em>; only the <em>managed</em> new-table case
+(and managed overwrite-onto-existing) retains the gap described above.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="feature-surface">Feature surface</h2><a class="sl-anchor-link" href="#feature-surface"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Feature surface”</span></a></div>
+<ul>
+<li><strong>Bucketed tables (<code dir="auto">CLUSTERED BY ... INTO n BUCKETS</code>)</strong> — confirmed
+transparent, no fix needed. Bucketing metadata lives entirely in
+<code dir="auto">InsertIntoHiveTable.bucketSpec</code>, never touches the translated schema,
+location, or format on either the read or write side.
+<code dir="auto">HiveConnectorSpec</code>’s permanent test.</li>
+<li><strong>A real Hive UDF</strong> (not Spark’s own <code dir="auto">ScalaUDF</code>) — confirmed
+transparent. <code dir="auto">isOpaqueUdf</code>’s existing <code dir="auto">n.endsWith("HiveGenericUDF")</code>
+check (already in the codebase, previously untested against a real
+Hive UDF for lack of a metastore) correctly recognizes
+<code dir="auto">org.apache.hadoop.hive.ql.udf.generic.GenericUDFUpper</code>, translating it
+as an explicit <code dir="auto">UDF</code> node with a diagnostic — no fix needed, just the
+first real confirmation. <code dir="auto">HiveConnectorSpec</code>’s permanent test.</li>
+<li><strong>Nullability on read-back</strong> — confirmed, the same practical
+consequence as Parquet’s/CSV’s own version of this finding, for an
+independent reason: classic Hive DDL has no <code dir="auto">NOT NULL</code> column
+constraint at all, so every column — data or partition — is always
+nullable in the catalog’s own schema, regardless of what’s actually
+written. <code dir="auto">HiveConnectorSpec</code>’s PASS/FAIL pair (a <code dir="auto">required: false</code>
+contract passes; <code dir="auto">required: true</code> is correctly rejected as
+<code dir="auto">OUTPUT_FIELD_NULLABILITY_MISMATCH</code>).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="fail-closed-policy--confirmed-not-extended">Fail-closed policy — confirmed, not extended</h2><a class="sl-anchor-link" href="#fail-closed-policy--confirmed-not-extended"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Fail-closed policy — confirmed, not extended”</span></a></div>
+<p>No <code dir="auto">FailClosedCommands</code> changes were needed. Hive’s own maintenance/DDL
+surface reuses generic Spark commands this module already classified
+during Delta/Iceberg’s onboarding — confirmed for real against a Hive
+table, not left as a theoretical carryover:</p>
+<ul>
+<li><code dir="auto">CreateTableCommand</code> (plain <code dir="auto">CREATE TABLE</code>, no <code dir="auto">AS SELECT</code>) — already
+safe-listed, confirmed safe for a Hive-format table too.</li>
+<li><code dir="auto">AnalyzeTableCommand</code>, <code dir="auto">ShowTables</code>, <code dir="auto">RepairTableCommand</code> (<code dir="auto">MSCK REPAIR TABLE</code>), <code dir="auto">AlterTableAddPartitionCommand</code> — already safe-listed,
+confirmed for real against a partitioned Hive table.</li>
+<li><code dir="auto">LoadDataCommand</code> (<code dir="auto">LOAD DATA [LOCAL] INPATH ... INTO TABLE</code>) and
+<code dir="auto">TruncateTableCommand</code> — already correctly <em>excluded</em> (documented as
+genuinely data-mutating, deliberately unmodeled) — confirmed for real:
+both are rejected, and the target table’s data is left unchanged.</li>
+<li><code dir="auto">MergeIntoTable</code>/<code dir="auto">UpdateTable</code> — confirmed empirically to be real,
+<code dir="auto">Command</code>-shaped plans for a plain Hive table’s <code dir="auto">MERGE INTO</code>/<code dir="auto">UPDATE</code>
+(unlike Iceberg, which rewrites these into <code dir="auto">ReplaceData</code>/<code dir="auto">WriteDelta</code>
+before they’d ever reach this point — Hive tables don’t implement
+<code dir="auto">SupportsRowLevelOperations</code>, so the rewrite never applies). Already
+correctly excluded from the safe list (this document’s own exclusion
+list already named both). Confirmed for real: Invaract’s own
+<code dir="auto">UnverifiableWrite</code> rejection fires <em>before</em> Spark’s own <code dir="auto">MERGE INTO TABLE is not supported temporarily</code>/<code dir="auto">UPDATE TABLE is not supported temporarily</code> error ever would. <code dir="auto">DELETE FROM</code> against a plain Hive table
+is rejected by Spark itself before producing any <code dir="auto">Command</code>-shaped plan
+at all — genuinely nothing for this policy to classify.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="external-tables">External tables</h2><a class="sl-anchor-link" href="#external-tables"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “External tables”</span></a></div>
+<p>Everything above (and every test in <code dir="auto">HiveConnectorSpec</code> before this
+section) uses a plain <em>managed</em> table at the default warehouse path.
+None of it exercises an <code dir="auto">EXTERNAL</code> table or a <code dir="auto">LOCATION</code> outside the
+warehouse dir — a real gap in <em>investigation</em>, not an assumed one, closed
+here against a real embedded-Derby session for both Hive-SerDe
+(<code dir="auto">STORED AS</code>) and datasource-provider (<code dir="auto">USING PARQUET</code>/<code dir="auto">USING DELTA</code>)
+formats, comparing the raw-SQL <code dir="auto">CREATE EXTERNAL TABLE</code> path against
+<code dir="auto">.saveAsTable()</code>.</p>
+<p><strong>The short answer: no translation or enforcement gap exists for any of
+it.</strong> Every write shape an external table produces was already a
+recognized <code dir="auto">WriteCommandSupport</code> entry; since it, <code dir="auto">SparkPlanAdapter</code>,
+<code dir="auto">ContractEnforcementRule</code>, and <code dir="auto">SparkAdapterListener</code> all share the one
+registry, notification publishing is correct for free, with no
+external-table-specific code needed anywhere.</p>
+<ul>
+<li><strong><code dir="auto">CREATE EXTERNAL TABLE t (...) STORED AS PARQUET LOCATION '&#x3C;path>'</code></strong>
+(Hive SerDe DDL, metastore conversion <strong>on</strong>, the default) — the
+<code dir="auto">CREATE</code> itself is <code dir="auto">CreateTableCommand</code> (already safe-listed). The
+catalog registers <code dir="auto">tableType=EXTERNAL</code> with <code dir="auto">location</code> set to exactly
+the given path (never a computed warehouse path). The subsequent
+<code dir="auto">INSERT INTO</code> resolves to <strong><code dir="auto">InsertIntoHadoopFsRelationCommand</code></strong>, not
+<code dir="auto">InsertIntoHiveTable</code> — conversion-on treats even an EXTERNAL
+Hive-SerDe Parquet table as a plain datasource relation for <em>writes</em>
+too, the write-side counterpart of this document’s existing read-side
+conversion-toggle finding, now confirmed for an EXTERNAL table
+specifically. Already covered by the pre-existing <code dir="auto">insertIntoHadoopFsRelation</code>
+case. <code dir="auto">HiveConnectorSpec</code>’s translation test and PASS test.</li>
+<li><strong><code dir="auto">CREATE TABLE t (...) USING PARQUET LOCATION '&#x3C;path>'</code></strong> (no
+<code dir="auto">EXTERNAL</code> keyword — the datasource DDL form) — confirmed directly that
+a bare <code dir="auto">LOCATION</code> implies <code dir="auto">tableType=EXTERNAL</code> with no keyword needed
+at all. <code dir="auto">CreateDataSourceTableCommand</code> (safe-listed) → <code dir="auto">InsertIntoHadoopFsRelationCommand</code>.
+Already covered. <code dir="auto">HiveConnectorSpec</code>’s PASS test.</li>
+<li><strong><code dir="auto">CREATE TABLE t (...) USING DELTA LOCATION '&#x3C;path>'</code></strong> under a
+Hive-catalog session (<code dir="auto">enableHiveSupport()</code> + Delta’s own
+<code dir="auto">DeltaSparkSessionExtension</code>/<code dir="auto">DeltaCatalog</code>) — the <code dir="auto">CREATE</code> itself is a
+safe-listed <code dir="auto">CreateTable</code>, plus Delta’s own internal transaction-log
+bootstrap plans (<code dir="auto">LogicalRDD</code>/<code dir="auto">DeserializeToObject</code>/etc.), none of
+which are <code dir="auto">Command</code>-shaped so none ever reach the fail-closed gate at
+all — confirmed noise, not a gap. The catalog registers
+<code dir="auto">tableType=EXTERNAL</code>, <code dir="auto">provider=delta</code>. <code dir="auto">INSERT INTO</code> resolves to
+<code dir="auto">AppendData</code> — the existing, connector-agnostic DSv2 write shape. First
+real confirmation that Delta’s write path is unaffected by Hive
+metastore registration (every other Delta test in this codebase runs
+under the default in-memory catalog). <code dir="auto">HiveConnectorSpec</code>’s PASS test.</li>
+<li><strong><code dir="auto">.format("hive").option("path", extPath).saveAsTable(newTable)</code></strong> —
+the direct Hive analogue of <code dir="auto">.saveAsTable()</code> against an external
+location. Confirmed to produce a genuine <code dir="auto">EXTERNAL</code> table, and — see
+the amendment to “Known limitation” above — confirmed to sidestep that
+limitation entirely: the outer <code dir="auto">CreateHiveTableAsSelectCommand</code> and the
+nested <code dir="auto">InsertIntoHiveTable</code> agree on the real physical path by
+construction, the same way <code dir="auto">CreateDataSourceTableAsSelectCommand</code>’s own
+<code dir="auto">.option("path", ...)</code> case already does. <code dir="auto">HiveConnectorSpec</code>’s PASS
+test, which also pins this as a standing regression check on the fix.</li>
+<li><strong><code dir="auto">.format("parquet").option("path", extPath).saveAsTable(newTable)</code></strong>
+— already covered by the existing <code dir="auto">CreateDataSourceTableAsSelectCommand</code>
+case, whose <code dir="auto">.option("path", ...)</code> handling was already documented to
+resolve the physical path immediately. First confirmation under a real
+Hive-catalog session specifically. <code dir="auto">HiveConnectorSpec</code>’s PASS test.</li>
+<li><strong><code dir="auto">.format("delta").option("path", extPath).saveAsTable(newTable)</code></strong> —
+<strong>the append side is fully covered</strong> (<code dir="auto">AppendData</code> against the
+now-committed table resolves the real physical path; <code dir="auto">HiveConnectorSpec</code>’s
+PASS test), but <strong>the new-table CREATE side is not, and <code dir="auto">.option("path", ...)</code>
+does not change that</strong> — confirmed here (not assumed) to be the exact
+same behavior <code dir="auto">docs/connectors/delta.md</code>’s own new-table <code dir="auto">.saveAsTable()</code>
+row already documents for the default in-memory catalog: the outer
+<code dir="auto">CreateTableAsSelect</code>’s target is a <code dir="auto">StagedTable</code> mid atomic-commit, whose
+reported location is never trusted regardless of whether a path was
+supplied (see <code dir="auto">WriteCommandSupport.namedRelationLocationAndFormat</code>’s own
+doc), so it always resolves to the qualified catalog identifier
+(<code dir="auto">spark_catalog.default.&#x3C;table></code>) instead. Unlike Hive’s own
+<code dir="auto">CreateHiveTableAsSelectCommand</code> (a V1 command, above), an explicit path
+option has no effect here — this is a genuine, pre-existing DSv2
+limitation, not something being external changes one way or the other.
+<code dir="auto">HiveConnectorSpec</code>’s dedicated test confirms this explicitly rather than
+leaving it as an unstated assumption carried over from <code dir="auto">delta.md</code>.</li>
+</ul>
+<div class="sl-heading-wrapper level-h3"><h3 id="drop-table-on-an-external-table--a-confirmed-deliberate-false-rejection"><code dir="auto">DROP TABLE</code> on an external table — a confirmed, deliberate false rejection</h3><a class="sl-anchor-link" href="#drop-table-on-an-external-table--a-confirmed-deliberate-false-rejection"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “DROP TABLE on an external table — a confirmed, deliberate false rejection”</span></a></div>
+<p>Dropping an <code dir="auto">EXTERNAL</code> table leaves its data files on disk — only the
+metastore entry is removed (confirmed directly: the table’s files
+survive a <code dir="auto">DROP TABLE</code>). Invaract’s fail-closed policy nonetheless
+rejects <code dir="auto">DropTable</code> unconditionally, regardless of table type — it’s
+neither a recognized write nor on <code dir="auto">FailClosedCommands</code>’ safe list. This
+is <strong>working as designed, not a bug</strong>: a class-name-only check can’t
+distinguish “this specific DROP is harmless” from “this one deletes a
+managed table’s real data” without inspecting the instance, and
+<code dir="auto">FailClosedCommands</code>’ own documented asymmetry already accepts this
+tradeoff (a safe command wrongly missing costs one rejection; one wrongly
+present could silently defeat the whole feature). <code dir="auto">HiveConnectorSpec</code>’s
+fail-closed test confirms both halves: the rejection fires, and the data
+really would have survived anyway.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="real-notification-messages-write-then-register-vs-saveastable">Real notification messages: write-then-register vs. <code dir="auto">.saveAsTable()</code></h3><a class="sl-anchor-link" href="#real-notification-messages-write-then-register-vs-saveastable"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Real notification messages: write-then-register vs. .saveAsTable()”</span></a></div>
+<p>The two write paths this document compares throughout don’t just differ
+in which <code dir="auto">WriteCommandSupport</code> case handles them — they publish a
+genuinely different amount of notification traffic for what looks, from
+the caller’s side, like “one write.” <code dir="auto">HiveConnectorSpec</code>’s comparison
+test wires a real <code dir="auto">FileNotificationSink</code> (the same sink
+<code dir="auto">demo/notify.properties</code>/<code dir="auto">./dev/test</code> use — not a mock) into both forms,
+using this contract shape for both (note the <code dir="auto">format:</code> field — a
+contract can declare an expected output <em>format</em>, checked against the
+plan’s actual format, independently of the per-field <code dir="auto">type</code>s in
+<code dir="auto">schema.fields</code>):</p>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-61/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-61/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="yaml"><code><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">id</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">enforcement_demo</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">version</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span></div></div><div class="ec-line"><div class="code"><span style="--0:#7FDBCA;--1:#111111">outputs</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">  </span></span><span style="--0:#D6DEEB;--1:#403F53">- </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">out</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">location</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">&#x3C;the external location></span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">format</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">parquet</span></div></div><div class="ec-line"><div class="code"><span class="indent">    </span><span style="--0:#7FDBCA;--1:#111111">schema</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent">      </span><span style="--0:#7FDBCA;--1:#111111">fields</span><span style="--0:#D6DEEB;--1:#403F53">:</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">id</span></div></div><div class="ec-line"><div class="code"><span class="indent">          </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">long</span></div></div><div class="ec-line"><div class="code"><span class="indent">          </span><span style="--0:#7FDBCA;--1:#111111">required</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">true</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#D6DEEB;--1:#403F53">        </span></span><span style="--0:#D6DEEB;--1:#403F53">- </span><span style="--0:#7FDBCA;--1:#111111">name</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">value</span></div></div><div class="ec-line"><div class="code"><span class="indent">          </span><span style="--0:#7FDBCA;--1:#111111">type</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#ECC48D;--1:#3B61B0">long</span></div></div><div class="ec-line"><div class="code"><span class="indent">          </span><span style="--0:#7FDBCA;--1:#111111">required</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">true</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="id: enforcement_demoversion: &#x22;1.0.0&#x22;outputs:  - name: out    location: <the external location>    format: parquet    schema:      fields:        - name: id          type: long          required: true        - name: value          type: long          required: true"><div></div></button></div></figure></div>
+<p><strong>(A) Write parquet directly, then separately register a Hive <code dir="auto">EXTERNAL</code>
+table over the already-written data</strong> — the realistic “an ETL job writes
+files, a later metadata step catalogs them” pattern:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="scala"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">df.write.mode(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">overwrite</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">).parquet(path)                                    </span><span style="--0:#919F9F;--1:#5D6376">// the only write</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">spark.sql(</span><span style="--0:#C792EA;--1:#8844AE">s</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">CREATE EXTERNAL TABLE t (id BIGINT, value BIGINT) </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#C792EA;--1:#8844AE">+</span></div></div><div class="ec-line"><div class="code"><span class="indent">          </span><span style="--0:#C792EA;--1:#8844AE">s</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">STORED AS PARQUET LOCATION '</span><span style="--0:#D6DEEB;--1:#403F53">$path</span><span style="--0:#ECC48D;--1:#984E4D">'</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)                            </span><span style="--0:#919F9F;--1:#5D6376">// metadata only</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="df.write.mode(&#x22;overwrite&#x22;).parquet(path)                                    // the only writespark.sql(s&#x22;CREATE EXTERNAL TABLE t (id BIGINT, value BIGINT) &#x22; +          s&#x22;STORED AS PARQUET LOCATION &#x27;$path&#x27;&#x22;)                            // metadata only"><div></div></button></div></figure></div>
+<p>Real captured output — <strong>exactly one of each event, and nothing at all
+from the <code dir="auto">CREATE EXTERNAL TABLE</code> step</strong>:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="json"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">CONTRACT_VALIDATION</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196777660</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"status"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">PASSED</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"violations"</span><span style="--0:#D6DEEB;--1:#403F53">: [], </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fingerprints"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="{&#x22;eventType&#x22;: &#x22;CONTRACT_VALIDATION&#x22;, &#x22;timestamp&#x22;: 1789196777660, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;status&#x22;: &#x22;PASSED&#x22;, &#x22;violations&#x22;: [], &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;, &#x22;fingerprints&#x22;: null}"><div></div></button></div></figure></div>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="json"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">WRITE</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196779435</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"location"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">file:/tmp/invaract-hive-test.../external_compare_sql</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"format"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"saveMode"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">overwrite</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"schema"</span><span style="--0:#D6DEEB;--1:#403F53">: [{</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}, {</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">value</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}], </span><span style="--0:#7FDBCA;--1:#096E72">"durationMs"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1761</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"rowCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">2</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"bytesWritten"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1435</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fileCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">2</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="{&#x22;eventType&#x22;: &#x22;WRITE&#x22;, &#x22;timestamp&#x22;: 1789196779435, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;location&#x22;: &#x22;file:/tmp/invaract-hive-test.../external_compare_sql&#x22;, &#x22;format&#x22;: &#x22;parquet&#x22;, &#x22;saveMode&#x22;: &#x22;overwrite&#x22;, &#x22;schema&#x22;: [{&#x22;name&#x22;: &#x22;id&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}, {&#x22;name&#x22;: &#x22;value&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}], &#x22;durationMs&#x22;: 1761, &#x22;rowCount&#x22;: 2, &#x22;bytesWritten&#x22;: 1435, &#x22;fileCount&#x22;: 2, &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;}"><div></div></button></div></figure></div>
+<p>The <code dir="auto">CREATE EXTERNAL TABLE</code> statement that follows publishes <strong>nothing</strong>
+— confirmed directly (a real assertion, not an assumption): schema-only
+<code dir="auto">CREATE EXTERNAL TABLE</code> with no <code dir="auto">AS SELECT</code> is <code dir="auto">CreateTableCommand</code>,
+already on <code dir="auto">FailClosedCommands</code>’ safe list, so it never reaches
+<code dir="auto">verifyOrThrow</code>’s <code dir="auto">ir.Write</code> branch at all. There is no “the table was
+registered” event of any kind — the contract was already fully checked
+at the moment the data itself was written; registering an external table
+over already-verified data adds nothing for Invaract to check, because
+it changes no row content.</p>
+<p><strong>(B) <code dir="auto">.format("parquet").option("path", ...).saveAsTable(newTable)</code></strong> —
+one call doing both, for the exact same input data:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="scala"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">df.write.format(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">).option(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">path</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, path).saveAsTable(</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">t</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="df.write.format(&#x22;parquet&#x22;).option(&#x22;path&#x22;, path).saveAsTable(&#x22;t&#x22;)"><div></div></button></div></figure></div>
+<p>Real captured output — <strong>two of each event</strong>, for what the caller
+experiences as one write:</p>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="json"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">CONTRACT_VALIDATION</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196783942</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"status"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">PASSED</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"violations"</span><span style="--0:#D6DEEB;--1:#403F53">: [], </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fingerprints"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">CONTRACT_VALIDATION</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196783958</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"status"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">PASSED</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"violations"</span><span style="--0:#D6DEEB;--1:#403F53">: [], </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fingerprints"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="{&#x22;eventType&#x22;: &#x22;CONTRACT_VALIDATION&#x22;, &#x22;timestamp&#x22;: 1789196783942, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;status&#x22;: &#x22;PASSED&#x22;, &#x22;violations&#x22;: [], &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;, &#x22;fingerprints&#x22;: null}{&#x22;eventType&#x22;: &#x22;CONTRACT_VALIDATION&#x22;, &#x22;timestamp&#x22;: 1789196783958, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;status&#x22;: &#x22;PASSED&#x22;, &#x22;violations&#x22;: [], &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;, &#x22;fingerprints&#x22;: null}"><div></div></button></div></figure></div>
+<div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="json"><code><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">WRITE</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196784087</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"location"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">file:/tmp/invaract-hive-test.../external_compare_saveastable</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"format"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"saveMode"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">overwrite</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"schema"</span><span style="--0:#D6DEEB;--1:#403F53">: [{</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}, {</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">value</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}], </span><span style="--0:#7FDBCA;--1:#096E72">"durationMs"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">127</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"rowCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">2</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"bytesWritten"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1435</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fileCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">2</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div><div class="ec-line"><div class="code"><span style="--0:#D6DEEB;--1:#403F53">{</span><span style="--0:#7FDBCA;--1:#096E72">"eventType"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">WRITE</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"timestamp"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">1789196784147</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"contract"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">enforcement_demo@1.0.0</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"location"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">file:///tmp/invaract-hive-test.../external_compare_saveastable</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"format"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">parquet</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"saveMode"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">error</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"schema"</span><span style="--0:#D6DEEB;--1:#403F53">: [{</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">id</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}, {</span><span style="--0:#7FDBCA;--1:#096E72">"name"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">value</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"type"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">long</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"nullable"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">false</span><span style="--0:#D6DEEB;--1:#403F53">}], </span><span style="--0:#7FDBCA;--1:#096E72">"durationMs"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#F78C6C;--1:#AA0982">201</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"rowCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"bytesWritten"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"fileCount"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#FF6A83;--1:#A24848">null</span><span style="--0:#D6DEEB;--1:#403F53">, </span><span style="--0:#7FDBCA;--1:#096E72">"applicationId"</span><span style="--0:#D6DEEB;--1:#403F53">: </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#C789D6;--1:#7C5686">local-1789196775261</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">}</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="{&#x22;eventType&#x22;: &#x22;WRITE&#x22;, &#x22;timestamp&#x22;: 1789196784087, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;location&#x22;: &#x22;file:/tmp/invaract-hive-test.../external_compare_saveastable&#x22;, &#x22;format&#x22;: &#x22;parquet&#x22;, &#x22;saveMode&#x22;: &#x22;overwrite&#x22;, &#x22;schema&#x22;: [{&#x22;name&#x22;: &#x22;id&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}, {&#x22;name&#x22;: &#x22;value&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}], &#x22;durationMs&#x22;: 127, &#x22;rowCount&#x22;: 2, &#x22;bytesWritten&#x22;: 1435, &#x22;fileCount&#x22;: 2, &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;}{&#x22;eventType&#x22;: &#x22;WRITE&#x22;, &#x22;timestamp&#x22;: 1789196784147, &#x22;contract&#x22;: &#x22;enforcement_demo@1.0.0&#x22;, &#x22;location&#x22;: &#x22;file:///tmp/invaract-hive-test.../external_compare_saveastable&#x22;, &#x22;format&#x22;: &#x22;parquet&#x22;, &#x22;saveMode&#x22;: &#x22;error&#x22;, &#x22;schema&#x22;: [{&#x22;name&#x22;: &#x22;id&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}, {&#x22;name&#x22;: &#x22;value&#x22;, &#x22;type&#x22;: &#x22;long&#x22;, &#x22;nullable&#x22;: false}], &#x22;durationMs&#x22;: 201, &#x22;rowCount&#x22;: null, &#x22;bytesWritten&#x22;: null, &#x22;fileCount&#x22;: null, &#x22;applicationId&#x22;: &#x22;local-1789196775261&#x22;}"><div></div></button></div></figure></div>
+<p><strong>Why two, and a real correction to what this document previously assumed
+from the Hive-specific write-up above:</strong> <code dir="auto">.saveAsTable()</code> on a new table
+analyzes to two nested <code dir="auto">Command</code> plans
+(<code dir="auto">CreateDataSourceTableAsSelectCommand</code> wrapping an inner
+<code dir="auto">InsertIntoHadoopFsRelationCommand</code>), and <code dir="auto">injectCheckRule</code> sees and
+verifies both independently — hence two <code dir="auto">ContractValidationEvent</code>s, both
+<code dir="auto">PASSED</code>, for one logical call. That part was expected, the same
+“one call, two Command-shaped plans” pitfall already documented for
+Hive’s own <code dir="auto">CreateHiveTableAsSelectCommand</code>/<code dir="auto">InsertIntoHiveTable</code> pair
+above. What’s <strong>not</strong> the same as the Hive case: this document’s
+<code dir="auto">CreateHiveTableAsSelectCommand</code> write-up states
+<code dir="auto">SparkAdapterListener</code>’s <code dir="auto">QueryExecutionListener</code> “only observes the
+top-level query” — true for <em>that</em> command, but confirmed here (not
+assumed to generalize) that <code dir="auto">CreateDataSourceTableAsSelectCommand</code> is
+different: Spark executes its inner write as its own separate
+<code dir="auto">QueryExecution</code>, so <code dir="auto">onSuccess</code> genuinely fires <strong>twice</strong>, producing two
+<code dir="auto">WriteEvent</code>s — one for the real physical write (accurate
+<code dir="auto">rowCount</code>/<code dir="auto">bytesWritten</code>/<code dir="auto">fileCount</code>, <code dir="auto">saveMode</code> reported as Spark’s own
+internal <code dir="auto">"overwrite"</code> for the fresh table) and one for the outer command
+itself (<code dir="auto">saveMode: "error"</code> — <code dir="auto">.saveAsTable()</code>’s default for a brand-new
+table with no explicit <code dir="auto">.mode()</code> — with <code dir="auto">rowCount</code>/<code dir="auto">bytesWritten</code>/<code dir="auto">fileCount</code>
+all <code dir="auto">null</code>, since the outer command’s own executed plan carries no
+<code dir="auto">SQLMetric</code>s at all). A subscriber consuming <code dir="auto">WriteEvent</code>s from a
+<code dir="auto">.saveAsTable()</code> call needs to expect this pair, not a single event, and
+know to prefer the one with real metrics over the metrics-free duplicate.</p>
+<p>Both forms’ events carry the table’s <em>real, external</em> <code dir="auto">location</code> (never
+a warehouse-relative or catalog-identifier form) and the same
+<code dir="auto">contract</code>/<code dir="auto">applicationId</code> pair — nothing about being external changes
+the shape or correctness of what’s published. The real difference this
+comparison surfaces is entirely about <em>event cardinality</em>: one write
+statement, one validation and one write event; one <code dir="auto">.saveAsTable()</code> call,
+two of each.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="catalog-registration-checks">Catalog registration checks</h2><a class="sl-anchor-link" href="#catalog-registration-checks"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Catalog registration checks”</span></a></div>
+<p><code dir="auto">Dataset.catalog</code> (<code dir="auto">docs/CONTRACT_MODEL.md</code>’s <code dir="auto">catalog</code> field, added
+alongside <code dir="auto">format</code>/<code dir="auto">saveMode</code>) lets a contract require an input or output
+to actually be registered in a catalog — the org-wide policy motivating
+this: every job’s output should have a real catalog entry so downstream
+tools can discover it, not just a bare path only the writing job knows
+about. Hive is the connector this was built and proven against first,
+since it’s the one this document’s own “External tables” section already
+established has no <em>translation</em> gap, only a <em>checking</em> one — nothing
+stopped a <code dir="auto">CREATE EXTERNAL TABLE</code> from registering a wrong or absent
+schema over already-written data, because catalog registration itself
+was never something a contract could require or verify at all.</p>
+<p><code dir="auto">ir.CatalogIdentity</code> (technology/catalogName/location/namespace/table) is
+the <em>observed</em> registration a real write/read resolved to, extracted per
+write/read shape by <code dir="auto">CatalogIdentitySupport</code>/<code dir="auto">WriteCommandSupport</code>/
+<code dir="auto">SparkPlanAdapter</code>, and compared against the contract’s declared
+<code dir="auto">CatalogRequirement</code> by <code dir="auto">StructuralVerifier</code>. Two new violation pairs:
+<code dir="auto">MISSING_OUTPUT_CATALOG_REGISTRATION</code>/<code dir="auto">OUTPUT_CATALOG_MISMATCH</code> and their
+input-side mirrors — only fired when a dataset’s <code dir="auto">catalog:</code> block declares
+<code dir="auto">required: true</code>; a contract that doesn’t declare <code dir="auto">catalog:</code> at all
+behaves exactly as it did before this feature existed.</p>
+<p><strong><code dir="auto">technology</code>/<code dir="auto">catalogName</code>/<code dir="auto">namespace</code>/<code dir="auto">table</code> are straightforward: real
+values, always populated for a real Hive write (<code dir="auto">spark_catalog</code>, the
+table’s database/name, <code dir="auto">technology: hive</code>).</strong> The one field genuinely
+worth documenting carefully is <code dir="auto">location</code> — the Hive metastore’s own
+network address (<code dir="auto">hive.metastore.uris</code>, or an <code dir="auto">embedded:&#x3C;jdbc-url></code>
+fallback for a local/embedded metastore like this suite’s own test
+fixture), read from the <em>active session’s</em> Hadoop configuration, not a
+Spark-local catalog alias. This answers a specific, real question a
+platform team would ask: <strong>can a job silently write through a different
+Hive metastore than the contract declares?</strong> No — confirmed by a real
+enforcement test (<code dir="auto">HiveConnectorSpec</code>’s “FAIL: a write through the wrong
+Hive metastore location is rejected”): a contract declaring
+<code dir="auto">location: thrift://not-the-real-metastore.example.com:9083</code> against a
+session actually backed by a different (here, embedded) metastore is
+rejected with <code dir="auto">OUTPUT_CATALOG_MISMATCH</code>, naming exactly which field
+disagreed and what the real value was. The matching PASS test reads the
+session’s real value the same way <code dir="auto">CatalogIdentitySupport.hiveMetastoreLocation</code>
+itself does (not hand-typed) and confirms a correctly-declared location is
+accepted.</p>
+<p><strong>A real gap, and a real bug it caused, found while proving the above for
+DSv2 connectors.</strong> <code dir="auto">ir.CatalogIdentity.location</code> is <code dir="auto">None</code> for every DSv2
+catalog by default — confirmed, not assumed: no reflective accessor
+exists in most of these connectors’ public API to read a catalog plugin’s
+own network endpoint without a compile-time dependency this module
+deliberately doesn’t take (see <code dir="auto">CatalogIdentitySupport.fromV2</code>’s own
+doc). The first version of the mismatch check compared a declared
+<code dir="auto">location</code> unconditionally once the contract declared it — which meant
+declaring <code dir="auto">catalog.location</code> against <em>any</em> DSv2 output would never be
+satisfiable, regardless of the value chosen, since the actual side is
+permanently <code dir="auto">None</code> there. A real Delta enforcement test (reused from this
+document’s own external-table fixtures) caught this immediately: a
+<code dir="auto">.saveAsTable()</code> append that should have passed cleanly was rejected
+instead. Fixed in <code dir="auto">StructuralVerifier.catalogFieldMismatches</code> to treat an
+unknown <em>actual</em> sub-field the same way <code dir="auto">formatViolation</code>’s own doc
+already treats an unknown actual format — no comparison, no violation —
+so declaring <code dir="auto">catalog.location</code> against a DSv2 output whose location
+genuinely can’t be resolved is accepted as a no-op, not a permanent,
+un-fixable rejection.</p>
+<p><strong>Narrower than first described: Delta is a real, confirmed exception.</strong>
+Delta’s own <code dir="auto">DeltaCatalog</code>, installed as <code dir="auto">spark.sql.catalog.spark_catalog</code>
+the way this suite (and essentially every real deployment) configures it,
+doesn’t run a separate metadata service the way Iceberg’s catalog
+implementations do — it registers a Delta table as an ordinary
+<code dir="auto">CatalogTable</code> (<code dir="auto">provider = "delta"</code>) in whichever catalog
+<code dir="auto">spark.sql.catalogImplementation</code> names, confirmed empirically: this
+document’s own “a Delta EXTERNAL table registered in the Hive metastore”
+test independently reads the very same table back via
+<code dir="auto">spark.sessionState.catalog.getTableMetadata</code>. That means a Delta table
+really can be registered through “the wrong Hive metastore” the exact
+same way a Parquet one can, and <code dir="auto">CatalogIdentitySupport.fromV2</code> now
+resolves it — see <code dir="auto">deltaSessionCatalogMetastoreLocation</code>’s own doc for the
+two conditions that keep this narrow (<code dir="auto">catalog.name == "spark_catalog"</code>,
+and the table must already exist — a brand-new <code dir="auto">CreateTableAsSelect</code>/
+<code dir="auto">ReplaceTableAsSelect</code> is still verified <em>before</em> the table exists, so its
+location genuinely isn’t resolvable yet, same as <code dir="auto">StagedTable</code>’s own
+documented limitation elsewhere). Three <code dir="auto">HiveConnectorSpec</code> tests pin this
+down: “known limitation: … can’t be checked on the FIRST write,” “PASS:
+… checked against the real Hive metastore location,” and “FAIL: …
+through the wrong Hive metastore location is rejected” — the same
+PASS/FAIL pair Hive itself gets, for a Delta table once it exists.</p>
+<p>Iceberg is deliberately NOT given the same treatment: even its “Hive”
+catalog flavor talks to the metastore through Iceberg’s own thrift
+client, entirely bypassing <code dir="auto">spark.sessionState.catalog</code> — so the same
+lookup technique isn’t known to be safe there, and <code dir="auto">technology</code>/
+<code dir="auto">catalogName</code>/<code dir="auto">namespace</code>/<code dir="auto">table</code> remain the only checked sub-fields for
+Iceberg/JDBC/a non-default Delta catalog instance.</p>
+<p><strong><code dir="auto">.saveAsTable()</code> and its literal SQL equivalent produce identical
+results.</strong> A separate question from the location work above: does the
+DataFrame API and raw SQL resolve to the same catalog identity for the
+same operation? Four <code dir="auto">PARITY</code> tests answer this directly (not just “both
+eventually pass some other test”) — <code dir="auto">.saveAsTable()</code> vs. <code dir="auto">CREATE TABLE ... AS SELECT</code> for a new table, and <code dir="auto">.saveAsTable()</code> append vs. <code dir="auto">INSERT INTO ... SELECT</code> for an existing one, each run for both Parquet and
+Delta. Each builds twin tables via both paths, asserts the resolved
+<code dir="auto">ir.CatalogIdentity</code> matches field-for-field, and confirms a shared
+“wrong technology” contract rejects both the same way. A real
+confirmation along the way: both paths emit <strong>two</strong> nested <code dir="auto">WriteEvent</code>s
+per call (one before the catalog registration lands, one after) — the
+same asymmetry the “write-then-register vs. saveAsTable” comparison above
+already found for event <em>counts</em>; these tests filter specifically for
+<code dir="auto">_.catalog.isDefined</code> to avoid a race between the two.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="writeto-and-streaming-writes--na-confirmed-by-spark-itself"><code dir="auto">.writeTo()</code> and streaming writes — N/A, confirmed by Spark itself</h2><a class="sl-anchor-link" href="#writeto-and-streaming-writes--na-confirmed-by-spark-itself"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “.writeTo() and streaming writes — N/A, confirmed by Spark itself”</span></a></div>
+<p>Both confirmed to be rejected by Spark before producing any analyzable
+plan Invaract could see, the same pattern already documented for
+Parquet/CSV: <code dir="auto">.writeTo(...).append()</code> against a Hive table fails with
+<code dir="auto">Cannot write into v1 table</code> (the default <code dir="auto">spark_catalog</code> isn’t a
+<code dir="auto">SupportsWrite</code>-capable V2 catalog for V1-provider-backed tables); a
+streaming <code dir="auto">.writeStream...toTable(...)</code> against a Hive table fails with
+<code dir="auto">The input source(...) is different from the table ...'s data source provider(hive)</code> — Hive isn’t a valid streaming sink format at all.
+<code dir="auto">HiveConnectorSpec</code>’s two tests.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="hive-operation-surface-coverage-ledger">Hive operation-surface coverage ledger</h2><a class="sl-anchor-link" href="#hive-operation-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Hive operation-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td><code dir="auto">.read.format("hive").load(path)</code></td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>Hive is catalog-only; there is no path-based <code dir="auto">.load()</code> form for it (Hive tables are always addressed by catalog identifier). Nothing to translate.</td></tr><tr><td>Catalog table read (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>)</td><td>✅ <strong>Covered — closed this pass</strong></td><td><code dir="auto">HiveTableRelation</code>, a real, previously-untranslated read shape — see above. <code dir="auto">HiveConnectorSpec</code>’s translation test and PASS enforcement test. Parquet/ORC-with-conversion reads confirmed to still use the pre-existing <code dir="auto">LogicalRelation</code> case, also tested.</td></tr><tr><td>Time travel / snapshot reads</td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>Hive tables have no versioning/snapshot concept. Nothing to translate.</td></tr><tr><td>Streaming read (<code dir="auto">readStream</code>)</td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>No streaming source implementation exists for the Hive table format. Not attempted; genuinely nothing to test against.</td></tr><tr><td>Change-data-feed / incremental read</td><td>🚫 <strong>N/A — no such mechanism exists</strong></td><td>No CDC mechanism exists for Hive tables. Nothing to translate.</td></tr><tr><td><code dir="auto">.save(path)</code></td><td>🚫 <strong>N/A — rejected by Spark itself</strong></td><td><code dir="auto">df.write.format("hive").save(path)</code> is rejected outright by Spark (<code dir="auto">Hive data source can only be used with tables</code>) — confirmed via the Spark documentation this module’s Phase 0 investigation checked; Hive is <code dir="auto">.saveAsTable()</code>-only by design. Not a translation gap.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, new table</td><td>✅ <strong>Covered — closed this pass, with a known limitation for MANAGED tables only</strong></td><td><code dir="auto">CreateHiveTableAsSelectCommand</code> + nested <code dir="auto">InsertIntoHiveTable</code>, both real <code dir="auto">WriteCommandSupport</code> entries. A genuinely new <strong>external</strong> table (<code dir="auto">.option("path", ...)</code>) is fully covered — the outer command resolves the real physical path immediately, confirmed by a dedicated <code dir="auto">HiveConnectorSpec</code> PASS test (see “External tables”). Only a new <strong>managed</strong> table (no explicit path) retains the documented gap — see “Known limitation” above. Next step for the managed case: thread a <code dir="auto">SparkSession</code> reference through <code dir="auto">WriteCommandSupport</code> (a real API shape change) or accept the qualified identifier as an equally valid declared <code dir="auto">location</code>, neither attempted here.</td></tr><tr><td><code dir="auto">.saveAsTable(...)</code>, existing table (append)</td><td>✅ <strong>Covered — closed this pass</strong></td><td>Same two commands, confirmed to agree on the real physical path for append mode specifically. <code dir="auto">HiveConnectorSpec</code>’s PASS/FAIL pair.</td></tr><tr><td><code dir="auto">.insertInto(...)</code></td><td>✅ <strong>Covered — closed this pass</strong></td><td><code dir="auto">InsertIntoHiveTable</code>. <code dir="auto">HiveConnectorSpec</code>’s PASS/FAIL pair, plus a dedicated translation test confirming <code dir="auto">INSERT OVERWRITE</code>’s save mode.</td></tr><tr><td><code dir="auto">.writeTo(...)</code> (DataFrameWriterV2)</td><td>🚫 <strong>N/A — rejected by Spark itself, not an Invaract gap</strong></td><td><code dir="auto">Cannot write into v1 table</code> — the default <code dir="auto">spark_catalog</code> isn’t a <code dir="auto">SupportsWrite</code> V2 catalog for Hive tables. <code dir="auto">HiveConnectorSpec</code>’s test.</td></tr><tr><td>Format-specific DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>)</td><td>🚫 <strong>Fails closed (MERGE/UPDATE), N/A (DELETE)</strong></td><td><code dir="auto">MergeIntoTable</code>/<code dir="auto">UpdateTable</code> are real <code dir="auto">Command</code>-shaped plans, correctly rejected by the existing generic exclusion (no new code needed) — <code dir="auto">HiveConnectorSpec</code>’s enforcement test. <code dir="auto">DELETE FROM</code> is rejected by Spark itself before any plan is produced. Next step, if ever pursued: would need the same kind of structural-only treatment <code dir="auto">deltaRowLevelDml</code>/<code dir="auto">dsv2RowLevelWrite</code> give Delta/DSv2 MERGE — not attempted, since plain Hive tables have no ACID/row-level-mutation storage layer in vanilla OSS Spark to make this meaningful.</td></tr><tr><td>Streaming write</td><td>🚫 <strong>N/A — rejected by Spark itself</strong></td><td>No valid streaming sink format for Hive tables — confirmed via a real rejected <code dir="auto">.toTable()</code> call. <code dir="auto">HiveConnectorSpec</code>’s test.</td></tr><tr><td>Maintenance operations that touch data</td><td>✅ <strong>Covered by policy classification</strong></td><td><code dir="auto">LoadDataCommand</code> (<code dir="auto">LOAD DATA INPATH</code>) and <code dir="auto">TruncateTableCommand</code> confirmed, for real against a Hive table, to already be correctly excluded from <code dir="auto">FailClosedCommands</code>’ safe list — both fail closed, with a dedicated test proving the target table’s data is left unchanged. <code dir="auto">INSERT ... DIRECTORY</code> (<code dir="auto">InsertIntoHiveDirCommand</code>) is a real, translated write, not a maintenance op — see above. <code dir="auto">DROP TABLE</code> against an EXTERNAL table is a confirmed, deliberate false rejection (data survives a real DROP, but the policy can’t distinguish table type from the class name alone) — see “External tables” below.</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="hive-feature-surface-coverage-ledger">Hive feature-surface coverage ledger</h2><a class="sl-anchor-link" href="#hive-feature-surface-coverage-ledger"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Hive feature-surface coverage ledger”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Feature</th><th>Status</th><th>Evidence / next step</th></tr></thead><tbody><tr><td>Static-partition <code dir="auto">INSERT ... PARTITION(...)</code></td><td>🔧 <strong>Found and fixed</strong></td><td>The partition column is missing from the query’s own schema entirely — real false-rejection bug, fixed via <code dir="auto">unionNewFields</code> in <code dir="auto">WriteCommandSupport.insertIntoHiveTable</code>. <code dir="auto">HiveConnectorSpec</code>’s PASS test (the fix) and FAIL test (a genuinely missing data field is still caught).</td></tr><tr><td>Dynamic-partition <code dir="auto">INSERT ... SELECT ..., col</code></td><td>✅ Confirmed — already correct</td><td>The partition column comes from the <code dir="auto">SELECT</code> itself, already part of <code dir="auto">query.schema</code> — no fix needed. <code dir="auto">HiveConnectorSpec</code>’s PASS test.</td></tr><tr><td>Bucketed tables (<code dir="auto">CLUSTERED BY ... INTO n BUCKETS</code>)</td><td>✅ Confirmed transparent</td><td>Bucketing metadata never affects the translated schema/location/format on either read or write. <code dir="auto">HiveConnectorSpec</code>’s test.</td></tr><tr><td>Real Hive UDFs (<code dir="auto">HiveSimpleUDF</code>/<code dir="auto">HiveGenericUDF</code>)</td><td>✅ Confirmed transparent</td><td>The existing <code dir="auto">isOpaqueUdf</code> suffix check, previously untested against a real Hive UDF, correctly recognizes <code dir="auto">GenericUDFUpper</code>. <code dir="auto">HiveConnectorSpec</code>’s test.</td></tr><tr><td>Nullability on read-back</td><td>✅ Confirmed — independently, same practical consequence as Parquet/CSV</td><td>Every Hive column (data or partition) is always nullable in the catalog schema — classic Hive DDL has no <code dir="auto">NOT NULL</code> constraint to preserve. <code dir="auto">HiveConnectorSpec</code>’s PASS/FAIL pair.</td></tr><tr><td>Metastore-conversion toggle (<code dir="auto">spark.sql.hive.convertMetastoreParquet</code>)</td><td>✅ Confirmed — determines which operation-surface row applies, not a bug</td><td>With conversion on (default), a Parquet/ORC Hive table’s reads/writes use the pre-existing <code dir="auto">LogicalRelation</code>/<code dir="auto">InsertIntoHadoopFsRelationCommand</code> cases; with it off, the same table uses <code dir="auto">HiveTableRelation</code>/<code dir="auto">InsertIntoHiveTable</code> instead. Both confirmed correct. <code dir="auto">HiveConnectorSpec</code>’s tests for both settings.</td></tr><tr><td>EXTERNAL tables (Hive SerDe and datasource-provider Parquet/Delta, both <code dir="auto">LOCATION</code>-via-raw-SQL and <code dir="auto">.option("path", ...)</code>-via-<code dir="auto">.saveAsTable()</code>)</td><td>✅ Confirmed — no gap, with one pre-existing DSv2 limitation reconfirmed</td><td>Every write shape an external table produces was already a recognized <code dir="auto">WriteCommandSupport</code> case; notification publishing (<code dir="auto">ContractValidationEvent</code>/<code dir="auto">WriteEvent</code>) is correct for the same reason, confirmed with real captured JSON. One caveat, not new to external tables: a NEW Delta table’s <code dir="auto">CreateTableAsSelect</code> still resolves to the qualified catalog identifier, not the physical path, <code dir="auto">.option("path", ...)</code> or not — the same <code dir="auto">StagedTable</code> behavior <code dir="auto">docs/connectors/delta.md</code> already documents for the default in-memory catalog. See “External tables” above; <code dir="auto">HiveConnectorSpec</code>’s 10 new tests.</td></tr><tr><td><code dir="auto">DROP TABLE</code> on an EXTERNAL table</td><td>✅ Confirmed — deliberate, accepted false rejection</td><td>Data survives a real <code dir="auto">DROP TABLE</code> on an EXTERNAL table, but Invaract rejects it anyway (not in <code dir="auto">FailClosedCommands</code>’ safe list, table type isn’t inspected) — working as designed per that list’s own safe-vs-unsafe asymmetry, not a bug. <code dir="auto">HiveConnectorSpec</code>’s test confirms both halves.</td></tr><tr><td>Notification publishing (<code dir="auto">ContractValidationEvent</code>/<code dir="auto">WriteEvent</code>) against an external table</td><td>✅ Confirmed — real messages captured, not asserted from the code</td><td>A real <code dir="auto">FileNotificationSink</code> receives a correctly-populated <code dir="auto">ContractValidationEvent</code> (status, contract ref) and <code dir="auto">WriteEvent</code> (the real external <code dir="auto">location</code>, format, row/byte/file counts) for an external-table write — real JSON captured and quoted in “External tables” above. <code dir="auto">HiveConnectorSpec</code>’s test.</td></tr><tr><td>Catalog registration checks (<code dir="auto">catalog:</code> on a contract dataset)</td><td>🔧 <strong>Found and fixed, with one disclosed limitation narrowed to Iceberg/JDBC</strong></td><td>Real Hive metastore identity (technology/catalogName/location/namespace/table) extracted and checked for real — including a genuine “wrong metastore” rejection, the specific concern this feature exists to close. A real bug was found and fixed along the way: the mismatch check originally compared <code dir="auto">location</code> unconditionally, which would have made declaring <code dir="auto">catalog.location</code> against any DSv2 output permanently unsatisfiable, since those connectors report no location at all — caught by a real Delta enforcement test, not inspection. A follow-up pass confirmed Delta is a real exception once installed as <code dir="auto">spark_catalog</code>: it shares the Hive metastore rather than running a separate one, so it now gets the same PASS/FAIL “wrong metastore” pair Hive tables do (once the table already exists — still unresolvable on the first, table-creating write). Iceberg/JDBC/a non-default Delta catalog remain the genuinely unresolvable case. See “Catalog registration checks” above; 7 <code dir="auto">HiveConnectorSpec</code> tests plus a dedicated <code dir="auto">StructuralVerifierSpec</code> regression test, plus 3 more for the Delta-via-<code dir="auto">spark_catalog</code> follow-up.</td></tr><tr><td><code dir="auto">.saveAsTable()</code> vs. its literal SQL equivalent</td><td>✅ Confirmed — identical catalog identity, identical validation</td><td>Not the same pairing as “write-then-register (raw SQL) vs. saveAsTable()” above (that one is deliberately two different <em>operations</em>) — this directly compares <code dir="auto">.saveAsTable()</code> against <code dir="auto">CREATE TABLE ... AS SELECT</code> (new table) and <code dir="auto">INSERT INTO ... SELECT</code> (append onto an existing one), for both Parquet and Delta. A real, confirmed nuance along the way: both paths emit two nested <code dir="auto">WriteEvent</code>s per call, not one — tests disambiguate by filtering for <code dir="auto">_.catalog.isDefined</code> rather than relying on write order. 4 new <code dir="auto">PARITY</code> tests in <code dir="auto">HiveConnectorSpec</code>.</td></tr></tbody></table>
+<p>Net assessment: Hive is not “100% supported,” the same honest framing
+every other connector in this document gets — but every operation-surface
+row has a disposition and every disposition but one is ✅ Covered, and
+that one row’s gap is a tested, documented limitation with a concrete
+next step, not a silent one. Two real bugs were found and fixed (the
+<code dir="auto">HiveTableRelation</code> read gap, the static-partition schema gap); one real
+gap was found and left open with a standing regression test proving it’s
+still there (CTAS/overwrite location resolution); everything else was a
+genuine confirmation, not an assumption carried over from Delta/Iceberg/
+Parquet’s own onboarding. A later, external-tables-focused pass added 10
+more tests confirming external Hive-SerDe/datasource-provider/Delta
+tables have no gap of their own, narrowed the CTAS/overwrite limitation’s
+scope (it doesn’t apply to an external new-table <code dir="auto">.saveAsTable()</code> via
+Hive’s own V1 command — only the managed case, and separately, the DSv2
+<code dir="auto">CreateTableAsSelect</code> case regardless of external-vs-managed), confirmed
+a deliberate false rejection for <code dir="auto">DROP TABLE</code> on external tables, and
+captured real notification JSON against an external table for the first
+time. A later, catalog-registration-focused pass added 7 more tests
+proving the org-wide “every job needs a real catalog entry” policy is
+actually enforceable — including a genuine wrong-metastore rejection —
+and found and fixed a real bug of its own along the way (an
+unconditional <code dir="auto">location</code> comparison that would have made the check
+permanently unsatisfiable for every DSv2 connector). A final follow-up
+pass narrowed that limitation further (Delta via <code dir="auto">spark_catalog</code> now gets
+real “wrong metastore” protection too — 3 more tests) and directly
+confirmed <code dir="auto">.saveAsTable()</code>/SQL parity for both Parquet and Delta, a
+question the earlier notification-comparison test had explicitly left
+open (4 more <code dir="auto">PARITY</code> tests). <code dir="auto">HiveConnectorSpec</code>: 49 tests.</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/connectors/hive.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-61/connectors/iceberg/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Iceberg</span></span></a><a href="/Invaract/contributor-pr-preview/pr-61/connectors/parquet/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Parquet</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
