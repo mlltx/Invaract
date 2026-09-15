@@ -1574,6 +1574,67 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
   }
 
+  // --- Feature surface: WriteCommandInfo.partitionColumns across Delta's
+  // own write shapes - `.save()` (SaveIntoDataSourceCommand, sourced from
+  // DataSourceUtils.PARTITIONING_COLUMNS_KEY), `.saveAsTable()` on a new
+  // table (ReplaceTableAsSelect's own `partitioning: Seq[Transform]`
+  // field), and row-level DML against an existing catalog table
+  // (CatalogTable.partitionColumnNames, the same field deltaRowLevelDml
+  // already extracts for `catalogIdentity`). ---
+
+  test("feature surface: a partitioned Delta .save() reports partitionColumns via the __partition_columns option") {
+    capturedPlans.clear()
+    val tablePath = scratchDir.resolve("save_part_feature").toString
+    spark.createDataFrame(Seq((1L, 10L, "a"), (2L, 20L, "b"))).toDF("id", "value", "part")
+      .write.format("delta").mode("overwrite").partitionBy("part").save(tablePath)
+    val cmd = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "SaveIntoDataSourceCommand" => p }
+      .getOrElse(fail("no SaveIntoDataSourceCommand plan observed"))
+    val info = WriteCommandSupport.combined.lift(cmd).getOrElse(fail("SaveIntoDataSourceCommand should be recognized"))
+    assert(info.partitionColumns == List("part"))
+  }
+
+  test("feature surface: an unpartitioned Delta .save() reports partitionColumns as Nil") {
+    capturedPlans.clear()
+    val tablePath = scratchDir.resolve("save_no_part_feature").toString
+    spark.createDataFrame(Seq((1L, 10L))).toDF("id", "value").write.format("delta").mode("overwrite").save(tablePath)
+    val cmd = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "SaveIntoDataSourceCommand" => p }
+      .getOrElse(fail("no SaveIntoDataSourceCommand plan observed"))
+    val info = WriteCommandSupport.combined.lift(cmd).getOrElse(fail("SaveIntoDataSourceCommand should be recognized"))
+    assert(info.partitionColumns == Nil)
+  }
+
+  test("feature surface: a new partitioned Delta table via .saveAsTable() reports partitionColumns via ReplaceTableAsSelect.partitioning") {
+    capturedPlans.clear()
+    val tableName = "delta_ctas_part_feature_tbl"
+    spark.createDataFrame(Seq((1L, 10L, "a"), (2L, 20L, "b"))).toDF("id", "value", "part")
+      .write.format("delta").mode("overwrite").partitionBy("part").saveAsTable(tableName)
+    val rtas = capturedPlans.collectFirst { case p: org.apache.spark.sql.catalyst.plans.logical.ReplaceTableAsSelect => p }
+      .getOrElse(fail("no ReplaceTableAsSelect plan observed"))
+    val info = WriteCommandSupport.combined.lift(rtas).getOrElse(fail("ReplaceTableAsSelect should be recognized"))
+    assert(info.partitionColumns == List("part"))
+  }
+
+  test("feature surface: a MERGE against a partitioned catalog Delta table reports partitionColumns via Delta's own metadata") {
+    val tableName = "delta_merge_part_feature_tbl"
+    spark.createDataFrame(Seq((1L, 10L, "a"))).toDF("id", "doubled", "region")
+      .write.format("delta").mode("overwrite").partitionBy("region").saveAsTable(tableName)
+    capturedPlans.clear()
+
+    spark.sql(
+      s"""MERGE INTO $tableName t
+         |USING (SELECT 1L AS id, 99L AS doubled, 'a' AS region) s
+         |ON t.id = s.id
+         |WHEN MATCHED THEN UPDATE SET t.doubled = s.doubled
+         |WHEN NOT MATCHED THEN INSERT *
+         |""".stripMargin
+    ).collect()
+
+    val merge = capturedPlans.collectFirst { case p if p.getClass.getSimpleName == "MergeIntoCommand" => p }
+      .getOrElse(fail("no MergeIntoCommand plan observed"))
+    val info = WriteCommandSupport.combined.lift(merge).getOrElse(fail("MergeIntoCommand should be recognized"))
+    assert(info.partitionColumns == List("region"))
+  }
+
   // deleteFromTable's own "no NamedRelation found" fallback - reached only
   // when DeleteFromTable.table's subtree contains no NamedRelation at all,
   // a shape real Spark analysis apparently never produces (every DELETE

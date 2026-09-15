@@ -1032,6 +1032,50 @@ field, but a literal `"catalog": null` — is an explicit signal that this
 write has no catalog entry at all, distinguishable from a field a
 consumer might otherwise mistake for "not populated by this version."
 
+**`WriteEvent` also carries `partitionColumns: List[String]`, which
+column(s) (or, for a DSv2 catalog table, partition transform(s) —
+`"bucket(4, id)"`/`"days(ts)"`) the write's target is partitioned by, when
+that's a knowable, static property of the target.** Sourced per write
+shape in `WriteCommandSupport` — `InsertIntoHadoopFsRelationCommand
+.partitionColumns` for a plain file-format write (Parquet/CSV/JSON/ORC),
+`CatalogTable.partitionColumnNames` for a Hive table, a DSv2 `Table
+.partitioning()` (each transform rendered via its own `.describe()`) for
+an `AppendData`/`OverwriteByExpression`/`OverwritePartitionsDynamic`/
+row-level-DML target, and the direct `partitioning: Seq[Transform]` field
+`CreateTableAsSelect`/`ReplaceTableAsSelect` already carry for a brand-new
+table. `Nil` — not a distinguished `Option[List[...]]`, the same
+"no further distinction needed" convention `schema` already uses — covers
+both a genuinely unpartitioned target and a write shape this hasn't been
+wired up for.
+
+One real, found-and-fixed gap from this feature's own development: a
+Delta table's `CatalogTable.partitionColumnNames` is confirmed empirically
+to read `Nil` regardless of whether the table is actually partitioned —
+Delta manages partitioning through its own transaction-log metadata, not
+Hive-style catalog partition registration, so generalizing the
+Hive-table convention to Delta without checking was a real mistake, not
+just a hypothetical one. Delta's row-level DML (MERGE/UPDATE/DELETE, in
+`WriteCommandSupport.deltaRowLevelDml`) instead reads
+`Metadata.partitionColumns` off the DML command's own already-resolved
+`TahoeFileIndex`/`DeltaLog` handle — see `deltaMetadataPartitionColumnsOf`'s
+own doc for the full per-class reflection path. This fix does **not**
+extend to a partitioned Delta `.writeStream...toTable(...)` sink
+(`WriteCommandSupport.writeToStream`), which still reads the same
+unreliable `CatalogTable.partitionColumnNames` — a known, narrower,
+disclosed gap (see that case's own comment), not silently wrong-and-unaware.
+
+This reports the target's partitioning *schema*, not which specific
+partition *values* a given write's own rows happened to touch — Spark
+exposes no such per-write metric the way `rowCount`/`bytesWritten`/
+`fileCount` above have one (no `SQLMetric` for it), so a dynamically
+partitioned INSERT's actual touched partition values aren't surfaced this
+way. A *static*-partition insert (Hive's
+`INSERT INTO t PARTITION(dt = '2024-01-01') SELECT ...`) does supply a
+concrete value in the query itself, but that value isn't carried by this
+field either — a real, narrower follow-up this field doesn't attempt, the
+same "disclosed, not silently missing" treatment `fingerprint`'s own
+Maven Central publishing gap gets in CLAUDE.md.
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment

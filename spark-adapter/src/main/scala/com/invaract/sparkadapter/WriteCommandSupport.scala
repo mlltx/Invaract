@@ -18,9 +18,10 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   RowLevelWrite
 }
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.connector.catalog.StagedTable
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
+import org.apache.spark.sql.execution.datasources.{DataSourceUtils, InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
@@ -84,7 +85,28 @@ private[sparkadapter] case class WriteCommandInfo(
   // already reachable at that case's own call site). `None` for a write
   // genuinely not catalog-registered (a bare path write/directory export),
   // not "not yet computed."
-  catalogIdentity: Option[CatalogIdentity] = None
+  catalogIdentity: Option[CatalogIdentity] = None,
+  // Which columns the write's target is partitioned by, when that's a
+  // knowable, static property of the target itself - a V1 FileFormat
+  // write's own `partitionColumns`/`.partitionBy()` request (confirmed
+  // empirically, a real throwaway probe against a live session, not
+  // assumed - see this field's callers below for the per-shape source),
+  // a catalog table's `CatalogTable.partitionColumnNames`, or a DSv2
+  // table's `Table.partitioning()` transforms rendered via `.describe()`
+  // (`"part"` for a plain identity partition column, `"bucket(4, id)"`/
+  // `"days(ts)"` for a derived one - the same strings `SHOW CREATE TABLE`
+  // itself would render). This is the write's target's partitioning
+  // *schema* - which column(s)/transform(s) it's partitioned by - not
+  // which specific partition *values* this particular write's rows
+  // happened to touch (Spark exposes no such per-write metric the way it
+  // does `numOutputRows`/`numOutputBytes`/`numFiles` - see `WriteEvent`'s
+  // own doc). `Nil` for a write with no knowable partitioning through the
+  // mechanism used at that case's call site - a genuinely unpartitioned
+  // target and "not attempted for this shape" both collapse to `Nil`,
+  // the same convention `schema: List[WriteFieldInfo]` (not
+  // `Option[List[...]]`) already uses elsewhere on this same
+  // `WriteEvent`.
+  partitionColumns: List[String] = Nil
 )
 
 /** One entry per Spark write-command *shape* this module recognizes — see
@@ -131,7 +153,16 @@ private[sparkadapter] object WriteCommandSupport {
         // (docs/connectors/hive.md's "External tables" write-then-register
         // comparison) - and `Some` for a `.saveAsTable()` append onto an
         // existing V1 table, which this same command also handles.
-        catalogIdentity = cmd.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
+        catalogIdentity = cmd.catalogTable.map(CatalogIdentitySupport.fromCatalogTable),
+        // `partitionColumns: Seq[Attribute]` - confirmed empirically (a
+        // real throwaway probe, since deleted) that a
+        // `.partitionBy("part").parquet(dir)` write's analyzed
+        // InsertIntoHadoopFsRelationCommand carries exactly `Seq(part)`
+        // here, `Seq.empty` for an unpartitioned write - the same field
+        // ParquetConnectorSpec's own "partitionBy columns are present"
+        // feature-surface test already relies on being part of
+        // `query.output` without extracting it separately until now.
+        partitionColumns = cmd.partitionColumns.map(_.name).toList
       )
   }
 
@@ -163,7 +194,24 @@ private[sparkadapter] object WriteCommandSupport {
         format = SparkPlanAdapter.formatOf(cmd.dataSource),
         saveMode = SparkPlanAdapter.saveModeOf(cmd.mode),
         outputSchema = cmd.query.schema,
-        diagnostic = diagnostic
+        diagnostic = diagnostic,
+        // `.partitionBy(...)` on a CreatableRelationProvider write (Delta's
+        // `.save(path)` included) doesn't reach this command as a typed
+        // field the way InsertIntoHadoopFsRelationCommand's own
+        // `partitionColumns` does - DataFrameWriter.saveToV1Source encodes
+        // it into `options` instead, under
+        // `DataSourceUtils.PARTITIONING_COLUMNS_KEY` ("__partition_columns"),
+        // JSON-array-encoded. Confirmed empirically (a real throwaway
+        // probe, since deleted, against a live Delta session): a
+        // `.partitionBy("part").format("delta").save(path)` write's
+        // analyzed SaveIntoDataSourceCommand.options contains exactly
+        // `"__partition_columns" -> "[\"part\"]"`; the key is absent
+        // entirely for an unpartitioned write - decoded via Spark's own
+        // public `DataSourceUtils.decodePartitioningColumns`, the same
+        // mechanism that encoded it, rather than hand-parsing the JSON.
+        partitionColumns = cmd.options.get(DataSourceUtils.PARTITIONING_COLUMNS_KEY)
+          .map(DataSourceUtils.decodePartitioningColumns(_).toList)
+          .getOrElse(Nil)
       )
   }
 
@@ -215,7 +263,12 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = SparkPlanAdapter.saveModeOf(cmd.mode),
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
-        catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(cmd.table))
+        catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(cmd.table)),
+        // `CatalogTable.partitionColumnNames` - confirmed empirically (a
+        // real throwaway probe, since deleted) that a
+        // `.partitionBy("part").saveAsTable(...)` new V1 table's resolved
+        // `cmd.table` already carries exactly `Seq(part)` here.
+        partitionColumns = cmd.table.partitionColumnNames.toList
       )
   }
 
@@ -255,7 +308,23 @@ private[sparkadapter] object WriteCommandSupport {
         // ws.catalogTable is None for a bare `.start(path)`/path-based sink
         // - genuinely not catalog-registered, the same as every other
         // bare-path write shape in this file.
-        catalogIdentity = ws.catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
+        catalogIdentity = ws.catalogTable.map(CatalogIdentitySupport.fromCatalogTable),
+        // Only knowable via the same `catalogTable` this case already
+        // reads for `catalogIdentity` above - `Nil` for a path-based sink,
+        // the same "not catalog-registered, nothing further to read"
+        // reasoning as that field. A KNOWN, narrower gap for a partitioned
+        // Delta `.writeStream...toTable(...)` sink specifically, not yet
+        // separately confirmed or fixed: `CatalogTable.partitionColumnNames`
+        // is confirmed empirically (see `deltaMetadataPartitionColumnsOf`'s
+        // own doc) to read `Nil` for a Delta table regardless of whether
+        // it's genuinely partitioned - Delta manages partitioning through
+        // its own commit log, not `SessionCatalog`. `deltaRowLevelDml`
+        // works around this via the DML command's own `TahoeFileIndex`/
+        // `DeltaLog` handle; no equivalent handle is available here to
+        // reach the same metadata without a live `SparkSession` this
+        // case doesn't have (unlike `SparkAdapterListener.deltaVersionOf`,
+        // which does).
+        partitionColumns = ws.catalogTable.map(_.partitionColumnNames.toList).getOrElse(Nil)
       )
   }
 
@@ -394,7 +463,8 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
-        catalogIdentity = catalogIdentityOf(cmd.table)
+        catalogIdentity = catalogIdentityOf(cmd.table),
+        partitionColumns = partitionColumnsOf(cmd.table)
       )
   }
 
@@ -420,7 +490,8 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
-        catalogIdentity = catalogIdentityOf(cmd.table)
+        catalogIdentity = catalogIdentityOf(cmd.table),
+        partitionColumns = partitionColumnsOf(cmd.table)
       )
   }
 
@@ -453,7 +524,8 @@ private[sparkadapter] object WriteCommandSupport {
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
-        catalogIdentity = catalogIdentityOf(cmd.table)
+        catalogIdentity = catalogIdentityOf(cmd.table),
+        partitionColumns = partitionColumnsOf(cmd.table)
       )
   }
 
@@ -482,7 +554,20 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = Some("overwrite"),
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
-        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name)
+        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
+        // `partitioning: Seq[Transform]` is a direct field on this case
+        // class (confirmed empirically, a real throwaway probe since
+        // deleted, against a live Delta-catalog session: a
+        // `.partitionBy("part").format("delta").saveAsTable(...)` new
+        // table's analyzed ReplaceTableAsSelect carries exactly
+        // `Seq(identity(part))` here) - the table's own declared
+        // partitioning, available even pre-commit since it's part of the
+        // CREATE/REPLACE request itself, not something that only exists
+        // once the table's data actually commits (unlike the location
+        // `v2CreateOrReplaceLocation` above can't yet trust for a staged
+        // table). See `partitionColumnsOf`'s own doc for the `.describe()`
+        // rendering.
+        partitionColumns = cmd.partitioning.toList.map(_.describe())
       )
   }
 
@@ -514,7 +599,10 @@ private[sparkadapter] object WriteCommandSupport {
         saveMode = Some(if (cmd.ignoreIfExists) "ignore" else "error"),
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
-        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name)
+        catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
+        // Same direct `partitioning: Seq[Transform]` field as
+        // ReplaceTableAsSelect above - see that case's own comment.
+        partitionColumns = cmd.partitioning.toList.map(_.describe())
       )
   }
 
@@ -675,6 +763,36 @@ private[sparkadapter] object WriteCommandSupport {
     */
   private[sparkadapter] def catalogIdentityOf(table: NamedRelation): Option[CatalogIdentity] =
     catalogTableRefOf(table).map { case (catalog, identifier) => CatalogIdentitySupport.fromV2(catalog, identifier) }
+
+  /** Shared by `appendData`/`overwriteByExpression`/`overwritePartitionsDynamic`/
+    * `dsv2RowLevelWrite`/`deleteFromTable` below: a DSv2 `Table`'s own
+    * `partitioning(): Array[Transform]`, rendered via each transform's
+    * `.describe()` - confirmed empirically (a real throwaway probe, since
+    * deleted, against a live Delta-catalog session) that this renders a
+    * plain identity partition column as its bare name (`"part"`, not
+    * `"identity(part)"` - `Transform.toString` gives the latter, but
+    * `.describe()` specifically gives the former, matching how
+    * `SHOW CREATE TABLE`/a connector's own `PARTITIONED BY (...)` clause
+    * would render it) and is expected (not yet separately confirmed for a
+    * derived transform specifically) to render e.g. a bucket/date
+    * transform as `"bucket(4, id)"`/`"days(ts)"` the same way, since
+    * `describe()` is a stable, public, per-transform method on Spark's own
+    * DSv2 `Transform` API, not something this module re-derives.
+    *
+    * `None` for a `StagedTable` (an atomic CREATE/REPLACE pending commit),
+    * the same distrust `namedRelationLocationAndFormat`'s own `StagedTable`
+    * tier already applies to that table's reported *location* - not
+    * separately confirmed one way or the other for `partitioning()`
+    * specifically, so treated with the same caution rather than assumed
+    * safe. `None` for anything that isn't a resolved `DataSourceV2Relation`
+    * at all (a V1 write reaching this by mistake, or an unresolved name).
+    */
+  private[sparkadapter] def partitionColumnsOf(table: NamedRelation): List[String] =
+    table match {
+      case v2: DataSourceV2Relation if !v2.table.isInstanceOf[StagedTable] =>
+        v2.table.partitioning().toList.map(_.describe())
+      case _ => Nil
+    }
 
   /** A resolved write target can legitimately have fields the write's own
     * `query` doesn't supply, that will still exist in the committed row -
@@ -886,10 +1004,66 @@ private[sparkadapter] object WriteCommandSupport {
             // None for a path-based (not catalog-registered) Delta table's
             // MERGE/UPDATE/DELETE, confirmed empirically above - the exact
             // same catalogTable this case already extracted for location.
-            catalogIdentity = catalogTable.map(CatalogIdentitySupport.fromCatalogTable)
+            catalogIdentity = catalogTable.map(CatalogIdentitySupport.fromCatalogTable),
+            partitionColumns = deltaMetadataPartitionColumnsOf(plan)
           )
         }.toOption
     }
+
+  /** A real, found-and-fixed bug in this feature's first pass: `catalogTable
+    * .partitionColumnNames` (the field every other case in this file uses
+    * for a Hive-style `CatalogTable`) is confirmed empirically to be
+    * `Nil` for a Delta table registered via `.saveAsTable(...)`/`CREATE
+    * TABLE ... USING delta`, *even when the table genuinely is partitioned*
+    * - a real throwaway probe (since deleted) against a live
+    * `.partitionBy("region").saveAsTable(...)` table showed both
+    * `SessionCatalog.getTableMetadata(...).partitionColumnNames` and this
+    * exact MERGE's own `catalogTable.partitionColumnNames` as `List()`.
+    * Root cause: Delta manages its own partitioning independently of
+    * Hive-style catalog partition registration/discovery (its own commit
+    * log, not `SessionCatalog`, is the source of truth) - a caught mistake
+    * from generalizing Hive's own `CatalogTable.partitionColumnNames`
+    * convention to Delta without confirming it, exactly the "confirmed
+    * empirically, not assumed" discipline this module's own comments
+    * elsewhere insist on.
+    *
+    * The reliable source is Delta's own transaction-log `Metadata
+    * .partitionColumns`, reached via whichever handle each DML command
+    * class already carries onto it (found via `javap` against the real
+    * `delta-spark` jar, not guessed): `MergeIntoCommand.targetFileIndex()`/
+    * `UpdateCommand.tahoeFileIndex()` are both a `TahoeFileIndex`, which
+    * (via the shared `SnapshotDescriptor` trait) already exposes
+    * `.metadata()` directly - no separate `DeltaLog` lookup needed at all;
+    * `DeleteCommand` carries no file index, only `.deltaLog()`, so its own
+    * path goes through `.snapshot().metadata()` instead. All resolved via
+    * reflection (this module has no compile-time Delta dependency, the
+    * same convention every other case in this file already follows) and
+    * wrapped in `Try` - if a future Delta version renames one of these
+    * methods, this degrades to `Nil` (a safe understatement) rather than
+    * throwing. Unlike `SparkAdapterListener.deltaVersionOf`'s deliberately
+    * *fresh* per-path `DeltaLog` lookup (needed there because a commit
+    * version changes the instant this write executes), this reads the
+    * table's already-resolved, pre-commit metadata - a table's partition
+    * *columns* don't change between analysis and execution of the DML
+    * that's about to run against them, so the handle this command already
+    * carries is exactly as current as a fresh lookup would be.
+    */
+  private def deltaMetadataPartitionColumnsOf(plan: LogicalPlan): List[String] =
+    scala.util.Try {
+      val metadata: AnyRef = plan.getClass.getSimpleName match {
+        case "DeleteCommand" =>
+          val deltaLog = plan.getClass.getMethod("deltaLog").invoke(plan)
+          val snapshot = deltaLog.getClass.getMethod("snapshot").invoke(deltaLog)
+          snapshot.getClass.getMethod("metadata").invoke(snapshot)
+        case "MergeIntoCommand" =>
+          val fileIndex = plan.getClass.getMethod("targetFileIndex").invoke(plan)
+          fileIndex.getClass.getMethod("metadata").invoke(fileIndex)
+        case _ => // UpdateCommand
+          val fileIndex = plan.getClass.getMethod("tahoeFileIndex").invoke(plan)
+          fileIndex.getClass.getMethod("metadata").invoke(fileIndex)
+      }
+      metadata.getClass.getMethod("partitionColumns").invoke(metadata).asInstanceOf[scala.collection.Seq[String]].toList
+    }.toOption.getOrElse(Nil)
 
   private val deltaDmlClassNames: Set[String] = Set(
     "org.apache.spark.sql.delta.commands.MergeIntoCommand",
@@ -954,7 +1128,8 @@ private[sparkadapter] object WriteCommandSupport {
         // cmd.operation is populated by the DSv2 planner before this node
         // is ever produced, for any connector using Spark's standard
         // row-level-operation mechanism, not just Iceberg.
-        operation = Some(cmd.operation.command().toString.toLowerCase)
+        operation = Some(cmd.operation.command().toString.toLowerCase),
+        partitionColumns = partitionColumnsOf(cmd.table)
       )
   }
 
@@ -996,7 +1171,8 @@ private[sparkadapter] object WriteCommandSupport {
             outputSchema = relation.schema,
             diagnostic = diagnostic,
             operation = Some("delete"),
-            catalogIdentity = catalogIdentityOf(relation)
+            catalogIdentity = catalogIdentityOf(relation),
+            partitionColumns = partitionColumnsOf(relation)
           )
         case None =>
           val msg = s"No NamedRelation found under DeleteFromTable's target; " +
@@ -1093,7 +1269,8 @@ private[sparkadapter] object WriteCommandSupport {
             saveMode = SparkPlanAdapter.saveModeOf(mode),
             outputSchema = query.schema,
             diagnostic = diagnostic,
-            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(tableDesc))
+            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(tableDesc)),
+            partitionColumns = tableDesc.partitionColumnNames.toList
           )
         }.toOption
     }
@@ -1153,7 +1330,8 @@ private[sparkadapter] object WriteCommandSupport {
             saveMode = Some(if (overwrite) "overwrite" else "append"),
             outputSchema = outputSchema,
             diagnostic = locationDiagnostic.orElse(evolutionDiagnostic),
-            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(table))
+            catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(table)),
+            partitionColumns = table.partitionColumnNames.toList
           )
         }.toOption
     }

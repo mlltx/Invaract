@@ -222,6 +222,25 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(NotificationJson.toJson(plainAppend).contains("\"operation\": null"))
   }
 
+  test("toJson for WriteEvent renders default partitionColumns=Nil as an empty array, not null") {
+    val unpartitioned = WriteEvent(None, "file:/tmp/out.parquet", Some("parquet"), Some("overwrite"), Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(unpartitioned).contains("\"partitionColumns\": []"))
+  }
+
+  test("toJson for WriteEvent renders a populated partitionColumns as a plain string array") {
+    val partitioned = WriteEvent(
+      None,
+      "file:/tmp/out.parquet",
+      Some("parquet"),
+      Some("overwrite"),
+      Nil,
+      0L,
+      Map.empty,
+      partitionColumns = List("year", "month")
+    )
+    assert(NotificationJson.toJson(partitioned).contains("\"partitionColumns\": [\"year\", \"month\"]"))
+  }
+
   test("toJson for JobSummaryEvent includes every field") {
     val summary = JobSummaryEvent(
       totalWrites = 3L,

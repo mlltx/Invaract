@@ -512,6 +512,39 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     assert(spark.table("hive_dynamic_part_tbl").count() == 1)
   }
 
+  // --- Feature surface: WriteCommandInfo.partitionColumns for Hive writes -
+  // sourced from CatalogTable.partitionColumnNames, the same field this
+  // suite's own static/dynamic-partition tests above already rely on being
+  // present in table.schema (via unionNewFields) without asserting the
+  // column-name list directly until now. ---
+
+  test("feature surface: a Hive INSERT reports partitionColumns via CatalogTable.partitionColumnNames") {
+    capturedPlans.clear()
+    spark.conf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+    spark.sql("INSERT INTO hive_dynamic_part_tbl SELECT 2, 20, '2024-01-02'")
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == List("dt"))
+  }
+
+  test("feature surface: a new Hive table via saveAsTable reports partitionColumns via its CatalogTable") {
+    capturedPlans.clear()
+    spark.createDataFrame(Seq((1L, 10L, "2024-01-01"))).toDF("id", "value", "dt")
+      .write.mode("overwrite").format("hive").partitionBy("dt").saveAsTable("hive_ctas_part_feature_tbl")
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == List("dt"))
+  }
+
+  test("feature surface: an unpartitioned Hive table reports partitionColumns as Nil") {
+    capturedPlans.clear()
+    spark.sql("CREATE TABLE hive_no_part_feature_tbl (id BIGINT, value BIGINT) STORED AS TEXTFILE")
+    spark.sql("INSERT INTO hive_no_part_feature_tbl SELECT 1, 10")
+    val info = capturedPlans.collectFirst(WriteCommandSupport.combined)
+      .getOrElse(fail("no write command observed"))
+    assert(info.partitionColumns == Nil)
+  }
+
   test("FAIL: static-partition INSERT missing a genuinely-required data field is still correctly rejected") {
     spark.sql("CREATE TABLE hive_static_part_fail_tbl (id BIGINT, value BIGINT) PARTITIONED BY (dt STRING) STORED AS TEXTFILE")
     val loc = tableLocation("hive_static_part_fail_tbl")
@@ -1773,6 +1806,45 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     capturedB.validationLines.foreach(l => println(s"[B ContractValidationEvent] $l"))
     capturedB.writeLines.foreach(l => println(s"[B WriteEvent] $l"))
     // scalastyle:on println
+  }
+
+  // --- End-to-end: a real captured WriteEvent's own partitionColumns field,
+  // through the full SparkAdapterListener -> NotificationJson pipeline, not
+  // just WriteCommandSupport's own output in isolation. ---
+
+  test("notifications: a real captured WriteEvent for a partitioned Hive INSERT includes partitionColumns") {
+    spark.sql("CREATE TABLE hive_notify_part_tbl (id BIGINT, value BIGINT) PARTITIONED BY (dt STRING) STORED AS TEXTFILE")
+    val loc = tableLocation("hive_notify_part_tbl")
+    val eventsFile = scratchDir.resolve("notify_part_events.jsonl")
+    val sink = new FileNotificationSink
+    sink.configure(Map("path" -> eventsFile.toString))
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $loc
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |        - name: value
+         |          type: long
+         |          required: true
+         |        - name: dt
+         |          type: string
+         |          required: false
+         |""".stripMargin
+
+    val captured = captureNotifications(yaml, sink, eventsFile, expectedWriteEvents = 1) {
+      spark.sql("INSERT INTO hive_notify_part_tbl PARTITION(dt='2024-01-01') SELECT 1, 10")
+    }
+    assert(
+      captured.writeLines.exists(_.contains("\"partitionColumns\": [\"dt\"]")),
+      s"expected the real captured WriteEvent to include partitionColumns: ${captured.writeLines}"
+    )
   }
 
   // --- Direct comparison: .saveAsTable() vs. its literal SQL equivalent --
