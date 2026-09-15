@@ -69,6 +69,7 @@ extensions:
 | `format` | no | Storage/serialization format (e.g. `csv`, `parquet`, `delta`). |
 | `saveMode` | no | Expected write behavior toward existing data (`append`/`overwrite`/`ignore`/`error`). Outputs only; checked against the plan's actual write mode when both are known. |
 | `catalog` | no | Expected data-catalog registration — see [Catalog registration](#catalog-registration) below. Meaningful for both inputs and outputs. |
+| `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked against a real write. An [organizational policy](/guides/enforcing-organizational-policy/) can require every dataset to declare one. |
 | `schema.fields` | yes | List of fields (at least one). |
 
 ## Field fields

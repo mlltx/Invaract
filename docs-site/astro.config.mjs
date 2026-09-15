@@ -80,6 +80,10 @@ export default defineConfig({
 							label: 'Require Catalog Registration',
 							slug: 'guides/requiring-catalog-registration',
 						},
+						{
+							label: 'Enforce an Organizational Policy',
+							slug: 'guides/enforcing-organizational-policy',
+						},
 					],
 				},
 				{
@@ -101,6 +105,10 @@ export default defineConfig({
 						{ label: 'Connector Support', slug: 'reference/connector-support' },
 						{ label: 'Spark Version Support', slug: 'reference/spark-version-support' },
 						{ label: 'Violation Types', slug: 'reference/violation-types' },
+						{
+							label: 'Organizational Policy Format',
+							slug: 'reference/org-policy-format',
+						},
 						{ label: 'Dev Commands', slug: 'reference/dev-commands' },
 					],
 				},

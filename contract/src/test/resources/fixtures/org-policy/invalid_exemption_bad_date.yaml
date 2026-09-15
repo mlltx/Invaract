@@ -1,0 +1,6 @@
+version: "1.0"
+exemptions:
+  - contractId: foo
+    policyIds: [x]
+    reason: "test"
+    reviewBy: "not-a-date"

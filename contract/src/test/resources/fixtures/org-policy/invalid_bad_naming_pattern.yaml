@@ -1,0 +1,5 @@
+version: "1.0"
+policies:
+  - id: bad-pattern
+    type: field_naming_convention
+    pattern: "[a-z"

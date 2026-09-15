@@ -113,6 +113,23 @@ object ViolationType {
     */
   val RuleDisallowedUpdateColumn = "RULE_DISALLOWED_UPDATE_COLUMN"
 
+  /** Not produced by `StructuralVerifier`/`RuleVerifier` — `ContractEnforcementRule`
+    * produces this when a `spark.invaract.orgPolicy`-configured organizational
+    * policy (`com.invaract.contract.OrgPolicy`) rejects the contract itself,
+    * independent of any transformation: the contract doesn't satisfy a
+    * platform-wide rule (e.g. every output must be catalog-registered) that
+    * applies regardless of who authored the contract. Checked once, eagerly,
+    * at session-build time — before any plan is even analyzed — since a
+    * policy rule depends only on the contract's own declared shape, never on
+    * what a job actually writes. `message`/`remediation` name the specific
+    * policy rule (by id) and dataset involved; there is deliberately no
+    * further sub-vocabulary the way structural violations have one per
+    * check, since a policy document's own `id`/`description` already carry
+    * that specificity (see docs/CONTRACT_MODEL.md's "Organizational Policy"
+    * section).
+    */
+  val OrgPolicyViolation = "ORG_POLICY_VIOLATION"
+
   /** Not produced by `RuleVerifier` — `ContractEnforcementRule`'s
     * fail-closed response when a plan is genuinely row-level DML of a
     * kind the active contract declares a rule for (`merge_condition`/

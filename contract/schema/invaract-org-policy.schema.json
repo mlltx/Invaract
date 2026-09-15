@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-org-policy.schema.json",
+  "title": "Invaract Organizational Contract Policy",
+  "description": "Structural shape of an organizational policy document Invaract's `contract` module (com.invaract.contract.OrgPolicyParser/OrgPolicyValidator) accepts - a platform-owned artifact, separate from any one contract, expressing rules that apply across every contract in an organization (see docs/CONTRACT_MODEL.md's \"Organizational Policy\" section). Attached to a Spark job via the `spark.invaract.orgPolicy` conf key (spark-adapter's ContractEnforcementRule), independent of any change to the job's own source. Deliberately permissive (`additionalProperties: true`) on policy-rule-specific properties, since each rule `type`'s own extra keys (e.g. `technology` for `require_catalog`, `name`/`fieldType` for `require_field`, `pattern` for `field_naming_convention`, `key`/`value` for `require_extension`, `formats` for `require_format`, `ifKey`/`ifValue`/`thenKey`/`thenValue` for `require_extension_if`; `require_dataset_description` takes none) are open-ended, decoded by OrgPolicyParser rather than fixed here - the same layering invaract-contract.schema.json uses for `rules`. `require_field`'s type pin is deliberately `fieldType`, not `type`: a policy rule's own kind is itself the `type` key at the same mapping level.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form revision identifier for this policy document itself - not compared against ContractVersion semantics, just tracked like any other version-controlled config."
+    },
+    "policies": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/policyRule" },
+      "description": "The policy rules themselves. Seven types are interpreted today (com.invaract.contract.PolicyType/PolicyRule.interpret): 'require_catalog' (optional 'technology'), 'require_field' (required 'name', optional 'fieldType'), 'field_naming_convention' (required 'pattern', a regex every field name - recursing into nested struct fields - must fully match), 'require_extension' (required 'key', optional 'value' - checks the contract's own top-level 'extensions' map, e.g. requiring every contract to declare an 'owner'; unlike the dataset-level types, this checks the contract as a whole once, not once per dataset, so 'scope'/'when' have no effect on it - OrgPolicyValidator warns if they're set), 'require_format' (required 'formats' - a single format string or a list, e.g. 'delta' or ['delta', 'iceberg'] - matched case-insensitively against the dataset's own declared 'format'), 'require_dataset_description' (no properties - the dataset's own 'description' must simply be present and non-blank), and 'require_extension_if' (required 'ifKey'/'thenKey', optional 'ifValue'/'thenValue' - a conditional require_extension: only when the contract already satisfies 'ifKey'[='ifValue'] must it also satisfy 'thenKey'[='thenValue'], e.g. a contract with extensions.status=deprecated must also declare extensions.sunsetDate; a contract not satisfying the 'if' condition is unaffected, and like require_extension this is contract-wide, so 'scope'/'when' are inert on it too). A known type with malformed properties for its shape is an OrgPolicyValidator Error; an unrecognized type is recorded but never checked (interpret returns None), the same permissive behavior ContractRule.interpret has for an unrecognized contract rule type."
+    },
+    "inject": {
+      "$ref": "#/$defs/inject",
+      "description": "Rules/options this policy contributes to every contract it governs, merged in before verification runs - so an org-wide requirement (e.g. 'no unconditional DELETE anywhere') doesn't depend on every contract author remembering to declare it themselves."
+    },
+    "exemptions": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/exemption" },
+      "description": "Platform-controlled exceptions - a contract's own author cannot exempt their own contract; only whoever owns this policy file can. Each exemption is scoped to specific policy ids and can carry an expiry ('reviewBy'); an exemption whose reviewBy has passed no longer applies (OrgPolicyValidator warns, it does not error)."
+    }
+  },
+  "$defs": {
+    "policyRule": {
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identifier for this policy rule, referenced by exemptions and shown in violation messages. Must be unique among this document's policies (OrgPolicyValidator errors on a duplicate)."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Policy kind - see the top-level 'policies' description for the seven types Invaract currently interprets."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable explanation, surfaced in violation messages for self-service remediation."
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["inputs", "outputs", "all"],
+          "default": "all",
+          "description": "Which of a contract's datasets this policy applies to."
+        },
+        "when": {
+          "$ref": "#/$defs/condition",
+          "description": "Optionally narrows which datasets this policy applies to, beyond 'scope' alone."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["enforce", "warn"],
+          "default": "enforce",
+          "description": "'enforce' blocks - ContractEnforcementRule throws before any Spark plan is analyzed. 'warn' only publishes a notification event, letting a new policy be rolled out safely (watched, then flipped to 'enforce') before it starts blocking jobs."
+        }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "required": ["sensitivityTag"],
+      "additionalProperties": false,
+      "properties": {
+        "sensitivityTag": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only datasets with at least one field (recursively, through nested struct properties) carrying this sensitivity tag are in scope for this policy - see Field.sensitivityTags."
+        }
+      }
+    },
+    "inject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array",
+          "default": [],
+          "items": { "$ref": "#/$defs/injectedRule" },
+          "description": "ContractRule-shaped entries (the same 'type' + properties shape a contract's own 'rules' key uses) merged into every governed contract's rules before RuleVerifier runs."
+        },
+        "minVerificationOptions": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" },
+          "description": "Floors ORed onto VerificationOptions (e.g. rejectUndeclaredFields, rejectUndeclaredInputs, computeFingerprint) - a flag a job's own code left false can still be forced true by policy; the reverse never happens."
+        }
+      }
+    },
+    "injectedRule": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "exemption": {
+      "type": "object",
+      "required": ["contractId", "policyIds", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "contractId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Contract.id this exemption applies to."
+        },
+        "policyIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Which policy rule ids (see policyRule.id, above) this exemption covers."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this exemption exists - required, for auditability."
+        },
+        "reviewBy": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Optional ISO-8601 date (YYYY-MM-DD) after which this exemption stops applying. Omitted means the exemption never expires."
+        }
+      }
+    }
+  }
+}

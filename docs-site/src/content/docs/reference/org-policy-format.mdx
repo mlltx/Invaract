@@ -1,0 +1,174 @@
+---
+title: Organizational Policy Format
+description: The complete organizational policy document shape, field by field.
+sidebar:
+  order: 6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The full shape `OrgPolicyParser`/`OrgPolicyValidator` accept. See
+[Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) for a guided
+introduction.
+
+## Document shape
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-org-policy.schema.json
+version: "1.0"
+
+policies:
+  - id: catalog-required
+    type: require_catalog
+    technology: hive
+    scope: outputs
+    description: "All outputs must be registered in a discoverable catalog."
+  - id: pii-flag-required
+    type: require_field
+    name: pii_reviewed
+    fieldType: boolean
+    scope: outputs
+  - id: snake-case-fields
+    type: field_naming_convention
+    pattern: "^[a-z][a-z0-9_]*$"
+    mode: warn
+  - id: owner-required
+    type: require_extension
+    key: owner
+    description: "Every contract must declare an owning team."
+  - id: dataset-described
+    type: require_dataset_description
+  - id: sunset-date-if-deprecated
+    type: require_extension_if
+    ifKey: status
+    ifValue: deprecated
+    thenKey: sunsetDate
+    description: "A deprecated contract must declare its sunset date."
+
+inject:
+  rules:
+    - type: forbid_unconditional_delete
+  minVerificationOptions:
+    rejectUndeclaredFields: true
+
+exemptions:
+  - contractId: legacy_customer_orders
+    policyIds: [catalog-required]
+    reason: "predates policy; migration tracked in JIRA-1234"
+    reviewBy: "2026-12-01"
+```
+
+## Top-level fields
+
+| Key | Required | Meaning |
+|---|---|---|
+| `version` | yes | Free-form revision identifier for this document — your own tracking, not compared against a contract's `ContractVersion`. |
+| `policies` | no | The policy rules themselves — see below. |
+| `inject` | no | Rules/options this policy contributes to every governed contract — see [Rule/option injection](#injectrulesinjectminverificationoptions). |
+| `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
+
+## Policy rule fields (`policies[]`)
+
+| Key | Required | Meaning |
+|---|---|---|
+| `id` | yes | Stable identifier, referenced by `exemptions` and shown in violation messages. Must be unique within the document. |
+| `type` | yes | Policy kind — see [Policy types](#policy-types) below. |
+| `description` | no | Human-readable explanation, appended to violation messages for self-service remediation. |
+| `scope` | no | `inputs`, `outputs`, or `all` (default). Which of a contract's datasets this rule applies to. |
+| `when` | no | `{ sensitivityTag: <tag> }` — narrows `scope` further to only datasets with at least one field (recursively) carrying that [sensitivity tag](/reference/contract-format/#sensitivity-tags). |
+| `mode` | no | `enforce` (default) blocks a write before any plan is analyzed. `warn` only publishes a notification event and never blocks — the safe-rollout mechanism for a newly-introduced rule. |
+
+Every other key on a policy rule is type-specific and captured verbatim, the same way a
+contract's own `rules:` entries work.
+
+## Policy types
+
+| Type | Properties | Checks |
+|---|---|---|
+| `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally matching a specific `technology`. |
+| `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name` — not recursive into nested structs — optionally of `fieldType` (checked case-insensitively). |
+| `field_naming_convention` | `pattern` (required) | Every field name in the dataset's schema — recursing into nested struct `properties` — fully matches the regular expression `pattern`. A partial match doesn't satisfy it. |
+| `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
+| `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
+| `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+| `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
+
+A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
+the same permissive behavior an unrecognized contract `rules[].type` already has. A known
+type with malformed or missing properties for its shape (e.g. `require_field` with no
+`name`) is an `OrgPolicyValidator` Error, not silently ignored.
+
+<Aside type="caution" title="require_field's type pin is fieldType, not type">
+A policy rule's own kind (`require_field`) is itself spelled `type:` at the same mapping
+level. SnakeYAML doesn't reject a document with two `type:` keys — it silently keeps only
+the last one, which would overwrite the rule's own kind rather than raise anything. The
+type pin therefore uses the distinct key `fieldType`.
+</Aside>
+
+<Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
+`require_catalog`, `require_field`, `field_naming_convention`, `require_format`, and
+`require_dataset_description` each check one dataset at a time, honoring `scope`/`when`.
+`require_extension` and `require_extension_if` are different: they check the contract
+document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
+either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
+correctly), since it's likely not what the author intended.
+</Aside>
+
+<Aside type="tip" title="require_extension_if answers 'only if' requirements">
+`require_extension` can require a key to exist, but can't make that requirement depend on
+another key's value. `require_extension_if` fills that gap — e.g. only a contract whose
+`extensions.status` is `deprecated` needs to also declare `extensions.sunsetDate`; a
+contract that isn't deprecated is entirely unaffected by the rule, not merely exempted
+from it.
+</Aside>
+
+## `inject.rules`/`inject.minVerificationOptions`
+
+| Key | Meaning |
+|---|---|
+| `inject.rules` | A list of ordinary [DML rule](/guides/enforcing-dml-rules/) entries (`{type, ...properties}`, the same shape a contract's own `rules:` uses) merged into every governed contract's `rules` before verification runs. A rule the contract already declares isn't duplicated. |
+| `inject.minVerificationOptions` | A map of `VerificationOptions` flag name (`rejectUndeclaredInputs`, `rejectUndeclaredFields`, `computeFingerprint`) to `true` — ORed onto a job's own options. A flag a job left `false` can be forced `true` by policy; the reverse never happens. An unrecognized key (e.g. a typo) is rejected — `ContractEnforcementRule` fails loudly rather than silently ignoring it. |
+
+## Exemptions
+
+| Key | Required | Meaning |
+|---|---|---|
+| `contractId` | yes | The `Contract.id` this exemption covers. |
+| `policyIds` | yes | Which policy rule `id`s (at least one) this exemption suppresses, for this `contractId` only. |
+| `reason` | yes | Why the exemption exists — required, for auditability. |
+| `reviewBy` | no | An ISO-8601 date (`YYYY-MM-DD`). Once passed, the exemption stops applying and the violation it was suppressing re-surfaces. Omitted means it never expires. |
+
+<Aside type="tip" title="Exemptions live in the policy file, not the contract">
+A contract's own author can't grant themselves an exemption — that would defeat the
+purpose of an organization-wide rule. Only whoever owns the policy document can.
+</Aside>
+
+## Enforce mode vs. warn mode
+
+| `mode` | Blocks a write? | Published event |
+|---|---|---|
+| `enforce` (default) | Yes — throws before any plan is analyzed | A `FAILED`-status `ContractValidationEvent`, if a sink is configured |
+| `warn` | Never | A `PASSED`-status `ContractValidationEvent` still carrying the violation, if a sink is configured |
+
+## Attaching a policy
+
+| Mechanism | How |
+|---|---|
+| `spark-submit --conf` | `--conf spark.invaract.orgPolicy=/path/to/org-policy.yaml` — attachable to any job that already installs `ContractEnforcementRule.forContract`, with no change to that job's source. |
+| Standalone lint | `sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"` — no Spark involved, for a contracts repository's own CI/pre-commit gate. |
+
+### Standalone lint: exit codes and flags
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Every discovered contract satisfies every `enforce`-mode rule. A `warn` violation still prints but never fails the run. |
+| `1` | The policy document itself is invalid, a contract fails to parse, or no contract files were found. |
+| `2` | Usage error — too few arguments, or a malformed `--warn-expiring-within-days` value. |
+
+| Flag | Meaning |
+|---|---|
+| `--warn-expiring-within-days N` | Reports any exemption whose `reviewBy` falls within the next `N` days — before it lapses, not after. Defaults to `30`; never affects the exit code, since the exemption is still fully in force. |
+
+See [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) for both,
+worked through in full, and [Violation Types](/reference/violation-types/) for
+`ORG_POLICY_VIOLATION`.

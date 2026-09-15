@@ -234,4 +234,34 @@ class ContractCompatibilityTest extends AnyFunSuite {
     assert(problems.nonEmpty)
     assert(problems.head.contains("MAJOR"))
   }
+
+  // description is purely documentary - never checked by RuleVerifier/
+  // StructuralVerifier - so unlike format/saveMode/catalog it is never a
+  // compatibility constraint in either direction: added, changed, or
+  // removed, it can never turn a previously-valid producer/consumer
+  // relationship invalid.
+
+  test("diff should NOT flag newly declaring a dataset description") {
+    val v1 = fixture("customer_orders_v1.yaml")
+    val described = withOutputs(v1)(_.copy(description = Some("Customer order records.")))
+
+    val report = ContractCompatibility.diff(v1, described)
+    assert(!report.changes.exists(_.path.endsWith(".description")))
+  }
+
+  test("diff should NOT flag changing a dataset description's text") {
+    val v1 = withOutputs(fixture("customer_orders_v1.yaml"))(_.copy(description = Some("Old text.")))
+    val reworded = withOutputs(v1)(_.copy(description = Some("New text.")))
+
+    val report = ContractCompatibility.diff(v1, reworded)
+    assert(!report.changes.exists(_.path.endsWith(".description")))
+  }
+
+  test("diff should NOT flag removing a dataset description") {
+    val v1 = withOutputs(fixture("customer_orders_v1.yaml"))(_.copy(description = Some("Customer order records.")))
+    val undescribed = withOutputs(v1)(_.copy(description = None))
+
+    val report = ContractCompatibility.diff(v1, undescribed)
+    assert(!report.changes.exists(_.path.endsWith(".description")))
+  }
 }

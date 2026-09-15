@@ -1,0 +1,446 @@
+---
+title: Enforce an Organizational Policy
+description: Make a rule apply to every contract in your organization, not just the ones whose authors remembered to write it.
+sidebar:
+  order: 12
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A single contract's `rules:` are written by that contract's own author, for that one
+dataset. An organizational policy is a different, platform-owned document that applies
+across *every* contract a job installs it against — "every output must be
+catalog-registered," "every dataset must declare a `pii_reviewed` field," "every field
+name must be `snake_case`" — without any contract's author having to opt in, or being
+able to opt out.
+
+<Aside type="note" title="Entirely optional">
+No `spark.invaract.orgPolicy` conf key means no behavior change at all — this is exactly
+how every job runs today. Everything below only applies once a platform attaches a policy.
+</Aside>
+
+## Write a policy document
+
+<Steps>
+
+1. Give it a `version` (your own revision tracking for the file — unrelated to a
+   contract's `ContractVersion`) and a list of `policies`, each with a stable `id`:
+
+   ```yaml
+   # org-policy.yaml
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-org-policy.schema.json
+   version: "1.0"
+   policies:
+     - id: catalog-required
+       type: require_catalog
+       scope: outputs
+       description: "All outputs must be registered in a discoverable catalog."
+   ```
+
+   The `$schema` comment gives live validation and autocomplete in any editor with the
+   [YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
+   extension — the same convention Invaract's own demo contracts use for
+   `invaract-contract.schema.json`.
+
+2. Seven policy types are interpreted today:
+
+   | Type | Properties | Checks |
+   |---|---|---|
+   | `require_catalog` | `technology` (optional) | The dataset declares `catalog.required: true`, optionally pinned to a specific `technology` (e.g. `hive`). |
+   | `require_field` | `name` (required), `fieldType` (optional) | The dataset's schema declares a top-level field named `name`, optionally of `fieldType`. |
+   | `field_naming_convention` | `pattern` (required) | Every field name — including nested struct fields — fully matches the regular expression `pattern`. |
+   | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
+   | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` (a string or a list), matched case-insensitively. |
+   | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+   | `require_extension_if` | `ifKey`/`thenKey` (required), `ifValue`/`thenValue` (optional) | A conditional `require_extension` — only once the contract satisfies `ifKey` must it also satisfy `thenKey`. See [Conditional requirements](#conditional-requirements-require_extension_if) below. |
+
+   ```yaml
+   policies:
+     - id: catalog-required
+       type: require_catalog
+       scope: outputs
+     - id: pii-flag-required
+       type: require_field
+       name: pii_reviewed
+       fieldType: boolean
+       scope: outputs
+     - id: snake-case-fields
+       type: field_naming_convention
+       pattern: "^[a-z][a-z0-9_]*$"
+     - id: owner-required
+       type: require_extension
+       key: owner
+       description: "Every contract must declare an owning team."
+   ```
+
+   A contract satisfies `owner-required` by declaring the extension at its own top level:
+
+   ```yaml
+   # some_contract.yaml
+   id: customer_orders
+   extensions:
+     owner: data-platform-team
+   # ...
+   ```
+
+   The same pattern covers other org-wide "every contract must carry X" requirements — an
+   `owner`, a `costCenter`, a `dataClassification` — anything a platform wants recorded on
+   every contract regardless of what that contract's own `rules:` check.
+
+   <Aside type="caution" title="fieldType, not type">
+   A policy rule's own kind (`require_field`, in this example) is itself spelled `type:`.
+   Naming the field-type pin `type:` too would collide with it at the same YAML mapping
+   level — SnakeYAML doesn't reject a document with two `type:` keys, it silently keeps
+   only the last one, so `require_field`'s type pin uses the distinct key `fieldType`
+   instead.
+   </Aside>
+
+3. Each rule's `scope` (`inputs`/`outputs`/`all`, default `all`) says which of a contract's
+   datasets it applies to. An optional `when` narrows it further, to only datasets with at
+   least one field (including nested) carrying a given [sensitivity tag](/reference/contract-format/#sensitivity-tags):
+
+   ```yaml
+   policies:
+     - id: restricted-namespace-for-pii
+       type: require_catalog
+       scope: outputs
+       when:
+         sensitivityTag: pii
+   ```
+
+   `require_extension` is the one exception: it checks the contract document as a whole,
+   not any one dataset, so `scope`/`when` don't apply to it — setting either on a
+   `require_extension` rule produces a lint warning, not an error.
+
+</Steps>
+
+## Attach it via `spark-submit --conf`
+
+The same attachability every other opt-in Invaract capability has — no change to a job's
+own source, only its `spark-submit` invocation:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.4.0.jar \
+  --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
+  my-real-job.jar
+```
+
+`MyRealJob` needs no code of its own to know this exists, as long as it installs Invaract
+the ordinary way — see [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/).
+
+## Enforcement is eager — before any plan exists
+
+A policy violation is checked once, at session build — the same moment
+`spark.invaract.locationMap` is read — rather than waiting for a write to happen. A policy
+rule only ever depends on the contract's own declared shape, never on what a job actually
+does, so there's no reason to wait. This is the real, unedited rejection message from a
+contract with no `catalog:` block, checked against the policy above (`intercept[ContractViolationException] { rule(spark) }` — no `LogicalPlan` involved at all, since none exists yet):
+
+```
+Contract violation: 'sales@1.0.0' rejected this transformation. Write aborted.
+
+What the contract expects:
+  output 'sales' at /warehouse/sales: id: long
+
+What the plan contains:
+  UnknownPlan(no transformation plan exists yet - rejected by organizational policy before any plan was analyzed)
+
+Why it violates the contract (1 violation):
+  1. [ORG_POLICY_VIOLATION] organizational policy 'catalog-required' (All outputs must be registered in a discoverable catalog.) requires dataset 'sales' to declare catalog.required=true, but it does not.
+
+How to correct it:
+  1. Add a 'catalog: {required: true}' block to dataset 'sales' in the contract.
+```
+
+A non-compliant contract can't even finish installing — let alone reach a write.
+
+## Roll a new policy out safely with `mode: warn`
+
+Flipping a brand-new org-wide policy straight to blocking can fail every job that hasn't
+caught up yet, all at once. Set `mode: warn` while you find out how many jobs a new rule
+actually affects:
+
+```yaml
+policies:
+  - id: catalog-required
+    type: require_catalog
+    scope: outputs
+    mode: warn   # never blocks - only reported
+```
+
+A `warn` violation never throws. If a [notification sink](/guides/notification-sinks/) is
+configured, it still publishes a `ContractValidationEvent` — status `"PASSED"` (nothing was
+actually blocked), carrying the violation in its `violations` list — so you can watch how
+often it fires before flipping `mode` to `enforce`.
+
+## Grant exemptions without weakening the policy
+
+An exemption lives in the *policy* file, not the contract — a contract's own author can't
+exempt their own contract, only whoever owns the policy can:
+
+```yaml
+exemptions:
+  - contractId: legacy_customer_orders
+    policyIds: [catalog-required]
+    reason: "predates policy; migration tracked in JIRA-1234"
+    reviewBy: "2026-12-01"
+```
+
+`reviewBy` is optional and, once it passes, the exemption simply stops applying — the
+violation re-surfaces rather than being silently bypassed forever. Omit it for an
+exemption that never expires.
+
+## Add rules or stricter defaults to every governed contract
+
+`inject` contributes directly to what `RuleVerifier`/`VerificationOptions` already check,
+so an org-wide requirement doesn't depend on every contract author remembering to declare
+it themselves:
+
+```yaml
+inject:
+  rules:
+    - type: forbid_unconditional_delete
+  minVerificationOptions:
+    rejectUndeclaredFields: true
+```
+
+`inject.rules` entries are ordinary [DML rules](/guides/enforcing-dml-rules/), merged into
+every governed contract's own `rules:`. `inject.minVerificationOptions` ORs a floor onto a
+job's `VerificationOptions` — a flag a job left `false` can be forced `true` by policy;
+the reverse never happens.
+
+## Lint contracts before they ever reach a job
+
+Because policy evaluation only ever touches the contract document — no Spark involved —
+the same check can run as a standalone command against a whole contracts repository, in
+CI or a pre-commit hook:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+```
+
+Real, unedited output against a contract missing its `catalog:` block:
+
+```
+[FAIL] contracts/sales.yaml: [catalog-required] organizational policy 'catalog-required' (All outputs must be registered in a discoverable catalog.) requires dataset 'sales' to declare catalog.required=true, but it does not.
+       remediation: Add a 'catalog: {required: true}' block to dataset 'sales' in the contract.
+```
+
+Exits `0` once every contract satisfies every `enforce`-mode rule (a `warn` violation still
+prints but never fails the run), `1` on any violation, an unparseable contract, an invalid
+policy document, or no contract files found, `2` on a usage error. The policy file itself
+is excluded from the scan even when it lives in the same directory as the contracts it
+governs.
+
+## Get advance notice before an exemption lapses
+
+An exemption stops applying the moment its `reviewBy` date passes — the violation it was
+suppressing simply re-surfaces, silently, the next time that job runs. `OrgPolicyLintCli`
+reports any exemption expiring soon *before* that happens, by default within the next 30
+days, on every run — no flag needed:
+
+```
+[WARN] exemption for contract 'legacy_orders' (policies: catalog-required) expires 2026-09-26 (in 12 days): predates policy; migration tracked in JIRA-1234
+[ OK ] contracts/legacy_orders.yaml
+```
+
+Real, unedited output — the exact dates and day count will differ depending on when you
+run it, since they're relative to today. Never affects the exit code: the exemption is
+still fully in force, this is a look-ahead, not a violation. Widen or narrow the window
+with `--warn-expiring-within-days`:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --warn-expiring-within-days 14 org-policy.yaml contracts/"
+```
+
+## Test your own policy before deploying it
+
+`OrgPolicyParser`/`OrgPolicyEvaluator` are ordinary public Scala API — nothing about them
+requires going through the CLI or a real Spark job. Writing a small test suite against your
+own policy file, the same way you'd test any other config that gates production behavior,
+lets you evolve it with the same confidence Invaract's own fixtures give its contributors.
+
+Add `com.invaract:invaract-contract` as a test (or compile) dependency in your own policy
+repository's `build.sbt`, then assert directly against representative contracts — real ones
+from your repo, or ones built inline for a specific case you want to pin down:
+
+```scala
+import com.invaract.contract._
+import org.scalatest.funsuite.AnyFunSuite
+
+class OrgPolicyComplianceTest extends AnyFunSuite {
+  private val policy = OrgPolicyParser.parseFile("org-policy.yaml")
+
+  test("a compliant contract satisfies catalog-required") {
+    val contract = ContractParser.parseFile("contracts/customer_orders.yaml")
+    val evaluation = OrgPolicyEvaluator.evaluate(contract, policy)
+    assert(!evaluation.hasBlockingViolations, evaluation.enforceViolations.mkString("\n"))
+  }
+
+  test("a contract missing catalog registration is rejected by catalog-required") {
+    val contract = ContractParser.parse(
+      """id: no_catalog_example
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /tmp/no-catalog
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: long
+        |""".stripMargin)
+    val evaluation = OrgPolicyEvaluator.evaluate(contract, policy)
+    assert(evaluation.enforceViolations.exists(_.policyId == "catalog-required"))
+  }
+}
+```
+
+Verified against a real run before publishing this example — both assertions pass exactly
+as shown. This is also the right place to pin down a rule's *boundary* the same way
+Invaract's own test suite does for `OrgPolicyEvaluator` itself: a dataset with no fields
+carrying a `when: sensitivityTag`, a `scope: inputs` rule against a contract with no
+inputs, an exemption exactly on its `reviewBy` date versus one day past it — the cases
+most likely to surprise you later are the ones worth asserting on now, while the fix is a
+one-line YAML edit instead of a failed production job.
+
+## Common organizational policy patterns
+
+The seven policy types above compose into most standardization an organization actually
+wants to enforce. A few real-world patterns, each a complete, working rule:
+
+**Cost attribution.** Every contract must be attributable to a cost center, so nothing
+ships without someone paying for it:
+
+```yaml
+- id: cost-center-required
+  type: require_extension
+  key: costCenter
+  description: "Every contract must declare a cost center for chargeback."
+```
+
+**Data retention.** Every contract must state how long its data lives, rather than
+leaving that decision undocumented until a storage bill or an audit forces the question:
+
+```yaml
+- id: retention-declared
+  type: require_extension
+  key: retentionDays
+  description: "Every contract must declare its data's retention period, in days."
+```
+
+**Regulatory basis.** Every contract must record the legal basis it relies on to process
+its data:
+
+```yaml
+- id: legal-basis-required
+  type: require_extension
+  key: gdprBasis
+  description: "Every contract must declare its GDPR processing basis."
+```
+
+<Aside type="caution" title="require_extension can't be conditioned on a dataset's own tags">
+This rule applies to *every* contract in the document, not only ones that actually
+handle personal data — `require_extension` is a `ContractPolicy` (see
+[Reference → Organizational Policy Format](/reference/org-policy-format/)), and `when` has
+no effect on it. If you only want this enforced on contracts carrying `pii`-tagged fields,
+today's options are a separate policy document scoped to just those contracts, or waiting
+for genuine dataset-tag-conditioned policy support (an open idea, not yet built —
+`require_extension_if` below solves a *different* conditional shape: one extension's
+value gating another, not a dataset's own tags).
+</Aside>
+
+### Conditional requirements (`require_extension_if`)
+
+**Deprecation lifecycle.** A contract marked `deprecated` must also declare when it sunsets
+— but an *active* contract shouldn't be forced to carry a meaningless `sunsetDate`:
+
+```yaml
+- id: sunset-date-if-deprecated
+  type: require_extension_if
+  ifKey: status
+  ifValue: deprecated
+  thenKey: sunsetDate
+  description: "A deprecated contract must declare its sunset date."
+```
+
+A contract with no `status` extension at all, or one whose `status` is anything other than
+`deprecated`, is entirely unaffected by this rule — not merely exempted from it, just
+outside what it checks. Only once `extensions.status: deprecated` is present does
+`extensions.sunsetDate` become required too:
+
+```yaml
+# some_contract.yaml
+extensions:
+  status: deprecated
+  sunsetDate: "2026-12-01"
+```
+
+`ifValue`/`thenValue` are both optional. Omitting `ifValue` means "the `if` condition holds
+whenever `ifKey` is present at all, whatever its value" — useful for "if this contract
+declares an owner, it must also declare a cost center" without caring which owner:
+
+```yaml
+- id: cost-center-if-owned
+  type: require_extension_if
+  ifKey: owner
+  thenKey: costCenter
+```
+
+`require_extension_if` is a `ContractPolicy` too, so the same `scope`/`when`-have-no-effect
+warning applies to it.
+
+**On-call and escalation routing.** Every contract must name where a rejected write's
+first responder should be paged, so an enforcement failure in production has a known
+audience, not just a stack trace in a log nobody's watching:
+
+```yaml
+- id: escalation-channel-required
+  type: require_extension
+  key: slackChannel
+  description: "Every contract must name the Slack channel to page on enforcement failure."
+```
+
+**Storage format standardization.** Every output must be written in an approved
+lakehouse format, never raw `parquet` or `csv`:
+
+```yaml
+- id: lakehouse-formats-only
+  type: require_format
+  formats: [delta, iceberg]
+  scope: outputs
+  description: "Outputs must use an approved lakehouse format."
+```
+
+**PII field hygiene.** Every dataset carrying a `pii`-tagged field must also carry an
+explicit `pii_reviewed` flag — combining `require_field` with `when` so the check only
+applies where it's actually relevant:
+
+```yaml
+- id: pii-review-flag-required
+  type: require_field
+  name: pii_reviewed
+  fieldType: boolean
+  scope: outputs
+  when:
+    sensitivityTag: pii
+  description: "Any output carrying PII must carry an explicit review flag."
+```
+
+**Documentation completeness.** Every output must say what it is, for catalog and
+data-dictionary discoverability — no properties to configure, just presence:
+
+```yaml
+- id: dataset-described
+  type: require_dataset_description
+  scope: outputs
+  description: "Every output must document what it is/contains."
+```
+
+## What's next
+
+See [Reference → Organizational Policy Format](/reference/org-policy-format/) for the
+complete document shape, and [Reference → Violation Types](/reference/violation-types/)
+for `ORG_POLICY_VIOLATION` alongside every other violation type.

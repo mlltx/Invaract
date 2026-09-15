@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, ContractValidator}
+import com.invaract.contract.{Contract, ContractValidator, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
@@ -90,7 +90,8 @@ object ContractEnforcementRule {
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
-      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, None)
+      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, None, None)
+      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None)
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -115,7 +116,9 @@ object ContractEnforcementRule {
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
-      (plan: LogicalPlan) => verifyOrThrow(resolvedContract, plan, resolvedOptions, Some(sink), Some(session.sparkContext.applicationId))
+      val applicationId = Some(session.sparkContext.applicationId)
+      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
+      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId)
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -182,6 +185,179 @@ object ContractEnforcementRule {
       computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey)
     )
   }
+
+  /** Spark configuration key naming an organizational policy document
+    * (`com.invaract.contract.OrgPolicy`, YAML — see docs/CONTRACT_MODEL.md's
+    * "Organizational Policy" section) a platform attaches to *any* job that
+    * already installs `forContract`, purely via `spark-submit --conf
+    * spark.invaract.orgPolicy=<path>` — no change to that job's own source,
+    * the same attachability `LocationMapConfKey` documents. Absent (the
+    * default), org-policy enforcement is entirely inert: `enforceOrgPolicy`
+    * returns `contract`/`options` unchanged, exactly today's behavior.
+    */
+  val OrgPolicyConfKey = "spark.invaract.orgPolicy"
+
+  /** Parses the document `OrgPolicyConfKey` names, if set — `None` when the
+    * conf key is absent, so a job with no org policy attached pays no cost
+    * and sees no behavior change at all.
+    */
+  private[sparkadapter] def resolveOrgPolicy(session: SparkSession): Option[OrgPolicy] =
+    session.conf.getOption(OrgPolicyConfKey).map(OrgPolicyParser.parseFile)
+
+  /** Governs `contract`/`options` through the organizational policy named by
+    * `OrgPolicyConfKey`, if any is configured — the eager, "stop ASAP"
+    * counterpart to `resolveContractLocations`/`resolveVerificationOptions`,
+    * called once per session build rather than per plan: a policy rule
+    * depends only on the contract's own declared shape (does it declare a
+    * catalog, a required field, field names matching a convention), never on
+    * what a specific write actually does, so there's no reason to wait for a
+    * write to happen before rejecting a non-compliant contract.
+    *
+    * Three things happen, in order, when a policy is configured:
+    *   1. `policy.inject.rules` are merged into `contract.rules`
+    *      (`OrgPolicyEvaluator.applyInjectedRules`) and
+    *      `policy.inject.minVerificationOptions` floors are ORed onto
+    *      `options` (`applyMinVerificationOptions`) — so an org-wide DML
+    *      rule or a forced `VerificationOptions` flag applies to every write
+    *      this session's `verifyOrThrow` later checks, with no further
+    *      change needed there.
+    *   2. Every policy rule is evaluated against the (already-injected)
+    *      contract. `Warn`-mode violations are published to `sink` (if any)
+    *      as an informational, non-blocking `VerificationResult` — this is
+    *      the rollout mechanism: a platform introduces a new policy in
+    *      `warn`, watches violations accumulate, then flips it to `enforce`,
+    *      no code change on any governed job.
+    *   3. Any `Enforce`-mode violation throws `ContractViolationException`
+    *      immediately, through the exact same `Violation`/`explain`/
+    *      notification-sink path a structural violation uses — before this
+    *      method returns, so before `forContract`'s caller ever gets back a
+    *      plan-check function to install. A non-compliant contract can't
+    *      even finish installing.
+    *
+    * Throws `OrgPolicyParseException` (from parsing, from `OrgPolicyValidator`
+    * finding the policy document itself malformed — e.g. an exemption
+    * referencing an unknown policy id — or from
+    * `requireKnownMinVerificationOptionKeys` rejecting an unrecognized
+    * `inject.minVerificationOptions` key) rather than silently ignoring a
+    * broken policy document, the same "fail loudly, not quietly," principle
+    * `ContractParser`/`ContractValidator` apply to a malformed contract.
+    */
+  private[sparkadapter] def enforceOrgPolicy(
+      contract: Contract,
+      options: VerificationOptions,
+      session: SparkSession,
+      sink: Option[NotificationSink],
+      applicationId: Option[String]
+  ): (Contract, VerificationOptions) =
+    resolveOrgPolicy(session) match {
+      case None => (contract, options)
+      case Some(policy) =>
+        val policyValidation = OrgPolicyValidator.validate(policy)
+        if (!policyValidation.isValid) {
+          throw new com.invaract.contract.OrgPolicyParseException(
+            s"Organizational policy at '${session.conf.get(OrgPolicyConfKey)}' is invalid: " +
+              policyValidation.errors.mkString("; ")
+          )
+        }
+        requireKnownMinVerificationOptionKeys(policy, session)
+
+        val governedContract = OrgPolicyEvaluator.applyInjectedRules(contract, policy)
+        val governedOptions = applyMinVerificationOptions(options, policy)
+        val evaluation = OrgPolicyEvaluator.evaluate(governedContract, policy)
+
+        if (evaluation.hasBlockingViolations) {
+          val violations = evaluation.enforceViolations.map(toViolation)
+          val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
+          publishValidation(governedContract, result, sink, applicationId)
+          // No parenthesized fragment here: PlanPrinter renders UnknownPlan
+          // as "UnknownPlan(<description>)" verbatim - wrapping the
+          // description in its own parens too (an earlier version of this
+          // message did) produced a confusing doubled "((...))" that read
+          // like a rendering bug on first encounter, rather than the true,
+          // simple fact that no plan exists yet to show.
+          val describedPlan = com.invaract.ir.UnknownPlan(
+            "no transformation plan exists yet - rejected by organizational policy before any plan was analyzed"
+          )
+          throw new ContractViolationException(result, explain(governedContract, describedPlan, result))
+        } else if (evaluation.warnViolations.nonEmpty) {
+          // Never blocks - published (if a sink is configured) so a
+          // platform can watch a newly-introduced policy's violations
+          // accumulate before flipping it to Enforce. Built directly
+          // rather than via VerificationResult.of: that helper infers
+          // FAILED from a non-empty violation list, which would
+          // misrepresent a Warn-only result as a rejection that never
+          // actually happened.
+          val result = VerificationResult(
+            "PASSED",
+            s"${governedContract.id}@${governedContract.version}",
+            evaluation.warnViolations.map(toViolation)
+          )
+          publishValidation(governedContract, result, sink, applicationId)
+        }
+
+        (governedContract, governedOptions)
+    }
+
+  /** The only `inject.minVerificationOptions` keys `applyMinVerificationOptions`
+    * actually reads — `VerificationOptions`'s three flag names. Kept as its
+    * own named set (rather than inlined) so `requireKnownMinVerificationOptionKeys`
+    * can validate against exactly the same list `applyMinVerificationOptions`
+    * consults, with no risk of the two drifting apart.
+    */
+  private val KnownMinVerificationOptionKeys = Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint")
+
+  /** Fails loudly on a `policy.inject.minVerificationOptions` key outside
+    * `KnownMinVerificationOptionKeys` — a typo (e.g.
+    * `rejectUndeclredFields`) would otherwise be silently ignored by
+    * `applyMinVerificationOptions`'s plain `getOrElse(key, false)` lookup,
+    * leaving a platform team believing a flag is enforced org-wide when it
+    * genuinely isn't. `contract` itself can't run this check (it has no
+    * `VerificationOptions` to validate against), so it lives here, next to
+    * the one place that actually knows the real flag names.
+    */
+  private[sparkadapter] def requireKnownMinVerificationOptionKeys(policy: OrgPolicy, session: SparkSession): Unit = {
+    val unknownKeys = policy.inject.minVerificationOptions.keySet -- KnownMinVerificationOptionKeys
+    if (unknownKeys.nonEmpty) {
+      throw new com.invaract.contract.OrgPolicyParseException(
+        s"Organizational policy at '${session.conf.get(OrgPolicyConfKey)}' declares unrecognized " +
+          s"inject.minVerificationOptions key(s): ${unknownKeys.toList.sorted.mkString(", ")} " +
+          s"(known keys: ${KnownMinVerificationOptionKeys.toList.sorted.mkString(", ")})"
+      )
+    }
+  }
+
+  /** ORs `policy.inject.minVerificationOptions` floors onto `options` — a
+    * flag a job's own `VerificationOptions` left `false` can still be forced
+    * `true` by policy; the reverse never happens (a job can't use policy to
+    * weaken a flag it already opted into). Keyed by option name, since
+    * `InjectedDefaults.minVerificationOptions` is a plain `Map[String,
+    * Boolean]` (`contract` cannot depend on this Spark-specific type). Safe
+    * to call with an unrecognized key still present (an unknown key's value
+    * is simply never consulted) — `enforceOrgPolicy` calls
+    * `requireKnownMinVerificationOptionKeys` first specifically so that
+    * case never reaches here silently.
+    */
+  private[sparkadapter] def applyMinVerificationOptions(options: VerificationOptions, policy: OrgPolicy): VerificationOptions = {
+    def floor(key: String, current: Boolean): Boolean =
+      current || policy.inject.minVerificationOptions.getOrElse(key, false)
+    options.copy(
+      rejectUndeclaredInputs = floor("rejectUndeclaredInputs", options.rejectUndeclaredInputs),
+      rejectUndeclaredFields = floor("rejectUndeclaredFields", options.rejectUndeclaredFields),
+      computeFingerprint = floor("computeFingerprint", options.computeFingerprint)
+    )
+  }
+
+  /** Adapts a `com.invaract.contract.PolicyViolation` into this module's own
+    * `Violation` shape, so an org-policy rejection flows through the exact
+    * same `explain`/notification-sink/`demo/output/report.json` path a
+    * structural violation already does. `column`/`location` are left unset,
+    * the same convention whole-contract-level violations like
+    * `ViolationType.InvalidContract` already use — the offending dataset (if
+    * any) is named in `message`/`remediation` themselves, via
+    * `PolicyViolation.dataset`.
+    */
+  private def toViolation(violation: PolicyViolation): Violation =
+    Violation(ViolationType.OrgPolicyViolation, violation.message, violation.remediation)
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -482,7 +658,12 @@ object ContractEnforcementRule {
       }
       val result = VerificationResult.of(contractRef, violations)
       publishValidation(contract, result, sink, applicationId)
-      val describedPlan = com.invaract.ir.UnknownPlan("(contract validation failed before any plan was checked)")
+      // See enforceOrgPolicy's identical describedPlan for why this reads
+      // as a plain sentence rather than a parenthesized fragment: PlanPrinter
+      // already wraps it as "UnknownPlan(<description>)", so an inner
+      // "(...)" too would render as a confusing doubled "((...))".
+      val describedPlan =
+        com.invaract.ir.UnknownPlan("no transformation plan exists yet - contract validation failed before any plan was checked")
       throw new ContractViolationException(result, explain(contract, describedPlan, result))
     }
   }

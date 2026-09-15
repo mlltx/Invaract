@@ -1,0 +1,14 @@
+version: "1.0"
+policies:
+  - id: catalog-required
+    type: require_catalog
+    scope: outputs
+exemptions:
+  - contractId: legacy_customer_orders
+    policyIds: [catalog-required]
+    reason: "predates policy; migration tracked in JIRA-1234"
+    reviewBy: "2099-01-01"
+  - contractId: another_legacy_contract
+    policyIds: [catalog-required]
+    reason: "expired exemption fixture"
+    reviewBy: "2000-01-01"

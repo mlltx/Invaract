@@ -127,6 +127,13 @@ case class CatalogRequirement(
   * @param catalog optional data-catalog registration requirement — see
   *   `CatalogRequirement`'s own doc. Unlike `saveMode`, meaningful for
   *   both inputs and outputs.
+  * @param description optional free-form human-readable explanation of
+  *   what this dataset is/contains — purely documentary, never checked by
+  *   `RuleVerifier`/`StructuralVerifier`. Exists mainly so an
+  *   organizational policy can require one (`require_dataset_description`
+  *   — see `docs/CONTRACT_MODEL.md`'s "Organizational Policy" section),
+  *   the same catalog-discoverability motivation `require_catalog`
+  *   already has, but for a human reader rather than a catalog consumer.
   */
 case class Dataset(
   name: String,
@@ -134,7 +141,8 @@ case class Dataset(
   format: Option[String],
   schema: Schema,
   saveMode: Option[String] = None,
-  catalog: Option[CatalogRequirement] = None
+  catalog: Option[CatalogRequirement] = None,
+  description: Option[String] = None
 )
 
 /** Rule types Invaract currently interprets during verification (see

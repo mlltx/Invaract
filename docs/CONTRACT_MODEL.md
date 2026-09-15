@@ -105,6 +105,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `format` | no | Storage/serialization format. |
 | `saveMode` | no | Expected write behavior toward existing data at `location` (`append`/`overwrite`/`ignore`/`error`). Meaningful for outputs only; checked against the plan's actual write mode. |
 | `catalog` | no | Expected data-catalog registration — see `CatalogRequirement` below. Unlike `saveMode`, meaningful for both inputs and outputs. Omitted entirely (the default) means no check at all. |
+| `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
 | `schema.fields` | yes | List of fields (at least one). |
 
 A dataset's `catalog` block, when present:
@@ -174,7 +175,8 @@ Dataset
 ├── format: Option[String]
 ├── schema: Schema(fields: List[Field])
 ├── saveMode: Option[String]
-└── catalog: Option[CatalogRequirement]
+├── catalog: Option[CatalogRequirement]
+└── description: Option[String]
 
 CatalogRequirement
 ├── required: Boolean
@@ -281,6 +283,7 @@ report.changes          // every detected change, each tagged with a level and p
 | An already-`required: true` catalog block's `technology`/`catalogName`/`location`/`namespace`/`table` changed | Breaking |
 | Catalog block removed, or relaxed to `required: false` | Not flagged (loosening) |
 | Catalog block added with `required: false` (informational only) | Not flagged |
+| `description` added, changed, or removed | Not flagged (never a constraint) |
 
 `format`/`saveMode`/`catalog` all follow the same asymmetric philosophy the
 schema checks above already use: `StructuralVerifier` only ever compares one
@@ -293,7 +296,11 @@ required to optional — it isn't flagged. A `catalog` block's own `required:
 false` case is a third state, not just "some declaration": it's accepted by
 `ContractValidator` as informational only (see its own warning above) and
 gates nothing during verification, so it never counts as a real
-requirement change either way.
+requirement change either way. `description` is different again: it is
+purely documentary (see the field table above), never compared against a
+real write at all, so `ContractCompatibility.diffDatasets` doesn't diff it
+in either direction — unlike `format`/`saveMode`/`catalog`, there is no
+asymmetry to apply, because there is no constraint.
 
 `ContractCompatibility.verifyVersionBump(previous, next)` checks that the
 *declared* version bump matches the *actual* scope of change, and returns
@@ -423,6 +430,318 @@ check is still a structural approximation, not full predicate-logic
 verification: it recognizes only a flat top-level `AND` of equalities,
 without reasoning about `NOT`, `CASE WHEN`, or De Morgan equivalences,
 and doesn't distinguish target- from source-side qualifiers.
+
+## Organizational Policy
+
+Everything above is scoped to *one* contract, authored by whoever owns
+that dataset's pipeline. `OrgPolicy` (`OrgPolicyModel.scala`) is a
+different axis entirely: a platform-owned document, independent of any
+one contract, expressing rules that apply across *every* contract in an
+organization — "every output must be catalog-registered," "every dataset
+must declare a `pii_reviewed` field," "every field name must be
+`snake_case`." A contract's own author cannot opt out of it; only
+whoever owns the policy document can (see "Exemptions" below). See
+docs-site's "Enforce an Organizational Policy" guide for the user-facing
+walkthrough this section's design backs.
+
+### Model, parser, validator, evaluator
+
+Same three-layer split as the contract model itself, all in `contract/`
+(no Spark dependency — `OrgPolicyEvaluator` only ever touches the
+`Contract` object model):
+
+- **`OrgPolicy`** (`OrgPolicyModel.scala`) — `version`, `policies: List[PolicyRule]`,
+  `inject: InjectedDefaults`, `exemptions: List[PolicyExemption]`. A
+  `PolicyRule` carries `id` (referenced by exemptions, shown in violation
+  messages), `ruleType`, open `properties: Map[String, Any]` (the same
+  shape `ContractRule.properties` uses), `scope` (`Inputs`/`Outputs`/`All`),
+  an optional `when: PolicyCondition` (currently just `sensitivityTag`,
+  narrowing which datasets a rule applies to by `Field.sensitivityTags`),
+  and `mode` (`Enforce`/`Warn`).
+- **`OrgPolicyParser`** — YAML → `OrgPolicy`, the same fail-fast/permissive
+  split `ContractParser` uses: strict about what it needs to interpret the
+  document (`version`; a policy rule's `id`/`type`; an exemption's
+  `contractId`/`policyIds`/`reason`; a well-formed `reviewBy` date),
+  permissive about everything else (an unrecognized policy `type` still
+  parses — see `PolicyRule.interpret` below). Deliberately self-contained
+  rather than reaching into `ContractParser`'s private YAML-coercion
+  helpers — two small, independently evolving parsers duplicating a few
+  dozen lines of coercion logic is a smaller risk than widening visibility
+  on an already-published, MiMa-covered file for it. `inject.rules`
+  entries are parsed straight into ordinary `ContractRule`s (same `type` +
+  properties shape a contract's own `rules:` key uses).
+- **`OrgPolicyValidator`** — the org-policy counterpart to
+  `ContractValidator`, reusing its exact `ValidationSeverity`/
+  `ValidationIssue`/`ValidationResult` types rather than a parallel result
+  shape. Errors: empty `version`; a policy rule with an empty `id`/`type`;
+  a duplicate policy `id`; a known `ruleType` (`PolicyType.All`) with
+  malformed properties (`interpret` returns `None` — the identical
+  "known-type-but-malformed is an Error, unknown-type is silently
+  recorded" split `ContractValidator` already uses for `ContractRule`);
+  an exemption with an empty `contractId`/`reason`, no `policyIds`, or a
+  `policyIds` entry naming a policy `id` this document doesn't declare.
+  Warning: an exemption whose `reviewBy` has already passed (informational
+  — the exemption simply stops applying, per "Exemptions" below).
+- **`OrgPolicyEvaluator`** — the pure engine. `evaluate(contract, policy,
+  now)` evaluates every policy rule (skipping one an unexpired exemption
+  covers for `contract.id`) and splits the resulting `PolicyViolation`s by
+  `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
+  warnViolations)`. `applyInjectedRules(contract, policy)` merges
+  `policy.inject.rules` into `contract.rules` (skipping a rule the
+  contract already declares, by `ruleType`+`properties` equality) — see
+  "Rule/option injection" below.
+
+### Policy types (`PolicyType`/`InterpretedPolicy`)
+
+Deliberately narrow and closed, mirroring `RuleType`/`InterpretedRule`'s
+own role for contract-level rules — not a general policy-expression
+language:
+
+- **`require_catalog`** (optional `technology`) — a dataset must declare
+  `catalog.required: true`, optionally pinning `technology` (e.g.
+  `"hive"`) to a specific implementation.
+- **`require_field`** (required `name`, optional `fieldType`) — a dataset's
+  schema must declare a top-level field named `name` (`Schema.field`'s
+  own lookup semantics — not recursive into nested structs), optionally
+  of the declared `fieldType`, checked case-insensitively. Deliberately
+  `fieldType`, not `type`: a policy rule's own kind is itself spelled
+  `type:` at the same YAML mapping level, and SnakeYAML doesn't reject a
+  document with two `type:` keys — it silently keeps only the last one,
+  which would corrupt `ruleType` itself into whatever field type was
+  named rather than raise anything. Confirmed the hard way by a real
+  failing round-trip through `OrgPolicyParser.parse` before this was
+  caught — every unit test covering the type pin had constructed
+  `PolicyRule` directly in Scala, bypassing the parser entirely, so none
+  of them could have caught it.
+- **`field_naming_convention`** (required `pattern`) — every field name in
+  a dataset's schema — recursing into nested struct `properties` — must
+  *fully* match the regular expression `pattern` (`Matcher.matches()`,
+  not `find()`: a partial match doesn't satisfy it). `interpret` returns
+  `None` for a `pattern` that doesn't even compile as a regex, the same
+  "malformed known type" treatment `OrgPolicyValidator` reports as an
+  Error.
+- **`require_extension`** (required `key`, optional `value`) — the
+  contract *itself* must declare `key` in its top-level `extensions` map
+  (e.g. `extensions: { owner: data-platform-team }`), optionally pinning
+  it to an exact `value` (case-sensitive string equality). A key present
+  but mapped to YAML `null` (`extensions: { owner: }`) is treated as
+  absent — present-but-blank isn't a real declaration. Unlike the other
+  types, this checks the *contract as a whole*, once, not once per
+  dataset in scope — see "`DatasetPolicy` vs. `ContractPolicy`" below.
+- **`require_format`** (required `formats`) — a dataset must declare
+  `format` as one of `formats`, matched case-insensitively (e.g. every
+  output must be `"delta"` or `"iceberg"`, never raw `"parquet"`/`"csv"`).
+  `formats` accepts either a single scalar (`formats: delta`) or a YAML
+  list (`formats: [delta, iceberg]`) — the one property in this file that
+  needs list coercion at all, handled by `PolicyRule.parseFormats`. A
+  dataset with no `format` declared at all does not satisfy this, the
+  same "required but absent" treatment every other check in this section
+  gives.
+- **`require_dataset_description`** (no properties) — a dataset must
+  declare a non-blank `description` (see `Dataset`'s own doc in the
+  "Contract Format" section above). The one type in this object that takes
+  no properties at all: there's nothing to configure beyond "this dataset
+  must have one," so unlike every other type here, `interpret` can never
+  fail on malformed properties for it.
+- **`require_extension_if`** (required `ifKey`/`thenKey`, optional
+  `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
+  only once the contract already satisfies `ifKey` (optionally pinned to
+  `ifValue`) must it *also* satisfy `thenKey` (optionally pinned to
+  `thenValue`) — e.g. `ifKey: status, ifValue: deprecated, thenKey:
+  sunsetDate` requires a `sunsetDate` extension only on a contract whose
+  `status` extension is already `deprecated`. A contract that doesn't
+  satisfy the `if` condition at all produces no violation — the rule
+  simply doesn't apply to it, not merely "exempted" from it. Like
+  `require_extension`, this checks the contract as a whole, once — see
+  "`DatasetPolicy` vs. `ContractPolicy`" below. Both `checkRequireExtension`
+  and `checkRequireExtensionIf` (`OrgPolicyEvaluator`) share one private
+  `extensionSatisfies(contract, key, value)` helper for this "does
+  `extensions` declare `key`[`=value`]" test, since `require_extension_if`
+  needs it applied twice — once for its `if`, once for its `then`.
+
+`PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
+into one of these seven shapes — `None` for an unrecognized `ruleType`
+*or* malformed properties for a recognized one, the identical
+total/safe design `ContractRule.interpret` already documents; this is
+what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
+`OrgPolicyValidator` hasn't checked (though a real caller should still
+validate first, so a malformed policy surfaces as a clear, named error
+rather than a silent no-op).
+
+#### `DatasetPolicy` vs. `ContractPolicy`
+
+`InterpretedPolicy` is split into two sub-traits, reflecting the two
+different granularities a policy rule can check at:
+
+- **`DatasetPolicy`** — `require_catalog`, `require_field`,
+  `field_naming_convention`, `require_format`, and
+  `require_dataset_description`. `OrgPolicyEvaluator` narrows to
+  `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
+  checks each dataset independently, producing a `PolicyViolation` with
+  `dataset = Some(name)` per offending dataset.
+- **`ContractPolicy`** — `require_extension` and `require_extension_if`
+  (`PolicyType.ContractLevelTypes`). Checked exactly once against
+  `contract` as a whole; `PolicyRule.scope`/`.when` have no effect on
+  either at all (`OrgPolicyEvaluator` never even inspects them for a
+  `ContractPolicy` `ruleType`), and their `PolicyViolation`s always carry
+  `dataset = None`. `OrgPolicyValidator` warns — not errors, since the
+  rule still evaluates correctly — if `scope`/`when` are set on either
+  rule type anyway, since declaring either is silently inert rather than
+  a mistake the evaluator itself can catch. This warning is keyed off
+  `PolicyType.ContractLevelTypes`, not a hardcoded `ruleType` check, so a
+  future `ContractPolicy` addition gets it for free.
+
+A future contract-level check (e.g. a hypothetical `require_status`)
+would join `ContractPolicy`, not `DatasetPolicy` — the split exists so
+adding one doesn't force a dataset-shaped evaluation path onto a check
+that was never about any one dataset.
+
+### Rule/option injection
+
+Beyond the policy types above (which check the contract *document's
+declared shape*), `OrgPolicy.inject` lets a policy contribute to what's
+already checked, reusing the existing engine wholesale instead of needing
+a second evaluator for behavioral concerns:
+
+- **`inject.rules: List[ContractRule]`** — merged into a governed
+  contract's own `rules` before `RuleVerifier` runs (`applyInjectedRules`
+  above). An org-wide `forbid_unconditional_delete` no contract author has
+  to remember to declare themselves.
+- **`inject.minVerificationOptions: Map[String, Boolean]`** — floors ORed
+  onto a job's `VerificationOptions` by `spark-adapter`'s
+  `ContractEnforcementRule.applyMinVerificationOptions` (e.g.
+  `"rejectUndeclaredFields" -> true`) — a flag a job's own code left
+  `false` can still be forced `true` by policy; never the reverse. A
+  plain `Map[String, Boolean]`, not a typed `VerificationOptions`, since
+  that type is `spark-adapter`-specific and this module has no Spark
+  dependency to spend on it — which also means this module can't itself
+  validate a key against the real flag set. `spark-adapter`'s
+  `ContractEnforcementRule.requireKnownMinVerificationOptionKeys` does
+  that check instead, right where the three real flag names
+  (`rejectUndeclaredInputs`/`rejectUndeclaredFields`/`computeFingerprint`)
+  are already known, throwing `OrgPolicyParseException` on an
+  unrecognized key rather than silently no-op'ing a typo a platform team
+  would otherwise believe was actually enforced.
+
+### Exemptions
+
+`PolicyExemption(contractId, policyIds, reason, reviewBy: Option[LocalDate])`
+lives in the *policy* document, not the contract — deliberately: a
+contract's own author cannot exempt their own contract from an org-wide
+rule (that would defeat the rule's purpose), only whoever owns the policy
+file can. `reviewBy` is optional expiry, not a permanent bypass: an
+exemption with no `reviewBy` never expires; one whose `reviewBy` has
+passed simply stops applying (`PolicyExemption.covers`'s
+`reviewBy.forall(!now.isAfter(_))` — `true` for no expiry at all, or for
+`now` on-or-before it) and the violation it was suppressing re-surfaces,
+rather than remaining a silent, forever bypass. `OrgPolicyValidator`
+warns (does not error) once a `reviewBy` has already passed, so an
+expired exemption stays visible without being fatal on its own.
+
+### Enforcement in `spark-adapter` — eager, "stop ASAP"
+
+`ContractEnforcementRule.forContract` reads a `spark.invaract.orgPolicy`
+Spark configuration key (the same attachability `LocationMapConfKey`/
+`RejectUndeclaredFieldsConfKey` document — see CLAUDE.md's "External
+Attachability Requirement") naming an `OrgPolicy` YAML document,
+resolved once per session build, inside `forContract`'s outer
+`session => {...}` closure — the same moment `resolveContractLocations`/
+`resolveVerificationOptions` already run, and deliberately *before*
+`forContract` returns the inner `LogicalPlan => Unit` check function.
+
+This is a deliberate design choice, not an implementation detail: unlike
+every other check in this module, an org-policy rule depends only on the
+*contract's own declared shape* — never on what a specific write actually
+does — so there is no reason to wait for a plan to exist before rejecting
+a non-compliant contract. `enforceOrgPolicy`:
+
+1. Merges `policy.inject.rules`/`minVerificationOptions` into the
+   contract/options `verifyOrThrow` will use for every subsequent plan
+   this session checks.
+2. Evaluates every policy rule. `Warn`-mode violations publish an
+   informational `VerificationResult` (status `"PASSED"`, built directly
+   rather than via `VerificationResult.of`, which would have inferred
+   `FAILED` from a non-empty violation list — nothing was actually
+   blocked) to the configured `NotificationSink`, if any, and never
+   block — the mechanism for rolling a new org-wide policy out safely: a
+   platform introduces a rule as `warn`, watches violations accumulate,
+   then flips it to `enforce`, no code change on any governed job.
+3. Any `Enforce`-mode violation throws `ContractViolationException`
+   **immediately** — through the same `Violation`/`explain`/
+   notification-sink path a structural violation already uses (a new
+   `ViolationType.OrgPolicyViolation`, `explain`'s existing four-part
+   format, `com.invaract.ir.UnknownPlan` standing in for "no real plan
+   exists yet" the same way `requireValidContract`'s own rejection
+   already does) — before `forContract` ever returns a usable check
+   function to its caller. A non-compliant contract can't even finish
+   installing, let alone reach a write.
+
+A malformed policy document — bad YAML, or an `OrgPolicyValidator` error
+(duplicate policy ids, an exemption naming an unknown policy) — fails
+loudly via `OrgPolicyParseException` rather than silently skipping
+enforcement, the same "fail loudly, not quietly" principle
+`ContractParser`/`ContractValidator` already apply to a malformed
+contract. No `spark.invaract.orgPolicy` conf key at all means
+`enforceOrgPolicy` returns `(contract, options)` completely unchanged —
+today's behavior, byte for byte, for every job that doesn't opt in.
+
+### Linting contracts without Spark (`OrgPolicyLintCli`)
+
+Because `OrgPolicyEvaluator` never touches Spark, the exact same
+evaluation a job pays for at session-build time can also run as a
+standalone check with nothing but a JVM:
+
+```
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+```
+
+Recursively lints every `*.yaml`/`*.yml` contract under a directory (or a
+single file) against a policy document, printing an `[ OK ]`/`[WARN]`/
+`[FAIL]` line per contract and exiting non-zero on any Enforce-mode
+violation, a parse failure, or an invalid policy document (`0` otherwise).
+The policy document itself is excluded from the scan even when it lives
+alongside the contracts it governs (a real bug found and fixed while
+writing this CLI's tests — see `OrgPolicyLintCliTest`). Meant for a
+contracts repository's own CI/pre-commit gate: an author gets policy
+feedback at authoring time, not only the next time a job runs.
+
+Also reports, on every run, any exemption whose `reviewBy` falls within
+the next `--warn-expiring-within-days` days (default 30, backed by
+`OrgPolicyEvaluator.expiringExemptions`) — a proactive look-ahead a
+platform team can act on before an exemption lapses, rather than
+`OrgPolicyValidator`'s Warning, which only fires once it already has.
+Never affects the exit code: the exemption named is still fully active.
+
+### JSON Schema and fixtures
+
+`contract/schema/invaract-org-policy.schema.json` (Draft 2020-12) is the
+org-policy document's own standalone schema, the same role
+`invaract-contract.schema.json` plays for contracts — validated against
+real fixtures both ways (`OrgPolicySchemaSpec`) so it can't silently
+drift from `OrgPolicyParser`/`OrgPolicyValidator`. Fixtures live under
+`contract/src/test/resources/fixtures/org-policy/`.
+
+### What this does *not* do (yet)
+
+Deliberately out of scope for this iteration, named rather than silently
+absent:
+
+- **Fingerprint-based drift control** — a policy type comparing a write's
+  semantic fingerprint (`fingerprint/`) against a previously-approved
+  value, blocking on undisclosed logic changes even when the schema
+  didn't change. `fingerprint/` currently has no consumer that compares
+  against a stored prior value at all; this is real, substantial future
+  work, not a narrow gap.
+- **Cross-contract policies** — a rule spanning *multiple* contracts at
+  once (e.g. "every input must be some other contract's declared
+  output," "no two contracts may target the same physical location")
+  needs a contract registry to know about every contract in an
+  organization at once, which ROADMAP.md already tracks as unbuilt Phase
+  3 work.
+- **Policy layering/inheritance** — a stricter business-unit policy
+  composing with a looser org-wide one. `OrgPolicy` is deliberately flat/
+  single-document for now; revisit once a real need for layering
+  appears.
 
 ## API compatibility
 
