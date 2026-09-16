@@ -1050,4 +1050,19 @@ strykerThresholdsBreak := 70
 // baked into both sides of the comparison and its four filters (which
 // documented it against the old 0.4.0 baseline) are removed rather than
 // left as dead entries with nothing left to match.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.5.0")
+//
+// ROOT-CAUSE FIX: the whole "flip this once that PR lands" dance narrated
+// above is no longer load-bearing for CI. It happened at least three times
+// in this section's own history (twice here, once more in contract's) and
+// each time it was skipped or delayed, it silently broke every unrelated
+// PR opened against main until someone noticed - because CI publishes
+// base-ref's build under base-ref's OWN actual version, while this literal
+// only updated when a human remembered to open a follow-up PR. CI's
+// api-compatibility job (.github/workflows/test.yml) now reads base-ref's
+// own `ThisBuild / version` directly and passes it via
+// INVARACT_MIMA_BASELINE_VERSION, so the two can no longer drift apart.
+// The hardcoded "0.5.0" below is now only a local-dev fallback - update it
+// whenever convenient, but a stale value here can't break CI for anyone.
+mimaPreviousArtifacts := Set(
+  "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.5.0")
+)
