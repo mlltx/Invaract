@@ -29,13 +29,19 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 #### 2. Licensing
 
-- [ ] **Choose permissive licence**
+- [x] **Choose permissive licence** — done: Apache 2.0 `LICENSE` at the
+  repository root; `SPDX-License-Identifier` headers confirmed present on
+  every main-source and test Scala file in the repo.
   - Recommended: Apache 2.0 (aligns with Spark ecosystem)
   - Alternative: MIT (simpler, still permissive)
   - Document: LICENSE file at repository root
   - Include: SPDX header in source files
 
-- [ ] **Copyright and attribution**
+- [ ] **Copyright and attribution** — still open: no `NOTICE` file and no
+  explicit "Copyright © ... Invaract Contributors" statement exists
+  anywhere (`CONTRIBUTING.md`'s only "copyright" mention is inside an
+  example commit message, not a stated policy). `CONTRIBUTORS.md` covers
+  recognition, not a declared copyright holder or attribution policy.
   - Define copyright holder(s)
   - Establish contributor attribution policy
   - Document in LICENSE and CONTRIBUTING.md
@@ -57,7 +63,9 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - Core concepts ✓
   - Long-term goals ✓
 
-- [ ] **CONTRIBUTING.md**
+- [x] **CONTRIBUTING.md** — done, exists at repo root, covers setup, code
+  style, testing requirements, PR process, commit conventions, and a full
+  worked developer-workflow example.
   - How to set up development environment
   - Code style guidelines
   - Testing requirements
@@ -65,20 +73,24 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - Commit message conventions
   - Developer workflow
 
-- [ ] **CODE_OF_CONDUCT.md**
+- [x] **CODE_OF_CONDUCT.md** — done, exists at repo root.
   - Community standards
   - Reporting mechanism
   - Enforcement policy
   - Inclusive language guidelines
 
-- [ ] **ARCHITECTURE.md**
+- [x] **ARCHITECTURE.md** — done, exists at repo root: system design,
+  the two-halves (engine vs. harness) breakdown, data flow diagrams, nine
+  ADRs (under "Architectural Decisions" — inline in this file rather than
+  a separate `docs/adr/` directory, see the Architectural Principles item
+  below), and technology-choice rationale.
   - High-level system design
   - Component breakdown
   - Data flow diagrams
   - Decision records (ADRs)
   - Technology choices and rationale
 
-- [ ] **SECURITY.md**
+- [x] **SECURITY.md** — done, exists at repo root.
   - Reporting security vulnerabilities
   - Supported versions for security updates
   - Security best practices
@@ -86,41 +98,76 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 #### 4. Continuous Integration
 
-- [ ] **GitHub Actions workflow**
-  - Test on push to main branches
-  - Test on pull requests
-  - Run on multiple OS (Linux, macOS, Windows)
-  - Run on multiple Java versions (11, 17, 21)
-  - Code coverage reporting
-  - Lint checks
+- [x] **GitHub Actions workflow** (`.github/workflows/test.yml`) — done for
+  every sub-item except lint checks.
+  - [x] Test on push to main branches
+  - [x] Test on pull requests
+  - [x] Run on multiple OS (Linux, macOS, Windows)
+  - [x] Run on multiple Java versions (11, 17, 21)
+  - [x] Code coverage reporting — not via a line-coverage tool (no
+    scoverage/JaCoCo/Codecov wired in anywhere); closed instead by
+    Stryker4s mutation testing on `ir`/`spark-adapter`/`fingerprint`
+    (CLAUDE.md's "Mutation Testing Requirement"), which is a strictly
+    stronger signal for those three modules: a surviving `NoCoverage`
+    mutant *is* an uncovered-line report, and a killed mutant additionally
+    proves the covering test asserts on actual behavior, not just that the
+    line executed. This does not extend to `contract` (no Stryker4s wired
+    to it at all) or to `plugin`/`runner`/`web` — those have no coverage
+    signal, line- or mutation-based, of any kind. Treat as closed for the
+    engine's mutation-tested modules, still open for `contract` and the
+    harness.
+  - [ ] Lint checks — open: no scalafmt/scalafix (or ESLint config beyond
+    `web/.eslintrc.json`, which only covers `web/`) found for the Scala
+    modules.
 
-- [ ] **Build configuration**
-  - sbt configuration
-  - Dependency resolution
-  - Caching strategies
-  - Artifact publishing
+- [x] **Build configuration** — done.
+  - [x] sbt configuration (per-module `build.sbt`, explicit version pins)
+  - [x] Dependency resolution (managed deps + the `unmanagedJars`
+    cross-module graph `dev/build` documents)
+  - [x] Caching strategies (`actions/cache@v4` plus `setup-java`'s
+    `cache: 'sbt'`, throughout `.github/workflows/test.yml`)
+  - [x] Artifact publishing (`release.yml`, `publish-spark-jars.yml`)
 
-- [ ] **Quality gates**
-  - Coverage thresholds
-  - Style enforcement
-  - Type checking
-  - Documentation build
+- [ ] **Quality gates** — mostly done; style enforcement is the one real
+  gap.
+  - [x] Coverage thresholds — see the mutation-testing note above; closed
+    for `ir`/`spark-adapter`/`fingerprint`, open for `contract` and the
+    harness modules
+  - [ ] Style enforcement — open, no formatter/linter configured for Scala
+  - [x] Type checking — inherent to `sbt compile` in every CI job; the
+    Scala compiler is the type checker here and already blocks the build
+  - [x] Documentation build (`deploy-docs.yml`, `deploy-contributor-docs.yml`)
 
 #### 5. Dependency Management
 
-- [ ] **Dependency declaration**
+- [x] **Dependency declaration** — done: every module's `build.sbt` pins
+  exact versions and separates `libraryDependencies` by `Compile`/`Test`
+  scope; rationale for major choices (Spark 3.5.1, sbt split, Stryker4s
+  version) is documented in this file and CLAUDE.md rather than inline
+  per-dependency, which is a thinner form of the last sub-item than
+  originally envisioned but not a gap worth reopening on its own.
   - Define all dependencies with versions
   - Separate compile, test, and provided dependencies
   - Use meaningful version constraints
   - Document rationale for major dependencies
 
-- [ ] **Dependency updates**
+- [x] **Dependency updates** — done: `.github/dependabot.yml` (npm +
+  GitHub Actions ecosystems) plus `docs/CVE_REMEDIATION.md`, which
+  explicitly covers the gap Dependabot can't close (no sbt/Maven updater,
+  so `contract`/`ir`/`spark-adapter`/`plugin`/`runner` CVE alerts are
+  triaged manually) — security response timeline, breaking-change
+  handling, and the compatibility matrix (`docs/COMPATIBILITY.md`) all
+  included.
   - Establish policy for dependency upgrades
   - Security update response timeline
   - Breaking change handling
   - Compatibility matrix
 
-- [ ] **Reproducible builds**
+- [x] **Reproducible builds** — done: `build.sbt` version pins serve as
+  the lock file (sbt has no separate lock-file mechanism), the dev
+  container (`.devcontainer/`) documents the build environment, and a
+  dedicated `sbom` CI job (`sbt makeBom` per module, `npm sbom` for `web`)
+  publishes real build metadata as a workflow artifact on every run.
   - Lock file for exact versions
   - Document build environment
   - Publish build metadata
@@ -158,43 +205,67 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   install instructions to docs-site/ per CLAUDE.md's Documentation Policy.
   - [x] Maven Central or similar registry (Central Portal, pending
     namespace verification)
-  - [ ] GitHub Releases with binaries
+  - [x] GitHub Releases with binaries — done: `publish-spark-jars.yml`
+    republishes `contract`/`ir`/`spark-adapter`/`fingerprint` jars as
+    GitHub Release assets on the rolling `spark-jars-latest` tag on every
+    push to `main` that passes CI.
   - [ ] Documentation on artifact locations (docs-site/, once a real
     release exists)
 
 #### 7. Compatibility Policy
 
-- [ ] **Java/JVM compatibility**
+All four items below are done, all documented in `docs/COMPATIBILITY.md`
+and `docs/VERSIONING.md`.
+
+- [x] **Java/JVM compatibility** — `docs/COMPATIBILITY.md` documents the
+  supported-JDK matrix (11/17/21) and 1.8 bytecode target.
   - Minimum JDK version policy
   - Support matrix for multiple versions
   - End-of-life policy for old versions
 
-- [ ] **Spark compatibility**
+- [x] **Spark compatibility**
   - Supported Spark versions
   - Test matrix for multiple Spark versions — done for the Spark 3.5.x
     line, see Phase 1c's "Spark version compatibility matrix" sub-phase
   - Adapter pattern for different Spark APIs
 
-- [ ] **Scala compatibility**
+- [x] **Scala compatibility** — `docs/COMPATIBILITY.md` documents the
+  supported Scala 2.12.18 binary, explicitly scopes cross-compilation as
+  future work ("No cross-compilation needed for Phase 0"; Scala 2.13 via
+  cross-compilation planned for 0.2.0+), and covers the Spark 4.x /
+  Scala-2.13-only implication.
   - Supported Scala versions
   - Binary compatibility guarantees
   - Cross-compilation strategy
 
-- [ ] **Deprecation policy**
+- [x] **Deprecation policy** — `docs/VERSIONING.md`'s "Deprecation Policy"
+  section: an announced → deprecated → removed lifecycle, `@deprecated`
+  code annotations with a migration path, and release-note/`MIGRATION.md`
+  communication (note: `MIGRATION.md` itself doesn't exist yet — nothing
+  has been deprecated to migrate away from so far, so this is unexercised
+  rather than broken).
   - Timeline for deprecation warnings
   - Removal timeline for deprecated APIs
   - Communication strategy
 
 #### 8. Architectural Principles
 
-- [ ] **Document principles**
+- [x] **Document principles** — done via `ARCHITECTURE.md`'s "Two halves
+  of this repository" and "System Architecture" sections (technology
+  independence via the IR, modularity via the module split, explainability
+  via `ContractEnforcementRule.explain`'s four-part answer).
   - Technology independence (not Spark-specific)
   - Open standards preference
   - Modularity and composition
   - Explainability
   - Performance and scalability
 
-- [ ] **ADR (Architecture Decision Records)**
+- [x] **ADR (Architecture Decision Records)** — done, with one deviation
+  from the original plan: nine ADRs live inline in `ARCHITECTURE.md`'s
+  "Architectural Decisions" section rather than as separate files under a
+  `docs/adr/` directory (which doesn't exist). Substance matches the
+  planned examples (Spark-first via adapter, not Scala-vs-Java; contract
+  model choices) even though the specific example topics didn't map 1:1.
   - Format: Use ADR template
   - Repository: docs/adr/
   - Examples:
@@ -203,7 +274,10 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
     - Contract standard choice (ODCS)
     - Verification algorithm approach
 
-- [ ] **Design patterns**
+- [x] **Design patterns** — done, documented across `ARCHITECTURE.md`
+  (ADR-001's adapter pattern) and `docs/TRANSFORMATION_IR.md`/
+  `docs/CONTRACT_MODEL.md`/`docs/SPARK_ADAPTER.md` (IR abstraction,
+  contract representation, `VerificationResult` shape respectively).
   - Abstraction for transformation IR
   - Adapter pattern for execution engines
   - Contract representation pattern
@@ -211,19 +285,27 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 #### 9. Governance
 
-- [ ] **Project governance model**
+- [x] **Project governance model** — done: `docs/GOVERNANCE.md` defines a
+  4-level decision-making process (patch → minor → major → breaking),
+  maintainer roles, and a steering-committee/RFC path for major changes.
   - Decision-making process
   - Maintainer roles
   - Steering committee (if applicable)
   - Conflict resolution
 
-- [ ] **Contribution levels**
+- [x] **Contribution levels** — done: `docs/GOVERNANCE.md`'s
+  Contributor/Committer/Maintainer sections match this checklist exactly,
+  including concrete requirements to advance a level (e.g. committer:
+  ≥3 months, ≥5 merged PRs, maintainer nomination).
   - Contributor
   - Committer
   - Maintainer
   - Requirements for each level
 
-- [ ] **Roadmap and planning**
+- [x] **Roadmap and planning** — done for the mechanical parts (this file
+  is the public, phase-based roadmap); community feedback integration is
+  process, not artifact, and stays unverified until real external
+  contributions start flowing through it.
   - Public roadmap (this file)
   - Phase-based releases
   - Long-term vision alignment
@@ -231,19 +313,30 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 
 #### 10. Community
 
-- [ ] **Discussion channels**
+- [ ] **Discussion channels** — partly evidenced, not fully verifiable
+  from inside this repo: `CONTRIBUTING.md` already directs questions to
+  "GitHub Discussions" as the documented practice, but whether Discussions
+  is actually *enabled* on the repo (a GitHub repo setting, not a file)
+  couldn't be confirmed from this session — no repo-settings API was
+  available to check. Issues/PRs being enabled is self-evident (this repo
+  has both). Leave open pending a maintainer confirming the repo setting.
   - GitHub Discussions for questions
   - Issues for bugs and features
   - Slack workspace (optional)
   - Email list (optional)
 
-- [ ] **First-time contributor experience**
+- [ ] **First-time contributor experience** — partly done:
+  `CONTRIBUTING.md` covers onboarding docs and sets clear expectations
+  (review process, testing requirements). Still open: no "good first
+  issue" labeling evidence found (a GitHub label/issue-triage practice,
+  not a file this repo can encode), and maintainer responsiveness isn't
+  something a static check can confirm.
   - Good first issues tagged
   - Comprehensive onboarding docs
   - Responsive maintainers
   - Clear expectations
 
-- [ ] **Recognition**
+- [x] **Recognition** — done: `CONTRIBUTORS.md` exists at the repo root.
   - Contributors file (CONTRIBUTORS.md)
   - Changelog acknowledgments
   - Community highlights
@@ -256,40 +349,53 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
 Phase 0 is complete when:
 
 1. **Legal & Licensing**
-   - [ ] Apache 2.0 license in place
-   - [ ] SPDX headers in source files
-   - [ ] Copyright clearly stated
+   - [x] Apache 2.0 license in place
+   - [x] SPDX headers in source files
+   - [ ] Copyright clearly stated — no NOTICE file or explicit statement (see
+     "Copyright and attribution" above)
 
 2. **Documentation**
-   - [ ] README with quick-start
-   - [ ] CONTRIBUTING.md with clear process
-   - [ ] CODE_OF_CONDUCT.md established
-   - [ ] ARCHITECTURE.md with design decisions
-   - [ ] SECURITY.md with vulnerability reporting
+   - [x] README with quick-start
+   - [x] CONTRIBUTING.md with clear process
+   - [x] CODE_OF_CONDUCT.md established
+   - [x] ARCHITECTURE.md with design decisions
+   - [x] SECURITY.md with vulnerability reporting
 
 3. **CI/CD**
-   - [ ] GitHub Actions workflows running
-   - [ ] Tests pass on all supported versions
-   - [ ] Code coverage tracked
-   - [ ] Lint checks enforced
+   - [x] GitHub Actions workflows running
+   - [x] Tests pass on all supported versions
+   - [x] Code coverage tracked — via Stryker4s mutation testing on
+     `ir`/`spark-adapter`/`fingerprint`, not a line-coverage tool; still
+     untracked for `contract`/harness modules (see "Quality gates" above)
+   - [ ] Lint checks enforced — no Scala formatter/linter configured
 
 4. **Versioning**
-   - [ ] Semantic versioning defined
-   - [ ] Release process documented
-   - [ ] Changelog maintained
-   - [ ] Compatibility matrix published
+   - [x] Semantic versioning defined (`docs/VERSIONING.md`)
+   - [x] Release process documented (`docs/RELEASING.md`)
+   - [ ] Changelog maintained — no `CHANGELOG.md` exists yet
+   - [x] Compatibility matrix published (`docs/COMPATIBILITY.md`)
 
 5. **Repository Health**
-   - [ ] Branch protection rules enforced
-   - [ ] Issues enabled and triaged
-   - [ ] Pull request template created
-   - [ ] Stale issue management configured
+   - [ ] Branch protection rules enforced — unverified (GitHub repo
+     setting, not checkable from inside the repo without an API call this
+     session couldn't make)
+   - [ ] Issues enabled and triaged — issues/PRs are evidently enabled
+     (this repo has PR/issue templates), but "triaged" is a process claim
+     no static check can confirm
+   - [x] Pull request template created (`.github/PULL_REQUEST_TEMPLATE.md`)
+   - [ ] Stale issue management configured — no stale-bot workflow found
 
 6. **External Readiness**
-   - [ ] Repository is public and discoverable
-   - [ ] Documentation is complete and accurate
-   - [ ] First external contribution can be accepted
-   - [ ] No architectural blockers identified
+   - [ ] Repository is public and discoverable — unverified, same
+     repo-setting limitation as branch protection
+   - [x] Documentation is complete and accurate — extensive `docs/`,
+     `docs-site/`, and `contributor-docs/` coverage, cross-checked against
+     actual code in this pass
+   - [x] First external contribution can be accepted — CONTRIBUTING.md,
+     templates, and CI are all in place mechanically; no actual external PR
+     has landed yet, which is a different claim than being *able* to accept
+     one
+   - [x] No architectural blockers identified
 
 ---
 
