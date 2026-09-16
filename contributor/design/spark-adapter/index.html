@@ -1061,6 +1061,45 @@ ROADMAP.md’s catalog-registration addendum). <code dir="auto">None</code> — 
 field, but a literal <code dir="auto">"catalog": null</code> — is an explicit signal that this
 write has no catalog entry at all, distinguishable from a field a
 consumer might otherwise mistake for “not populated by this version.”</p>
+<p><strong><code dir="auto">WriteEvent</code> also carries <code dir="auto">partitionColumns: List[String]</code>, which
+column(s) (or, for a DSv2 catalog table, partition transform(s) —
+<code dir="auto">"bucket(4, id)"</code>/<code dir="auto">"days(ts)"</code>) the write’s target is partitioned by, when
+that’s a knowable, static property of the target.</strong> Sourced per write
+shape in <code dir="auto">WriteCommandSupport</code> — <code dir="auto">InsertIntoHadoopFsRelationCommand .partitionColumns</code> for a plain file-format write (Parquet/CSV/JSON/ORC),
+<code dir="auto">CatalogTable.partitionColumnNames</code> for a Hive table, a DSv2 <code dir="auto">Table .partitioning()</code> (each transform rendered via its own <code dir="auto">.describe()</code>) for
+an <code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/<code dir="auto">OverwritePartitionsDynamic</code>/
+row-level-DML target, and the direct <code dir="auto">partitioning: Seq[Transform]</code> field
+<code dir="auto">CreateTableAsSelect</code>/<code dir="auto">ReplaceTableAsSelect</code> already carry for a brand-new
+table. <code dir="auto">Nil</code> — not a distinguished <code dir="auto">Option[List[...]]</code>, the same
+“no further distinction needed” convention <code dir="auto">schema</code> already uses — covers
+both a genuinely unpartitioned target and a write shape this hasn’t been
+wired up for.</p>
+<p>One real, found-and-fixed gap from this feature’s own development: a
+Delta table’s <code dir="auto">CatalogTable.partitionColumnNames</code> is confirmed empirically
+to read <code dir="auto">Nil</code> regardless of whether the table is actually partitioned —
+Delta manages partitioning through its own transaction-log metadata, not
+Hive-style catalog partition registration, so generalizing the
+Hive-table convention to Delta without checking was a real mistake, not
+just a hypothetical one. Delta’s row-level DML (MERGE/UPDATE/DELETE, in
+<code dir="auto">WriteCommandSupport.deltaRowLevelDml</code>) instead reads
+<code dir="auto">Metadata.partitionColumns</code> off the DML command’s own already-resolved
+<code dir="auto">TahoeFileIndex</code>/<code dir="auto">DeltaLog</code> handle — see <code dir="auto">deltaMetadataPartitionColumnsOf</code>’s
+own doc for the full per-class reflection path. This fix does <strong>not</strong>
+extend to a partitioned Delta <code dir="auto">.writeStream...toTable(...)</code> sink
+(<code dir="auto">WriteCommandSupport.writeToStream</code>), which still reads the same
+unreliable <code dir="auto">CatalogTable.partitionColumnNames</code> — a known, narrower,
+disclosed gap (see that case’s own comment), not silently wrong-and-unaware.</p>
+<p>This reports the target’s partitioning <em>schema</em>, not which specific
+partition <em>values</em> a given write’s own rows happened to touch — Spark
+exposes no such per-write metric the way <code dir="auto">rowCount</code>/<code dir="auto">bytesWritten</code>/
+<code dir="auto">fileCount</code> above have one (no <code dir="auto">SQLMetric</code> for it), so a dynamically
+partitioned INSERT’s actual touched partition values aren’t surfaced this
+way. A <em>static</em>-partition insert (Hive’s
+<code dir="auto">INSERT INTO t PARTITION(dt = '2024-01-01') SELECT ...</code>) does supply a
+concrete value in the query itself, but that value isn’t carried by this
+field either — a real, narrower follow-up this field doesn’t attempt, the
+same “disclosed, not silently missing” treatment <code dir="auto">fingerprint</code>’s own
+Maven Central publishing gap gets in CLAUDE.md.</p>
 <p><strong>Configuration is a plain <code dir="auto">.properties</code> file, deliberately not YAML and
 deliberately not part of the contract document.</strong> Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment
