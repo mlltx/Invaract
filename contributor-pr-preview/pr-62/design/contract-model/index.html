@@ -670,10 +670,16 @@ exemption simply stops applying, per “Exemptions” below); a
 types” below for the latter two.</li>
 <li><strong><code dir="auto">OrgPolicyEvaluator</code></strong> — the pure engine. <code dir="auto">evaluate(contract, policy, now)</code> evaluates every policy rule (skipping one an unexpired exemption
 covers for <code dir="auto">contract.id</code>) and splits the resulting <code dir="auto">PolicyViolation</code>s by
-<code dir="auto">PolicyMode</code> into <code dir="auto">OrgPolicyEvaluation(enforceViolations, warnViolations)</code>. <code dir="auto">applyInjectedRules(contract, policy)</code> merges
-<code dir="auto">policy.inject.rules</code> into <code dir="auto">contract.rules</code> (skipping a rule the
-contract already declares, by <code dir="auto">ruleType</code>+<code dir="auto">properties</code> equality) — see
-“Rule/option injection” below.</li>
+<code dir="auto">PolicyMode</code> into <code dir="auto">OrgPolicyEvaluation(enforceViolations, warnViolations)</code>. Every rule — built-in or custom — is evaluated through
+the identical <code dir="auto">CustomPolicyEvaluator</code> interface: <code dir="auto">resolveEvaluator</code>
+checks <code dir="auto">builtinEvaluators</code> (the seven built-in types, each an ordinary
+<code dir="auto">CustomPolicyEvaluator</code> compiled into this module) before falling back to
+<code dir="auto">policy.customPolicyTypes</code> for a <code dir="auto">ruleType</code> outside that set — see
+“Custom policy types” below for the full mechanism, and its own note on
+why a built-in type always wins a naming collision.
+<code dir="auto">applyInjectedRules(contract, policy)</code> merges <code dir="auto">policy.inject.rules</code> into
+<code dir="auto">contract.rules</code> (skipping a rule the contract already declares, by
+<code dir="auto">ruleType</code>+<code dir="auto">properties</code> equality) — see “Rule/option injection” below.</li>
 </ul>
 <div class="sl-heading-wrapper level-h3"><h3 id="policy-types-policytypeinterpretedpolicy">Policy types (<code dir="auto">PolicyType</code>/<code dir="auto">InterpretedPolicy</code>)</h3><a class="sl-anchor-link" href="#policy-types-policytypeinterpretedpolicy"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Policy types (PolicyType/InterpretedPolicy)”</span></a></div>
 <p>Deliberately narrow and closed, mirroring <code dir="auto">RuleType</code>/<code dir="auto">InterpretedRule</code>’s
@@ -754,25 +760,34 @@ validate first, so a malformed policy surfaces as a clear, named error
 rather than a silent no-op).</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="datasetpolicy-vs-contractpolicy"><code dir="auto">DatasetPolicy</code> vs. <code dir="auto">ContractPolicy</code></h4><a class="sl-anchor-link" href="#datasetpolicy-vs-contractpolicy"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “DatasetPolicy vs. ContractPolicy”</span></a></div>
 <p><code dir="auto">InterpretedPolicy</code> is split into two sub-traits, reflecting the two
-different granularities a policy rule can check at:</p>
+different granularities a policy rule can check at. This is a
+<em>classification</em>, not <code dir="auto">OrgPolicyEvaluator</code>’s dispatch mechanism — each
+built-in type is its own <code dir="auto">CustomPolicyEvaluator</code> in <code dir="auto">builtinEvaluators</code>
+(see “Custom policy types” below), and it’s that evaluator’s own body,
+not a shared branch keyed off this split, that decides whether to narrow
+to <code dir="auto">scopedDatasets</code> or check the contract as a whole. The trait split
+remains useful, though: it’s what a reader (or <code dir="auto">OrgPolicyValidator</code>, via
+<code dir="auto">PolicyType.ContractLevelTypes</code>) uses to know which shape a given
+built-in type is, without re-deriving it from each evaluator’s own body:</p>
 <ul>
 <li><strong><code dir="auto">DatasetPolicy</code></strong> — <code dir="auto">require_catalog</code>, <code dir="auto">require_field</code>,
 <code dir="auto">field_naming_convention</code>, <code dir="auto">require_format</code>, and
-<code dir="auto">require_dataset_description</code>. <code dir="auto">OrgPolicyEvaluator</code> narrows to
-<code dir="auto">datasetsInScope(contract, rule.scope)</code> (honoring <code dir="auto">scope</code>/<code dir="auto">when</code>) and
-checks each dataset independently, producing a <code dir="auto">PolicyViolation</code> with
-<code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
+<code dir="auto">require_dataset_description</code>. Each of these types’ own
+<code dir="auto">builtinEvaluators</code> entry narrows to <code dir="auto">scopedDatasets(contract, rule)</code>
+(<code dir="auto">datasetsInScope(contract, rule.scope)</code>, further filtered by
+<code dir="auto">rule.when</code>) and checks each dataset independently, producing a
+<code dir="auto">PolicyViolation</code> with <code dir="auto">dataset = Some(name)</code> per offending dataset.</li>
 <li><strong><code dir="auto">ContractPolicy</code></strong> — <code dir="auto">require_extension</code> and <code dir="auto">require_extension_if</code>
-(<code dir="auto">PolicyType.ContractLevelTypes</code>). Checked exactly once against
-<code dir="auto">contract</code> as a whole; <code dir="auto">PolicyRule.scope</code>/<code dir="auto">.when</code> have no effect on
-either at all (<code dir="auto">OrgPolicyEvaluator</code> never even inspects them for a
-<code dir="auto">ContractPolicy</code> <code dir="auto">ruleType</code>), and their <code dir="auto">PolicyViolation</code>s always carry
-<code dir="auto">dataset = None</code>. <code dir="auto">OrgPolicyValidator</code> warns — not errors, since the
-rule still evaluates correctly — if <code dir="auto">scope</code>/<code dir="auto">when</code> are set on either
-rule type anyway, since declaring either is silently inert rather than
-a mistake the evaluator itself can catch. This warning is keyed off
-<code dir="auto">PolicyType.ContractLevelTypes</code>, not a hardcoded <code dir="auto">ruleType</code> check, so a
-future <code dir="auto">ContractPolicy</code> addition gets it for free.</li>
+(<code dir="auto">PolicyType.ContractLevelTypes</code>). Each of these types’ own
+<code dir="auto">builtinEvaluators</code> entry checks <code dir="auto">contract</code> as a whole, exactly once;
+neither ever reads <code dir="auto">rule.scope</code>/<code dir="auto">.when</code> at all, and their
+<code dir="auto">PolicyViolation</code>s always carry <code dir="auto">dataset = None</code>. <code dir="auto">OrgPolicyValidator</code>
+warns — not errors, since the rule still evaluates correctly — if
+<code dir="auto">scope</code>/<code dir="auto">when</code> are set on either rule type anyway, since declaring
+either is silently inert rather than a mistake the evaluator itself
+can catch. This warning is keyed off <code dir="auto">PolicyType.ContractLevelTypes</code>,
+not a hardcoded <code dir="auto">ruleType</code> check, so a future <code dir="auto">ContractPolicy</code> addition
+gets it for free.</li>
 </ul>
 <p>A future contract-level check (e.g. a hypothetical <code dir="auto">require_status</code>)
 would join <code dir="auto">ContractPolicy</code>, not <code dir="auto">DatasetPolicy</code> — the split exists so
@@ -799,22 +814,30 @@ composes for free with the conf-driven <code dir="auto">spark.invaract.orgPolicy
 attachment point (“Enforcement in <code dir="auto">spark-adapter</code>” below) — a platform
 team points <code dir="auto">--jars</code> at their own evaluator jar alongside the engine’s,
 with zero change to any governed job’s own source.</p>
-<p><code dir="auto">OrgPolicyEvaluator.evaluateRule</code> dispatches to <code dir="auto">customPolicyTypes</code> only
-when <code dir="auto">rule.interpret</code> is <code dir="auto">None</code> — i.e. only for a <code dir="auto">ruleType</code> outside
-<code dir="auto">PolicyType.All</code> — so a <code dir="auto">customPolicyTypes</code> key that collides with a
-built-in type is inert; the built-in interpretation always wins
-(<code dir="auto">OrgPolicyValidator</code> warns on this, not errors, the same “still
-evaluates correctly, just not the way you might expect” treatment
-<code dir="auto">ContractLevelTypes</code>’ inert <code dir="auto">scope</code>/<code dir="auto">when</code> already gets). Unlike a built-in
-<code dir="auto">InterpretedPolicy</code>, there is no <code dir="auto">DatasetPolicy</code>/<code dir="auto">ContractPolicy</code> split
-here: an implementation receives the whole <code dir="auto">Contract</code> and the raw
-<code dir="auto">PolicyRule</code> (<code dir="auto">scope</code>/<code dir="auto">when</code>/<code dir="auto">mode</code>/<code dir="auto">properties</code> all included) and decides
-for itself what to check and how — or whether — to honor
-<code dir="auto">rule.scope</code>/<code dir="auto">rule.when</code>. <code dir="auto">PolicyExemption</code> coverage and <code dir="auto">PolicyMode</code>
-splitting still apply automatically, though: both happen in
-<code dir="auto">OrgPolicyEvaluator.evaluate</code> <em>before</em> dispatching to either a built-in or
-a custom type, so an implementation gets both for free without
-reimplementing either.</p>
+<p>There is nothing special about a <em>built-in</em> type’s evaluation mechanism —
+<code dir="auto">OrgPolicyEvaluator.resolveEvaluator</code> looks <code dir="auto">ruleType</code> up in
+<code dir="auto">builtinEvaluators</code> (a <code dir="auto">Map[String, CustomPolicyEvaluator]</code> covering the
+seven built-in types, each an ordinary <code dir="auto">CustomPolicyEvaluator</code>, built via
+the private <code dir="auto">interpreted</code> helper — see that method’s own doc for why —
+compiled into this module) before ever consulting <code dir="auto">customPolicyTypes</code>.
+This is why
+a <code dir="auto">customPolicyTypes</code> key that collides with a built-in type is inert; the
+built-in lookup always wins (<code dir="auto">OrgPolicyValidator</code> warns on this, not
+errors, the same “still evaluates correctly, just not the way you might
+expect” treatment <code dir="auto">ContractLevelTypes</code>’ inert <code dir="auto">scope</code>/<code dir="auto">when</code> already
+gets). Unlike a built-in type’s own <code dir="auto">CustomPolicyEvaluator</code> (which starts
+from <code dir="auto">rule.interpret</code>’s already-parsed <code dir="auto">InterpretedPolicy</code> shape and, for
+a <code dir="auto">DatasetPolicy</code> type, narrows to <code dir="auto">scopedDatasets</code> itself), a <em>custom</em>
+implementation receives only the raw <code dir="auto">Contract</code> and <code dir="auto">PolicyRule</code>
+(<code dir="auto">scope</code>/<code dir="auto">when</code>/<code dir="auto">mode</code>/<code dir="auto">properties</code> all included, <code dir="auto">properties</code> unparsed)
+and decides for itself what to check and how — or whether — to honor
+<code dir="auto">rule.scope</code>/<code dir="auto">rule.when</code>; there is no <code dir="auto">interpret</code>-equivalent parsing step
+or <code dir="auto">DatasetPolicy</code>/<code dir="auto">ContractPolicy</code> split available to it, since neither
+is part of the public <code dir="auto">CustomPolicyEvaluator</code> contract. <code dir="auto">PolicyExemption</code>
+coverage and <code dir="auto">PolicyMode</code> splitting still apply automatically to both
+alike, though: both happen in <code dir="auto">OrgPolicyEvaluator.evaluate</code> <em>before</em>
+<code dir="auto">resolveEvaluator</code> is even called, so an implementation — built-in or
+custom — gets both for free without reimplementing either.</p>
 <p>Two different failure modes get two different treatments, deliberately
 asymmetric:</p>
 <ul>
