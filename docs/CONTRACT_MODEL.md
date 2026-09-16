@@ -495,10 +495,16 @@ Same three-layer split as the contract model itself, all in `contract/`
   now)` evaluates every policy rule (skipping one an unexpired exemption
   covers for `contract.id`) and splits the resulting `PolicyViolation`s by
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
-  warnViolations)`. `applyInjectedRules(contract, policy)` merges
-  `policy.inject.rules` into `contract.rules` (skipping a rule the
-  contract already declares, by `ruleType`+`properties` equality) — see
-  "Rule/option injection" below.
+  warnViolations)`. Every rule — built-in or custom — is evaluated through
+  the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
+  checks `builtinEvaluators` (the seven built-in types, each an ordinary
+  `CustomPolicyEvaluator` compiled into this module) before falling back to
+  `policy.customPolicyTypes` for a `ruleType` outside that set — see
+  "Custom policy types" below for the full mechanism, and its own note on
+  why a built-in type always wins a naming collision.
+  `applyInjectedRules(contract, policy)` merges `policy.inject.rules` into
+  `contract.rules` (skipping a rule the contract already declares, by
+  `ruleType`+`properties` equality) — see "Rule/option injection" below.
 
 ### Policy types (`PolicyType`/`InterpretedPolicy`)
 
@@ -583,25 +589,34 @@ rather than a silent no-op).
 #### `DatasetPolicy` vs. `ContractPolicy`
 
 `InterpretedPolicy` is split into two sub-traits, reflecting the two
-different granularities a policy rule can check at:
+different granularities a policy rule can check at. This is a
+*classification*, not `OrgPolicyEvaluator`'s dispatch mechanism — each
+built-in type is its own `CustomPolicyEvaluator` in `builtinEvaluators`
+(see "Custom policy types" below), and it's that evaluator's own body,
+not a shared branch keyed off this split, that decides whether to narrow
+to `scopedDatasets` or check the contract as a whole. The trait split
+remains useful, though: it's what a reader (or `OrgPolicyValidator`, via
+`PolicyType.ContractLevelTypes`) uses to know which shape a given
+built-in type is, without re-deriving it from each evaluator's own body:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
   `field_naming_convention`, `require_format`, and
-  `require_dataset_description`. `OrgPolicyEvaluator` narrows to
-  `datasetsInScope(contract, rule.scope)` (honoring `scope`/`when`) and
-  checks each dataset independently, producing a `PolicyViolation` with
-  `dataset = Some(name)` per offending dataset.
+  `require_dataset_description`. Each of these types' own
+  `builtinEvaluators` entry narrows to `scopedDatasets(contract, rule)`
+  (`datasetsInScope(contract, rule.scope)`, further filtered by
+  `rule.when`) and checks each dataset independently, producing a
+  `PolicyViolation` with `dataset = Some(name)` per offending dataset.
 - **`ContractPolicy`** — `require_extension` and `require_extension_if`
-  (`PolicyType.ContractLevelTypes`). Checked exactly once against
-  `contract` as a whole; `PolicyRule.scope`/`.when` have no effect on
-  either at all (`OrgPolicyEvaluator` never even inspects them for a
-  `ContractPolicy` `ruleType`), and their `PolicyViolation`s always carry
-  `dataset = None`. `OrgPolicyValidator` warns — not errors, since the
-  rule still evaluates correctly — if `scope`/`when` are set on either
-  rule type anyway, since declaring either is silently inert rather than
-  a mistake the evaluator itself can catch. This warning is keyed off
-  `PolicyType.ContractLevelTypes`, not a hardcoded `ruleType` check, so a
-  future `ContractPolicy` addition gets it for free.
+  (`PolicyType.ContractLevelTypes`). Each of these types' own
+  `builtinEvaluators` entry checks `contract` as a whole, exactly once;
+  neither ever reads `rule.scope`/`.when` at all, and their
+  `PolicyViolation`s always carry `dataset = None`. `OrgPolicyValidator`
+  warns — not errors, since the rule still evaluates correctly — if
+  `scope`/`when` are set on either rule type anyway, since declaring
+  either is silently inert rather than a mistake the evaluator itself
+  can catch. This warning is keyed off `PolicyType.ContractLevelTypes`,
+  not a hardcoded `ruleType` check, so a future `ContractPolicy` addition
+  gets it for free.
 
 A future contract-level check (e.g. a hypothetical `require_status`)
 would join `ContractPolicy`, not `DatasetPolicy` — the split exists so
@@ -637,22 +652,30 @@ attachment point ("Enforcement in `spark-adapter`" below) — a platform
 team points `--jars` at their own evaluator jar alongside the engine's,
 with zero change to any governed job's own source.
 
-`OrgPolicyEvaluator.evaluateRule` dispatches to `customPolicyTypes` only
-when `rule.interpret` is `None` — i.e. only for a `ruleType` outside
-`PolicyType.All` — so a `customPolicyTypes` key that collides with a
-built-in type is inert; the built-in interpretation always wins
-(`OrgPolicyValidator` warns on this, not errors, the same "still
-evaluates correctly, just not the way you might expect" treatment
-`ContractLevelTypes`' inert `scope`/`when` already gets). Unlike a built-in
-`InterpretedPolicy`, there is no `DatasetPolicy`/`ContractPolicy` split
-here: an implementation receives the whole `Contract` and the raw
-`PolicyRule` (`scope`/`when`/`mode`/`properties` all included) and decides
-for itself what to check and how — or whether — to honor
-`rule.scope`/`rule.when`. `PolicyExemption` coverage and `PolicyMode`
-splitting still apply automatically, though: both happen in
-`OrgPolicyEvaluator.evaluate` *before* dispatching to either a built-in or
-a custom type, so an implementation gets both for free without
-reimplementing either.
+There is nothing special about a *built-in* type's evaluation mechanism —
+`OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
+`builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering the
+seven built-in types, each an ordinary `CustomPolicyEvaluator`, built via
+the private `interpreted` helper — see that method's own doc for why —
+compiled into this module) before ever consulting `customPolicyTypes`.
+This is why
+a `customPolicyTypes` key that collides with a built-in type is inert; the
+built-in lookup always wins (`OrgPolicyValidator` warns on this, not
+errors, the same "still evaluates correctly, just not the way you might
+expect" treatment `ContractLevelTypes`' inert `scope`/`when` already
+gets). Unlike a built-in type's own `CustomPolicyEvaluator` (which starts
+from `rule.interpret`'s already-parsed `InterpretedPolicy` shape and, for
+a `DatasetPolicy` type, narrows to `scopedDatasets` itself), a *custom*
+implementation receives only the raw `Contract` and `PolicyRule`
+(`scope`/`when`/`mode`/`properties` all included, `properties` unparsed)
+and decides for itself what to check and how — or whether — to honor
+`rule.scope`/`rule.when`; there is no `interpret`-equivalent parsing step
+or `DatasetPolicy`/`ContractPolicy` split available to it, since neither
+is part of the public `CustomPolicyEvaluator` contract. `PolicyExemption`
+coverage and `PolicyMode` splitting still apply automatically to both
+alike, though: both happen in `OrgPolicyEvaluator.evaluate` *before*
+`resolveEvaluator` is even called, so an implementation — built-in or
+custom — gets both for free without reimplementing either.
 
 Two different failure modes get two different treatments, deliberately
 asymmetric:
