@@ -773,11 +773,13 @@ private[sparkadapter] object WriteCommandSupport {
     * `"identity(part)"` - `Transform.toString` gives the latter, but
     * `.describe()` specifically gives the former, matching how
     * `SHOW CREATE TABLE`/a connector's own `PARTITIONED BY (...)` clause
-    * would render it) and is expected (not yet separately confirmed for a
-    * derived transform specifically) to render e.g. a bucket/date
-    * transform as `"bucket(4, id)"`/`"days(ts)"` the same way, since
-    * `describe()` is a stable, public, per-transform method on Spark's own
-    * DSv2 `Transform` API, not something this module re-derives.
+    * would render it) - and confirmed empirically for a derived transform
+    * too (a second real throwaway probe, since deleted, against a live
+    * Iceberg table `PARTITIONED BY (bucket(4, id), days(ts), truncate(3,
+    * name))`): renders as exactly `"bucket(4, id)"`/`"days(ts)"`/
+    * `"truncate(3, name)"`, matching Iceberg's own SQL syntax for
+    * declaring them - not a guess from `describe()` being "a stable,
+    * public API" alone.
     *
     * `None` for a `StagedTable` (an atomic CREATE/REPLACE pending commit),
     * the same distrust `namedRelationLocationAndFormat`'s own `StagedTable`
