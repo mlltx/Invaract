@@ -56,6 +56,9 @@ exemptions:
     policyIds: [catalog-required]
     reason: "predates policy; migration tracked in JIRA-1234"
     reviewBy: "2026-12-01"
+
+customPolicyTypes:
+  require_approved_location_prefix: com.acme.governance.RequireApprovedLocationPrefix
 ```
 
 ## Top-level fields
@@ -66,6 +69,7 @@ exemptions:
 | `policies` | no | The policy rules themselves — see below. |
 | `inject` | no | Rules/options this policy contributes to every governed contract — see [Rule/option injection](#injectrulesinjectminverificationoptions). |
 | `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
+| `customPolicyTypes` | no | Maps a `type:` name outside the built-in set to a `CustomPolicyEvaluator` class — see [Custom policy types](#custom-policy-types). |
 
 ## Policy rule fields (`policies[]`)
 
@@ -93,10 +97,12 @@ contract's own `rules:` entries work.
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
-A policy `type` this version of Invaract doesn't recognize is recorded but never checked —
-the same permissive behavior an unrecognized contract `rules[].type` already has. A known
-type with malformed or missing properties for its shape (e.g. `require_field` with no
-`name`) is an `OrgPolicyValidator` Error, not silently ignored.
+A policy `type` matching neither this set nor a [`customPolicyTypes`](#custom-policy-types)
+entry is recorded but never checked — the same permissive behavior an unrecognized contract
+`rules[].type` already has, though `OrgPolicyValidator` now reports it as a Warning (not an
+Error) since `customPolicyTypes` makes this shape more likely to be a typo than intentional.
+A known type with malformed or missing properties for its shape (e.g. `require_field` with
+no `name`) is an `OrgPolicyValidator` Error, not silently ignored.
 
 <Aside type="caution" title="require_field's type pin is fieldType, not type">
 A policy rule's own kind (`require_field`) is itself spelled `type:` at the same mapping
@@ -121,6 +127,48 @@ another key's value. `require_extension_if` fills that gap — e.g. only a contr
 contract that isn't deprecated is entirely unaffected by the rule, not merely exempted
 from it.
 </Aside>
+
+## Custom policy types
+
+`customPolicyTypes` maps a `type:` name your document uses to the fully-qualified class
+name of a `com.invaract.contract.CustomPolicyEvaluator` implementation — the escape hatch
+for a policy type outside the built-in set above, with no Invaract source change needed.
+See [Write your own policy type](/guides/enforcing-organizational-policy/#write-your-own-policy-type)
+for a full worked example.
+
+```yaml
+customPolicyTypes:
+  require_approved_location_prefix: com.acme.governance.RequireApprovedLocationPrefix
+```
+
+| Key | Meaning |
+|---|---|
+| `customPolicyTypes.<type>` | Fully-qualified class name of a `CustomPolicyEvaluator` (public no-arg constructor required), resolved reflectively and cached — one instance per class name, reused across every rule/contract that names it. |
+
+```scala
+trait CustomPolicyEvaluator {
+  def evaluate(contract: Contract, rule: PolicyRule): List[PolicyViolation]
+}
+```
+
+`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the seven
+built-in ones — a `customPolicyTypes` key matching a built-in `type` is dead (the built-in
+always wins; `OrgPolicyValidator` warns on this). `PolicyExemption` coverage and `mode:
+enforce`/`warn` splitting still apply automatically to a custom type's violations, exactly
+like a built-in one.
+
+<Aside type="note" title="Composes with spark.invaract.orgPolicy for free">
+A `customPolicyTypes` entry is just more content in the same YAML document
+`spark.invaract.orgPolicy=<path>` already names — the evaluator class itself is supplied
+via `--jars`, the same as any other Invaract extension jar. No new `spark-submit` flag, no
+job source change.
+</Aside>
+
+| `OrgPolicyValidator` outcome | When |
+|---|---|
+| Error | `customPolicyTypes.<type>` has an empty class name, or names a class that doesn't resolve (missing, no public no-arg constructor, doesn't implement `CustomPolicyEvaluator`). |
+| Warning | `customPolicyTypes.<type>` collides with a built-in `type` (dead — the built-in always wins). |
+| Warning | A policy rule's `type` matches neither a built-in type nor a `customPolicyTypes` entry (it will never be evaluated). |
 
 ## `inject.rules`/`inject.minVerificationOptions`
 

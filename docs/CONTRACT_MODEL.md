@@ -451,13 +451,15 @@ Same three-layer split as the contract model itself, all in `contract/`
 `Contract` object model):
 
 - **`OrgPolicy`** (`OrgPolicyModel.scala`) — `version`, `policies: List[PolicyRule]`,
-  `inject: InjectedDefaults`, `exemptions: List[PolicyExemption]`. A
-  `PolicyRule` carries `id` (referenced by exemptions, shown in violation
-  messages), `ruleType`, open `properties: Map[String, Any]` (the same
-  shape `ContractRule.properties` uses), `scope` (`Inputs`/`Outputs`/`All`),
-  an optional `when: PolicyCondition` (currently just `sensitivityTag`,
-  narrowing which datasets a rule applies to by `Field.sensitivityTags`),
-  and `mode` (`Enforce`/`Warn`).
+  `inject: InjectedDefaults`, `exemptions: List[PolicyExemption]`,
+  `customPolicyTypes: Map[String, String]` (ruleType → `CustomPolicyEvaluator`
+  class name — see "Custom policy types" below). A `PolicyRule` carries `id`
+  (referenced by exemptions, shown in violation messages), `ruleType`, open
+  `properties: Map[String, Any]` (the same shape `ContractRule.properties`
+  uses), `scope` (`Inputs`/`Outputs`/`All`), an optional `when:
+  PolicyCondition` (currently just `sensitivityTag`, narrowing which
+  datasets a rule applies to by `Field.sensitivityTags`), and `mode`
+  (`Enforce`/`Warn`).
 - **`OrgPolicyParser`** — YAML → `OrgPolicy`, the same fail-fast/permissive
   split `ContractParser` uses: strict about what it needs to interpret the
   document (`version`; a policy rule's `id`/`type`; an exemption's
@@ -479,9 +481,16 @@ Same three-layer split as the contract model itself, all in `contract/`
   "known-type-but-malformed is an Error, unknown-type is silently
   recorded" split `ContractValidator` already uses for `ContractRule`);
   an exemption with an empty `contractId`/`reason`, no `policyIds`, or a
-  `policyIds` entry naming a policy `id` this document doesn't declare.
-  Warning: an exemption whose `reviewBy` has already passed (informational
-  — the exemption simply stops applying, per "Exemptions" below).
+  `policyIds` entry naming a policy `id` this document doesn't declare; a
+  `customPolicyTypes` entry with an empty ruleType/class name, or one
+  naming a class `CustomPolicyEvaluatorFactory` can't resolve. Warnings:
+  an exemption whose `reviewBy` has already passed (informational — the
+  exemption simply stops applying, per "Exemptions" below); a
+  `PolicyRule.ruleType` matching neither a built-in type nor a
+  `customPolicyTypes` entry (it will never be evaluated); a
+  `customPolicyTypes` entry whose ruleType collides with a built-in
+  `PolicyType` (dead — the built-in always wins). See "Custom policy
+  types" below for the latter two.
 - **`OrgPolicyEvaluator`** — the pure engine. `evaluate(contract, policy,
   now)` evaluates every policy rule (skipping one an unexpired exemption
   covers for `contract.id`) and splits the resulting `PolicyViolation`s by
@@ -495,7 +504,10 @@ Same three-layer split as the contract model itself, all in `contract/`
 
 Deliberately narrow and closed, mirroring `RuleType`/`InterpretedRule`'s
 own role for contract-level rules — not a general policy-expression
-language:
+language. An organization needing a policy type outside this set isn't
+stuck waiting on an Invaract release for it, though — see "Custom policy
+types" below, the reflective escape hatch this closed set doesn't have to
+grow to cover:
 
 - **`require_catalog`** (optional `technology`) — a dataset must declare
   `catalog.required: true`, optionally pinning `technology` (e.g.
@@ -595,6 +607,76 @@ A future contract-level check (e.g. a hypothetical `require_status`)
 would join `ContractPolicy`, not `DatasetPolicy` — the split exists so
 adding one doesn't force a dataset-shaped evaluation path onto a check
 that was never about any one dataset.
+
+### Custom policy types (`CustomPolicyEvaluator`)
+
+The seven built-in types above are deliberately closed — but an
+organization's own policy vocabulary isn't limited to them. `OrgPolicy`
+carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
+a `PolicyRule.ruleType` this document uses to the fully-qualified class
+name of a `CustomPolicyEvaluator` implementation:
+
+```scala
+trait CustomPolicyEvaluator {
+  def evaluate(contract: Contract, rule: PolicyRule): List[PolicyViolation]
+}
+```
+
+`CustomPolicyEvaluatorFactory` resolves it reflectively — `Class.forName`,
+a public no-arg constructor, one instance cached and reused across every
+rule/contract that names it — the identical "class name in config, loaded
+once" mechanism `spark-adapter`'s `NotificationSinkFactory` already
+established for a `NotificationSink`'s `sink.class`, just relocated into
+`contract` itself (plain JVM reflection, not a `spark-adapter`/Spark
+dependency `contract` would otherwise have to take on). This is what
+turns "add an organizational policy type" from "change Invaract's own
+source, cut a release, wait for it" into "write and deploy a small jar" —
+see CLAUDE.md's "External Attachability Requirement": the whole thing
+composes for free with the conf-driven `spark.invaract.orgPolicy=<path>`
+attachment point ("Enforcement in `spark-adapter`" below) — a platform
+team points `--jars` at their own evaluator jar alongside the engine's,
+with zero change to any governed job's own source.
+
+`OrgPolicyEvaluator.evaluateRule` dispatches to `customPolicyTypes` only
+when `rule.interpret` is `None` — i.e. only for a `ruleType` outside
+`PolicyType.All` — so a `customPolicyTypes` key that collides with a
+built-in type is inert; the built-in interpretation always wins
+(`OrgPolicyValidator` warns on this, not errors, the same "still
+evaluates correctly, just not the way you might expect" treatment
+`ContractLevelTypes`' inert `scope`/`when` already gets). Unlike a built-in
+`InterpretedPolicy`, there is no `DatasetPolicy`/`ContractPolicy` split
+here: an implementation receives the whole `Contract` and the raw
+`PolicyRule` (`scope`/`when`/`mode`/`properties` all included) and decides
+for itself what to check and how — or whether — to honor
+`rule.scope`/`rule.when`. `PolicyExemption` coverage and `PolicyMode`
+splitting still apply automatically, though: both happen in
+`OrgPolicyEvaluator.evaluate` *before* dispatching to either a built-in or
+a custom type, so an implementation gets both for free without
+reimplementing either.
+
+Two different failure modes get two different treatments, deliberately
+asymmetric:
+
+- **A misconfigured `customPolicyTypes` entry** (a typo'd class name, a
+  class with no public no-arg constructor, a class that doesn't implement
+  `CustomPolicyEvaluator`) never throws out of `OrgPolicyEvaluator` —
+  `evaluateRule` stays total/safe, the same "config problem, not ours to
+  crash a real job over" design every other malformed-policy case in this
+  file already gets. `OrgPolicyValidator` is where this becomes a visible
+  Error instead, eagerly resolving every `customPolicyTypes` entry during
+  `validate()` — the same moment `OrgPolicyLintCli` and
+  `ContractEnforcementRule.enforceOrgPolicy` already call it, before any
+  real contract is evaluated. A `PolicyRule.ruleType` matching neither a
+  built-in type nor a `customPolicyTypes` entry is a Warning (not an
+  Error — a genuinely-unrecognized type still just no-ops, the same as
+  before this field existed), since this is exactly the shape a forgotten
+  or misspelled registration takes.
+- **An exception from a custom evaluator's own `evaluate()` call**
+  (a bug in the implementation itself, not a configuration problem)
+  propagates, on purpose — fail-closed, the same principle behind every
+  other "reject rather than silently pass" decision in this codebase. A
+  broken custom check must not quietly pass every contract it was
+  supposed to be checking.
 
 ### Rule/option injection
 
@@ -748,7 +830,11 @@ absent:
 `Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule`,
 `RuleType`, and `InterpretedRule` (all in `ContractModel.scala`), plus
 `ContractParser`, `ContractValidator`, and `ContractCompatibility`'s
-public methods, are this module's binary API surface — checked by
+public methods, are this module's binary API surface — as are `OrgPolicy`
+and its own model/parser/validator/evaluator classes
+(`OrgPolicyModel.scala`/`OrgPolicyParser.scala`/`OrgPolicyValidator.scala`/
+`OrgPolicyEvaluator.scala`), `CustomPolicyEvaluator`, and
+`CustomPolicyEvaluatorFactory` — checked by
 [MiMa](https://github.com/lightbend/mima) via `sbt mimaReportBinaryIssues`,
 CI-enforced on every PR. See CLAUDE.md's "API Compatibility Requirement"
 for the full mechanism (why there's no Maven Central release to compare

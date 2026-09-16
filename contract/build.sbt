@@ -7,6 +7,11 @@ name := "invaract-contract"
 // the MINOR digit (not MAJOR, pinned at 0 until 1.0.0) to signal a
 // deliberate break - the same convention the 0.1.0 -> 0.2.0 rebrand
 // itself used.
+// 0.5.0 -> 0.6.0: OrgPolicy gained a customPolicyTypes constructor
+// parameter (see docs/CONTRACT_MODEL.md's "Custom policy types" section),
+// changing OrgPolicy.apply/copy/this's arity - the same shape of break as
+// 0.2.0 -> 0.3.0 above, confirmed by a real `sbt mimaReportBinaryIssues`
+// run against the 0.5.0 baseline below before this bump, not assumed.
 // ThisBuild-scoped, not a bare `version :=` - sbt-sonatype's
 // sonatypePublishToBundle (and other cross-cutting plugin settings) reads
 // ThisBuild/version specifically, which otherwise silently stays at sbt's
@@ -15,7 +20,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.5.0"
+ThisBuild / version := "0.6.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -91,7 +96,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.5.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.6.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -119,29 +124,31 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// The 0.4.0 -> 0.5.0 bump (this file's version above) landed on the base
-// branch in its own PR (the Dataset.description addition), which left this
-// pointing at the now-superseded 0.4.0 baseline with a "FOLLOW-UP: flip
-// this once that PR lands" comment - the same pattern the 0.2.0 -> 0.3.0
-// and 0.3.0 -> 0.4.0 bumps themselves used (see git history for prior
-// revisions of this section). That PR has now landed (base-ref itself
-// publishes 0.5.0, not 0.4.0, confirmed the hard way: a real CI run's
-// api-compatibility job failed with "Error downloading
-// com.invaract:invaract-contract_2.12:0.4.0 ... not found" resolving
-// 0.4.0, since base-ref never publishes that coordinate once its own
-// `version` moved past it), so this is that follow-up flip.
+// mimaPreviousArtifacts stays at 0.5.0 here, one version behind this
+// file's own `version` (0.6.0) above - base-ref (main) hasn't landed this
+// PR yet, so it still publishes 0.5.0 under this coordinate; pointing
+// this at 0.6.0 already would make CI's api-compatibility job fail to
+// resolve a coordinate that doesn't exist yet, the same failure a
+// previous PR hit for the 0.4.0 -> 0.5.0 bump (see git history for that
+// prior revision of this comment). Once this PR merges, a FOLLOW-UP PR
+// flips this to 0.6.0 and removes the filters below, the same two-step
+// dance the 0.2.0 -> 0.3.0, 0.3.0 -> 0.4.0, and 0.4.0 -> 0.5.0 bumps
+// themselves each used.
 mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.5.0")
 
-// FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and add
-// filters for whatever real break motivated the bump, mirroring this
-// section's own history - do not make that flip in the PR doing the bump
-// itself (base-ref won't have it yet).
-//
-// No filters needed right now: mimaPreviousArtifacts above already equals
-// this module's own current version, so there is nothing between them to
-// filter - the Dataset.description break that motivated the 0.4.0 -> 0.5.0
-// bump is now baked into both sides of the comparison. The four filters
-// that documented it against the old 0.4.0 baseline (Dataset.apply/copy/
-// this/companion) were removed here rather than left as dead entries with
-// nothing left to match.
+import com.typesafe.tools.mima.core._
+
+// The real, deliberate break motivating the 0.5.0 -> 0.6.0 bump above:
+// OrgPolicy gained a fifth constructor parameter, customPolicyTypes (see
+// docs/CONTRACT_MODEL.md's "Custom policy types" section) - confirmed by a
+// real `sbt mimaReportBinaryIssues` run against the 0.5.0 baseline before
+// this bump, not assumed. FOLLOW-UP (once a future PR bumps `version`
+// above again): flip `mimaPreviousArtifacts` to 0.6.0 and remove these
+// four filters - the break becomes baked into both sides of the
+// comparison then, the same as every prior round of this dance.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.OrgPolicy$")
+)

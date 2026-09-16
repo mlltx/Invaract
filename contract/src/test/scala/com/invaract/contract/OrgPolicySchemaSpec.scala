@@ -60,6 +60,7 @@ class OrgPolicySchemaSpec extends AnyFunSuite {
     assertConformant(fixture("valid_basic.yaml"))
     assertConformant(fixture("valid_with_condition_and_injection.yaml"))
     assertConformant(fixture("valid_with_exemptions.yaml"))
+    assertConformant(fixture("valid_with_custom_policy_type.yaml"))
   }
 
   // Structurally well-formed as documents (a schema-conformant "policies"/

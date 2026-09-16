@@ -1,0 +1,6 @@
+version: "1.0"
+policies:
+  - id: id-lowercase
+    type: require_lowercase_id
+customPolicyTypes:
+  require_lowercase_id: com.invaract.contract.ContractIdMustBeLowercaseEvaluator

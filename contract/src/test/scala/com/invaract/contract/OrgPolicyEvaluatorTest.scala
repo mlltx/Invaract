@@ -571,4 +571,81 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     val policy = OrgPolicy("1.0", exemptions = List(soon, later, sooner))
     assert(OrgPolicyEvaluator.expiringExemptions(policy, withinDays = 30, now) == List(sooner, soon, later))
   }
+
+  // -- custom policy types (CustomPolicyEvaluator / customPolicyTypes) -----
+
+  private val customClassName = classOf[ContractIdMustBeLowercaseEvaluator].getName
+
+  test("a ruleType not in PolicyType.All, with a customPolicyTypes entry, dispatches to the named evaluator") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> customClassName))
+    val violating = contract().copy(id = "Mixed_Case_Id")
+    val eval = OrgPolicyEvaluator.evaluate(violating, policy, now)
+    assert(eval.enforceViolations.size == 1)
+    assert(eval.enforceViolations.head.policyId == "id-lowercase")
+    assert(eval.enforceViolations.head.ruleType == "require_lowercase_id")
+  }
+
+  test("a custom evaluator producing no violations is reflected as no violations") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> customClassName))
+    val satisfying = contract().copy(id = "already_lowercase")
+    assert(OrgPolicyEvaluator.evaluate(satisfying, policy, now).allViolations.isEmpty)
+  }
+
+  test("a custom type's violation honors rule.mode, split into warnViolations under Warn") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty, mode = PolicyMode.Warn)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> customClassName))
+    val violating = contract().copy(id = "Mixed_Case_Id")
+    val eval = OrgPolicyEvaluator.evaluate(violating, policy, now)
+    assert(eval.enforceViolations.isEmpty)
+    assert(eval.warnViolations.size == 1)
+  }
+
+  test("an unexpired exemption suppresses a custom type's violation the same as a built-in one") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption("Mixed_Case_Id", List("id-lowercase"), "reason")),
+      customPolicyTypes = Map("require_lowercase_id" -> customClassName)
+    )
+    val violating = contract().copy(id = "Mixed_Case_Id")
+    assert(OrgPolicyEvaluator.evaluate(violating, policy, now).allViolations.isEmpty)
+  }
+
+  test("a ruleType with no customPolicyTypes entry and no built-in match produces no violation (not a crash)") {
+    val rule = PolicyRule("mystery", "totally_unrecognized_type", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule))
+    assert(OrgPolicyEvaluator.evaluate(contract(), policy, now).allViolations.isEmpty)
+  }
+
+  test("a customPolicyTypes entry naming an unresolvable class produces no violation, does not throw") {
+    val rule = PolicyRule("broken", "totally_unrecognized_type", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("totally_unrecognized_type" -> "com.invaract.contract.NoSuchClassAtAll"))
+    assert(OrgPolicyEvaluator.evaluate(contract(), policy, now).allViolations.isEmpty)
+  }
+
+  test("a customPolicyTypes entry duplicating a built-in ruleType is inert - the built-in interpretation wins") {
+    val rule = PolicyRule("catalog-required", PolicyType.RequireCatalog, Map.empty, scope = PolicyScope.Outputs)
+    // Points require_catalog at an evaluator that always violates for every dataset in scope - if this were
+    // ever consulted, the un-cataloged "out" dataset below would produce a violation via it too, on top of the
+    // built-in check's own. It must not be: rule.interpret is Some(...) for a well-formed require_catalog rule,
+    // so evaluateRule never even looks at customPolicyTypes for this rule.
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      customPolicyTypes = Map(PolicyType.RequireCatalog -> classOf[AlwaysViolatesPerDatasetInScopeEvaluator].getName)
+    )
+    val eval = OrgPolicyEvaluator.evaluate(contract(outputs = List(dataset("out"))), policy, now)
+    assert(eval.allViolations.size == 1) // the built-in require_catalog violation only, not a second one from the custom evaluator
+  }
+
+  test("an exception thrown by a custom evaluator's own evaluate() propagates, rather than being swallowed") {
+    val rule = PolicyRule("throws", "throwing_type", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("throwing_type" -> classOf[ThrowingCustomPolicyEvaluator].getName))
+    intercept[RuntimeException] {
+      OrgPolicyEvaluator.evaluate(contract(), policy, now)
+    }
+  }
 }

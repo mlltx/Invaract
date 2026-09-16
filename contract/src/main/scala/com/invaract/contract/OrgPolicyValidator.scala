@@ -34,6 +34,24 @@ object OrgPolicyValidator {
           path,
           s"Policy type '${rule.ruleType}' has malformed or missing properties for its shape" + ruleHint(rule.ruleType)
         )
+      } else if (
+        !PolicyType.All.contains(rule.ruleType) && !policy.customPolicyTypes.contains(rule.ruleType)
+      ) {
+        // Not an Error: this is the same "recorded but never acted on"
+        // behavior PolicyType's own doc describes for a ruleType this
+        // version of Invaract simply doesn't (yet) know - could be a
+        // forward-compatible document authored against a newer Invaract,
+        // not necessarily a mistake. Still worth surfacing as a Warning,
+        // though, now that customPolicyTypes exists: this is exactly the
+        // shape a typo'd or forgotten customPolicyTypes registration takes
+        // (the rule references a type, but nothing maps it to a class), and
+        // that failure mode was silent before this field existed.
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"Policy type '${rule.ruleType}' is not a built-in type and has no customPolicyTypes entry naming a " +
+            "CustomPolicyEvaluator for it - this rule will never be evaluated"
+        )
       }
       // A ContractPolicy type (PolicyType.ContractLevelTypes) checks the
       // contract as a whole, not one dataset at a time - scope/when only
@@ -57,6 +75,37 @@ object OrgPolicyValidator {
 
     duplicateNames(policy.policies.map(_.id)).foreach { id =>
       issues += ValidationIssue(ValidationSeverity.Error, "policies", s"Duplicate policy id '$id'")
+    }
+
+    policy.customPolicyTypes.toList.sortBy(_._1).foreach { case (ruleType, className) =>
+      val path = s"customPolicyTypes.$ruleType"
+      if (ruleType.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, "customPolicyTypes", "A customPolicyTypes key must not be empty")
+      } else if (PolicyType.All.contains(ruleType)) {
+        // Dead entry, not a crash: OrgPolicyEvaluator.evaluateRule only
+        // ever consults customPolicyTypes when rule.interpret is None,
+        // which a built-in ruleType with well-formed properties never is -
+        // the built-in interpretation always wins. Flagged the same way
+        // ContractLevelTypes' inert scope/when is: a Warning, since it
+        // still evaluates correctly, just not via the class this entry
+        // names.
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"customPolicyTypes entry for '$ruleType' is dead - it's already a built-in PolicyType, which always takes precedence"
+        )
+      }
+      if (className.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "A customPolicyTypes class name must not be empty")
+      } else {
+        CustomPolicyEvaluatorFactory.tryResolve(className).failed.foreach { e =>
+          issues += ValidationIssue(
+            ValidationSeverity.Error,
+            path,
+            s"customPolicyTypes class '$className' could not be resolved: ${e.getMessage}"
+          )
+        }
+      }
     }
 
     val knownPolicyIds = policy.policies.map(_.id).toSet

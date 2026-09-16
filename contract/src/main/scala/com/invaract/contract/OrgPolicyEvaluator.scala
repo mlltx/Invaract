@@ -46,10 +46,16 @@ object OrgPolicyEvaluator {
 
   /** Evaluates every policy rule in `policy` against `contract`, skipping
     * any rule an unexpired `PolicyExemption` covers for `contract.id`, and
-    * splits the resulting violations by `PolicyMode`.
+    * splits the resulting violations by `PolicyMode`. A rule whose
+    * `ruleType` isn't one of the built-in `PolicyType`s is dispatched to
+    * `policy.customPolicyTypes`'s `CustomPolicyEvaluator`, if it names one
+    * for that `ruleType` — exemption coverage and mode-splitting apply to
+    * a custom type's violations exactly the same way, since both happen
+    * here, before `evaluateRule` dispatches to either kind.
     */
   def evaluate(contract: Contract, policy: OrgPolicy, now: LocalDate = LocalDate.now()): OrgPolicyEvaluation = {
-    val violations = policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, now))
+    val violations =
+      policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, now))
     val (enforceViolations, warnViolations) = violations.partition(_.mode == PolicyMode.Enforce)
     OrgPolicyEvaluation(enforceViolations, warnViolations)
   }
@@ -93,12 +99,31 @@ object OrgPolicyEvaluator {
       contract: Contract,
       rule: PolicyRule,
       exemptions: List[PolicyExemption],
+      customPolicyTypes: Map[String, String],
       now: LocalDate
   ): List[PolicyViolation] = {
     if (exemptions.exists(_.covers(contract.id, rule.id, now))) Nil
     else
       rule.interpret match {
-        case None => Nil // unrecognized or malformed policy type - OrgPolicyValidator's job to flag this, not ours to crash on
+        case None =>
+          // Not a built-in type (or malformed properties for one) - falls
+          // through to customPolicyTypes, the reflective escape hatch for
+          // a policy type Invaract's own PolicyType set doesn't cover (see
+          // CustomPolicyEvaluator). Deliberately total here too, the same
+          // as the built-in "unrecognized or malformed -> Nil" case below
+          // it replaces: neither "no customPolicyTypes entry for this
+          // ruleType" nor "the entry's class doesn't resolve" ever throws
+          // out of this method - OrgPolicyValidator's job to flag either,
+          // not ours to crash a real job over a misconfigured policy
+          // document.
+          customPolicyTypes.get(rule.ruleType) match {
+            case Some(className) =>
+              CustomPolicyEvaluatorFactory.tryResolve(className) match {
+                case scala.util.Success(evaluator) => evaluator.evaluate(contract, rule)
+                case scala.util.Failure(_)         => Nil
+              }
+            case None => Nil
+          }
         case Some(InterpretedPolicy.RequireExtension(key, value)) =>
           checkRequireExtension(rule, contract, key, value)
         case Some(InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
