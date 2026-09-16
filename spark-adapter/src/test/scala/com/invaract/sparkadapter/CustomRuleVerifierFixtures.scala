@@ -6,13 +6,13 @@ package com.invaract.sparkadapter
 import com.invaract.contract.ContractRule
 import com.invaract.ir.RowMutation
 
-/** Real, permanent `CustomRuleVerifier` fixtures for
-  * `CustomRuleVerifierFactoryTest`/`RuleVerifierSpec`/
-  * `ContractEnforcementRuleCustomRuleTypesSpec` — a class name reflectively
-  * resolved against the real test classpath, the same "real fixture, not a
-  * mock" approach `NotificationSinkFactory`'s and
-  * `CustomPolicyEvaluatorFactory`'s own tests use.
-  */
+// Real, permanent CustomRuleVerifier fixtures for
+// CustomRuleVerifierFactoryTest/RuleVerifierSpec/
+// ContractEnforcementRuleCustomRuleTypesSpec - a class name reflectively
+// resolved against the real test classpath, the same "real fixture, not a
+// mock" approach NotificationSinkFactory's and CustomPolicyEvaluatorFactory's
+// own tests use.
+
 /** Deterministic, side-effect-free: violates an UPDATE that assigns a
   * `password` column, regardless of what the contract's own
   * `allowed_update_columns` rule (if any) says — a rule type Invaract's

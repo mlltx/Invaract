@@ -106,19 +106,18 @@ private[sparkadapter] object RuleVerifier {
     * contract, or just an operation kind it happens not to declare any
     * rule for (in which case there's nothing to fail closed over).
     * Preserved for direct unit coverage against an already-`interpret`ed
-    * `InterpretedRule` — a thin delegation onto the matching built-in
-    * `CustomRuleVerifier`'s own `appliesTo`, translating `kind` at the
-    * boundary. `anyRuleAppliesTo`, below, is what `ContractEnforcementRule`
-    * actually calls, since it also has to reach a *custom* rule type,
-    * whose `ContractRule.interpret` is always `None`.
+    * `InterpretedRule`, and doubling as a compile-time completeness guard:
+    * this is the one remaining exhaustive `match` over `InterpretedRule`'s
+    * subtypes, so a new built-in rule type that isn't also wired into
+    * `builtinVerifiers` fails to compile here rather than silently
+    * never applying. `anyRuleAppliesTo`, below, is what
+    * `ContractEnforcementRule` actually calls, since it also has to reach
+    * a *custom* rule type, whose `ContractRule.interpret` is always `None`.
     */
-  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = {
-    val mutationKind = toMutationKind(kind)
-    rule match {
-      case _: InterpretedRule.MergeCondition         => MergeConditionVerifier.appliesTo(mutationKind)
-      case InterpretedRule.ForbidUnconditionalDelete => ForbidUnconditionalDeleteVerifier.appliesTo(mutationKind)
-      case _: InterpretedRule.AllowedUpdateColumns   => AllowedUpdateColumnsVerifier.appliesTo(mutationKind)
-    }
+  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = rule match {
+    case _: InterpretedRule.MergeCondition         => kind == RowMutationSupport.Kind.Merge
+    case InterpretedRule.ForbidUnconditionalDelete => kind == RowMutationSupport.Kind.Delete
+    case _: InterpretedRule.AllowedUpdateColumns   => kind == RowMutationSupport.Kind.Update
   }
 
   /** Whether any of `rules` — built-in or, via `customRuleTypes`, custom —

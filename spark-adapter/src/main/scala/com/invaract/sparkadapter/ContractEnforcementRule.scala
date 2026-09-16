@@ -530,9 +530,10 @@ object ContractEnforcementRule {
         // that kind needs - see RowMutationSupport's class doc) fails
         // closed instead of silently skipping the rule, but only when the
         // contract actually declares a rule that kind is relevant to -
-        // RuleVerifier.appliesTo decides that, so an UPDATE this module
-        // can't fully verify doesn't spuriously fail a contract that only
-        // declares forbid_unconditional_delete, say.
+        // RuleVerifier.anyRuleAppliesTo decides that (built-in or custom
+        // rule types alike), so an UPDATE this module can't fully verify
+        // doesn't spuriously fail a contract that only declares
+        // forbid_unconditional_delete, say.
         // Classified once and reused below by both ruleViolations and
         // fingerprinting - RowMutationSupport.classify re-derives the same
         // RowMutation from the same `plan` either way, so computing it
