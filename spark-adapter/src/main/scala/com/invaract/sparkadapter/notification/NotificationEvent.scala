@@ -176,6 +176,27 @@ object CatalogInfo {
   * ignore/error. `None` for a plain append/overwrite/create, where
   * `saveMode` already conveys the operation and this would only duplicate
   * it.
+  *
+  * `partitionColumns` is which column(s) (or, for a DSv2 catalog table,
+  * partition transform(s) — `"bucket(4, id)"`/`"days(ts)"`, rendered the
+  * same way `SHOW CREATE TABLE`/a connector's own `PARTITIONED BY (...)`
+  * clause would) the write's target is partitioned by, when that's a
+  * knowable, static property of the target — `WriteCommandInfo
+  * .partitionColumns`'s own doc has the full per-write-shape source
+  * (`InsertIntoHadoopFsRelationCommand.partitionColumns`,
+  * `CatalogTable.partitionColumnNames`, a DSv2 `Table.partitioning()`,
+  * ...). `Nil` for a genuinely unpartitioned target *and* for a write
+  * shape this hasn't been wired up for — the same "no further distinction
+  * needed" convention `schema` already uses over `Option[List[...]]`.
+  * This reports the target's partitioning *schema*, not which specific
+  * partition *values* this write's own rows happened to touch — Spark
+  * exposes no such per-write metric (no `SQLMetric` the way
+  * `rowCount`/`bytesWritten`/`fileCount` above have one), so a dynamically
+  * partitioned INSERT's actual touched partition values aren't
+  * knowable through this mechanism; a *static*-partition write (Hive's
+  * `INSERT ... PARTITION(dt = '2024-01-01')`) does supply a concrete
+  * value, but that value isn't carried by this field either — see
+  * `WriteCommandInfo.partitionColumns`'s own doc.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -193,7 +214,8 @@ case class WriteEvent(
   deltaVersion: Option[Long] = None,
   icebergSnapshotId: Option[Long] = None,
   operation: Option[String] = None,
-  catalog: Option[CatalogInfo] = None
+  catalog: Option[CatalogInfo] = None,
+  partitionColumns: List[String] = Nil
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }
