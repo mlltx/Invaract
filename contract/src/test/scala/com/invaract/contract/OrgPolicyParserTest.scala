@@ -231,4 +231,25 @@ class OrgPolicyParserTest extends AnyFunSuite {
       OrgPolicyParser.parse(yaml)
     }
   }
+
+  test("parse should parse customPolicyTypes as a ruleType -> class name map") {
+    val yaml =
+      """version: "1.0"
+        |customPolicyTypes:
+        |  require_lowercase_id: com.acme.governance.RequireLowercaseIdEvaluator
+        |  require_owning_team: com.acme.governance.RequireOwningTeamEvaluator
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(
+      policy.customPolicyTypes == Map(
+        "require_lowercase_id" -> "com.acme.governance.RequireLowercaseIdEvaluator",
+        "require_owning_team" -> "com.acme.governance.RequireOwningTeamEvaluator"
+      )
+    )
+  }
+
+  test("parse should default customPolicyTypes to empty when absent") {
+    val policy = OrgPolicyParser.parse("version: \"1.0\"\n")
+    assert(policy.customPolicyTypes.isEmpty)
+  }
 }

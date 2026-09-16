@@ -42,7 +42,9 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Seven policy types are interpreted today:
+2. Seven policy types are interpreted today — not everything an organization needs, though:
+   see [Write your own policy type](#write-your-own-policy-type) below for a type outside
+   this set, with no Invaract source change or release needed.
 
    | Type | Properties | Checks |
    |---|---|---|
@@ -438,6 +440,83 @@ data-dictionary discoverability — no properties to configure, just presence:
   scope: outputs
   description: "Every output must document what it is/contains."
 ```
+
+## Write your own policy type
+
+The seven built-in types cover a lot of ground, but they're a closed set — an
+organization's own vocabulary ("every dataset must carry an `approvedBy` extension
+matching one of these three names," "every output's location must fall under one of
+these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a
+`type:` name your policy document uses to a class implementing
+`CustomPolicyEvaluator`:
+
+```scala
+import com.invaract.contract.{Contract, CustomPolicyEvaluator, PolicyRule, PolicyViolation}
+
+class RequireApprovedLocationPrefix extends CustomPolicyEvaluator {
+  private val approvedPrefixes = List("s3a://prod-warehouse/", "s3a://prod-archive/")
+
+  override def evaluate(contract: Contract, rule: PolicyRule): List[PolicyViolation] =
+    contract.outputs.collect {
+      case d if !approvedPrefixes.exists(d.location.startsWith) =>
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(d.name),
+          s"organizational policy '${rule.id}' requires dataset '${d.name}''s location to start with " +
+            s"one of ${approvedPrefixes.mkString(", ")}, but it is '${d.location}'.",
+          s"Move dataset '${d.name}' under an approved prefix, or update the approved list."
+        )
+    }
+}
+```
+
+Point `customPolicyTypes` at it, the same class-name-in-config shape `sink.class`
+uses for a [notification sink](/guides/notification-sinks/#writing-your-own-sink):
+
+```yaml
+version: "1.0"
+policies:
+  - id: approved-location-prefix
+    type: require_approved_location_prefix
+customPolicyTypes:
+  require_approved_location_prefix: com.acme.governance.RequireApprovedLocationPrefix
+```
+
+Build and deploy it as its own small jar, and add it to `--jars` alongside the engine's
+own — no Invaract source change, and no change to any governed job's own source either:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.5.0.jar,my-governance-policies.jar \
+  --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
+  my-real-job.jar
+```
+
+Unlike a built-in type, `evaluate` gets the whole `Contract` and the raw `PolicyRule`
+(`scope`/`when`/`mode`/`properties`, all included) and decides for itself what to check —
+`rule.scope` isn't applied for you the way it is for a built-in `require_catalog`, for
+instance. Exemptions and `mode: warn`/`enforce` splitting still work automatically,
+though: both are already handled before your evaluator is ever called.
+
+<Aside type="tip" title="A typo is caught at lint time, not the next time a job runs">
+`OrgPolicyLintCli` (and `ContractEnforcementRule` itself) validate every `customPolicyTypes`
+entry eagerly — a misspelled class name, or one missing a public no-arg constructor, is an
+`OrgPolicyValidator` Error before any contract is ever checked against it. A `type:` naming
+neither a built-in type nor a `customPolicyTypes` entry is a Warning, not silently ignored —
+exactly the shape a forgotten registration takes.
+</Aside>
+
+<Aside type="caution" title="A bug in your own evaluator isn't swallowed">
+An exception thrown from `evaluate` itself propagates, the same as a bug anywhere else in a
+job's own installed check — it does not silently pass every contract it was supposed to be
+checking. Construction failures (a bad class name) are the only thing `OrgPolicyValidator`
+catches ahead of time; a runtime bug in your own check logic is yours to fix like any other
+code defect.
+</Aside>
 
 ## What's next
 

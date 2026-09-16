@@ -43,10 +43,11 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("malformed or missing properties")))
   }
 
-  test("an unrecognized policy type is not an Error - recorded, not interpreted") {
+  test("an unrecognized policy type is not an Error - recorded, not interpreted - but is a Warning") {
     val policy = OrgPolicy("1.0", List(PolicyRule("custom", "some_future_type", Map("x" -> "y"))))
     val result = OrgPolicyValidator.validate(policy)
     assert(result.isValid)
+    assert(result.warnings.exists(_.message.contains("will never be evaluated")))
   }
 
   test("require_extension with no 'key' property is an Error, not silently accepted") {
@@ -222,5 +223,75 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     val policy = OrgPolicy("1.0", List(requireCatalog), exemptions = List(PolicyExemption("c", List("catalog-required"), "reason", None)))
     val result = OrgPolicyValidator.validate(policy)
     assert(result.warnings.isEmpty)
+  }
+
+  // -- customPolicyTypes -----------------------------------------------------
+
+  private val lowercaseIdEvaluatorClass = classOf[ContractIdMustBeLowercaseEvaluator].getName
+
+  test("a customPolicyTypes entry naming a resolvable class is valid, no issues") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> lowercaseIdEvaluatorClass))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("a customPolicyTypes entry with an empty class name is an Error") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> ""))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("class name must not be empty")))
+  }
+
+  test("a customPolicyTypes entry naming a class with no public no-arg constructor is an Error") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      customPolicyTypes = Map("require_lowercase_id" -> classOf[NoNoArgConstructorCustomPolicyEvaluator].getName)
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(e => e.path == "customPolicyTypes.require_lowercase_id" && e.message.contains("could not be resolved")))
+  }
+
+  test("a customPolicyTypes entry naming a class that doesn't implement CustomPolicyEvaluator is an Error") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      customPolicyTypes = Map("require_lowercase_id" -> classOf[NotACustomPolicyEvaluator].getName)
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.isValid)
+  }
+
+  test("a customPolicyTypes entry naming a class that doesn't exist is an Error") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      customPolicyTypes = Map("require_lowercase_id" -> "com.invaract.contract.NoSuchClassAtAll")
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.isValid)
+  }
+
+  test("a customPolicyTypes entry colliding with a built-in PolicyType is a Warning, not an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(requireCatalog),
+      customPolicyTypes = Map(PolicyType.RequireCatalog -> lowercaseIdEvaluatorClass)
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.exists(w => w.path == s"customPolicyTypes.${PolicyType.RequireCatalog}" && w.message.contains("dead")))
+  }
+
+  test("a rule referencing a ruleType with a valid customPolicyTypes entry produces no 'will never be evaluated' warning") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val policy = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> lowercaseIdEvaluatorClass))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.warnings.exists(_.message.contains("will never be evaluated")))
   }
 }

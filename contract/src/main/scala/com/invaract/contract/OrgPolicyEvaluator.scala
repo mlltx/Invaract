@@ -46,10 +46,17 @@ object OrgPolicyEvaluator {
 
   /** Evaluates every policy rule in `policy` against `contract`, skipping
     * any rule an unexpired `PolicyExemption` covers for `contract.id`, and
-    * splits the resulting violations by `PolicyMode`.
+    * splits the resulting violations by `PolicyMode`. Every rule is
+    * evaluated through the same `CustomPolicyEvaluator` interface —
+    * `resolveEvaluator` picks a built-in `PolicyType`'s evaluator
+    * (`builtinEvaluators`) first, falling back to `policy.customPolicyTypes`
+    * only for a `ruleType` outside that set — so exemption coverage and
+    * mode-splitting apply identically to a built-in and a custom type's
+    * violations alike, since both happen here, before dispatch.
     */
   def evaluate(contract: Contract, policy: OrgPolicy, now: LocalDate = LocalDate.now()): OrgPolicyEvaluation = {
-    val violations = policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, now))
+    val violations =
+      policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, now))
     val (enforceViolations, warnViolations) = violations.partition(_.mode == PolicyMode.Enforce)
     OrgPolicyEvaluation(enforceViolations, warnViolations)
   }
@@ -93,32 +100,100 @@ object OrgPolicyEvaluator {
       contract: Contract,
       rule: PolicyRule,
       exemptions: List[PolicyExemption],
+      customPolicyTypes: Map[String, String],
       now: LocalDate
-  ): List[PolicyViolation] = {
+  ): List[PolicyViolation] =
     if (exemptions.exists(_.covers(contract.id, rule.id, now))) Nil
-    else
-      rule.interpret match {
-        case None => Nil // unrecognized or malformed policy type - OrgPolicyValidator's job to flag this, not ours to crash on
-        case Some(InterpretedPolicy.RequireExtension(key, value)) =>
-          checkRequireExtension(rule, contract, key, value)
-        case Some(InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
-          checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
-        case Some(datasetPolicy: InterpretedPolicy.DatasetPolicy) =>
-          val datasets = datasetsInScope(contract, rule.scope).filter(matchesCondition(_, rule.when))
-          datasetPolicy match {
-            case InterpretedPolicy.RequireCatalog(technology) =>
-              datasets.flatMap(checkRequireCatalog(rule, _, technology))
-            case InterpretedPolicy.RequireField(name, fieldType) =>
-              datasets.flatMap(checkRequireField(rule, _, name, fieldType))
-            case InterpretedPolicy.FieldNamingConvention(pattern) =>
-              datasets.flatMap(checkFieldNamingConvention(rule, _, pattern))
-            case InterpretedPolicy.RequireFormat(formats) =>
-              datasets.flatMap(checkRequireFormat(rule, _, formats))
-            case InterpretedPolicy.RequireDatasetDescription =>
-              datasets.flatMap(checkRequireDatasetDescription(rule, _))
-          }
-      }
-  }
+    else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
+
+  /** Looks up the `CustomPolicyEvaluator` that evaluates `ruleType` — a
+    * built-in `PolicyType` (`builtinEvaluators`, below) always wins when
+    * present; `customPolicyTypes`'s reflective escape hatch is consulted
+    * only when `ruleType` matches neither. This one-directional fallback
+    * is why a `customPolicyTypes` entry colliding with a built-in
+    * `ruleType` is dead — the built-in lookup succeeds first, so the
+    * `customPolicyTypes` entry for it is never even reached (see
+    * `OrgPolicyValidator`'s matching Warning). Deliberately total, never
+    * throws: neither a `ruleType` matching neither set nor a
+    * `customPolicyTypes` entry naming an unresolvable class is ours to
+    * crash a real job over — `OrgPolicyValidator`'s job to flag either.
+    */
+  private def resolveEvaluator(ruleType: String, customPolicyTypes: Map[String, String]): Option[CustomPolicyEvaluator] =
+    builtinEvaluators.get(ruleType).orElse {
+      customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
+    }
+
+  /** The seven built-in `PolicyType`s, each an ordinary
+    * `CustomPolicyEvaluator` — the identical trait a third party's own
+    * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
+    * about a built-in type's *evaluation* is privileged anymore; what
+    * makes it "built-in" is only that it ships compiled into this module
+    * and `resolveEvaluator` checks this map before `customPolicyTypes` is
+    * ever consulted, not a separate dispatch mechanism the way an earlier
+    * version of this method had (a hardcoded match on `InterpretedPolicy`,
+    * split by `DatasetPolicy`/`ContractPolicy` — see that trait's own doc,
+    * still accurate as a *classification* even though evaluation no
+    * longer branches on it directly here).
+    *
+    * Each entry is built via `interpreted` (below): every built-in
+    * evaluator's real shape is "start from `rule.interpret`'s already
+    * parsed/validated `InterpretedPolicy`, match this type's own case, and
+    * produce no violations for anything else" — `interpreted` factors that
+    * shared wrapper out once instead of repeating it seven times (the
+    * `case Some(InterpretedPolicy.X(...)) => ...; case _ => Nil` shape
+    * each entry would otherwise need is exactly what it replaces).
+    * `interpret` returning `None` here (wrong `ruleType` for this
+    * evaluator, or malformed properties for the right one) is the
+    * identical total/safe behavior every built-in type always had.
+    */
+  private val builtinEvaluators: Map[String, CustomPolicyEvaluator] = Map(
+    PolicyType.RequireCatalog -> interpreted { case (contract, rule, InterpretedPolicy.RequireCatalog(technology)) =>
+      scopedDatasets(contract, rule).flatMap(checkRequireCatalog(rule, _, technology))
+    },
+    PolicyType.RequireField -> interpreted { case (contract, rule, InterpretedPolicy.RequireField(name, fieldType)) =>
+      scopedDatasets(contract, rule).flatMap(checkRequireField(rule, _, name, fieldType))
+    },
+    PolicyType.FieldNamingConvention -> interpreted {
+      case (contract, rule, InterpretedPolicy.FieldNamingConvention(pattern)) =>
+        scopedDatasets(contract, rule).flatMap(checkFieldNamingConvention(rule, _, pattern))
+    },
+    PolicyType.RequireExtension -> interpreted { case (contract, rule, InterpretedPolicy.RequireExtension(key, value)) =>
+      checkRequireExtension(rule, contract, key, value)
+    },
+    PolicyType.RequireFormat -> interpreted { case (contract, rule, InterpretedPolicy.RequireFormat(formats)) =>
+      scopedDatasets(contract, rule).flatMap(checkRequireFormat(rule, _, formats))
+    },
+    PolicyType.RequireDatasetDescription -> interpreted {
+      case (contract, rule, InterpretedPolicy.RequireDatasetDescription) =>
+        scopedDatasets(contract, rule).flatMap(checkRequireDatasetDescription(rule, _))
+    },
+    PolicyType.RequireExtensionIf -> interpreted {
+      case (contract, rule, InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
+        checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
+    }
+  )
+
+  /** Builds a `CustomPolicyEvaluator` from `f`, a partial function over
+    * `(contract, rule, rule.interpret's-unwrapped-value)` covering only
+    * the one `InterpretedPolicy` case this built-in type matches —
+    * `interpret` returning `None`, or `f` not being defined for the
+    * `Some` it returns (both signal "not this evaluator's ruleType, or
+    * malformed properties for it"), produce `Nil` rather than throwing,
+    * the same total/safe contract every built-in evaluator has always had.
+    * `contract`/`rule` ride along in the matched tuple (rather than `f`
+    * closing over them) purely so every `builtinEvaluators` entry above
+    * can stay a single `case` clause with no surrounding boilerplate.
+    */
+  private def interpreted(f: PartialFunction[(Contract, PolicyRule, InterpretedPolicy), List[PolicyViolation]]): CustomPolicyEvaluator =
+    (contract, rule) => rule.interpret.flatMap(ip => f.lift((contract, rule, ip))).getOrElse(Nil)
+
+  /** `datasetsInScope(contract, rule.scope)`, further narrowed by
+    * `rule.when` — the identical "which datasets does this rule apply to"
+    * computation every dataset-level built-in evaluator above needs, split
+    * out once rather than repeated seven times.
+    */
+  private def scopedDatasets(contract: Contract, rule: PolicyRule): List[Dataset] =
+    datasetsInScope(contract, rule.scope).filter(matchesCondition(_, rule.when))
 
   private def datasetsInScope(contract: Contract, scope: PolicyScope): List[Dataset] = scope match {
     case PolicyScope.Inputs  => contract.inputs

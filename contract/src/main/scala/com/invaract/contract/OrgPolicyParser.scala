@@ -72,11 +72,21 @@ object OrgPolicyParser {
       case None        => Nil
     }
 
-    // Duplicate policy ids are a structurally sound object (same as a
-    // Contract with duplicate dataset names) — OrgPolicyValidator flags
-    // this as an Error, not this parser, the same split ContractValidator
-    // uses for duplicate dataset/field names.
-    OrgPolicy(version, policies, inject, exemptions)
+    val customPolicyTypes = raw.get("customPolicyTypes") match {
+      case Some(value) =>
+        loadMap(value, "orgPolicy.customPolicyTypes").map { case (ruleType, className) =>
+          ruleType -> String.valueOf(className)
+        }
+      case None => Map.empty[String, String]
+    }
+
+    // Duplicate policy ids, a customPolicyTypes entry colliding with a
+    // built-in PolicyType, or one naming a class that doesn't resolve are
+    // all structurally sound documents (same as a Contract with duplicate
+    // dataset names) — OrgPolicyValidator flags these as Errors/Warnings,
+    // not this parser, the same split ContractValidator uses for duplicate
+    // dataset/field names.
+    OrgPolicy(version, policies, inject, exemptions, customPolicyTypes)
   }
 
   private def parsePolicyRule(raw: Map[String, Any], context: String): PolicyRule = {

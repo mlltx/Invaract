@@ -40,11 +40,18 @@ object PolicyScope {
   */
 case class PolicyCondition(sensitivityTag: String)
 
-/** Policy types Invaract currently interprets during org-policy evaluation
-  * (see `InterpretedPolicy`, and `OrgPolicyEvaluator`). Any other
-  * `PolicyRule.ruleType` is still recorded on `OrgPolicy.policies` but never
-  * acted on — deliberately a narrow, closed set (mirroring `RuleType`'s own
-  * role for contract-level rules), not a general policy-expression language.
+/** Policy types Invaract itself knows how to interpret during org-policy
+  * evaluation (see `InterpretedPolicy`, and `OrgPolicyEvaluator`) —
+  * deliberately a narrow, closed set (mirroring `RuleType`'s own role for
+  * contract-level rules), not a general policy-expression language. A
+  * `PolicyRule.ruleType` outside this set is not necessarily inert, though:
+  * if `OrgPolicy.customPolicyTypes` names a `CustomPolicyEvaluator`
+  * implementation for it, `OrgPolicyEvaluator` dispatches to that instead —
+  * see that field's own doc, and `CustomPolicyEvaluator`, for the
+  * plug-in-without-a-source-change escape hatch this closed set doesn't
+  * have to grow to cover every organization's own policy vocabulary. A
+  * `ruleType` matching neither this set nor `customPolicyTypes` is still
+  * recorded on `OrgPolicy.policies` but never acted on.
   */
 object PolicyType {
 
@@ -280,6 +287,41 @@ object PolicyRule {
   }
 }
 
+/** Extension point for an organizational policy type Invaract's own
+  * built-in `PolicyType` set doesn't cover — resolved reflectively via
+  * `OrgPolicy.customPolicyTypes` (`CustomPolicyEvaluatorFactory`), the same
+  * "class name named in config, public no-arg constructor, loaded once"
+  * mechanism `spark-adapter`'s `NotificationSinkFactory` already
+  * established for `NotificationSink`. See docs/CONTRACT_MODEL.md's
+  * "Custom policy types" section.
+  *
+  * Unlike a built-in `InterpretedPolicy`, there is no `DatasetPolicy`/
+  * `ContractPolicy` split here: an implementation receives the whole
+  * `Contract` and the raw `PolicyRule` (`scope`/`when`/`mode`/`properties`
+  * all included) and decides for itself what to check and how — or
+  * whether — to honor `rule.scope`/`rule.when`, the same freedom
+  * `PolicyRule.properties` already gives every built-in type's own
+  * `interpret`.
+  *
+  * `OrgPolicyEvaluator.evaluate` already applies `PolicyExemption`
+  * coverage and `PolicyMode` splitting uniformly, *before* dispatching to
+  * a custom type (see `evaluateRule`) — an implementation gets both for
+  * free and never needs to reimplement either. `rule.mode` is available on
+  * every returned `PolicyViolation` regardless of what an implementation
+  * sets there; only `OrgPolicyEvaluator`'s own `evaluate` decides which of
+  * `enforceViolations`/`warnViolations` a violation ends up in, from
+  * `rule.mode` — an implementation's own `PolicyViolation.mode` field is
+  * informational only, not consulted for that split.
+  *
+  * Required to be stateless: `CustomPolicyEvaluatorFactory` constructs one
+  * instance per class name and reuses it across every rule/contract that
+  * names it, the same assumption `NotificationSink` makes about a sink
+  * instance surviving many `publish` calls.
+  */
+trait CustomPolicyEvaluator {
+  def evaluate(contract: Contract, rule: PolicyRule): List[PolicyViolation]
+}
+
 /** A platform-controlled exception to one or more policy rules, for one
   * specific contract. Deliberately lives in the *policy* document, not the
   * contract: a contract's own author cannot exempt their own contract from
@@ -333,10 +375,21 @@ case class InjectedDefaults(rules: List[ContractRule] = Nil, minVerificationOpti
   * `spark.invaract.orgPolicy` conf key (`spark-adapter`'s
   * `ContractEnforcementRule`) — see docs/CONTRACT_MODEL.md's
   * "Organizational Policy" section.
+  *
+  * @param customPolicyTypes maps a `PolicyRule.ruleType` this document uses
+  *   to the fully-qualified class name of a `CustomPolicyEvaluator`
+  *   implementation that evaluates it — the plug-in-without-editing-
+  *   Invaract's-own-source extension point for an organizational policy
+  *   type the built-in `PolicyType` set doesn't cover. A `ruleType` also
+  *   present in `PolicyType.All` is inert here — the built-in
+  *   interpretation always wins (`OrgPolicyValidator` warns on this).
+  *   Resolved by `CustomPolicyEvaluatorFactory`; see
+  *   docs/CONTRACT_MODEL.md's "Custom policy types" section.
   */
 case class OrgPolicy(
   version: String,
   policies: List[PolicyRule] = Nil,
   inject: InjectedDefaults = InjectedDefaults(),
-  exemptions: List[PolicyExemption] = Nil
+  exemptions: List[PolicyExemption] = Nil,
+  customPolicyTypes: Map[String, String] = Map.empty
 )
