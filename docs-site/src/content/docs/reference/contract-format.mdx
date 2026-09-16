@@ -58,6 +58,7 @@ extensions:
 | `inputs` | no | List of datasets the transformation reads. |
 | `outputs` | yes | List of datasets the transformation produces. At least one required. |
 | `rules` | no | List of `{type, ...properties}`. Most types are recorded, not yet interpreted — three are interpreted and enforced today, see [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/). |
+| `customRuleTypes` | no | Map of `type:` name → fully-qualified `CustomRuleVerifier` class name, for a rule type outside the three built-in ones. See [Write your own rule type](/guides/enforcing-dml-rules/#write-your-own-rule-type). |
 | `extensions` | no | Free-form map, merged with any unrecognized top-level keys. |
 
 ## Dataset fields (`inputs[]` / `outputs[]`)
@@ -201,7 +202,10 @@ rules:
 
 See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for the full
 semantics of each. Every other `rules` entry type (e.g. `compatibility`) is recorded on
-the parsed contract but not yet interpreted or enforced.
+the parsed contract but not yet interpreted or enforced — unless it's named in
+`customRuleTypes`, in which case it's dispatched to a reflectively-resolved
+`CustomRuleVerifier` instead. See [Write your own rule
+type](/guides/enforcing-dml-rules/#write-your-own-rule-type).
 
 ## JSON Schema
 

@@ -162,6 +162,82 @@ class ContractParserTest extends AnyFunSuite {
     assert(contract.extensions.get("domain").contains("sales"))
   }
 
+  test("parse should parse customRuleTypes as a ruleType -> class name map, not leak into extensions") {
+    val yaml =
+      """id: custom_rule_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |customRuleTypes:
+        |  forbid_full_table_scan: com.acme.governance.ForbidFullTableScan
+        |  require_partition_pruning: com.acme.governance.RequirePartitionPruning
+        |""".stripMargin
+
+    val contract = ContractParser.parse(yaml)
+    assert(
+      contract.customRuleTypes == Map(
+        "forbid_full_table_scan" -> "com.acme.governance.ForbidFullTableScan",
+        "require_partition_pruning" -> "com.acme.governance.RequirePartitionPruning"
+      )
+    )
+    assert(!contract.extensions.contains("customRuleTypes"))
+  }
+
+  test("parse should default customRuleTypes to empty when absent") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    assert(ContractParser.parse(yaml).customRuleTypes.isEmpty)
+  }
+
+  test("write should round-trip customRuleTypes") {
+    val original = ContractParser.parse(
+      """id: custom_rule_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |customRuleTypes:
+        |  forbid_full_table_scan: com.acme.governance.ForbidFullTableScan
+        |""".stripMargin
+    )
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped.customRuleTypes == original.customRuleTypes)
+  }
+
+  test("write should omit customRuleTypes entirely for a contract that declares none") {
+    val original = ContractParser.parse(
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    )
+    assert(!ContractParser.write(original).contains("customRuleTypes"))
+  }
+
   test("parse should decode a well-formed merge_condition rule via interpret") {
     val yaml =
       """id: dml_contract

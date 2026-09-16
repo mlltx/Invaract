@@ -154,7 +154,7 @@ dependencyOverrides ++= Seq(
 // spark-adapter. Versions must track contract/ir/spark-adapter's own
 // current `version :=` exactly.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-contract" % "0.6.0",
+  "com.invaract" %% "invaract-contract" % "0.7.0",
   "com.invaract" %% "invaract-ir" % "0.4.0",
   "com.invaract" %% "invaract-spark-adapter" % "0.5.0"
 )

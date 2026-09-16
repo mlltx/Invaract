@@ -1,0 +1,13 @@
+id: custom_rule_types_example
+version: "1.0.0"
+outputs:
+  - name: out
+    location: gold.out
+    schema:
+      fields:
+        - name: id
+          type: string
+rules:
+  - type: forbid_full_table_scan
+customRuleTypes:
+  forbid_full_table_scan: com.acme.governance.ForbidFullTableScan

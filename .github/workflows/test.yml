@@ -458,7 +458,7 @@ jobs:
       matrix:
         include:
           - name: shard-1
-            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala,src/main/scala/com/invaract/sparkadapter/MutationKind.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifierFactory.scala"
           - name: shard-2
             files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala"
           - name: shard-3

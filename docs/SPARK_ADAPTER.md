@@ -1603,7 +1603,11 @@ silent gap this closes. `ContractEnforcementRule.verifyOrThrow` checks
 classification as a problem, so an operation kind the active contract
 declares no rule for still passes normally — a merge-on-read UPDATE
 under a contract that only declares `forbid_unconditional_delete` isn't
-spuriously rejected. The new `RULE_UNVERIFIABLE_DML` violation type gets
+spuriously rejected. `RuleVerifier.anyRuleAppliesTo` generalizes this
+across both built-in and custom rule types (see "Custom rule types"
+below) — a single fail-closed decision point, rather than one path for
+`InterpretedRule` and a second for a reflectively-resolved
+`CustomRuleVerifier`. The new `RULE_UNVERIFIABLE_DML` violation type gets
 the same abort-before-any-data-is-written treatment as every other
 violation.
 
@@ -1710,6 +1714,107 @@ condition this module can't be sure about. Confirmed against a real Delta
 session (`ContractEnforcementRuleSpec`'s "a MERGE INTO whose ON condition
 compares a target column to ITSELF" test): `ON t.id = t.id` is now
 correctly aborted where it previously wrongly executed.
+
+### Custom rule types (`CustomRuleVerifier`)
+
+The three built-in DML rule types above are deliberately closed — but an
+organization's own DML governance vocabulary isn't limited to them.
+`Contract` carries an eighth field, `customRuleTypes: Map[String, String]`
+(`com.invaract.contract.Contract` — see docs/CONTRACT_MODEL.md's "Custom
+rule types"), mapping a `ContractRule.ruleType` to the fully-qualified
+class name of a `CustomRuleVerifier` implementation:
+
+```scala
+trait CustomRuleVerifier {
+  def appliesTo(kind: MutationKind): Boolean
+  def verify(rule: ContractRule, mutation: RowMutation): List[Violation]
+}
+```
+
+`CustomRuleVerifierFactory` resolves it reflectively — `Class.forName`, a
+public no-arg constructor, one instance cached and reused across every
+rule/mutation that names it — the identical "class name in config, loaded
+once" mechanism `NotificationSinkFactory` established for a
+`NotificationSink`'s `sink.class` and `contract`'s own
+`CustomPolicyEvaluatorFactory` established for organizational policy's
+`CustomPolicyEvaluator` (see docs/CONTRACT_MODEL.md's "Custom policy
+types"). It's reimplemented here rather than shared with
+`CustomPolicyEvaluatorFactory`, deliberately: `CustomRuleVerifier` returns
+this module's own `Violation` type and is checked against a real
+`ir.RowMutation` extracted from a live Spark plan, both of which are
+`spark-adapter`-only concerns `contract` can't depend on (the
+`contract` → `ir` → `spark-adapter` dependency runs one way — see
+CLAUDE.md's "Module dependency direction"). This is what turns "add a DML
+rule type" from "change Invaract's own source, cut a release, wait for
+it" into "write and deploy a small jar" — see CLAUDE.md's "External
+Attachability Requirement": a platform team points `--jars` at their own
+verifier jar alongside the engine's, with zero change to any governed
+job's own source, the contract document itself (`customRuleTypes` +
+`rules`) being the only thing that changes.
+
+`MutationKind` (`Merge`/`Update`/`Delete`) is the public,
+third-party-facing counterpart to `RowMutationSupport.Kind`
+(`private[sparkadapter]`, paired with connector-specific extraction
+machinery no plugin author needs to see) — `RuleVerifier` translates
+between the two at the boundary, so a `CustomRuleVerifier`'s own
+`appliesTo`/`verify` never see connector-specific types.
+
+There is nothing special about a *built-in* type's dispatch mechanism —
+`RuleVerifier.resolveVerifier` looks `ruleType` up in `builtinVerifiers`
+(a `Map[String, CustomRuleVerifier]` covering `merge_condition`/
+`forbid_unconditional_delete`/`allowed_update_columns`, each an ordinary
+`CustomRuleVerifier` wrapping the same built-in check logic this document
+already describes above) before ever consulting `customRuleTypes`. This
+is why a `customRuleTypes` key that collides with a built-in type is
+inert; the built-in lookup always wins, the same "still evaluates
+correctly, just not the way you might expect" treatment organizational
+policy's identically-shaped collision gets (`ContractValidator` warns on
+this, not errors — see docs/CONTRACT_MODEL.md's "Custom rule types").
+`RuleVerifier.verify`/`anyRuleAppliesTo` both dispatch through
+`resolveVerifier`, so a custom rule type participates in the same
+fail-closed `Unverifiable` handling a built-in one does automatically,
+with no extra wiring on the plugin author's part.
+
+Two different failure modes get two different treatments, deliberately
+asymmetric — the same split organizational policy's `customPolicyTypes`
+already makes:
+
+- **A misconfigured `customRuleTypes` entry** (a typo'd class name, a
+  class with no public no-arg constructor, a class that doesn't implement
+  `CustomRuleVerifier`) never throws out of `RuleVerifier` —
+  `resolveVerifier` stays total/safe, treating an unresolvable entry the
+  same as any other malformed or unrecognized rule type: no violation
+  produced, not a thrown exception. `ContractEnforcementRule.requireValidContract`
+  is where this becomes a visible, loud rejection instead: it eagerly
+  resolves every `customRuleTypes` entry (via `CustomRuleVerifierFactory.tryResolve`)
+  at the same moment it already runs `ContractValidator.validate`, before
+  any write is checked — `ContractValidator` itself can only validate the
+  entry's *shape* (empty key/class name, a collision with a built-in
+  `RuleType`), since it lives in `contract`, which can't depend on
+  `CustomRuleVerifier` at all; actually resolving the named class can only
+  happen here, in `spark-adapter`.
+- **An exception from a custom verifier's own `verify()` call** (a bug in
+  the implementation itself, not a configuration problem) propagates, on
+  purpose — fail-closed, the same principle behind every other "reject
+  rather than silently pass" decision in this codebase. A broken custom
+  check must not quietly pass every mutation it was supposed to be
+  checking.
+
+**Mutation testing.** `MutationKind`/`CustomRuleVerifier` are pure
+data/interface declarations with no branching logic to mutate.
+`CustomRuleVerifierFactory`'s reflection/caching logic and `RuleVerifier`'s
+dispatch (`resolveVerifier`, `toMutationKind`, the unified `verify`/
+`anyRuleAppliesTo`) are both covered directly — `CustomRuleVerifierFactoryTest`
+mirrors `CustomPolicyEvaluatorFactoryTest`'s coverage exactly (successful
+resolution, caching, each of the three failure shapes, `tryResolve` never
+throwing); `RuleVerifierSpec` covers custom dispatch, the built-in-always-
+wins collision, an unresolvable entry's silent inertness, and a custom
+verifier's exception propagating, alongside its existing built-in-rule
+coverage. `ContractEnforcementRuleCustomRuleTypesSpec` is the real,
+`local[*]` Delta end-to-end proof: a live UPDATE blocked by a reflectively-
+resolved `CustomRuleVerifier`, and a contract naming an unresolvable class
+rejected before touching the table — the same "real fixture, not a mock"
+discipline every other plugin mechanism in this codebase is held to.
 
 ## Testing
 
@@ -2271,7 +2376,7 @@ overhead. The two levers above reduced wasted time around that core cost
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a 4-way matrix job
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
-scoped to a fixed subset of the module's 17 source files
+scoped to a fixed subset of the module's 27 source files
 (`strategy.matrix.include`, one entry per shard). This doesn't reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
 once per mutant, exactly as before — it parallelizes it across four

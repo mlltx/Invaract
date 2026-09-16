@@ -83,6 +83,44 @@ object ContractValidator {
           s"Rule type '${rule.ruleType}' has malformed or missing properties for its shape" + ruleHint(rule.ruleType)
         )
       }
+      // Deliberately no "unrecognized ruleType has no customRuleTypes
+      // entry" Warning here, unlike OrgPolicyValidator's identical-shaped
+      // check for customPolicyTypes: unlike org policy's seven-type closed
+      // set, a contract's own `rules:` is documented (see this file's own
+      // class doc, and docs/CONTRACT_MODEL.md's "Interpreted rules"
+      // section) as routinely carrying rule types Invaract doesn't
+      // interpret at all - `compatibility` (versioning mode) is a real,
+      // pervasive example, present in essentially every demo/fixture
+      // contract in this repo without ever being a mistake. Flagging that
+      // as "will never be evaluated" would be a false positive against
+      // this module's own established, intentional design - confirmed
+      // directly: adding that check broke a real "well-formed contract,
+      // no warnings" test over a `compatibility` rule, not a hypothetical.
+    }
+
+    // Only this module's own shape can be checked here: an empty
+    // ruleType/class name, or a ruleType colliding with a built-in
+    // RuleType (dead - RuleVerifier's own built-in lookup always wins,
+    // see spark-adapter's RuleVerifier for why). Whether a named class
+    // actually resolves needs CustomRuleVerifierFactory, which lives in
+    // spark-adapter - this module has no Spark dependency to reach it
+    // with, so that check happens there instead, the same moment
+    // spark-adapter's ContractEnforcementRule already runs this
+    // validator (see Contract.customRuleTypes's own doc).
+    contract.customRuleTypes.toList.sortBy(_._1).foreach { case (ruleType, className) =>
+      val path = s"customRuleTypes.$ruleType"
+      if (ruleType.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, "customRuleTypes", "A customRuleTypes key must not be empty")
+      } else if (RuleType.All.contains(ruleType)) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"customRuleTypes entry for '$ruleType' is dead - it's already a built-in RuleType, which always takes precedence"
+        )
+      }
+      if (className.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "A customRuleTypes class name must not be empty")
+      }
     }
 
     ValidationResult(issues.result())

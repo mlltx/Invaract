@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{ContractRule, InterpretedRule}
+import com.invaract.contract.{ContractRule, InterpretedRule, RuleType}
 import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, DeleteScope, Expr, RowMutation}
 
 /** Checks a contract's declared DML rules (`com.invaract.contract.RuleType`)
@@ -37,26 +37,111 @@ import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, Del
   */
 private[sparkadapter] object RuleVerifier {
 
+  /** The three built-in `RuleType`s, each an ordinary `CustomRuleVerifier`
+    * — the identical trait a third party's own DML rule type implements
+    * via `Contract.customRuleTypes`. Nothing about a built-in type's
+    * *verification* is privileged anymore; what makes it "built-in" is
+    * only that it ships compiled into this module and `resolveVerifier`
+    * checks this map before `customRuleTypes` is ever consulted, not a
+    * separate dispatch mechanism. Each still starts from `rule.interpret`,
+    * the same parsed/validated `InterpretedRule` shape `ContractValidator`'s
+    * malformed-properties check already relies on.
+    */
+  private object MergeConditionVerifier extends CustomRuleVerifier {
+    override def appliesTo(kind: MutationKind): Boolean = kind == MutationKind.Merge
+    override def verify(rule: ContractRule, mutation: RowMutation): List[Violation] = rule.interpret match {
+      case Some(InterpretedRule.MergeCondition(columns)) => checkMergeCondition(columns, mutation)
+      case _                                             => Nil
+    }
+  }
+
+  private object ForbidUnconditionalDeleteVerifier extends CustomRuleVerifier {
+    override def appliesTo(kind: MutationKind): Boolean = kind == MutationKind.Delete
+    override def verify(rule: ContractRule, mutation: RowMutation): List[Violation] = rule.interpret match {
+      case Some(InterpretedRule.ForbidUnconditionalDelete) => checkForbidUnconditionalDelete(mutation)
+      case _                                               => Nil
+    }
+  }
+
+  private object AllowedUpdateColumnsVerifier extends CustomRuleVerifier {
+    override def appliesTo(kind: MutationKind): Boolean = kind == MutationKind.Update
+    override def verify(rule: ContractRule, mutation: RowMutation): List[Violation] = rule.interpret match {
+      case Some(InterpretedRule.AllowedUpdateColumns(columns)) => checkAllowedUpdateColumns(columns, mutation)
+      case _                                                   => Nil
+    }
+  }
+
+  private val builtinVerifiers: Map[String, CustomRuleVerifier] = Map(
+    RuleType.MergeCondition -> MergeConditionVerifier,
+    RuleType.ForbidUnconditionalDelete -> ForbidUnconditionalDeleteVerifier,
+    RuleType.AllowedUpdateColumns -> AllowedUpdateColumnsVerifier
+  )
+
+  private def toMutationKind(kind: RowMutationSupport.Kind): MutationKind = kind match {
+    case RowMutationSupport.Kind.Merge  => MutationKind.Merge
+    case RowMutationSupport.Kind.Update => MutationKind.Update
+    case RowMutationSupport.Kind.Delete => MutationKind.Delete
+  }
+
+  /** Looks up the `CustomRuleVerifier` that verifies `ruleType` — a
+    * built-in `RuleType` (`builtinVerifiers`, above) always wins when
+    * present; `customRuleTypes`'s reflective escape hatch is consulted
+    * only when `ruleType` matches neither. A `customRuleTypes` entry
+    * colliding with a built-in `ruleType` is therefore dead — the
+    * built-in lookup succeeds first (see `ContractValidator`'s matching
+    * Warning). Deliberately total, never throws: neither a `ruleType`
+    * matching neither set nor a `customRuleTypes` entry naming an
+    * unresolvable class is ours to crash a real job over —
+    * `ContractEnforcementRule.requireValidContract`'s job to flag that.
+    */
+  private def resolveVerifier(ruleType: String, customRuleTypes: Map[String, String]): Option[CustomRuleVerifier] =
+    builtinVerifiers.get(ruleType).orElse {
+      customRuleTypes.get(ruleType).flatMap(className => CustomRuleVerifierFactory.tryResolve(className).toOption)
+    }
+
   /** Whether `rule` is the kind of rule `RowMutationSupport.Classification.Unverifiable(kind)`
     * would need to check — used by `ContractEnforcementRule` to decide
     * whether an operation this module recognized as DML-shaped but
     * couldn't extract facts for is actually a problem for *this*
     * contract, or just an operation kind it happens not to declare any
     * rule for (in which case there's nothing to fail closed over).
+    * Preserved for direct unit coverage against an already-`interpret`ed
+    * `InterpretedRule` — a thin delegation onto the matching built-in
+    * `CustomRuleVerifier`'s own `appliesTo`, translating `kind` at the
+    * boundary. `anyRuleAppliesTo`, below, is what `ContractEnforcementRule`
+    * actually calls, since it also has to reach a *custom* rule type,
+    * whose `ContractRule.interpret` is always `None`.
     */
-  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = (rule, kind) match {
-    case (_: InterpretedRule.MergeCondition, RowMutationSupport.Kind.Merge)         => true
-    case (InterpretedRule.ForbidUnconditionalDelete, RowMutationSupport.Kind.Delete) => true
-    case (_: InterpretedRule.AllowedUpdateColumns, RowMutationSupport.Kind.Update)   => true
-    case _                                                                          => false
+  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = {
+    val mutationKind = toMutationKind(kind)
+    rule match {
+      case _: InterpretedRule.MergeCondition         => MergeConditionVerifier.appliesTo(mutationKind)
+      case InterpretedRule.ForbidUnconditionalDelete => ForbidUnconditionalDeleteVerifier.appliesTo(mutationKind)
+      case _: InterpretedRule.AllowedUpdateColumns   => AllowedUpdateColumnsVerifier.appliesTo(mutationKind)
+    }
   }
 
-  def verify(rules: List[ContractRule], mutation: RowMutation): List[Violation] =
-    rules.flatMap(_.interpret).flatMap {
-      case InterpretedRule.MergeCondition(columns)       => checkMergeCondition(columns, mutation)
-      case InterpretedRule.ForbidUnconditionalDelete     => checkForbidUnconditionalDelete(mutation)
-      case InterpretedRule.AllowedUpdateColumns(columns) => checkAllowedUpdateColumns(columns, mutation)
-    }
+  /** Whether any of `rules` — built-in or, via `customRuleTypes`, custom —
+    * applies to `kind`. The same "fail closed on an Unverifiable
+    * classification only when a declared rule actually cares about this
+    * DML kind" decision `appliesTo` makes for one already-interpreted
+    * built-in rule, extended to a whole rule list and to custom rule
+    * types: a rule whose `ruleType` `resolveVerifier` can't resolve at
+    * all (unrecognized, or a `customRuleTypes` entry naming an
+    * unresolvable class) simply never contributes `true` here, the same
+    * total/safe behavior `verify` below has.
+    */
+  def anyRuleAppliesTo(
+      rules: List[ContractRule],
+      kind: RowMutationSupport.Kind,
+      customRuleTypes: Map[String, String] = Map.empty
+  ): Boolean = {
+    val mutationKind = toMutationKind(kind)
+    rules.exists(rule => resolveVerifier(rule.ruleType, customRuleTypes).exists(_.appliesTo(mutationKind)))
+  }
+
+  def verify(rules: List[ContractRule], mutation: RowMutation, customRuleTypes: Map[String, String] = Map.empty): List[Violation] =
+    rules.flatMap(rule => resolveVerifier(rule.ruleType, customRuleTypes).map(_.verify(rule, mutation)).getOrElse(Nil))
 
   /** Predicate-aware, not just "referenced somewhere": a declared column
     * must appear as a bare operand of a required, top-level equality

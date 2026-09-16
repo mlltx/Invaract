@@ -70,6 +70,7 @@ class ContractSchemaSpec extends AnyFunSuite {
     assertConformant(fixture("customer_orders_v1.yaml"))
     assertConformant(fixture("customer_orders_v1_1_compatible.yaml"))
     assertConformant(fixture("customer_orders_v2_breaking.yaml"))
+    assertConformant(fixture("custom_rule_types.yaml"))
   }
 
   test("a fixture with only ContractValidator warnings (not errors) still conforms to the schema") {

@@ -106,6 +106,7 @@ object ContractParser {
     if (contract.outputs.nonEmpty) doc.put("outputs", contract.outputs.map(datasetToJava).asJava)
     if (contract.rules.nonEmpty) doc.put("rules", contract.rules.map(ruleToJava).asJava)
     if (contract.extensions.nonEmpty) doc.put("extensions", contract.extensions.asJava)
+    if (contract.customRuleTypes.nonEmpty) doc.put("customRuleTypes", contract.customRuleTypes.asJava)
     doc
   }
 
@@ -162,7 +163,7 @@ object ContractParser {
   }
 
   private def parseContract(raw: Map[String, Any]): Contract = {
-    val knownKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions")
+    val knownKeys = Set("id", "version", "status", "inputs", "outputs", "rules", "extensions", "customRuleTypes")
 
     val id = requireString(raw, "id", "contract")
     val version = ContractVersion.parse(requireString(raw, "version", "contract"))
@@ -181,7 +182,15 @@ object ContractParser {
     val undeclaredExtensions = raw -- knownKeys
     val extensions = undeclaredExtensions ++ declaredExtensions
 
-    Contract(id, version, status, inputs, outputs, rules, extensions)
+    val customRuleTypes = raw.get("customRuleTypes") match {
+      case Some(value) =>
+        loadMap(value, "contract.customRuleTypes").map { case (ruleType, className) =>
+          ruleType -> String.valueOf(className)
+        }
+      case None => Map.empty[String, String]
+    }
+
+    Contract(id, version, status, inputs, outputs, rules, extensions, customRuleTypes)
   }
 
   private def parseDatasets(raw: Option[Any], field: String): List[Dataset] = raw match {

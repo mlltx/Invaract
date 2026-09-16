@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{ContractRule, InterpretedRule}
+import com.invaract.contract.{ContractRule, InterpretedRule, RuleType}
 import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, Conditional, DeleteScope, Literal, RowMutation}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -363,5 +363,106 @@ class RuleVerifierSpec extends AnyFunSuite {
     assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
     assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
     assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
+  }
+
+  // --- customRuleTypes: a ruleType Invaract's own RuleType.All doesn't
+  // cover, resolved reflectively to a CustomRuleVerifier - mirrors
+  // OrgPolicyEvaluatorTest's identically-shaped custom-dispatch coverage
+  // for CustomPolicyEvaluator/customPolicyTypes. ---
+
+  private val forbidPasswordClassName = classOf[ForbidPasswordColumnUpdateVerifier].getName
+
+  test("a ruleType not in RuleType.All, with a customRuleTypes entry, dispatches to the named verifier") {
+    val rules = List(ContractRule("forbid_password_update", Map.empty))
+    val mutation = RowMutation(updatedColumns = List("password"))
+    val violations = RuleVerifier.verify(rules, mutation, Map("forbid_password_update" -> forbidPasswordClassName))
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("password"))
+  }
+
+  test("a custom verifier producing no violations is reflected as no violations") {
+    val rules = List(ContractRule("forbid_password_update", Map.empty))
+    val mutation = RowMutation(updatedColumns = List("status")) // no 'password' column touched
+    val violations = RuleVerifier.verify(rules, mutation, Map("forbid_password_update" -> forbidPasswordClassName))
+    assert(violations.isEmpty)
+  }
+
+  test("a ruleType with no customRuleTypes entry and no built-in match produces no violation (not a crash)") {
+    val rules = List(ContractRule("totally_unrecognized_type", Map.empty))
+    val mutation = RowMutation(updatedColumns = List("password"))
+    assert(RuleVerifier.verify(rules, mutation).isEmpty)
+  }
+
+  test("a customRuleTypes entry naming an unresolvable class produces no violation, not a thrown exception") {
+    val rules = List(ContractRule("totally_unrecognized_type", Map.empty))
+    val mutation = RowMutation(updatedColumns = List("password"))
+    val violations =
+      RuleVerifier.verify(rules, mutation, Map("totally_unrecognized_type" -> "com.invaract.sparkadapter.NoSuchClassAtAll"))
+    assert(violations.isEmpty)
+  }
+
+  test("a customRuleTypes entry duplicating a built-in ruleType is inert - the built-in interpretation wins") {
+    // Maps 'merge_condition' to a verifier that ALWAYS violates - but since
+    // resolveVerifier checks builtinVerifiers first, a well-formed
+    // merge_condition rule must still be checked (and pass) via the real
+    // MergeConditionVerifier, never reaching the custom one at all.
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    val mutation = RowMutation(matchCondition = Some(equalityOn("id", "id")))
+    val violations =
+      RuleVerifier.verify(rules, mutation, Map(RuleType.MergeCondition -> classOf[AlwaysViolatesRuleVerifier].getName))
+    assert(violations.isEmpty, "the built-in merge_condition check must run, not the always-violating custom verifier")
+  }
+
+  test("an exception thrown by a custom verifier's own verify() propagates, rather than being swallowed") {
+    val rules = List(ContractRule("throwing_type", Map.empty))
+    val mutation = RowMutation(updatedColumns = List("anything"))
+    val e = intercept[RuntimeException] {
+      RuleVerifier.verify(rules, mutation, Map("throwing_type" -> classOf[ThrowingCustomRuleVerifier].getName))
+    }
+    assert(e.getMessage == "boom")
+  }
+
+  // --- anyRuleAppliesTo: the fail-closed decision RuleVerifier.appliesTo
+  // makes for a built-in InterpretedRule, generalized across both built-in
+  // and custom rule types - the check ContractEnforcementRule uses when a
+  // plan is recognized DML but this module couldn't extract the facts a
+  // rule needs (RowMutationSupport.Classification.Unverifiable). ---
+
+  test("anyRuleAppliesTo: a custom rule type applies only to the MutationKind its verifier declares") {
+    val rules = List(ContractRule("forbid_password_update", Map.empty))
+    val customTypes = Map("forbid_password_update" -> forbidPasswordClassName)
+    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update, customTypes))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge, customTypes))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Delete, customTypes))
+  }
+
+  test("anyRuleAppliesTo: an unresolvable customRuleTypes entry never applies (not a thrown exception)") {
+    val rules = List(ContractRule("totally_unrecognized_type", Map.empty))
+    val customTypes = Map("totally_unrecognized_type" -> "com.invaract.sparkadapter.NoSuchClassAtAll")
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update, customTypes))
+  }
+
+  test("anyRuleAppliesTo: a built-in ruleType with no matching customRuleTypes entry still applies via its own appliesTo") {
+    val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
+    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update))
+  }
+
+  test("anyRuleAppliesTo: a malformed built-in rule (bad shape) still fails closed by ruleType alone") {
+    // resolveVerifier's built-in lookup succeeds by ruleType string alone,
+    // independent of whether ContractRule.interpret can actually parse the
+    // rule's params - a genuinely malformed merge_condition rule (missing
+    // 'columns') must still be recognized as Merge-relevant here, so an
+    // Unverifiable Merge plan still fails closed rather than silently
+    // passing because interpret() happened to fail.
+    val rules = List(ContractRule("merge_condition", Map.empty)) // malformed: no 'columns'
+    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
+  }
+
+  test("anyRuleAppliesTo: an unrecognized ruleType with no customRuleTypes entry never applies") {
+    val rules = List(ContractRule("compatibility", Map("mode" -> "backward")))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Delete))
   }
 }
