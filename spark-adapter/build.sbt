@@ -1025,25 +1025,29 @@ strykerThresholdsBreak := 70
 // standing convention (never flip in the same PR as the bump - base-ref
 // won't have it yet).
 //
-// The 0.4.0 -> 0.5.0 bump (this file's version above) is this module's own
-// next deliberate break: notification.WriteEvent gained a trailing
+// The 0.4.0 -> 0.5.0 bump (this file's version above) was this module's own
+// deliberate break: notification.WriteEvent gained a trailing
 // `partitionColumns: List[String]` constructor parameter (see
 // contract/build.sbt's and ir/build.sbt's matching comments for the
 // identical reasoning - source-compatible, not binary-compatible, since
 // Scala's case-class codegen has exactly one apply/copy/constructor per
-// class). Filtered per MiMa's own suggested exclusions for exactly this
-// break:
-import com.typesafe.tools.mima.core._
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.WriteEvent$")
-)
-
-// FOLLOW-UP (once a future PR bumps `version` above again): flip
-// `mimaPreviousArtifacts` to this module's new current version and remove
-// the filters above once base-ref itself publishes 0.5.0 (mirroring this
-// section's own history) - do not make that flip in the PR doing the bump
-// itself (base-ref won't have it yet).
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.4.0")
+// class).
+//
+// mimaPreviousArtifacts below is that bump's own follow-up flip: the PR
+// that landed the 0.4.0 -> 0.5.0 bump (WriteEvent.partitionColumns) left
+// this pointing at the now-superseded 0.4.0 baseline with a "FOLLOW-UP:
+// flip this once that PR lands" comment - the identical pattern this
+// section's own history already shows for 0.3.0 -> 0.4.0 - but that
+// follow-up flip was never made in a subsequent PR, silently breaking
+// api-compatibility on every PR against main since (confirmed the hard
+// way: a real CI run's api-compatibility job failed with "Error
+// downloading com.invaract:invaract-spark-adapter_2.12:0.4.0 ... not
+// found" resolving 0.4.0, since base-ref never publishes that coordinate
+// once its own `version` moved past it - the identical failure mode
+// contract/build.sbt's own matching comment documents for the same bug
+// in that module). This is that overdue flip: mimaPreviousArtifacts now
+// equals this module's own current version, so the WriteEvent break is
+// baked into both sides of the comparison and its four filters (which
+// documented it against the old 0.4.0 baseline) are removed rather than
+// left as dead entries with nothing left to match.
+mimaPreviousArtifacts := Set("com.invaract" %% "invaract-spark-adapter" % "0.5.0")
