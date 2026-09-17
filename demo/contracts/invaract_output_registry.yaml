@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output_registry
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    Same schema as demo/contracts/invaract_output.yaml, under a distinct id -
+    dev/registry-demo registers this file's content into a running
+    invaract-registry server (PUT /contracts/invaract_demo_output_registry/versions/1.0.0),
+    then runs DemoJobHarness with
+    spark.invaract.contract=registry://invaract_demo_output_registry@1.0.0
+    instead of a local file path, proving spark-adapter's registry://
+    resolution (com.invaract.sparkadapter.registry.ContractSource) end to
+    end against a real Spark job. See docs/CONTRACT_REGISTRY.md.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+          sensitivityTags: [internal]
+
+outputs:
+  - name: result
+    location: demo/output/result.parquet
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

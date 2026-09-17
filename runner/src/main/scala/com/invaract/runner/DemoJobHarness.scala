@@ -3,11 +3,13 @@
 
 package com.invaract.runner
 
-import com.invaract.contract.{Contract, ContractParser}
+import com.invaract.contract.{Contract, ContractParser, ContractVersion}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
+import com.invaract.registryclient.HttpContractRegistryClient
 import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, InvaractSparkSessionExtension, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
+import com.invaract.sparkadapter.registry.ContractSource
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.io.File
@@ -52,7 +54,13 @@ object DemoJobHarness {
     // before positional parsing, so `--dry-run` can precede or follow the
     // other arguments equally.
     val dryRun = args.contains("--dry-run")
-    val positional = args.filterNot(_ == "--dry-run")
+    // Only meaningful when contractPath (below) is a registry://<id>@<version>
+    // reference (dev/registry-demo's own case) - see loadContract's doc for
+    // why this harness needs it as a plain string, separate from the
+    // spark.invaract.registryUrl conf key InvaractSparkSessionExtension
+    // itself reads once the SparkSession exists.
+    val registryUrlArg = args.find(_.startsWith("--registry-url=")).map(_.stripPrefix("--registry-url="))
+    val positional = args.filterNot(a => a == "--dry-run" || a.startsWith("--registry-url="))
 
     val inputPath = positional.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = positional.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
@@ -92,7 +100,7 @@ object DemoJobHarness {
       // resolver-wiring code of its own. See docs-site's "Resolve Dataset
       // Locations at Runtime" guide for how a platform attaches this
       // purely via `spark-submit --conf`, with no change to this file.
-      val contract = if (dryRun) None else Some(ContractParser.parseFile(contractPath))
+      val contract = if (dryRun) None else Some(loadContract(contractPath, registryUrlArg))
 
       // Off by default (empty path -> NotificationConfig.disabled ->
       // NotificationSinkFactory.create returns None): see
@@ -162,9 +170,21 @@ object DemoJobHarness {
       //     explicitly in code" section for this exact case.
       val spark = (contract, notifySink) match {
         case (Some(_), None) =>
-          sessionBuilder
-            .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
-            .config(InvaractSparkSessionExtension.ContractConfKey, contractPath)
+          // registryUrlArg also flows into spark.invaract.registryUrl here
+          // (not just used by loadContract above) - InvaractSparkSessionExtension
+          // re-resolves contractPath itself, independently, once this session
+          // exists (ContractSource.resolve, inside forContract's own builder
+          // closure - see that class's doc), and it needs this same conf key
+          // to do it. Without it, enforcement would fail with the
+          // IllegalStateException ContractSource.fetchFromRegistry raises for
+          // a registry:// reference with no registryUrl configured, even
+          // though loadContract's own upfront fetch (for this file's
+          // reporting/irListener use) already succeeded.
+          registryUrlArg.foldLeft(
+            sessionBuilder
+              .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
+              .config(InvaractSparkSessionExtension.ContractConfKey, contractPath)
+          )((builder, url) => builder.config(ContractSource.RegistryUrlConfKey, url))
             .getOrCreate()
         case (None, _) =>
           sessionBuilder
@@ -394,6 +414,42 @@ object DemoJobHarness {
 
     System.exit(if (report.status == "PASS") 0 else 1)
   }
+
+  /** Resolves `contractPath` to a real `Contract`, for this file's own
+    * upfront needs (irListener's constructor, and the `contractVerification`
+    * report fields) - needed *before* the SparkSession exists, unlike
+    * `ContractSource.resolve` (spark-adapter), which only ever runs inside
+    * the already-built session `InvaractSparkSessionExtension`/
+    * `ContractEnforcementRule.forContract` install. That means this harness
+    * can't reuse `ContractSource.resolve` itself (it takes a `SparkSession`
+    * to read `spark.invaract.registryUrl` from), so a `registry://<id>@<version>`
+    * value here is instead resolved directly via `registry-client`'s real
+    * `HttpContractRegistryClient` - a *direct* dependency, unlike
+    * spark-adapter's deliberately-reflective one, since this harness (unlike
+    * the engine) has no reason to keep registry-client off its compile-time
+    * classpath (see runner/build.sbt).
+    *
+    * Enforcement itself (the part that actually matters) does not depend on
+    * this method at all - it happens entirely inside
+    * `InvaractSparkSessionExtension`, driven by the same `contractPath` raw
+    * string and `spark.invaract.registryUrl` conf key, both threaded through
+    * to the `sessionBuilder` call below independently of this method's
+    * return value.
+    */
+  private def loadContract(contractPath: String, registryUrl: Option[String]): Contract =
+    ContractSource.parse(contractPath) match {
+      case Some((contractId, version)) =>
+        val url = registryUrl.getOrElse(throw new IllegalArgumentException(
+          s"'$contractPath' is a registry:// reference; pass --registry-url=<url> " +
+            "so this harness can resolve it (see dev/registry-demo)."
+        ))
+        val client = new HttpContractRegistryClient()
+        client.configure(url)
+        if (version == ContractSource.LatestVersion) client.getLatest(contractId)
+        else client.get(contractId, ContractVersion.parse(version))
+      case None =>
+        ContractParser.parseFile(contractPath)
+    }
 
   /** Blocks until `listener` has captured a write, or `timeoutMs` elapses.
     * QueryExecutionListener callbacks run asynchronously on Spark's own

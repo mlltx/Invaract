@@ -156,7 +156,16 @@ dependencyOverrides ++= Seq(
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.7.0",
   "com.invaract" %% "invaract-ir" % "0.4.0",
-  "com.invaract" %% "invaract-spark-adapter" % "0.5.0"
+  "com.invaract" %% "invaract-spark-adapter" % "0.5.0",
+  // Direct dependency, deliberately unlike spark-adapter's own reflective
+  // relationship to this module (docs/CONTRACT_REGISTRY.md §7) - this
+  // harness's own loadContract (DemoJobHarness.scala) needs a real
+  // ContractRegistryClient instance before any SparkSession exists, purely
+  // for its own upfront reporting/irListener bookkeeping. Enforcement
+  // itself never uses this dependency; it happens entirely inside
+  // spark-adapter's own reflective resolution, independently of runner's
+  // classpath.
+  "com.invaract" %% "invaract-registry-client" % "0.1.0"
 )
 
 // plugin is harness-only (CLAUDE.md's "example integration and test
