@@ -96,23 +96,18 @@ object OrgPolicyLintCli {
       }
     }
 
-    layers.foreach { case (path, layer) =>
-      val layerValidation = OrgPolicyValidator.validate(layer)
-      if (!layerValidation.isValid) {
-        err.println(s"Organizational policy '$path' is invalid:")
-        layerValidation.errors.foreach(issue => err.println(s"  $issue"))
-        return 1
-      }
-      layerValidation.warnings.foreach(issue => out.println(s"[WARN] policy ($path): $issue"))
+    // A single pass over the whole stack: validateLayers already covers
+    // each layer's own issues (path-prefixed with its own file path) *and*
+    // the cross-layer duplicate-id check in one call, rather than this CLI
+    // hand-rolling a per-layer loop that duplicates what validateLayers
+    // itself already does.
+    val layersValidation = OrgPolicyValidator.validateLayers(layers)
+    if (!layersValidation.isValid) {
+      err.println("Organizational policy is invalid:")
+      layersValidation.errors.foreach(issue => err.println(s"  $issue"))
+      return 1
     }
-    // A policy id repeated across layers doesn't affect correctness (each
-    // layer still evaluates independently - see OrgPolicyValidator.validateLayers'
-    // own doc), but is worth surfacing here too, the same as any other
-    // policy-level warning above.
-    OrgPolicyValidator
-      .validateLayers(layers.map(_._2))
-      .warnings
-      .foreach(issue => out.println(s"[WARN] policy layers: $issue"))
+    layersValidation.warnings.foreach(issue => out.println(s"[WARN] policy: $issue"))
 
     // Printed once, up front, per layer - an exemption's expiry is a
     // policy-level concern independent of which contracts happen to be
@@ -150,11 +145,12 @@ object OrgPolicyLintCli {
       return 1
     }
 
+    val policies = layers.map(_._2)
     var hadFailure = false
     contractFiles.foreach { path =>
       try {
         val contract = ContractParser.parseFile(new File(path))
-        val evaluation = OrgPolicyEvaluator.evaluateLayers(contract, layers.map(_._2))
+        val evaluation = OrgPolicyEvaluator.evaluateLayers(contract, policies)
         evaluation.warnViolations.foreach(v => out.println(s"[WARN] $path: [${v.policyId}] ${v.message}"))
         if (evaluation.hasBlockingViolations) {
           hadFailure = true
@@ -176,42 +172,40 @@ object OrgPolicyLintCli {
   }
 
   /** Extracts `flagName VALUE` from anywhere in `args`: `Right(Some(v))` when
-    * present with a valid integer value, `Right(None)` when the flag isn't
-    * present at all, `Left(rawValue)` when it's present but the following
-    * token isn't a valid integer (including the flag being the very last
-    * argument, with no value to take at all — `rawValue` is `""` in that
-    * case). The second element is `args` with the flag and its value (if
-    * consumed) removed, in original order — Scala 2.12 has no
-    * `String.toIntOption` (a 2.13+ addition), hence `scala.util.Try`.
-    */
-  private def extractIntFlag(args: Array[String], flagName: String): (Either[String, Option[Int]], Array[String]) = {
-    val idx = args.indexOf(flagName)
-    if (idx < 0) (Right(None), args)
-    else if (idx == args.length - 1) (Left(""), args.take(idx))
-    else {
-      val rawValue = args(idx + 1)
-      val remaining = args.take(idx) ++ args.drop(idx + 2)
-      scala.util.Try(rawValue.toInt).toOption match {
-        case Some(value) => (Right(Some(value)), remaining)
-        case None        => (Left(rawValue), remaining)
-      }
-    }
-  }
-
-  /** Extracts `flagName VALUE` from anywhere in `args`, the string-valued
-    * counterpart to `extractIntFlag` above (used for `--overlays`, whose
-    * value is an arbitrary comma-separated path list, not an integer):
-    * `Right(Some(v))` when present with a following token to take as its
-    * value, `Right(None)` when the flag isn't present at all, `Left(())`
-    * when it's present but is the very last argument, with no value to
-    * take. The second element is `args` with the flag and its value (if
-    * consumed) removed, in original order.
+    * present with a following token to take as its value, `Right(None)` when
+    * the flag isn't present at all, `Left(())` when it's present but is the
+    * very last argument, with no value to take. The second element is `args`
+    * with the flag and its value (if consumed) removed, in original order.
+    * `extractIntFlag` below is this same locate/extract logic, plus an
+    * integer parse on the leaf value - built on top of this rather than
+    * duplicating it, since only the leaf step actually differs.
     */
   private def extractStringFlag(args: Array[String], flagName: String): (Either[Unit, Option[String]], Array[String]) = {
     val idx = args.indexOf(flagName)
     if (idx < 0) (Right(None), args)
     else if (idx == args.length - 1) (Left(()), args.take(idx))
     else (Right(Some(args(idx + 1))), args.take(idx) ++ args.drop(idx + 2))
+  }
+
+  /** `extractStringFlag`, with the extracted value additionally parsed as an
+    * integer: `Right(Some(v))` on a valid integer value, `Right(None)` when
+    * the flag isn't present, `Left(rawValue)` when it's present but the
+    * following token isn't a valid integer (`""` when the flag was the very
+    * last argument, with no value at all). Scala 2.12 has no
+    * `String.toIntOption` (a 2.13+ addition), hence `scala.util.Try`.
+    */
+  private def extractIntFlag(args: Array[String], flagName: String): (Either[String, Option[Int]], Array[String]) = {
+    val (rawResult, remaining) = extractStringFlag(args, flagName)
+    val result: Either[String, Option[Int]] = rawResult match {
+      case Left(())         => Left("")
+      case Right(None)      => Right(None)
+      case Right(Some(raw)) =>
+        scala.util.Try(raw.toInt).toOption match {
+          case Some(value) => Right(Some(value))
+          case None        => Left(raw)
+        }
+    }
+    (result, remaining)
   }
 
   /** `target` itself if it's a single file; every `.yaml`/`.yml` file found

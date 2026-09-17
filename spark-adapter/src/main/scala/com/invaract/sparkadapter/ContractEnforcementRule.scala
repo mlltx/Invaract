@@ -197,13 +197,6 @@ object ContractEnforcementRule {
     */
   val OrgPolicyConfKey = "spark.invaract.orgPolicy"
 
-  /** Parses the document `OrgPolicyConfKey` names, if set — `None` when the
-    * conf key is absent, so a job with no org policy attached pays no cost
-    * and sees no behavior change at all.
-    */
-  private[sparkadapter] def resolveOrgPolicy(session: SparkSession): Option[OrgPolicy] =
-    session.conf.getOption(OrgPolicyConfKey).map(OrgPolicyParser.parseFile)
-
   /** Spark configuration key naming additional organizational policy
     * documents — a comma-separated, ordered list of paths — layered on top
     * of `OrgPolicyConfKey`'s document for policy layering/inheritance: a
@@ -247,7 +240,7 @@ object ContractEnforcementRule {
     * doc for why layering needs no new document shape at all).
     */
   private[sparkadapter] def resolveOrgPolicyLayers(session: SparkSession): List[(String, OrgPolicy)] = {
-    val overlayPaths = session.conf.getOption(OrgPolicyOverlaysConfKey).toList.flatMap(_.split(",").map(_.trim).filter(_.nonEmpty))
+    val overlayPaths = session.conf.getOption(OrgPolicyOverlaysConfKey).toList.flatMap(VersionCompatibilityGuard.splitCommaSeparated)
     (session.conf.getOption(OrgPolicyConfKey), overlayPaths) match {
       case (None, Nil) => Nil
       case (None, _) =>
@@ -315,15 +308,13 @@ object ContractEnforcementRule {
     resolveOrgPolicyLayers(session) match {
       case Nil => (contract, options)
       case layers =>
-        layers.foreach { case (path, layer) =>
-          val layerValidation = OrgPolicyValidator.validate(layer)
-          if (!layerValidation.isValid) {
-            throw new com.invaract.contract.OrgPolicyParseException(
-              s"Organizational policy layer at '$path' is invalid: ${layerValidation.errors.mkString("; ")}"
-            )
-          }
-          requireKnownMinVerificationOptionKeys(layer, path)
+        val layersValidation = OrgPolicyValidator.validateLayers(layers)
+        if (!layersValidation.isValid) {
+          throw new com.invaract.contract.OrgPolicyParseException(
+            s"Organizational policy layers are invalid: ${layersValidation.errors.mkString("; ")}"
+          )
         }
+        layers.foreach { case (path, layer) => requireKnownMinVerificationOptionKeys(layer, path) }
 
         val policies = layers.map(_._2)
         val governedContract = OrgPolicyEvaluator.applyInjectedRulesFromLayers(contract, policies)

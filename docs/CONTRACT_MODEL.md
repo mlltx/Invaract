@@ -840,18 +840,23 @@ org-wide one already declares.
   (base or overlay) ends up in the final `contract.rules` exactly once,
   since `applyInjectedRules`' own per-call dedup already covers a rule
   repeated across layers, not just within one.
-- **`OrgPolicyValidator.validateLayers(layers, now)`** — validates every
-  layer individually (`validate`, each layer's issues re-pathed with
-  `layers[i].` so a caller can tell which layer an issue came from), plus
-  one cross-layer-only check: a policy `id` repeated in more than one
-  layer is a Warning (not an Error — unlike a duplicate `id` *within* one
-  document, which stays an Error). It's not unsafe (each layer still
-  evaluates independently — a repeated id never causes shadowing or
-  confused exemption/violation attribution), but a human reading two
-  violations both attributed to id `catalog-required` — one from the
-  org-wide layer, one from a business unit's — can't tell them apart by id
-  alone. Rather than mechanically namespacing ids, the recommended fix is
-  a naming convention: a layer prefixes its own rule ids (e.g.
+- **`OrgPolicyValidator.validateLayers(layers, now)`** — takes
+  `List[(String, OrgPolicy)]`, each layer paired with a caller-supplied
+  label (typically the file path it was loaded from), and is the single
+  entry point both real callers (`ContractEnforcementRule.enforceOrgPolicy`,
+  `OrgPolicyLintCli`) use to validate a policy-layering stack, rather than
+  each hand-rolling its own per-layer loop alongside it. Validates every
+  layer individually (`validate`, each layer's issues re-pathed with its
+  own label so a caller can tell which layer an issue came from), plus one
+  cross-layer-only check: a policy `id` repeated in more than one layer is
+  a Warning (not an Error — unlike a duplicate `id` *within* one document,
+  which stays an Error). It's not unsafe (each layer still evaluates
+  independently — a repeated id never causes shadowing or confused
+  exemption/violation attribution), but a human reading two violations
+  both attributed to id `catalog-required` — one from the org-wide layer,
+  one from a business unit's — can't tell them apart by id alone. Rather
+  than mechanically namespacing ids, the recommended fix is a naming
+  convention: a layer prefixes its own rule ids (e.g.
   `bu-finance-catalog-required`).
 
 There is no new document shape for an overlay — it's just another ordinary

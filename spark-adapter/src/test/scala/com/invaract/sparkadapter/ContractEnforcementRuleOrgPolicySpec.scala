@@ -61,15 +61,12 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     finally spark.conf.unset(ContractEnforcementRule.OrgPolicyConfKey)
   }
 
-  private def withOrgPolicyLayers[T](basePath: String, overlayPaths: String*)(body: => T): T = {
-    spark.conf.set(ContractEnforcementRule.OrgPolicyConfKey, basePath)
-    spark.conf.set(ContractEnforcementRule.OrgPolicyOverlaysConfKey, overlayPaths.mkString(","))
-    try body
-    finally {
-      spark.conf.unset(ContractEnforcementRule.OrgPolicyConfKey)
-      spark.conf.unset(ContractEnforcementRule.OrgPolicyOverlaysConfKey)
+  private def withOrgPolicyLayers[T](basePath: String, overlayPaths: String*)(body: => T): T =
+    withOrgPolicyConf(basePath) {
+      spark.conf.set(ContractEnforcementRule.OrgPolicyOverlaysConfKey, overlayPaths.mkString(","))
+      try body
+      finally spark.conf.unset(ContractEnforcementRule.OrgPolicyOverlaysConfKey)
     }
-  }
 
   private val noCatalogContractYaml =
     """id: org_policy_demo
@@ -105,26 +102,6 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     val contract = parseContract(noCatalogContractYaml)
     val rule = ContractEnforcementRule.forContract(contract)
     rule(spark) // must not throw - OrgPolicyConfKey is unset
-  }
-
-  test("resolveOrgPolicy returns None when the conf key is unset") {
-    assert(ContractEnforcementRule.resolveOrgPolicy(spark).isEmpty)
-  }
-
-  test("resolveOrgPolicy parses the document named by spark.invaract.orgPolicy") {
-    val policyPath = writePolicy(
-      "basic.yaml",
-      """version: "1.0"
-        |policies:
-        |  - id: catalog-required
-        |    type: require_catalog
-        |""".stripMargin
-    )
-    val policy = withOrgPolicyConf(policyPath) {
-      ContractEnforcementRule.resolveOrgPolicy(spark)
-    }
-    assert(policy.map(_.version).contains("1.0"))
-    assert(policy.exists(_.policies.exists(_.id == "catalog-required")))
   }
 
   // -- eager, "stop ASAP" enforcement ---------------------------------------

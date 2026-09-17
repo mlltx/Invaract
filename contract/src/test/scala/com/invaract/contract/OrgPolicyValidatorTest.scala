@@ -306,23 +306,23 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
   test("validateLayers with well-formed, non-overlapping layers is valid") {
     val orgWide = OrgPolicy("1.0", List(requireCatalog))
     val buOverlay = OrgPolicy("1.0", List(PolicyRule("bu-owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
-    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    val result = OrgPolicyValidator.validateLayers(List("org-wide" -> orgWide, "bu-overlay" -> buOverlay))
     assert(result.isValid)
     assert(result.warnings.isEmpty)
   }
 
-  test("validateLayers surfaces each layer's own issues, path-prefixed with that layer's index") {
+  test("validateLayers surfaces each layer's own issues, path-prefixed with the caller-supplied label") {
     val orgWide = OrgPolicy("1.0", List(requireCatalog))
     val brokenOverlay = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireField, Map.empty))) // missing required 'name'
-    val result = OrgPolicyValidator.validateLayers(List(orgWide, brokenOverlay))
+    val result = OrgPolicyValidator.validateLayers(List("org-wide" -> orgWide, "bu-overlay" -> brokenOverlay))
     assert(!result.isValid)
-    assert(result.errors.exists(e => e.path == "layers[1].policies[0]" && e.message.contains("malformed or missing properties")))
+    assert(result.errors.exists(e => e.path == "bu-overlay: policies[0]" && e.message.contains("malformed or missing properties")))
   }
 
   test("validateLayers: a policy id repeated across layers is a Warning, not an Error") {
     val orgWide = OrgPolicy("1.0", List(requireCatalog)) // id "catalog-required"
     val buOverlay = OrgPolicy("1.0", List(requireCatalog)) // same id, independent rule
-    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    val result = OrgPolicyValidator.validateLayers(List("org-wide" -> orgWide, "bu-overlay" -> buOverlay))
     assert(result.isValid, "a Warning, not an Error - each layer still evaluates independently, no shadowing")
     assert(result.warnings.exists(w => w.path == "layers" && w.message.contains("'catalog-required'") && w.message.contains("more than one layer")))
   }
@@ -330,7 +330,7 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
   test("validateLayers: a policy id unique to each layer triggers no cross-layer warning") {
     val orgWide = OrgPolicy("1.0", List(requireCatalog))
     val buOverlay = OrgPolicy("1.0", List(PolicyRule("bu-owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
-    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    val result = OrgPolicyValidator.validateLayers(List("org-wide" -> orgWide, "bu-overlay" -> buOverlay))
     assert(!result.warnings.exists(_.message.contains("more than one layer")))
   }
 
@@ -340,8 +340,8 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
       "1.0",
       exemptions = List(PolicyExemption("some_contract", List("catalog-required"), "the BU wants this exempted"))
     )
-    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    val result = OrgPolicyValidator.validateLayers(List("org-wide" -> orgWide, "bu-overlay" -> buOverlay))
     assert(!result.isValid)
-    assert(result.errors.exists(e => e.path == "layers[1].exemptions[0]" && e.message.contains("unknown policy id 'catalog-required'")))
+    assert(result.errors.exists(e => e.path == "bu-overlay: exemptions[0]" && e.message.contains("unknown policy id 'catalog-required'")))
   }
 }

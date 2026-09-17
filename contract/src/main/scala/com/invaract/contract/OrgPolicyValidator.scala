@@ -135,11 +135,16 @@ object OrgPolicyValidator {
     ValidationResult(issues.result())
   }
 
-  /** Validates every layer in an ordered `List[OrgPolicy]` individually
-    * (`validate`, each layer's issues re-pathed with its own index so a
-    * caller can tell which layer an issue came from), plus one check that
-    * only makes sense *across* layers: a policy `id` repeated in more than
-    * one layer.
+  /** Validates every layer in an ordered `List[(String, OrgPolicy)]`
+    * individually (`validate`, each layer's issues re-pathed with the
+    * caller-supplied label - typically the file path it was loaded from -
+    * so a caller can tell which layer an issue came from), plus one check
+    * that only makes sense *across* layers: a policy `id` repeated in more
+    * than one layer. The single entry point both real callers
+    * (`ContractEnforcementRule.enforceOrgPolicy`, `OrgPolicyLintCli`) use to
+    * validate a policy-layering stack, rather than each hand-rolling its own
+    * per-layer loop alongside this one - see docs/CONTRACT_MODEL.md's
+    * "Policy layering" section.
     *
     * This is deliberately a Warning, not an Error - unlike a duplicate `id`
     * *within* one document (still an Error, above), a repeated `id` across
@@ -164,11 +169,11 @@ object OrgPolicyValidator {
     * layer simply doesn't exist in *this* layer's own `policies`, so
     * `validate` already reports it as "references unknown policy id").
     */
-  def validateLayers(layers: List[OrgPolicy], now: LocalDate = LocalDate.now()): ValidationResult = {
-    val perLayer = layers.zipWithIndex.flatMap { case (layer, idx) =>
-      validate(layer, now).issues.map(issue => issue.copy(path = s"layers[$idx].${issue.path}"))
+  def validateLayers(layers: List[(String, OrgPolicy)], now: LocalDate = LocalDate.now()): ValidationResult = {
+    val perLayer = layers.flatMap { case (label, layer) =>
+      validate(layer, now).issues.map(issue => issue.copy(path = s"$label: ${issue.path}"))
     }
-    val duplicateIds = duplicateNames(layers.flatMap(_.policies.map(_.id)))
+    val duplicateIds = duplicateNames(layers.flatMap { case (_, layer) => layer.policies.map(_.id) })
     val crossLayerWarnings = duplicateIds.toList.sorted.map { id =>
       ValidationIssue(
         ValidationSeverity.Warning,
