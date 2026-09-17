@@ -6,6 +6,16 @@ name: Release to Maven Central
 # plugin/runner/notification-kafka) are published (CLAUDE.md's "What's
 # the product").
 #
+# `contract` is ADDITIONALLY published to GitHub Packages' Maven registry
+# in the same job (see the "Publish contract to GitHub Packages" step
+# below) — one release, two destinations, from the same tag. This exists
+# for the separate `mlltx/invaract-registry` repo (docs/CONTRACT_REGISTRY.md
+# §2), which needs a real, pinnable `contract` coordinate to depend on and
+# can't wait on Sonatype's namespace verification (docs/RELEASING.md)
+# landing first. `ir`/`spark-adapter`/`fingerprint` aren't
+# invaract-registry's dependencies, so only `contract` gets this second
+# destination.
+#
 # Triggered by pushing a `v*` tag (e.g. `v2026.09.0`, or any tag name a
 # maintainer chooses per docs/RELEASING.md — the tag itself carries no
 # version number the workflow reads; each module's own `build.sbt`
@@ -14,7 +24,9 @@ name: Release to Maven Central
 # their current build.sbt versions — Central rejects re-publishing a
 # version that already exists, so re-running this workflow (or tagging
 # again before bumping every module) is a safe no-op for whichever
-# modules haven't changed.
+# modules haven't changed. GitHub Packages behaves the same way for the
+# additional `contract` publish (a re-publish of an unchanged version is
+# rejected, not overwritten).
 on:
   push:
     tags:
@@ -25,6 +37,12 @@ jobs:
   release:
     name: Publish to Maven Central
     runs-on: ubuntu-latest
+    # packages: write is needed only for the GitHub Packages publish step
+    # below (contract's Sonatype/Maven Central publish needs no GitHub
+    # permissions at all — it authenticates with the Sonatype secrets).
+    permissions:
+      contents: read
+      packages: write
     # Sequential, not a matrix: spark-adapter's libraryDependencies resolve
     # contract/ir from the *same runner's* local Ivy cache (dev/build's
     # publishLocal pattern — see its own comment for the full rationale),
@@ -64,6 +82,30 @@ jobs:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
         run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      # Second destination for the same contract build (see this file's
+      # own top comment for why): an ad-hoc `set` of `publishTo`/
+      # `credentials` for just this one sbt invocation, rather than a
+      # build.sbt change — contract/build.sbt's own `publishTo` setting
+      # stays pointed at Sonatype's Central Portal for every other use
+      # (a plain local `sbt publish`, this job's own step above), since
+      # each `run:` step here is a fresh sbt process and the override
+      # below applies only within it. Uses the workflow's own default
+      # GITHUB_TOKEN (scoped to this repo, packages:write granted above)
+      # rather than a separate secret — no new credential to provision or
+      # rotate. GitHub Packages requires authentication to *resolve*
+      # artifacts too, not just publish them (real operational detail,
+      # not just a publish-time concern) — invaract-registry's own build
+      # documents the read-side token it needs in its own README.
+      - name: Publish contract to GitHub Packages
+        working-directory: contract
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          sbt -batch
+          'set publishTo := Some("GitHub Invaract Packages" at "https://maven.pkg.github.com/mlltx/Invaract")'
+          'set credentials += Credentials("GitHub Package Registry", "maven.pkg.github.com", "mlltx", sys.env.getOrElse("GITHUB_PACKAGES_TOKEN", ""))'
+          publish
 
       - name: Publish ir
         working-directory: ir
