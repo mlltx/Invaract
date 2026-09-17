@@ -1099,13 +1099,28 @@ jobs:
     # MiMa (sbt-mima-plugin) needs a previously *published* artifact to
     # diff the current build against, and there's no Maven Central release
     # of contract/ir/spark-adapter yet to compare to. Rather than skip the
-    # check entirely until a real release exists, this job publishes a
-    # recent prior commit to the local Ivy cache first (each module's
-    # build.sbt already declares `mimaPreviousArtifacts` under the same
-    # org/name/version its own `publishLocal` produces), then runs
+    # check entirely until a real release exists, this job publishes base-
+    # ref's build to the local Ivy cache first, then runs
     # `sbt mimaReportBinaryIssues` against the PR's head - "did this push
-    # break binary compatibility with the previous one." Only meaningful
-    # with a base to diff against, so PR-only.
+    # break binary compatibility with its own base branch." Only
+    # meaningful with a base to diff against, so PR-only.
+    #
+    # The comparison coordinate's VERSION is read directly off base-ref's
+    # own checked-out build.sbt (see the loop below) and passed to PR
+    # head's `mimaReportBinaryIssues` via INVARACT_MIMA_BASELINE_VERSION,
+    # rather than relying on each module's own hardcoded
+    # `mimaPreviousArtifacts` literal matching base-ref's actual version.
+    # That literal used to be the only source of truth and had to be
+    # manually "flipped" in a separate follow-up PR every time a module's
+    # version bumped; when that flip was skipped or merely delayed (it was,
+    # repeatedly - see contract/ir/spark-adapter/fingerprint's own
+    # build.sbt comments), base-ref would publish under its new version
+    # while PR head still asked MiMa for the old, now-unpublished
+    # coordinate, failing every OTHER PR's api-compatibility job with an
+    # "Error downloading ... Not found" until someone noticed. Deriving the
+    # baseline from base-ref's actual state instead of a hand-maintained
+    # copy of it removes that failure mode by construction: the two values
+    # can no longer drift apart, because there's only one of them now.
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout PR head
@@ -1244,15 +1259,31 @@ jobs:
             echo "=== $module: publishing base-ref build to the local Ivy cache ==="
             (cd "base-ref/$module" && sbt publishLocal)
 
+            # Read base-ref's own version straight off its checked-out
+            # build.sbt - the exact coordinate `sbt publishLocal` just used
+            # above - rather than trusting PR head's own hardcoded
+            # `mimaPreviousArtifacts` fallback to already match it. This is
+            # the fix for the recurring "Error downloading ... Not found"
+            # failure mode: see this job's own top-of-file comment and
+            # each module's build.sbt for the root-cause history.
+            BASE_VERSION=$(grep -oP '(?<=ThisBuild / version := ")[^"]+' "base-ref/$module/build.sbt" | head -1)
+            if [ -z "$BASE_VERSION" ]; then
+              echo "::error::Could not read ThisBuild / version from base-ref/$module/build.sbt - refusing to fall back to a possibly-stale hardcoded mimaPreviousArtifacts value."
+              exit 1
+            fi
+            echo "=== $module: base-ref's own version is $BASE_VERSION ==="
+
             # Compiles the PR head's current sources and diffs the result
-            # against the locally-published base-ref artifact just above. A
-            # real binary-incompatible change fails here with the exact
-            # offending symbol and a ready-to-paste ProblemFilters.exclude(...)
-            # line for a deliberate, documented exception - see CLAUDE.md's
-            # "API Compatibility Requirement" for when that's the right call
-            # versus a MAJOR version bump.
+            # against the locally-published base-ref artifact just above,
+            # comparing against base-ref's ACTUAL version regardless of
+            # whatever this module's own build.sbt hardcodes as its local-
+            # dev fallback. A real binary-incompatible change fails here
+            # with the exact offending symbol and a ready-to-paste
+            # ProblemFilters.exclude(...) line for a deliberate, documented
+            # exception - see CLAUDE.md's "API Compatibility Requirement"
+            # for when that's the right call versus a MAJOR version bump.
             echo "=== $module: checking PR head for binary compatibility ==="
-            (cd "$module" && sbt mimaReportBinaryIssues)
+            (cd "$module" && INVARACT_MIMA_BASELINE_VERSION="$BASE_VERSION" sbt mimaReportBinaryIssues)
 
             if [ "$module" != "spark-adapter" ]; then
               echo "=== $module: publishing PR head's own build to the local Ivy cache (spark-adapter's libraryDependencies) ==="

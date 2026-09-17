@@ -128,41 +128,55 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// mimaPreviousArtifacts stays at 0.6.0 here, one version behind this
-// file's own `version` (0.7.0) above - base-ref (main) hasn't landed this
-// PR yet, so it still publishes 0.6.0 under this coordinate; pointing
-// this at 0.7.0 already would make CI's api-compatibility job fail to
-// resolve a coordinate that doesn't exist yet, the same failure a
-// previous PR hit for the 0.4.0 -> 0.5.0 bump (see git history for that
-// prior revision of this comment). Once this PR merges, a FOLLOW-UP PR
-// flips this to 0.7.0 and removes the filters below, the same two-step
-// dance the 0.2.0 -> 0.3.0 through 0.5.0 -> 0.6.0 bumps themselves each
-// used.
+// mimaPreviousArtifacts stays at 0.6.0 here as the LOCAL-DEV fallback only
+// (a plain `sbt mimaReportBinaryIssues` outside CI, comparing against the
+// last baseline a human bothered to write down). It is deliberately NOT
+// what CI's api-compatibility job actually checks against.
 //
-// The 0.5.0 -> 0.6.0 flip (OrgPolicy.customPolicyTypes, landed via #62)
-// is folded into this same PR rather than its own separate follow-up:
-// that overdue flip was never made after #62 merged (mimaPreviousArtifacts
-// was still pointing at the now-superseded 0.5.0 baseline, confirmed the
-// hard way by this PR's own `sbt mimaReportBinaryIssues` run failing to
-// resolve 0.5.0's OrgPolicy shape as a false 5-problem report against a
-// two-versions-back baseline) - done here as the first half of this
-// change, so `mimaPreviousArtifacts` catches up to base-ref's real
-// current state (0.6.0) before the new 0.6.0 -> 0.7.0 break below is
-// layered on top of an already-correct baseline. The four OrgPolicy
-// filters that documented that break against the old 0.5.0 baseline are
-// removed - baked into both sides of the comparison now.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-contract" % "0.6.0")
+// ROOT CAUSE this env-var override fixes: this hardcoded literal used to
+// be the *only* source of truth, and it had to be manually "flipped" to
+// match base-ref's own `version` in a separate FOLLOW-UP PR every time
+// this file's `version` (above) bumped - CI publishes base-ref's build
+// under base-ref's own current version, so the moment that version moves
+// past whatever's hardcoded here, every OTHER PR's api-compatibility job
+// fails resolving a now-nonexistent coordinate (e.g. "Error downloading
+// com.invaract:invaract-contract_2.12:0.5.0 - Not found") until someone
+// notices and lands the flip - a real, repeated failure mode, not a
+// hypothetical one: the 0.2.0->0.3.0 through 0.5.0->0.6.0 bumps here (and
+// spark-adapter's 0.4.0->0.5.0) each cost a separate reactive fix-CI PR,
+// and this exact gap broke this repository's own PR #65 while that
+// follow-up sat unmade - see #65's own fix (which introduced this
+// mechanism) for the full history.
+//
+// The fix: CI's api-compatibility job (.github/workflows/test.yml) now
+// reads base-ref's OWN `ThisBuild / version` directly off its checked-out
+// build.sbt and passes it as INVARACT_MIMA_BASELINE_VERSION, so the
+// baseline PR-head is compared against always matches what CI actually
+// just published - by construction, not by a human remembering a
+// follow-up PR. The hardcoded literal below only matters for a local
+// `sbt mimaReportBinaryIssues` run with no env var set; bump it whenever
+// convenient, but a stale value here can no longer break CI for anyone.
+mimaPreviousArtifacts := Set(
+  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.6.0")
+)
 
 import com.typesafe.tools.mima.core._
 
+// The OrgPolicy.customPolicyTypes break (0.5.0 -> 0.6.0, landed via #62)
+// is baked into both sides of any comparison against a 0.6.0-or-later
+// baseline by construction now (see the comment above), so its four
+// filters are removed here rather than kept as dead entries with nothing
+// left to match.
+//
 // The real, deliberate break motivating the 0.6.0 -> 0.7.0 bump above:
 // Contract gained a sixth constructor parameter, customRuleTypes (see
 // docs/SPARK_ADAPTER.md's "Custom rule types" section) - confirmed by a
 // real `sbt mimaReportBinaryIssues` run against the 0.6.0 baseline before
-// this bump, not assumed. FOLLOW-UP (once a future PR bumps `version`
-// above again): flip `mimaPreviousArtifacts` to 0.7.0 and remove these
-// four filters - the break becomes baked into both sides of the
-// comparison then, the same as every prior round of this dance.
+// this bump, not assumed. Unlike the old hardcoded-literal mechanism,
+// these filters become inert on their own (matching nothing) once
+// base-ref's own version reaches 0.7.0 or later - no future PR needs to
+// remember to remove them to keep CI green, though it's fine to clean
+// them up whenever this file is next touched.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.copy"),
