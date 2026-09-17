@@ -296,6 +296,20 @@ freely, and neither substitutes for the other: a feature needs the
 conf-driven path to satisfy this requirement at all; the code path is a
 bonus for cases the conf key can't reach, not an alternative way to meet it.
 
+**Second worked example, same shape:** `spark.invaract.contract` itself
+can now name a `registry://<id>@<version>` reference instead of only a
+file path (docs/SPARK_ADAPTER.md's "Contract resolution: `registry://`"
+section, docs/CONTRACT_REGISTRY.md's full design) — a platform team
+attaches this with `spark-submit --conf
+spark.invaract.contract=registry://customer_orders@2.1.0 --conf
+spark.invaract.registryUrl=<url>` against any job that already installs
+`InvaractSparkSessionExtension`/`forContract`, no job-source change
+needed. The contract registry server itself lives in a separate,
+optional repo (`mlltx/invaract-registry`) — this capability is opt-in the
+same way `notification-kafka` is: `spark-adapter` has no compile-time
+dependency on the client that talks to it, so a job that never sets
+`spark.invaract.registryUrl` is entirely unaffected.
+
 **The baseline installation itself is covered too, not just capabilities
 layered on it.** `InvaractSparkSessionExtension`
 (`spark-adapter/src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala`)

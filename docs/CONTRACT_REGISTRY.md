@@ -258,11 +258,18 @@ spark-submit \
   my-job.jar
 ```
 
-`ContractEnforcementRule.forContract` gains a small additional overload
-taking a `ContractRegistryClient` directly, for "a resolver the conf key
-can't express" — the same "conf path required, code path is a bonus"
-composition rule the External Attachability Requirement already
-establishes for `ref://`/`locationMap`.
+The "resolver the conf key can't express" case (the code-path bonus the
+External Attachability Requirement's composition rule always leaves open
+for `ref://`/`locationMap`) needs **no new spark-adapter API at all** here
+— corrected after actually implementing this section: a job's own code
+can already call `registry-client` directly (`client.getLatest(id)` or
+`.get(id, version)`) to obtain a real `Contract`, then hand it to
+`ContractEnforcementRule.forContract(contract)` exactly the way it always
+could. `forContract` already takes a plain `Contract`, the same way
+`ContractLocationResolution.resolve(...)`'s own explicit-code path
+produces a `Contract` and hands it to the same existing overload — there
+was never a missing overload to add, only a resolver to call before
+`forContract`.
 
 **Confirmed end state**: `./dev/build`, `./dev/test`, and
 `./dev/regression` all continue to pass with zero registry-related code

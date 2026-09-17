@@ -5,6 +5,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+import com.invaract.sparkadapter.registry.ContractSource
 
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -55,8 +56,12 @@ class InvaractSparkSessionExtension extends (SparkSessionExtensions => Unit) {
 object InvaractSparkSessionExtension {
   private val logger = LoggerFactory.getLogger(classOf[InvaractSparkSessionExtension])
 
-  /** Path to the contract YAML to enforce. Required unless `DryRunConfKey`
-    * is `"true"` — dry-run mode has no contract to enforce at all (see
+  /** Path to the contract YAML to enforce, OR a `registry://<id>@<version>`
+    * reference resolved via `registry.ContractSource` (see
+    * docs/CONTRACT_REGISTRY.md §7 and `ContractSource`'s own doc) —
+    * recognized here the same way `ref://` is recognized inside a
+    * `Dataset.location`. Required unless `DryRunConfKey` is `"true"` —
+    * dry-run mode has no contract to enforce at all (see
     * `ContractEnforcementRule.dryRun`'s own doc).
     */
   val ContractConfKey = "spark.invaract.contract"
@@ -89,7 +94,7 @@ object InvaractSparkSessionExtension {
               s"(or '$DryRunConfKey=true' for dry-run mode, which needs no contract at all)."
           )
         )
-        val contract = ContractParser.parseFile(contractPath)
+        val contract = ContractSource.resolve(contractPath, session)
         val configuredSink = session.conf.getOption(NotifyConfigConfKey)
           .flatMap(path => NotificationSinkFactory.create(NotificationConfig.load(path)))
 
