@@ -3,7 +3,8 @@
 
 package com.invaract.sparkadapter
 
-import scala.collection.concurrent.TrieMap
+import com.invaract.contract.ReflectivePluginResolver
+
 import scala.util.Try
 
 /** Reflectively resolves the `CustomRuleVerifier` a
@@ -11,20 +12,17 @@ import scala.util.Try
   * config, public no-arg constructor, loaded once" mechanism
   * `NotificationSinkFactory` established for `NotificationSink`, and
   * `com.invaract.contract.CustomPolicyEvaluatorFactory` established for
-  * organizational policy's `CustomPolicyEvaluator` — reimplemented here
-  * (not shared) since it resolves a `spark-adapter`-only trait
-  * (`CustomRuleVerifier`, which returns this module's own `Violation`),
-  * unlike `CustomPolicyEvaluatorFactory`, which lives in `contract`
-  * because everything it resolves is Spark-independent.
+  * organizational policy's `CustomPolicyEvaluator`. The actual
+  * resolve/cache logic is generic (`com.invaract.contract.ReflectivePluginResolver`,
+  * shared with `CustomPolicyEvaluatorFactory`) and lives in `contract`,
+  * since the `contract` -> `spark-adapter` dependency runs one way; this
+  * object exists to give `CustomRuleVerifier` (a `spark-adapter`-only
+  * trait, which returns this module's own `Violation`) its own cache and
+  * its own narrowly-scoped `tryResolve`.
   */
 object CustomRuleVerifierFactory {
 
-  // Resolved instances are cached by class name - CustomRuleVerifier is
-  // required to be stateless, so reusing one instance across every rule/
-  // mutation that names it is always safe, and avoids repeated
-  // Class.forName/reflective construction for what's typically a handful
-  // of distinct classes checked on every governed row-level DML write.
-  private val cache = TrieMap.empty[String, CustomRuleVerifier]
+  private val resolver = new ReflectivePluginResolver[CustomRuleVerifier]
 
   /** Resolves and instantiates `className`, throwing `IllegalArgumentException`
     * on any failure (missing class, no public no-arg constructor, doesn't
@@ -37,8 +35,7 @@ object CustomRuleVerifierFactory {
     * call (e.g. a corrected contract re-validated) always re-attempts
     * reflection rather than remembering a stale failure.
     */
-  def resolve(className: String): CustomRuleVerifier =
-    cache.getOrElseUpdate(className, construct(className))
+  def resolve(className: String): CustomRuleVerifier = resolver.resolve(className)
 
   /** Same resolution as `resolve`, without throwing — `Failure` covers
     * every case `resolve` would throw for. `RuleVerifier` uses this: it
@@ -47,18 +44,5 @@ object CustomRuleVerifierFactory {
     * unresolvable class is treated the same as any other malformed rule
     * type: no violation produced, not a thrown exception.
     */
-  private[sparkadapter] def tryResolve(className: String): Try[CustomRuleVerifier] = Try(resolve(className))
-
-  private def construct(className: String): CustomRuleVerifier =
-    try {
-      Class.forName(className).getDeclaredConstructor().newInstance().asInstanceOf[CustomRuleVerifier]
-    } catch {
-      case e: ClassCastException =>
-        throw new IllegalArgumentException(s"'$className' does not implement CustomRuleVerifier", e)
-      case e: ReflectiveOperationException =>
-        throw new IllegalArgumentException(
-          s"Could not instantiate custom rule verifier '$className' (it needs a public no-arg constructor)",
-          e
-        )
-    }
+  private[sparkadapter] def tryResolve(className: String): Try[CustomRuleVerifier] = resolver.tryResolve(className)
 }
