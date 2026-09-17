@@ -621,7 +621,10 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     assert(
       governedContract.rules == List(
         ContractRule("forbid_unconditional_delete", Map.empty),
-        ContractRule("merge_condition", Map("columns" -> List("id")))
+        // YAML's own [id] list decodes as a java.util.List, the same
+        // shape RuleVerifierSpec's own merge_condition fixtures use, not
+        // a Scala List.
+        ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id")))
       )
     )
     assert(governedOptions.rejectUndeclaredFields, "the base's own floor")
