@@ -145,12 +145,21 @@ case class Dataset(
   description: Option[String] = None
 )
 
-/** Rule types Invaract currently interprets during verification (see
-  * `InterpretedRule`, and `RuleVerifier` in `spark-adapter`). Any other
-  * `ContractRule.ruleType` is still recorded on `Contract.rules` but not
-  * acted on — this is deliberately a narrow, closed set (the concrete
-  * first step ROADMAP.md's "Full semantic DML verification" item names),
-  * not a general rule-expression language.
+/** Rule types Invaract itself knows how to interpret during verification
+  * (see `InterpretedRule`, and `RuleVerifier` in `spark-adapter`) —
+  * deliberately a narrow, closed set (the concrete first step
+  * ROADMAP.md's "Full semantic DML verification" item names), not a
+  * general rule-expression language. A `ContractRule.ruleType` outside
+  * this set is not necessarily inert, though: if `Contract.customRuleTypes`
+  * names a `CustomRuleVerifier` implementation for it (`spark-adapter`),
+  * `RuleVerifier` dispatches to that instead — the same
+  * plug-in-without-a-source-change escape hatch
+  * `OrgPolicy.customPolicyTypes`/`CustomPolicyEvaluator` already give
+  * organizational policy types (see docs/CONTRACT_MODEL.md's
+  * "Organizational Policy" section and docs/SPARK_ADAPTER.md's "Custom
+  * rule types" section). A `ruleType` matching neither this set nor
+  * `customRuleTypes` is still recorded on `Contract.rules` but never
+  * acted on.
   */
 object RuleType {
   /** A MERGE must match on exactly these columns. */
@@ -246,6 +255,22 @@ object ContractRule extends scala.runtime.AbstractFunction2[String, Map[String, 
   * standardizes (schema, fields, types). Fields not recognized by Invaract
   * are preserved verbatim in `extensions` rather than rejected, so contracts
   * authored for other ODCS-based tooling remain valid inputs.
+  *
+  * @param customRuleTypes maps a `ContractRule.ruleType` this contract's
+  *   own `rules` use to the fully-qualified class name of a
+  *   `com.invaract.sparkadapter.CustomRuleVerifier` implementation that
+  *   verifies it — the plug-in-without-editing-Invaract's-own-source
+  *   extension point for a DML rule type the built-in `RuleType` set
+  *   doesn't cover. A `ruleType` also present in `RuleType.All` is inert
+  *   here — the built-in interpretation always wins
+  *   (`ContractValidator` warns on this). Resolved by
+  *   `com.invaract.sparkadapter.CustomRuleVerifierFactory` — this module
+  *   has no Spark dependency to resolve it itself, so
+  *   `ContractValidator` can only check this map's own shape (empty
+  *   keys/values, a built-in collision), not whether a named class
+  *   actually resolves; `spark-adapter`'s `ContractEnforcementRule` does
+  *   that eagerly, the same moment it already runs `ContractValidator`.
+  *   See docs/SPARK_ADAPTER.md's "Custom rule types" section.
   */
 case class Contract(
   id: String,
@@ -254,7 +279,8 @@ case class Contract(
   inputs: List[Dataset],
   outputs: List[Dataset],
   rules: List[ContractRule],
-  extensions: Map[String, Any]
+  extensions: Map[String, Any],
+  customRuleTypes: Map[String, String] = Map.empty
 ) {
   def input(name: String): Option[Dataset] = inputs.find(_.name == name)
   def output(name: String): Option[Dataset] = outputs.find(_.name == name)

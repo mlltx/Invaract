@@ -37,12 +37,18 @@
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/rule" },
-      "description": "Declarative rules attached to the contract. Most rule types (e.g. compatibility mode) are recorded but not yet verified against a transformation - see ROADMAP.md. Three types ARE interpreted and enforced during verification (com.invaract.contract.RuleType/ContractRule.interpret, checked by spark-adapter's RuleVerifier against a real Spark row-level DML operation): 'merge_condition' (columns: a MERGE's ON clause must reference these), 'forbid_unconditional_delete' (no properties: a DELETE may never omit a filtering predicate), and 'allowed_update_columns' (columns: an UPDATE may only assign these). A known rule type with malformed properties for its shape is a ContractValidator Error, not silently ignored."
+      "description": "Declarative rules attached to the contract. Most rule types (e.g. compatibility mode) are recorded but not yet verified against a transformation - see ROADMAP.md. Three types ARE interpreted and enforced during verification (com.invaract.contract.RuleType/ContractRule.interpret, checked by spark-adapter's RuleVerifier against a real Spark row-level DML operation): 'merge_condition' (columns: a MERGE's ON clause must reference these), 'forbid_unconditional_delete' (no properties: a DELETE may never omit a filtering predicate), and 'allowed_update_columns' (columns: an UPDATE may only assign these). A known rule type with malformed properties for its shape is a ContractValidator Error, not silently ignored. A fourth way to get a rule type interpreted: name it in `customRuleTypes` (below), the reflective escape hatch for a DML rule type outside these three built-in ones."
     },
     "extensions": {
       "type": "object",
       "additionalProperties": true,
       "description": "Explicit bucket for metadata Invaract doesn't interpret (owners, SLAs, quality rules, ...). Any top-level key not listed in this schema's `properties` is preserved here too by ContractParser, whether or not it's nested under this explicit `extensions` map."
+    },
+    "customRuleTypes": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Maps a rule `type` name this contract's own `rules` use to the fully-qualified class name of a com.invaract.sparkadapter.CustomRuleVerifier implementation that verifies it - the reflective, no-source-change extension point for a DML rule type outside the three built-in ones described above, resolved by com.invaract.sparkadapter.CustomRuleVerifierFactory the same way spark-adapter's NotificationSinkFactory resolves a notification sink.class, and contract/org-policy's own customPolicyTypes resolves a CustomPolicyEvaluator. A key here that collides with one of the three built-in rule types is dead (the built-in interpretation always wins) and is flagged by ContractValidator as a Warning, not an Error; unlike customPolicyTypes, a rule `type` matching neither a built-in type nor a customRuleTypes entry is NOT itself flagged - most of this document's `rules` are routinely recorded-but-uninterpreted (e.g. 'compatibility'), so that shape is normal here, not a likely typo."
     }
   },
   "$defs": {

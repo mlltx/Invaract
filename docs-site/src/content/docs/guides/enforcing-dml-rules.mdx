@@ -90,6 +90,88 @@ Set expectations correctly rather than assuming full coverage:
   exists for these yet; `rules` entries of other types are recorded on the contract but
   not interpreted.
 
+## Write your own rule type
+
+The three built-in types cover a lot of ground, but they're a closed set — an
+organization's own DML governance vocabulary ("never allow an `UPDATE` to touch this
+column directly," "a `DELETE` against this table must always carry an `archived_reason`
+predicate") isn't limited to it. `customRuleTypes` maps a `type:` name your contract's
+`rules:` list uses to a class implementing `CustomRuleVerifier`:
+
+```scala
+import com.invaract.contract.ContractRule
+import com.invaract.ir.RowMutation
+import com.invaract.sparkadapter.{CustomRuleVerifier, MutationKind, Violation, ViolationType}
+
+class ForbidPasswordColumnUpdate extends CustomRuleVerifier {
+  override def appliesTo(kind: MutationKind): Boolean = kind == MutationKind.Update
+
+  override def verify(rule: ContractRule, mutation: RowMutation): List[Violation] =
+    if (mutation.updatedColumns.contains("password"))
+      List(
+        Violation(
+          ViolationType.InvalidContract,
+          s"organizational rule '${rule.ruleType}' forbids updating the 'password' column directly.",
+          remediation = "Route password changes through the dedicated credential-rotation job instead."
+        )
+      )
+    else Nil
+}
+```
+
+Point `customRuleTypes` at it, the same class-name-in-config shape `sink.class` uses for a
+[notification sink](/guides/notification-sinks/#writing-your-own-sink) and
+`customPolicyTypes` uses for a
+[custom policy type](/guides/enforcing-organizational-policy/#write-your-own-policy-type):
+
+```yaml
+customRuleTypes:
+  forbid_password_update: com.acme.governance.ForbidPasswordColumnUpdate
+rules:
+  - type: forbid_password_update
+```
+
+Build and deploy it as its own small jar, and add it to `--jars` alongside the engine's
+own — no Invaract source change, and no change to any governed job's own source either:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.5.0.jar,my-governance-rules.jar \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  my-real-job.jar
+```
+
+`appliesTo` decides which of `MutationKind.Merge`/`Update`/`Delete` your rule cares about —
+it's also what decides whether a write this module recognizes as DML but can't fully
+extract facts for (Iceberg's merge-on-read `UPDATE`, above) fails closed under your rule,
+the same `RULE_UNVERIFIABLE_DML` treatment a built-in rule's own kind-matching already
+gets. `verify` receives the same `RowMutation` a built-in rule type's own check runs
+against — nothing about extraction is different for a custom type.
+
+<Aside type="tip" title="A typo is caught before any write is checked, not the next time a job runs">
+`ContractEnforcementRule` validates every `customRuleTypes` entry eagerly, the same moment
+it validates the rest of the contract — a misspelled class name, or one missing a public
+no-arg constructor, is rejected before any plan is ever checked, not silently ignored the
+next time a governed job runs.
+</Aside>
+
+<Aside type="caution" title="A bug in your own verifier isn't swallowed">
+An exception thrown from `verify` itself propagates, the same as a bug anywhere else in a
+job's own installed check — it does not silently pass every mutation it was supposed to be
+checking.
+</Aside>
+
+<Aside type="note" title="A built-in type always wins a name collision">
+If `customRuleTypes` names a `type:` Invaract already interprets (`merge_condition`,
+`forbid_unconditional_delete`, `allowed_update_columns`), the built-in check runs — your
+custom verifier is never consulted for that rule type. `ContractValidator` warns on this
+rather than erroring, since the contract still evaluates correctly, just not the way the
+collision might suggest.
+</Aside>
+
 ## Try it
 
 The regression pack (`./dev/regression`) demonstrates the structural PASS/FAIL guarantee

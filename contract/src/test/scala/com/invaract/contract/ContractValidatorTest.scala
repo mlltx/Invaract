@@ -148,6 +148,44 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.isValid)
   }
 
+  // -- customRuleTypes -----------------------------------------------------
+
+  private def customRuleContract(customRuleTypes: Map[String, String]): Contract = {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    Contract(
+      id = "custom_rule_types",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty,
+      customRuleTypes = customRuleTypes
+    )
+  }
+
+  test("a well-formed customRuleTypes entry produces no issues") {
+    val result = ContractValidator.validate(customRuleContract(Map("forbid_full_table_scan" -> "com.acme.governance.ForbidFullTableScan")))
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("a customRuleTypes entry with an empty key is an Error") {
+    val result = ContractValidator.validate(customRuleContract(Map("" -> "com.acme.governance.SomeVerifier")))
+    assert(result.errors.exists(_.message.contains("key must not be empty")))
+  }
+
+  test("a customRuleTypes entry with an empty class name is an Error") {
+    val result = ContractValidator.validate(customRuleContract(Map("forbid_full_table_scan" -> "")))
+    assert(result.errors.exists(e => e.path == "customRuleTypes.forbid_full_table_scan" && e.message.contains("class name must not be empty")))
+  }
+
+  test("a customRuleTypes entry colliding with a built-in RuleType is a Warning, not an Error") {
+    val result = ContractValidator.validate(customRuleContract(Map(RuleType.MergeCondition -> "com.acme.governance.SomeVerifier")))
+    assert(result.isValid)
+    assert(result.warnings.exists(w => w.path == s"customRuleTypes.${RuleType.MergeCondition}" && w.message.contains("dead")))
+  }
+
   test("validate should recurse into nested struct fields") {
     val nested = Field("zip", "unknown_type", required = false, nullable = true)
     val struct = Field("address", "struct", required = false, nullable = true, properties = List(nested))

@@ -431,6 +431,55 @@ verification: it recognizes only a flat top-level `AND` of equalities,
 without reasoning about `NOT`, `CASE WHEN`, or De Morgan equivalences,
 and doesn't distinguish target- from source-side qualifiers.
 
+### Custom rule types (`CustomRuleVerifier`)
+
+The three interpreted rule types above are deliberately closed, the same
+way `PolicyType`'s built-in set is (see "Custom policy types" below) —
+but a contract's own DML governance vocabulary isn't limited to them.
+`Contract` carries an eighth field, `customRuleTypes: Map[String, String]`,
+mapping a `ContractRule.ruleType` this document uses to the fully-qualified
+class name of a `spark-adapter`-defined `CustomRuleVerifier`
+implementation:
+
+```yaml
+customRuleTypes:
+  forbid_password_update: com.example.governance.ForbidPasswordColumnUpdateVerifier
+rules:
+  - type: forbid_password_update
+```
+
+Unlike `customPolicyTypes` — whose `CustomPolicyEvaluator` trait,
+factory, and dispatch all live in `contract` itself, since evaluating an
+organizational policy only ever needs a contract's own declared shape —
+`customRuleTypes` is a `contract`-model field whose *behavior* lives
+entirely in `spark-adapter` (`CustomRuleVerifier`/
+`CustomRuleVerifierFactory`/`RuleVerifier` — see
+docs/SPARK_ADAPTER.md's "Custom rule types"): a DML rule inherently needs
+to know what a real Spark write actually *did* (`ir.RowMutation`, only
+extractable from a live Spark plan), which is exactly the kind of fact
+`contract` — deliberately Spark-independent — has no way to produce or
+even reference the type of. This module's own role is correspondingly
+narrower than `OrgPolicyValidator`'s equivalent check: `ContractValidator`
+validates only `customRuleTypes`' *shape* (an entry with an empty
+ruleType/class name is an Error; an entry whose ruleType collides with a
+built-in `RuleType` is a Warning — dead, the built-in always wins, the
+same treatment `customPolicyTypes`' identical collision gets). It
+deliberately does **not** warn on a `ContractRule.ruleType` matching
+neither a built-in `RuleType` nor a `customRuleTypes` entry, unlike
+`OrgPolicyValidator`'s equivalent check for `PolicyType`: unlike
+`OrgPolicy`'s closed, org-controlled seven-type set (where an unrecognized
+type is almost always a typo), a contract's own `rules:` list routinely
+carries rule types no code interprets at all by design — `compatibility`
+being the standing, deliberately-inert example used throughout this
+repository's own contracts — so the identical check here would be a
+false positive on ordinary, correct usage, not a useful signal.
+Actually *resolving* a named class (as opposed to checking its name isn't
+empty) can only happen in `spark-adapter`, which is where
+`ContractEnforcementRule.requireValidContract` eagerly resolves every
+`customRuleTypes` entry via `CustomRuleVerifierFactory.tryResolve` — the
+same "fail loudly, at validation time, before any write is checked"
+treatment `OrgPolicyValidator`'s equivalent eager resolution gets.
+
 ## Organizational Policy
 
 Everything above is scoped to *one* contract, authored by whoever owns

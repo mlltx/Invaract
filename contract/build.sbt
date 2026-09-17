@@ -12,6 +12,10 @@ name := "invaract-contract"
 // changing OrgPolicy.apply/copy/this's arity - the same shape of break as
 // 0.2.0 -> 0.3.0 above, confirmed by a real `sbt mimaReportBinaryIssues`
 // run against the 0.5.0 baseline below before this bump, not assumed.
+// 0.6.0 -> 0.7.0: Contract gained a customRuleTypes constructor parameter
+// (see docs/SPARK_ADAPTER.md's "Custom rule types" section), the same
+// shape of break again - confirmed by a real `sbt mimaReportBinaryIssues`
+// run against the 0.6.0 baseline below before this bump, not assumed.
 // ThisBuild-scoped, not a bare `version :=` - sbt-sonatype's
 // sonatypePublishToBundle (and other cross-cutting plugin settings) reads
 // ThisBuild/version specifically, which otherwise silently stays at sbt's
@@ -20,7 +24,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.6.0"
+ThisBuild / version := "0.7.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -96,7 +100,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.6.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.7.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -124,7 +128,7 @@ assembly / assemblyMergeStrategy := {
 // own build.sbt settings, not this file's), so this must always match
 // base-ref's own current `version` above, not some fixed historical one.
 //
-// mimaPreviousArtifacts stays at 0.5.0 here as the LOCAL-DEV fallback only
+// mimaPreviousArtifacts stays at 0.6.0 here as the LOCAL-DEV fallback only
 // (a plain `sbt mimaReportBinaryIssues` outside CI, comparing against the
 // last baseline a human bothered to write down). It is deliberately NOT
 // what CI's api-compatibility job actually checks against.
@@ -138,10 +142,11 @@ assembly / assemblyMergeStrategy := {
 // fails resolving a now-nonexistent coordinate (e.g. "Error downloading
 // com.invaract:invaract-contract_2.12:0.5.0 - Not found") until someone
 // notices and lands the flip - a real, repeated failure mode, not a
-// hypothetical one: the 0.2.0->0.3.0, 0.3.0->0.4.0, and 0.4.0->0.5.0
-// bumps here (and spark-adapter's 0.4.0->0.5.0) each cost a separate
-// reactive fix-CI PR, and this exact 0.5.0 gap broke this repository's
-// own PR #65 while that follow-up sat unmade.
+// hypothetical one: the 0.2.0->0.3.0 through 0.5.0->0.6.0 bumps here (and
+// spark-adapter's 0.4.0->0.5.0) each cost a separate reactive fix-CI PR,
+// and this exact gap broke this repository's own PR #65 while that
+// follow-up sat unmade - see #65's own fix (which introduced this
+// mechanism) for the full history.
 //
 // The fix: CI's api-compatibility job (.github/workflows/test.yml) now
 // reads base-ref's OWN `ThisBuild / version` directly off its checked-out
@@ -152,24 +157,29 @@ assembly / assemblyMergeStrategy := {
 // `sbt mimaReportBinaryIssues` run with no env var set; bump it whenever
 // convenient, but a stale value here can no longer break CI for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.5.0")
+  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.6.0")
 )
 
 import com.typesafe.tools.mima.core._
 
-// The real, deliberate break motivating the 0.5.0 -> 0.6.0 bump above:
-// OrgPolicy gained a fifth constructor parameter, customPolicyTypes (see
-// docs/CONTRACT_MODEL.md's "Custom policy types" section) - confirmed by a
-// real `sbt mimaReportBinaryIssues` run against the 0.5.0 baseline before
-// this bump, not assumed. These filters become inert (harmless, matching
-// nothing) once base-ref's own version reaches 0.6.0 or later, since CI's
-// dynamically-injected baseline (see the comment above
-// `mimaPreviousArtifacts`) then already has the break on both sides of
-// the comparison - safe to remove whenever this file is next touched, not
-// something a future PR needs to do under time pressure to keep CI green.
+// The OrgPolicy.customPolicyTypes break (0.5.0 -> 0.6.0, landed via #62)
+// is baked into both sides of any comparison against a 0.6.0-or-later
+// baseline by construction now (see the comment above), so its four
+// filters are removed here rather than kept as dead entries with nothing
+// left to match.
+//
+// The real, deliberate break motivating the 0.6.0 -> 0.7.0 bump above:
+// Contract gained a sixth constructor parameter, customRuleTypes (see
+// docs/SPARK_ADAPTER.md's "Custom rule types" section) - confirmed by a
+// real `sbt mimaReportBinaryIssues` run against the 0.6.0 baseline before
+// this bump, not assumed. Unlike the old hardcoded-literal mechanism,
+// these filters become inert on their own (matching nothing) once
+// base-ref's own version reaches 0.7.0 or later - no future PR needs to
+// remember to remove them to keep CI green, though it's fine to clean
+// them up whenever this file is next touched.
 mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.OrgPolicy$")
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Contract$")
 )

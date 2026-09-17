@@ -530,9 +530,10 @@ object ContractEnforcementRule {
         // that kind needs - see RowMutationSupport's class doc) fails
         // closed instead of silently skipping the rule, but only when the
         // contract actually declares a rule that kind is relevant to -
-        // RuleVerifier.appliesTo decides that, so an UPDATE this module
-        // can't fully verify doesn't spuriously fail a contract that only
-        // declares forbid_unconditional_delete, say.
+        // RuleVerifier.anyRuleAppliesTo decides that (built-in or custom
+        // rule types alike), so an UPDATE this module can't fully verify
+        // doesn't spuriously fail a contract that only declares
+        // forbid_unconditional_delete, say.
         // Classified once and reused below by both ruleViolations and
         // fingerprinting - RowMutationSupport.classify re-derives the same
         // RowMutation from the same `plan` either way, so computing it
@@ -541,10 +542,9 @@ object ContractEnforcementRule {
         val rowMutationClassification = RowMutationSupport.classify(plan)
         val ruleViolations = rowMutationClassification match {
           case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
-            RuleVerifier.verify(contract.rules, mutation)
+            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes)
           case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
-            val declaredRules = contract.rules.flatMap(_.interpret)
-            if (declaredRules.exists(RuleVerifier.appliesTo(_, kind))) List(unverifiableDmlViolation(kind)) else Nil
+            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind)) else Nil
           case None => Nil
         }
         // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
@@ -646,9 +646,21 @@ object ContractEnforcementRule {
     */
   private def requireValidContract(contract: Contract, sink: Option[NotificationSink], applicationId: Option[String]): Unit = {
     val validation = ContractValidator.validate(contract)
-    if (!validation.isValid) {
+    // ContractValidator only checks customRuleTypes's shape (empty key/class
+    // name, collision with a built-in RuleType) - it lives in `contract`,
+    // which can't depend on CustomRuleVerifier (a spark-adapter-only trait,
+    // per the contract -> spark-adapter dependency direction), so it can
+    // never actually resolve a named class. Resolving each entry here, once
+    // per write, fails the same way an unresolvable NotificationSink class
+    // or CustomPolicyEvaluator class does: loudly, at validation time,
+    // before any rule check runs - rather than RuleVerifier silently
+    // treating every rule naming that class as inapplicable.
+    val unresolvableCustomRuleTypes = contract.customRuleTypes.toList.flatMap { case (ruleType, className) =>
+      CustomRuleVerifierFactory.tryResolve(className).failed.toOption.map(e => (ruleType, className, e.getMessage))
+    }
+    if (!validation.isValid || unresolvableCustomRuleTypes.nonEmpty) {
       val contractRef = s"${contract.id}@${contract.version}"
-      val violations = validation.errors.map { issue =>
+      val validatorViolations = validation.errors.map { issue =>
         Violation(
           ViolationType.InvalidContract,
           s"contract '$contractRef' is invalid at '${issue.path}': ${issue.message}",
@@ -656,7 +668,15 @@ object ContractEnforcementRule {
             "ContractValidator.validate before it's used to verify any write."
         )
       }
-      val result = VerificationResult.of(contractRef, violations)
+      val customRuleTypeViolations = unresolvableCustomRuleTypes.map { case (ruleType, className, message) =>
+        Violation(
+          ViolationType.InvalidContract,
+          s"contract '$contractRef' declares customRuleTypes['$ruleType'] = '$className', which could not be resolved: $message",
+          remediation = s"Fix or remove the customRuleTypes['$ruleType'] entry so '$className' names a class on the " +
+            "classpath implementing CustomRuleVerifier with a public no-arg constructor."
+        )
+      }
+      val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
       publishValidation(contract, result, sink, applicationId)
       // See enforceOrgPolicy's identical describedPlan for why this reads
       // as a plain sentence rather than a parenthesized fragment: PlanPrinter
