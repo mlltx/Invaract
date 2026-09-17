@@ -108,17 +108,15 @@ strykerThresholdsBreak := 50
 // contract/build.sbt's matching comment for the general invariant this
 // has to satisfy).
 //
-// The 0.3.0 -> 0.4.0 bump (this file's version above) landed on the base
-// branch in its own PR, which left this pointing at the now-superseded
-// 0.3.0 baseline with a "FOLLOW-UP: flip this once that PR lands" comment
-// - the same pattern the 0.2.0 -> 0.3.0 bump itself used (see git history
-// for prior revisions of this section). That PR has now landed (base-ref
-// itself publishes 0.4.0, not 0.3.0, confirmed the hard way: CI's
-// api-compatibility job failed with a real "Not found" resolving 0.3.0),
-// so this is that follow-up flip. The `mimaBinaryIssueFilters` entries
-// this section previously carried for the 0.3.0 -> 0.4.0 break (Read and
-// Write each gaining a trailing `catalog: Option[CatalogIdentity]`
-// constructor parameter) are removed along with it: now that the baseline
-// itself is 0.4.0, that break is inside the baseline on both sides of the
-// comparison and no longer shows up as a difference to filter.
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-ir" % "0.4.0")
+// The 0.3.0 -> 0.4.0 bump (this file's version above) previously required
+// a manual FOLLOW-UP PR to flip this literal once the bump landed on the
+// base branch - see contract/build.sbt's matching comment for the root
+// cause (a hardcoded baseline drifting out of sync with base-ref's actual
+// version breaks every OTHER PR's api-compatibility job in between) and
+// the fix: CI now derives the comparison baseline from base-ref's own
+// `ThisBuild / version` directly (INVARACT_MIMA_BASELINE_VERSION), so this
+// hardcoded value only matters for a local `sbt mimaReportBinaryIssues`
+// run and can no longer break CI by going stale.
+mimaPreviousArtifacts := Set(
+  "com.invaract" %% "invaract-ir" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.4.0")
+)

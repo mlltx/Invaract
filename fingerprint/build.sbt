@@ -22,18 +22,21 @@ organization := "com.invaract"
 // against base-ref's own build.sbt and then resolves exactly this
 // coordinate against it).
 //
-// The 0.1.0 -> 0.2.0 bump (this file's version above) landed on the base
-// branch in its own PR, which left this pointing at the now-superseded
-// 0.1.0 baseline - the same "FOLLOW-UP: flip this once that PR lands"
-// pattern contract/ir/spark-adapter's own version bumps already went
-// through (see ir/build.sbt's matching comment). That PR has now landed
-// (base-ref itself publishes 0.2.0, not 0.1.0, confirmed the hard way:
-// CI's api-compatibility job failed with a real "Not found" resolving
-// 0.1.0), so this is that follow-up flip. There were no
-// `mimaBinaryIssueFilters` to remove here - this module's own compiled
-// classes didn't change public shape across that bump (see git history
-// for the original 0.1.0 -> 0.2.0 comment's own reasoning).
-mimaPreviousArtifacts := Set("com.invaract" %% "invaract-fingerprint" % "0.2.0")
+// The 0.1.0 -> 0.2.0 bump (this file's version above) previously required
+// a manual FOLLOW-UP PR to flip this literal once the bump landed on the
+// base branch - the same "flip this once that PR lands" pattern
+// contract/ir/spark-adapter's own version bumps have each needed and, more
+// than once, forgotten (see contract/build.sbt's matching comment for the
+// root cause: a hardcoded baseline drifting out of sync with base-ref's
+// actual version breaks every OTHER PR's api-compatibility job in
+// between, not just the one that bumped it). The fix: CI now derives the
+// comparison baseline from base-ref's own `ThisBuild / version` directly
+// (INVARACT_MIMA_BASELINE_VERSION), so this hardcoded value only matters
+// for a local `sbt mimaReportBinaryIssues` run and can no longer break CI
+// by going stale.
+mimaPreviousArtifacts := Set(
+  "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
+)
 
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
 // spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
