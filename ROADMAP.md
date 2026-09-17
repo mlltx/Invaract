@@ -2775,13 +2775,29 @@ Extend verification engine to support multiple execution engines.
 
 Establish contract as a versioned, governed artifact.
 
-### Scope (Future)
+### Scope
 
-- [ ] Contract registry design
-- [ ] Version management
-- [ ] Compatibility checking
-- [ ] Impact analysis
-- [ ] Governance policies
+- [x] Contract registry design — docs/CONTRACT_REGISTRY.md, implemented
+      as a separate repo (`mlltx/invaract-registry`) per its own
+      "Two-repo split" reasoning, plus `registry-client` (this repo) and
+      `spark-adapter`'s reflective `registry://<id>@<version>` resolution
+      (`ContractSource.scala`) — proven end to end against a real Spark
+      job by `./dev/registry-demo`, per CLAUDE.md's Critical Requirement
+- [x] Version management — `invaract-registry`'s `RegistryStore`
+      (atomic compare-and-swap registration) and `GET /contracts/{id}/versions`
+- [x] Compatibility checking — every registration reuses `contract`'s own
+      `ContractCompatibility.diff`/`.verifyVersionBump`, rejecting a
+      declared version bump that doesn't match the actual scope of
+      change unless overridden (see docs/CONTRACT_REGISTRY.md §5)
+- [ ] Impact analysis — no UI/report beyond the `GET /contracts` listing
+      the registry already exposes; explicitly out of scope for the
+      current design (docs/CONTRACT_REGISTRY.md §9)
+- [ ] Governance policies — the registry enforces *per-contract* version
+      governance (above), but the *cross-contract* policies
+      docs/CONTRACT_MODEL.md names ("every input must be some other
+      contract's declared output," "no two contracts may target the same
+      physical location") have no consumer of the registry evaluating
+      them yet
 
 ### Dependencies
 

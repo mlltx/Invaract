@@ -1,0 +1,147 @@
+---
+title: Use a Contract Registry
+description: Point a job at a versioned, governed contract stored in a registry service instead of a local file.
+sidebar:
+  order: 13
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A contract normally comes from a file the job carries with it — but a file has no shared
+place other jobs, CI pipelines, or platform tooling can look up, version, or govern
+independently of any one job's own deployment. `registry://<id>@<version>` lets
+`spark.invaract.contract` name a contract stored in a **contract registry** — a small HTTP
+service (a separate project, [`mlltx/invaract-registry`](https://github.com/mlltx/invaract-registry))
+that stores versions of a contract, computes a compatibility diff against the previous
+version on every new registration, and rejects a registration whose declared version bump
+doesn't match the actual scope of change unless explicitly overridden.
+
+<Aside type="note" title="A separate repo, not a module in this one">
+Every other module in this repository is a library a Spark job embeds. A registry is a
+real, long-running deployable service with its own release/ops lifecycle — a different
+shape of artifact, so it lives in its own repo rather than Invaract's own module graph.
+See `docs/CONTRACT_REGISTRY.md`'s "Two-repo split" section (in this repository, not
+`docs-site/`) for the full reasoning.
+</Aside>
+
+## What you need running
+
+A registry server, reachable over HTTP from wherever your job runs. Clone and run one:
+
+```bash
+git clone https://github.com/mlltx/invaract-registry
+cd invaract-registry
+sbt run   # starts on :7000
+```
+
+See that repo's own README for building a container image instead, and for configuring
+`REGISTRY_AUTH_TOKEN` if you want bearer-token auth on top of the default open-access
+setup.
+
+## Register a contract
+
+<Steps>
+
+1. Write an ordinary contract, the same as any other — see [Write a
+   Contract](/guides/writing-a-contract/).
+
+2. `PUT` it to the registry:
+
+   ```bash
+   curl -X PUT http://localhost:7000/contracts/customer_orders/versions/1.0.0 \
+     -H "Content-Type: application/yaml" \
+     --data-binary @customer_orders.yaml
+   ```
+
+   A first-ever version returns `201` with an empty compatibility report:
+
+   ```json
+   {"changes":[]}
+   ```
+
+3. Registering a later version reuses `contract`'s own `ContractCompatibility` diff — the
+   same logic [Check Contract Compatibility](/guides/checking-contract-compatibility/)
+   describes — to reject a version bump that doesn't match the actual scope of change
+   (`?expectedPrevious=1.0.0` for the optimistic-concurrency check, `?force=true` to
+   override a rejected bump).
+
+</Steps>
+
+## Point a job at it, purely via `spark-submit --conf`
+
+No change to a job's own source is needed — the same attachability guarantee every other
+`spark.invaract.*` conf key in this documentation gives you:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=registry://customer_orders@2.1.0 \
+  --conf spark.invaract.registryUrl=https://registry.corp.internal \
+  --jars invaract-spark-adapter-0.5.0.jar,invaract-registry-client-0.1.0.jar \
+  my-job.jar
+```
+
+`registry://customer_orders@2.1.0` names an exact version; `registry://customer_orders@latest`
+resolves to whatever the registry currently considers the latest registered version for
+that id.
+
+<Aside type="tip" title="invaract-registry-client is only needed via --jars, not compiled in">
+`spark-adapter` has no compile-time dependency on `registry-client` — resolving a
+`registry://` reference loads it reflectively, by class name, only once a job actually
+uses one. A job that never sets `spark.invaract.contract` to a `registry://` value never
+needs `invaract-registry-client-*.jar` on its classpath at all, the same way
+`notification-kafka`'s jar is only needed by a job that configures a Kafka notification
+sink.
+</Aside>
+
+## Need a resolver `--conf` can't express?
+
+Call `registry-client` directly in code, the same "conf path required, code path is a
+bonus" composition every other resolution mechanism in this documentation follows:
+
+```scala
+import com.invaract.registryclient.HttpContractRegistryClient
+import com.invaract.sparkadapter.ContractEnforcementRule
+
+val client = new HttpContractRegistryClient()
+client.configure("https://registry.corp.internal")
+val contract = client.getLatest("customer_orders")
+
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(ContractEnforcementRule.forContract(contract)))
+  .getOrCreate()
+```
+
+## Trying it against the demo job
+
+```bash
+./dev/registry-demo
+```
+
+Needs a local clone of `mlltx/invaract-registry` next to this repository (or
+`INVARACT_REGISTRY_DIR` pointing at one elsewhere). The script starts a real registry
+server, registers `demo/contracts/invaract_output_registry.yaml` into it over real HTTP,
+then runs `DemoJobHarness` against `registry://invaract_demo_output_registry@1.0.0` —
+confirmed against a real run, not just described. Its `contractVerification` section:
+
+```json
+{
+  "status": "PASSED",
+  "contract": "invaract_demo_output_registry@1.0.0",
+  "contractPath": "registry://invaract_demo_output_registry@1.0.0",
+  "violations": []
+}
+```
+
+`contractPath` staying the literal `registry://...` string, rather than a resolved file
+path, is what confirms the run went through registry resolution end to end.
+
+## What's next
+
+A persistent registry storage backend (the reference implementation is in-memory, not
+durable across restarts), real SSO/OIDC auth, and cross-contract policies or
+fingerprint-based drift control consuming the registry are all named, disclosed future
+work — see `docs/CONTRACT_REGISTRY.md`'s "Non-goals" section and that repo's own README
+for the current state of each.

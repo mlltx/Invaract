@@ -890,8 +890,12 @@ absent:
   once (e.g. "every input must be some other contract's declared
   output," "no two contracts may target the same physical location")
   needs a contract registry to know about every contract in an
-  organization at once, which ROADMAP.md already tracks as unbuilt Phase
-  3 work.
+  organization at once. That registry now exists
+  (docs/CONTRACT_REGISTRY.md, implemented in the separate
+  `mlltx/invaract-registry` repo) — `GET /contracts` already lists every
+  registered id — but nothing consumes it to evaluate a cross-contract
+  rule yet; this remains real, unbuilt work, just no longer blocked on
+  the registry itself existing.
 - **Policy layering/inheritance** — a stricter business-unit policy
   composing with a looser org-wide one. `OrgPolicy` is deliberately flat/
   single-document for now; revisit once a real need for layering
@@ -934,7 +938,9 @@ scope for this deliverable, tracked in [ROADMAP.md](../ROADMAP.md):
   "Interpreted rules" above (compatibility mode, quality expectations,
   and everything else `rules` can carry are still recorded only)
 - Column-level lineage extraction
-- A contract registry or versioned storage (Phase 3)
+- Versioned storage of a contract itself as it evolves over time — that's
+  now a separate service, `mlltx/invaract-registry`
+  (docs/CONTRACT_REGISTRY.md), not part of this module or this repository
 
 ## Testing
 

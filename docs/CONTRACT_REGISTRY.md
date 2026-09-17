@@ -272,11 +272,25 @@ was never a missing overload to add, only a resolver to call before
 `forContract`.
 
 **Confirmed end state**: `./dev/build`, `./dev/test`, and
-`./dev/regression` all continue to pass with zero registry-related code
-present anywhere and no server running anywhere — nothing in the existing
-critical path changes. `registry-client` is not part of `./dev/build`'s
-default module set, the same as `plugin`/`runner`/`notification-kafka`
-today.
+`./dev/regression` all continue to pass with no server running anywhere,
+no network call to a registry, and `spark-adapter` still carrying zero
+compile-time dependency on `registry-client` — nothing about the existing
+critical path's *behavior* changes. One thing did change from the
+original plan, once `dev/registry-demo` (§10) needed a real, end-to-end
+proof to build against: `registry-client` **is** now part of
+`./dev/build`'s default module set (`publishLocal`'d after
+`spark-adapter`, before `runner`), because `runner`'s own
+`DemoJobHarness.scala` (harness code, not the engine) has a real,
+harness-only compile dependency on it — `loadContract` needs a real
+`ContractRegistryClient` to resolve a `registry://` reference for its own
+upfront reporting/`SparkAdapterListener` bookkeeping, before any
+`SparkSession` exists to read `spark.invaract.registryUrl` from (that
+resolution can't reuse `ContractSource.resolve` itself, which requires an
+already-built session). This is purely a local `publishLocal` step, adds
+no server dependency to `./dev/build`, and does not weaken this section's
+core guarantee: `spark-adapter` itself, and any real platform team's own
+job, still only ever reach `registry-client` reflectively, via `--jars`,
+exactly as described above.
 
 ## 8. Auth (v1)
 
@@ -311,3 +325,41 @@ uses:
 - **Maven Central publishing for `registry-client`** — matches
   `fingerprint`'s own deferred-publishing precedent; no release metadata
   until it's ready.
+
+## 10. Trying it: `dev/registry-demo`
+
+`./dev/registry-demo` proves everything above against a real Spark job,
+not just this document's description of it (CLAUDE.md's Critical
+Requirement) — it needs a local checkout of `mlltx/invaract-registry`
+(sibling directory by default, or `INVARACT_REGISTRY_DIR`), then:
+
+1. Builds every module (`./dev/build`, now including `registry-client`).
+2. Builds and starts a real `invaract-registry-server.jar` on
+   `localhost:7070` (or `$REGISTRY_DEMO_PORT`).
+3. Registers `demo/contracts/invaract_output_registry.yaml` into it with a
+   real `PUT` over HTTP — no `expectedPrevious`, so this is a first-ever
+   version, confirmed by the real compatibility report the server returns:
+   `{"changes":[]}`.
+4. Runs `DemoJobHarness` with
+   `spark.invaract.contract=registry://invaract_demo_output_registry@1.0.0`
+   and `spark.invaract.registryUrl=http://localhost:7070` — resolved by
+   `InvaractSparkSessionExtension`/`ContractSource` exactly as §7
+   describes, purely via conf, with no code of `DemoJobHarness`'s own
+   doing the enforcement-path resolution.
+5. Stops the server (a trap, on both success and failure) and asserts the
+   run's `demo/output/registry_report.json` says `"status": "PASS"`.
+
+A real run's captured `contractVerification` section:
+
+```json
+{
+  "status": "PASSED",
+  "contract": "invaract_demo_output_registry@1.0.0",
+  "contractPath": "registry://invaract_demo_output_registry@1.0.0",
+  "violations": []
+}
+```
+
+`contractPath` staying the literal `registry://...` string (not a
+resolved file path) is the confirmation that the whole run went through
+registry resolution, not a local file fallback.
