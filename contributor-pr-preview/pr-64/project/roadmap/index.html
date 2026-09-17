@@ -106,7 +106,9 @@
 <div class="sl-heading-wrapper level-h4"><h4 id="2-licensing">2. Licensing</h4><a class="sl-anchor-link" href="#2-licensing"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. Licensing”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Choose permissive licence</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Choose permissive licence</strong> — done: Apache 2.0 <code dir="auto">LICENSE</code> at the
+repository root; <code dir="auto">SPDX-License-Identifier</code> headers confirmed present on
+every main-source and test Scala file in the repo.</p>
 <ul>
 <li>Recommended: Apache 2.0 (aligns with Spark ecosystem)</li>
 <li>Alternative: MIT (simpler, still permissive)</li>
@@ -115,7 +117,11 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Copyright and attribution</strong></p>
+<p><input type="checkbox" disabled> <strong>Copyright and attribution</strong> — still open: no <code dir="auto">NOTICE</code> file and no
+explicit “Copyright © … Invaract Contributors” statement exists
+anywhere (<code dir="auto">CONTRIBUTING.md</code>’s only “copyright” mention is inside an
+example commit message, not a stated policy). <code dir="auto">CONTRIBUTORS.md</code> covers
+recognition, not a declared copyright holder or attribution policy.</p>
 <ul>
 <li>Define copyright holder(s)</li>
 <li>Establish contributor attribution policy</li>
@@ -147,7 +153,9 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>CONTRIBUTING.md</strong></p>
+<p><input type="checkbox" checked disabled> <strong>CONTRIBUTING.md</strong> — done, exists at repo root, covers setup, code
+style, testing requirements, PR process, commit conventions, and a full
+worked developer-workflow example.</p>
 <ul>
 <li>How to set up development environment</li>
 <li>Code style guidelines</li>
@@ -158,7 +166,7 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>CODE_OF_CONDUCT.md</strong></p>
+<p><input type="checkbox" checked disabled> <strong>CODE_OF_CONDUCT.md</strong> — done, exists at repo root.</p>
 <ul>
 <li>Community standards</li>
 <li>Reporting mechanism</li>
@@ -167,7 +175,11 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>ARCHITECTURE.md</strong></p>
+<p><input type="checkbox" checked disabled> <strong>ARCHITECTURE.md</strong> — done, exists at repo root: system design,
+the two-halves (engine vs. harness) breakdown, data flow diagrams, nine
+ADRs (under “Architectural Decisions” — inline in this file rather than
+a separate <code dir="auto">docs/adr/</code> directory, see the Architectural Principles item
+below), and technology-choice rationale.</p>
 <ul>
 <li>High-level system design</li>
 <li>Component breakdown</li>
@@ -177,7 +189,7 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>SECURITY.md</strong></p>
+<p><input type="checkbox" checked disabled> <strong>SECURITY.md</strong> — done, exists at repo root.</p>
 <ul>
 <li>Reporting security vulnerabilities</li>
 <li>Supported versions for security updates</li>
@@ -189,39 +201,64 @@
 <div class="sl-heading-wrapper level-h4"><h4 id="4-continuous-integration">4. Continuous Integration</h4><a class="sl-anchor-link" href="#4-continuous-integration"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Continuous Integration”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>GitHub Actions workflow</strong></p>
-<ul>
-<li>Test on push to main branches</li>
-<li>Test on pull requests</li>
-<li>Run on multiple OS (Linux, macOS, Windows)</li>
-<li>Run on multiple Java versions (11, 17, 21)</li>
-<li>Code coverage reporting</li>
-<li>Lint checks</li>
+<p><input type="checkbox" checked disabled> <strong>GitHub Actions workflow</strong> (<code dir="auto">.github/workflows/test.yml</code>) — done for
+every sub-item except lint checks.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> Test on push to main branches</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Test on pull requests</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Run on multiple OS (Linux, macOS, Windows)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Run on multiple Java versions (11, 17, 21)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Code coverage reporting — not via a line-coverage tool (no
+scoverage/JaCoCo/Codecov wired in anywhere); closed instead by
+Stryker4s mutation testing on <code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code>
+(CLAUDE.md’s “Mutation Testing Requirement”), which is a strictly
+stronger signal for those three modules: a surviving <code dir="auto">NoCoverage</code>
+mutant <em>is</em> an uncovered-line report, and a killed mutant additionally
+proves the covering test asserts on actual behavior, not just that the
+line executed. This does not extend to <code dir="auto">contract</code> (no Stryker4s wired
+to it at all) or to <code dir="auto">plugin</code>/<code dir="auto">runner</code>/<code dir="auto">web</code> — those have no coverage
+signal, line- or mutation-based, of any kind. Treat as closed for the
+engine’s mutation-tested modules, still open for <code dir="auto">contract</code> and the
+harness.</li>
+<li class="task-list-item"><input type="checkbox" disabled> Lint checks — open: no scalafmt/scalafix (or ESLint config beyond
+<code dir="auto">web/.eslintrc.json</code>, which only covers <code dir="auto">web/</code>) found for the Scala
+modules.</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Build configuration</strong></p>
-<ul>
-<li>sbt configuration</li>
-<li>Dependency resolution</li>
-<li>Caching strategies</li>
-<li>Artifact publishing</li>
+<p><input type="checkbox" checked disabled> <strong>Build configuration</strong> — done.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> sbt configuration (per-module <code dir="auto">build.sbt</code>, explicit version pins)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Dependency resolution (managed deps + the <code dir="auto">unmanagedJars</code>
+cross-module graph <code dir="auto">dev/build</code> documents)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Caching strategies (<code dir="auto">actions/cache@v4</code> plus <code dir="auto">setup-java</code>’s
+<code dir="auto">cache: 'sbt'</code>, throughout <code dir="auto">.github/workflows/test.yml</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Artifact publishing (<code dir="auto">release.yml</code>, <code dir="auto">publish-spark-jars.yml</code>)</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Quality gates</strong></p>
-<ul>
-<li>Coverage thresholds</li>
-<li>Style enforcement</li>
-<li>Type checking</li>
-<li>Documentation build</li>
+<p><input type="checkbox" disabled> <strong>Quality gates</strong> — mostly done; style enforcement is the one real
+gap.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> Coverage thresholds — see the mutation-testing note above; closed
+for <code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code>, open for <code dir="auto">contract</code> and the
+harness modules</li>
+<li class="task-list-item"><input type="checkbox" disabled> Style enforcement — open, no formatter/linter configured for Scala</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Type checking — inherent to <code dir="auto">sbt compile</code> in every CI job; the
+Scala compiler is the type checker here and already blocks the build</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Documentation build (<code dir="auto">deploy-docs.yml</code>, <code dir="auto">deploy-contributor-docs.yml</code>)</li>
 </ul>
 </li>
 </ul>
 <div class="sl-heading-wrapper level-h4"><h4 id="5-dependency-management">5. Dependency Management</h4><a class="sl-anchor-link" href="#5-dependency-management"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Dependency Management”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Dependency declaration</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Dependency declaration</strong> — done: every module’s <code dir="auto">build.sbt</code> pins
+exact versions and separates <code dir="auto">libraryDependencies</code> by <code dir="auto">Compile</code>/<code dir="auto">Test</code>
+scope; rationale for major choices (Spark 3.5.1, sbt split, Stryker4s
+version) is documented in this file and CLAUDE.md rather than inline
+per-dependency, which is a thinner form of the last sub-item than
+originally envisioned but not a gap worth reopening on its own.</p>
 <ul>
 <li>Define all dependencies with versions</li>
 <li>Separate compile, test, and provided dependencies</li>
@@ -230,7 +267,13 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Dependency updates</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Dependency updates</strong> — done: <code dir="auto">.github/dependabot.yml</code> (npm +
+GitHub Actions ecosystems) plus <code dir="auto">docs/CVE_REMEDIATION.md</code>, which
+explicitly covers the gap Dependabot can’t close (no sbt/Maven updater,
+so <code dir="auto">contract</code>/<code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">plugin</code>/<code dir="auto">runner</code> CVE alerts are
+triaged manually) — security response timeline, breaking-change
+handling, and the compatibility matrix (<code dir="auto">docs/COMPATIBILITY.md</code>) all
+included.</p>
 <ul>
 <li>Establish policy for dependency upgrades</li>
 <li>Security update response timeline</li>
@@ -239,7 +282,11 @@
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Reproducible builds</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Reproducible builds</strong> — done: <code dir="auto">build.sbt</code> version pins serve as
+the lock file (sbt has no separate lock-file mechanism), the dev
+container (<code dir="auto">.devcontainer/</code>) documents the build environment, and a
+dedicated <code dir="auto">sbom</code> CI job (<code dir="auto">sbt makeBom</code> per module, <code dir="auto">npm sbom</code> for <code dir="auto">web</code>)
+publishes real build metadata as a workflow artifact on every run.</p>
 <ul>
 <li>Lock file for exact versions</li>
 <li>Document build environment</li>
@@ -291,16 +338,22 @@ install instructions to docs-site/ per CLAUDE.md’s Documentation Policy.</p>
 <ul class="contains-task-list">
 <li class="task-list-item"><input type="checkbox" checked disabled> Maven Central or similar registry (Central Portal, pending
 namespace verification)</li>
-<li class="task-list-item"><input type="checkbox" disabled> GitHub Releases with binaries</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> GitHub Releases with binaries — done: <code dir="auto">publish-spark-jars.yml</code>
+republishes <code dir="auto">contract</code>/<code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code> jars as
+GitHub Release assets on the rolling <code dir="auto">spark-jars-latest</code> tag on every
+push to <code dir="auto">main</code> that passes CI.</li>
 <li class="task-list-item"><input type="checkbox" disabled> Documentation on artifact locations (docs-site/, once a real
 release exists)</li>
 </ul>
 </li>
 </ul>
 <div class="sl-heading-wrapper level-h4"><h4 id="7-compatibility-policy">7. Compatibility Policy</h4><a class="sl-anchor-link" href="#7-compatibility-policy"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “7. Compatibility Policy”</span></a></div>
+<p>All four items below are done, all documented in <code dir="auto">docs/COMPATIBILITY.md</code>
+and <code dir="auto">docs/VERSIONING.md</code>.</p>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Java/JVM compatibility</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Java/JVM compatibility</strong> — <code dir="auto">docs/COMPATIBILITY.md</code> documents the
+supported-JDK matrix (11/17/21) and 1.8 bytecode target.</p>
 <ul>
 <li>Minimum JDK version policy</li>
 <li>Support matrix for multiple versions</li>
@@ -308,7 +361,7 @@ release exists)</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Spark compatibility</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Spark compatibility</strong></p>
 <ul>
 <li>Supported Spark versions</li>
 <li>Test matrix for multiple Spark versions — done for the Spark 3.5.x
@@ -317,7 +370,11 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Scala compatibility</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Scala compatibility</strong> — <code dir="auto">docs/COMPATIBILITY.md</code> documents the
+supported Scala 2.12.18 binary, explicitly scopes cross-compilation as
+future work (“No cross-compilation needed for Phase 0”; Scala 2.13 via
+cross-compilation planned for 0.2.0+), and covers the Spark 4.x /
+Scala-2.13-only implication.</p>
 <ul>
 <li>Supported Scala versions</li>
 <li>Binary compatibility guarantees</li>
@@ -325,7 +382,12 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Deprecation policy</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Deprecation policy</strong> — <code dir="auto">docs/VERSIONING.md</code>’s “Deprecation Policy”
+section: an announced → deprecated → removed lifecycle, <code dir="auto">@deprecated</code>
+code annotations with a migration path, and release-note/<code dir="auto">MIGRATION.md</code>
+communication (note: <code dir="auto">MIGRATION.md</code> itself doesn’t exist yet — nothing
+has been deprecated to migrate away from so far, so this is unexercised
+rather than broken).</p>
 <ul>
 <li>Timeline for deprecation warnings</li>
 <li>Removal timeline for deprecated APIs</li>
@@ -336,7 +398,10 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 <div class="sl-heading-wrapper level-h4"><h4 id="8-architectural-principles">8. Architectural Principles</h4><a class="sl-anchor-link" href="#8-architectural-principles"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “8. Architectural Principles”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Document principles</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Document principles</strong> — done via <code dir="auto">ARCHITECTURE.md</code>’s “Two halves
+of this repository” and “System Architecture” sections (technology
+independence via the IR, modularity via the module split, explainability
+via <code dir="auto">ContractEnforcementRule.explain</code>’s four-part answer).</p>
 <ul>
 <li>Technology independence (not Spark-specific)</li>
 <li>Open standards preference</li>
@@ -346,7 +411,12 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>ADR (Architecture Decision Records)</strong></p>
+<p><input type="checkbox" checked disabled> <strong>ADR (Architecture Decision Records)</strong> — done, with one deviation
+from the original plan: nine ADRs live inline in <code dir="auto">ARCHITECTURE.md</code>’s
+“Architectural Decisions” section rather than as separate files under a
+<code dir="auto">docs/adr/</code> directory (which doesn’t exist). Substance matches the
+planned examples (Spark-first via adapter, not Scala-vs-Java; contract
+model choices) even though the specific example topics didn’t map 1:1.</p>
 <ul>
 <li>Format: Use ADR template</li>
 <li>Repository: docs/adr/</li>
@@ -361,7 +431,10 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Design patterns</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Design patterns</strong> — done, documented across <code dir="auto">ARCHITECTURE.md</code>
+(ADR-001’s adapter pattern) and <code dir="auto">docs/TRANSFORMATION_IR.md</code>/
+<code dir="auto">docs/CONTRACT_MODEL.md</code>/<code dir="auto">docs/SPARK_ADAPTER.md</code> (IR abstraction,
+contract representation, <code dir="auto">VerificationResult</code> shape respectively).</p>
 <ul>
 <li>Abstraction for transformation IR</li>
 <li>Adapter pattern for execution engines</li>
@@ -373,7 +446,9 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 <div class="sl-heading-wrapper level-h4"><h4 id="9-governance">9. Governance</h4><a class="sl-anchor-link" href="#9-governance"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “9. Governance”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Project governance model</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Project governance model</strong> — done: <code dir="auto">docs/GOVERNANCE.md</code> defines a
+4-level decision-making process (patch → minor → major → breaking),
+maintainer roles, and a steering-committee/RFC path for major changes.</p>
 <ul>
 <li>Decision-making process</li>
 <li>Maintainer roles</li>
@@ -382,7 +457,10 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Contribution levels</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Contribution levels</strong> — done: <code dir="auto">docs/GOVERNANCE.md</code>’s
+Contributor/Committer/Maintainer sections match this checklist exactly,
+including concrete requirements to advance a level (e.g. committer:
+≥3 months, ≥5 merged PRs, maintainer nomination).</p>
 <ul>
 <li>Contributor</li>
 <li>Committer</li>
@@ -391,7 +469,10 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Roadmap and planning</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Roadmap and planning</strong> — done for the mechanical parts (this file
+is the public, phase-based roadmap); community feedback integration is
+process, not artifact, and stays unverified until real external
+contributions start flowing through it.</p>
 <ul>
 <li>Public roadmap (this file)</li>
 <li>Phase-based releases</li>
@@ -403,7 +484,13 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 <div class="sl-heading-wrapper level-h4"><h4 id="10-community">10. Community</h4><a class="sl-anchor-link" href="#10-community"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “10. Community”</span></a></div>
 <ul class="contains-task-list">
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Discussion channels</strong></p>
+<p><input type="checkbox" disabled> <strong>Discussion channels</strong> — partly evidenced, not fully verifiable
+from inside this repo: <code dir="auto">CONTRIBUTING.md</code> already directs questions to
+“GitHub Discussions” as the documented practice, but whether Discussions
+is actually <em>enabled</em> on the repo (a GitHub repo setting, not a file)
+couldn’t be confirmed from this session — no repo-settings API was
+available to check. Issues/PRs being enabled is self-evident (this repo
+has both). Leave open pending a maintainer confirming the repo setting.</p>
 <ul>
 <li>GitHub Discussions for questions</li>
 <li>Issues for bugs and features</li>
@@ -412,7 +499,12 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>First-time contributor experience</strong></p>
+<p><input type="checkbox" disabled> <strong>First-time contributor experience</strong> — partly done:
+<code dir="auto">CONTRIBUTING.md</code> covers onboarding docs and sets clear expectations
+(review process, testing requirements). Still open: no “good first
+issue” labeling evidence found (a GitHub label/issue-triage practice,
+not a file this repo can encode), and maintainer responsiveness isn’t
+something a static check can confirm.</p>
 <ul>
 <li>Good first issues tagged</li>
 <li>Comprehensive onboarding docs</li>
@@ -421,7 +513,7 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 </ul>
 </li>
 <li class="task-list-item">
-<p><input type="checkbox" disabled> <strong>Recognition</strong></p>
+<p><input type="checkbox" checked disabled> <strong>Recognition</strong> — done: <code dir="auto">CONTRIBUTORS.md</code> exists at the repo root.</p>
 <ul>
 <li>Contributors file (CONTRIBUTORS.md)</li>
 <li>Changelog acknowledgments</li>
@@ -437,55 +529,68 @@ line, see Phase 1c’s “Spark version compatibility matrix” sub-phase</li>
 <li>
 <p><strong>Legal &#x26; Licensing</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> Apache 2.0 license in place</li>
-<li class="task-list-item"><input type="checkbox" disabled> SPDX headers in source files</li>
-<li class="task-list-item"><input type="checkbox" disabled> Copyright clearly stated</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Apache 2.0 license in place</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> SPDX headers in source files</li>
+<li class="task-list-item"><input type="checkbox" disabled> Copyright clearly stated — no NOTICE file or explicit statement (see
+“Copyright and attribution” above)</li>
 </ul>
 </li>
 <li>
 <p><strong>Documentation</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> README with quick-start</li>
-<li class="task-list-item"><input type="checkbox" disabled> CONTRIBUTING.md with clear process</li>
-<li class="task-list-item"><input type="checkbox" disabled> CODE_OF_CONDUCT.md established</li>
-<li class="task-list-item"><input type="checkbox" disabled> ARCHITECTURE.md with design decisions</li>
-<li class="task-list-item"><input type="checkbox" disabled> SECURITY.md with vulnerability reporting</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> README with quick-start</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> CONTRIBUTING.md with clear process</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> CODE_OF_CONDUCT.md established</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> ARCHITECTURE.md with design decisions</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> SECURITY.md with vulnerability reporting</li>
 </ul>
 </li>
 <li>
 <p><strong>CI/CD</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> GitHub Actions workflows running</li>
-<li class="task-list-item"><input type="checkbox" disabled> Tests pass on all supported versions</li>
-<li class="task-list-item"><input type="checkbox" disabled> Code coverage tracked</li>
-<li class="task-list-item"><input type="checkbox" disabled> Lint checks enforced</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> GitHub Actions workflows running</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Tests pass on all supported versions</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Code coverage tracked — via Stryker4s mutation testing on
+<code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code>, not a line-coverage tool; still
+untracked for <code dir="auto">contract</code>/harness modules (see “Quality gates” above)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Lint checks enforced — no Scala formatter/linter configured</li>
 </ul>
 </li>
 <li>
 <p><strong>Versioning</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> Semantic versioning defined</li>
-<li class="task-list-item"><input type="checkbox" disabled> Release process documented</li>
-<li class="task-list-item"><input type="checkbox" disabled> Changelog maintained</li>
-<li class="task-list-item"><input type="checkbox" disabled> Compatibility matrix published</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Semantic versioning defined (<code dir="auto">docs/VERSIONING.md</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Release process documented (<code dir="auto">docs/RELEASING.md</code>)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Changelog maintained — no <code dir="auto">CHANGELOG.md</code> exists yet</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Compatibility matrix published (<code dir="auto">docs/COMPATIBILITY.md</code>)</li>
 </ul>
 </li>
 <li>
 <p><strong>Repository Health</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> Branch protection rules enforced</li>
-<li class="task-list-item"><input type="checkbox" disabled> Issues enabled and triaged</li>
-<li class="task-list-item"><input type="checkbox" disabled> Pull request template created</li>
-<li class="task-list-item"><input type="checkbox" disabled> Stale issue management configured</li>
+<li class="task-list-item"><input type="checkbox" disabled> Branch protection rules enforced — unverified (GitHub repo
+setting, not checkable from inside the repo without an API call this
+session couldn’t make)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Issues enabled and triaged — issues/PRs are evidently enabled
+(this repo has PR/issue templates), but “triaged” is a process claim
+no static check can confirm</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Pull request template created (<code dir="auto">.github/PULL_REQUEST_TEMPLATE.md</code>)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Stale issue management configured — no stale-bot workflow found</li>
 </ul>
 </li>
 <li>
 <p><strong>External Readiness</strong></p>
 <ul class="contains-task-list">
-<li class="task-list-item"><input type="checkbox" disabled> Repository is public and discoverable</li>
-<li class="task-list-item"><input type="checkbox" disabled> Documentation is complete and accurate</li>
-<li class="task-list-item"><input type="checkbox" disabled> First external contribution can be accepted</li>
-<li class="task-list-item"><input type="checkbox" disabled> No architectural blockers identified</li>
+<li class="task-list-item"><input type="checkbox" disabled> Repository is public and discoverable — unverified, same
+repo-setting limitation as branch protection</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Documentation is complete and accurate — extensive <code dir="auto">docs/</code>,
+<code dir="auto">docs-site/</code>, and <code dir="auto">contributor-docs/</code> coverage, cross-checked against
+actual code in this pass</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> First external contribution can be accepted — CONTRIBUTING.md,
+templates, and CI are all in place mechanically; no actual external PR
+has landed yet, which is a different claim than being <em>able</em> to accept
+one</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> No architectural blockers identified</li>
 </ul>
 </li>
 </ol>
