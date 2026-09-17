@@ -54,6 +54,14 @@ class ContractSourceSpec extends AnyFunSuite with BeforeAndAfterAll with BeforeA
     assert(ContractSource.parse("demo/contracts/invaract_output.yaml") == None)
   }
 
+  test("parse returns None for an ordinary file path that happens to contain '@', not just paths without one") {
+    // Without the leading `raw.startsWith(Scheme)` guard, stripPrefix is a
+    // no-op on a string that doesn't start with it, and this path's own
+    // '@' would then wrongly satisfy the split("@", 2) pattern below,
+    // misparsing an ordinary path as a registry reference.
+    assert(ContractSource.parse("/data/customer_orders@2.1.0.yaml") == None)
+  }
+
   test("parse returns None for a reference missing the '@' separator") {
     assert(ContractSource.parse("registry://customer_orders") == None)
   }
