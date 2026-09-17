@@ -135,6 +135,51 @@ object OrgPolicyValidator {
     ValidationResult(issues.result())
   }
 
+  /** Validates every layer in an ordered `List[OrgPolicy]` individually
+    * (`validate`, each layer's issues re-pathed with its own index so a
+    * caller can tell which layer an issue came from), plus one check that
+    * only makes sense *across* layers: a policy `id` repeated in more than
+    * one layer.
+    *
+    * This is deliberately a Warning, not an Error - unlike a duplicate `id`
+    * *within* one document (still an Error, above), a repeated `id` across
+    * layers is not unsafe. Each layer is evaluated independently
+    * (`OrgPolicyEvaluator.evaluateLayers`), so a repeated id never causes
+    * one layer's rule to shadow or be confused with another's during
+    * evaluation itself - `PolicyExemption.covers` and violation attribution
+    * both stay correctly scoped to the one layer that owns the id. It's
+    * still worth flagging, though: a human reading two violations both
+    * attributed to `id 'catalog-required'` (one from the org-wide layer,
+    * one from a business unit's) can't tell them apart by id alone. See
+    * docs/CONTRACT_MODEL.md's "Policy layering" section, which recommends
+    * a naming convention (e.g. prefixing a layer's own rule ids, such as
+    * `bu-finance-catalog-required`) rather than mechanically namespacing
+    * ids - deliberately not automated here, the same "don't design for a
+    * problem a naming convention already solves" restraint this codebase
+    * applies elsewhere.
+    *
+    * Does not, itself, check that an exemption only references its own
+    * layer's policies - that already falls out of `validate` running on
+    * each layer in isolation (an exemption naming an id from a *different*
+    * layer simply doesn't exist in *this* layer's own `policies`, so
+    * `validate` already reports it as "references unknown policy id").
+    */
+  def validateLayers(layers: List[OrgPolicy], now: LocalDate = LocalDate.now()): ValidationResult = {
+    val perLayer = layers.zipWithIndex.flatMap { case (layer, idx) =>
+      validate(layer, now).issues.map(issue => issue.copy(path = s"layers[$idx].${issue.path}"))
+    }
+    val duplicateIds = duplicateNames(layers.flatMap(_.policies.map(_.id)))
+    val crossLayerWarnings = duplicateIds.toList.sorted.map { id =>
+      ValidationIssue(
+        ValidationSeverity.Warning,
+        "layers",
+        s"Policy id '$id' is declared in more than one layer - each layer evaluates independently (no shadowing), " +
+          "but violation messages won't distinguish which layer produced them; consider a per-layer id prefix"
+      )
+    }
+    ValidationResult(perLayer ++ crossLayerWarnings)
+  }
+
   private def ruleHint(ruleType: String): String = ruleType match {
     case PolicyType.RequireField           => " (expected a non-empty 'name' property)"
     case PolicyType.FieldNamingConvention  => " (expected a 'pattern' property that compiles as a valid regex)"

@@ -294,4 +294,54 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     val result = OrgPolicyValidator.validate(policy)
     assert(!result.warnings.exists(_.message.contains("will never be evaluated")))
   }
+
+  // -- validateLayers (policy layering/inheritance) --------------------------
+
+  test("validateLayers with no layers at all is valid, with no issues") {
+    val result = OrgPolicyValidator.validateLayers(Nil)
+    assert(result.isValid)
+    assert(result.issues.isEmpty)
+  }
+
+  test("validateLayers with well-formed, non-overlapping layers is valid") {
+    val orgWide = OrgPolicy("1.0", List(requireCatalog))
+    val buOverlay = OrgPolicy("1.0", List(PolicyRule("bu-owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
+    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validateLayers surfaces each layer's own issues, path-prefixed with that layer's index") {
+    val orgWide = OrgPolicy("1.0", List(requireCatalog))
+    val brokenOverlay = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireField, Map.empty))) // missing required 'name'
+    val result = OrgPolicyValidator.validateLayers(List(orgWide, brokenOverlay))
+    assert(!result.isValid)
+    assert(result.errors.exists(e => e.path == "layers[1].policies[0]" && e.message.contains("malformed or missing properties")))
+  }
+
+  test("validateLayers: a policy id repeated across layers is a Warning, not an Error") {
+    val orgWide = OrgPolicy("1.0", List(requireCatalog)) // id "catalog-required"
+    val buOverlay = OrgPolicy("1.0", List(requireCatalog)) // same id, independent rule
+    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    assert(result.isValid, "a Warning, not an Error - each layer still evaluates independently, no shadowing")
+    assert(result.warnings.exists(w => w.path == "layers" && w.message.contains("'catalog-required'") && w.message.contains("more than one layer")))
+  }
+
+  test("validateLayers: a policy id unique to each layer triggers no cross-layer warning") {
+    val orgWide = OrgPolicy("1.0", List(requireCatalog))
+    val buOverlay = OrgPolicy("1.0", List(PolicyRule("bu-owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
+    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    assert(!result.warnings.exists(_.message.contains("more than one layer")))
+  }
+
+  test("validateLayers: an exemption naming an id from a different layer is reported as an unknown policy id, not silently allowed") {
+    val orgWide = OrgPolicy("1.0", List(requireCatalog)) // id "catalog-required", owned by layer 0
+    val buOverlay = OrgPolicy(
+      "1.0",
+      exemptions = List(PolicyExemption("some_contract", List("catalog-required"), "the BU wants this exempted"))
+    )
+    val result = OrgPolicyValidator.validateLayers(List(orgWide, buOverlay))
+    assert(!result.isValid)
+    assert(result.errors.exists(e => e.path == "layers[1].exemptions[0]" && e.message.contains("unknown policy id 'catalog-required'")))
+  }
 }

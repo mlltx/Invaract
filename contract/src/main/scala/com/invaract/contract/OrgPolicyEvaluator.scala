@@ -40,7 +40,10 @@ case class OrgPolicyEvaluation(enforceViolations: List[PolicyViolation], warnVio
   * total/safe design) — though a caller building a real enforcement path
   * should still validate first, so a malformed policy surfaces as a clear
   * error rather than a silent no-op. See docs/CONTRACT_MODEL.md's
-  * "Organizational Policy" section for the full design.
+  * "Organizational Policy" section for the full design, and its "Policy
+  * layering" subsection for `evaluateLayers` — the `List[OrgPolicy]`
+  * counterpart to `evaluate`'s single document, for a stricter
+  * business-unit policy composing on top of a looser org-wide one.
   */
 object OrgPolicyEvaluator {
 
@@ -60,6 +63,62 @@ object OrgPolicyEvaluator {
     val (enforceViolations, warnViolations) = violations.partition(_.mode == PolicyMode.Enforce)
     OrgPolicyEvaluation(enforceViolations, warnViolations)
   }
+
+  /** Evaluates `contract` against every policy in `layers` — ordered
+    * loosest/most general first (typically an org-wide baseline) to
+    * strictest/most specific last (e.g. a business unit's own overlay) —
+    * and unions the resulting violations, the counterpart to `evaluate`
+    * for policy layering/inheritance (see docs/CONTRACT_MODEL.md's
+    * "Policy layering" section).
+    *
+    * Each layer is evaluated independently through the exact same
+    * single-document `evaluate` above — this is the whole mechanism, not
+    * a special case of it. That independence is what makes layering safe
+    * rather than just convenient: a layer's own `exemptions` can only ever
+    * suppress a violation produced by evaluating that *same* layer (since
+    * `evaluate(contract, layers(i), now)` only ever consults
+    * `layers(i).exemptions` against `layers(i).policies`), and
+    * `OrgPolicyValidator.validate` already rejects (as an Error) an
+    * exemption naming a policy id outside its own document's `policies`.
+    * So a business-unit-owned overlay can add policies on top of an
+    * org-wide baseline, but it is structurally incapable of exempting —
+    * i.e. loosening — a rule the org-wide layer declared; only that
+    * layer's own owner can. The same independence means each layer
+    * resolves its own `customPolicyTypes` against only its own map, so two
+    * layers naming the same `ruleType` for different `CustomPolicyEvaluator`
+    * classes never collide.
+    *
+    * Unioning a set of independently-evaluated violation lists is also
+    * why this composition is always at least as strict as any one layer
+    * alone: adding another layer's rules can only ever add violations
+    * (more constraints to satisfy), never remove ones an earlier layer
+    * already produced - there is no cross-layer "override" or "replace"
+    * mechanism for a rule's mode/properties, by design. A layer wanting a
+    * stricter version of a check an earlier layer already declares
+    * (e.g. tightening `warn` to `enforce`) simply adds its own additional
+    * rule of that type; both layers' rules are then evaluated and unioned,
+    * same as any other pair of unrelated rules.
+    *
+    * `layers.isEmpty` produces an `OrgPolicyEvaluation` with no violations
+    * at all - the same no-op `evaluate` gives for an `OrgPolicy` with no
+    * `policies`, and the same behavior a session with no org policy (nor
+    * any layers) configured at all sees today.
+    */
+  def evaluateLayers(contract: Contract, layers: List[OrgPolicy], now: LocalDate = LocalDate.now()): OrgPolicyEvaluation = {
+    val perLayer = layers.map(evaluate(contract, _, now))
+    OrgPolicyEvaluation(perLayer.flatMap(_.enforceViolations), perLayer.flatMap(_.warnViolations))
+  }
+
+  /** `layers.foldLeft(contract)(applyInjectedRules)` - applies every
+    * layer's `inject.rules` in turn, so a rule any layer injects (base or
+    * overlay) ends up in the final `contract.rules` exactly once (the
+    * per-call dedup `applyInjectedRules` already does covers a rule
+    * repeated across layers too, not just within one). Exists purely so
+    * `ContractEnforcementRule`/`OrgPolicyLintCli` don't each need to spell
+    * out the same fold themselves.
+    */
+  def applyInjectedRulesFromLayers(contract: Contract, layers: List[OrgPolicy]): Contract =
+    layers.foldLeft(contract)(applyInjectedRules)
 
   /** Merges `policy.inject.rules` into `contract.rules` — rules a governed
     * contract's author never has to declare themselves for `RuleVerifier`
