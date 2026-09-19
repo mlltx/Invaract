@@ -275,22 +275,31 @@ was never a missing overload to add, only a resolver to call before
 `./dev/regression` all continue to pass with no server running anywhere,
 no network call to a registry, and `spark-adapter` still carrying zero
 compile-time dependency on `registry-client` — nothing about the existing
-critical path's *behavior* changes. One thing did change from the
-original plan, once `dev/registry-demo` (§10) needed a real, end-to-end
-proof to build against: `registry-client` **is** now part of
-`./dev/build`'s default module set (`publishLocal`'d after
-`spark-adapter`, before `runner`), because `runner`'s own
-`DemoJobHarness.scala` (harness code, not the engine) has a real,
-harness-only compile dependency on it — `loadContract` needs a real
-`ContractRegistryClient` to resolve a `registry://` reference for its own
-upfront reporting/`SparkAdapterListener` bookkeeping, before any
-`SparkSession` exists to read `spark.invaract.registryUrl` from (that
-resolution can't reuse `ContractSource.resolve` itself, which requires an
-already-built session). This is purely a local `publishLocal` step, adds
-no server dependency to `./dev/build`, and does not weaken this section's
-core guarantee: `spark-adapter` itself, and any real platform team's own
-job, still only ever reach `registry-client` reflectively, via `--jars`,
-exactly as described above.
+critical path's *behavior* changes, and `registry-client` is not part of
+`./dev/build`'s default module set, the same as `plugin`/`runner`/
+`notification-kafka` today.
+
+`runner`'s own `DemoJobHarness.scala` (harness code, not the engine)
+reaches `registry://` the exact same way §7 describes for a real job: it
+resolves its Contract only *after* the `SparkSession` exists, by calling
+`ContractSource.resolve(contractPath, spark)` directly — the identical
+production entry point `InvaractSparkSessionExtension` itself uses for
+enforcement — rather than a second, harness-only resolution path that
+would have to duplicate `ContractSource`'s own scheme handling and stay in
+sync with it by hand. `registry-client`'s jar reaches the classpath the
+same way it would for any real job: via `--jars`, threaded through
+`dev/lib.sh`'s `run_demo_job_harness` by a new `SPARK_SUBMIT_EXTRA_JARS`
+env var (`dev/registry-demo`'s own use of it), never a compile dependency
+of `runner` or `spark-adapter`. One narrow, disclosed limitation follows
+from resolving after session construction: the one case that still needs
+a `Contract` object *before* the session exists — a configured
+notification sink, which needs the same `Contract` passed directly to
+`ContractEnforcementRule.forContract(contract, ..., sink)` — doesn't
+support a `registry://` reference in this harness yet (it would require
+the harness to reach `registry-client` some other way, since there's no
+session yet to resolve reflectively against); `dev/registry-demo` never
+combines the two, and DemoJobHarness raises a clear error if a caller
+does.
 
 ## 8. Auth (v1)
 
@@ -333,7 +342,9 @@ not just this document's description of it (CLAUDE.md's Critical
 Requirement) — it needs a local checkout of `mlltx/invaract-registry`
 (sibling directory by default, or `INVARACT_REGISTRY_DIR`), then:
 
-1. Builds every module (`./dev/build`, now including `registry-client`).
+1. Builds every module (`./dev/build`) and, separately, `registry-client`'s
+   own assembly jar (not part of `./dev/build`'s default sequence — see
+   above).
 2. Builds and starts a real `invaract-registry-server.jar` on
    `localhost:7070` (or `$REGISTRY_DEMO_PORT`).
 3. Registers `demo/contracts/invaract_output_registry.yaml` into it with a

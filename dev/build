@@ -28,23 +28,17 @@
 #   fingerprint            (needs ir published locally — not contract/plugin)
 #   spark-adapter          (needs contract, ir, fingerprint published locally
 #                            — not plugin)
-#   registry-client        (needs contract published locally — not ir/
-#                            spark-adapter/fingerprint; built here, after
-#                            spark-adapter, purely to keep this script's
-#                            sequencing simple, not because of a real
-#                            dependency between the two)
-#   runner                 (needs contract, ir, spark-adapter, and
-#                            registry-client published locally, plus
-#                            plugin's jar directly)
+#   runner                 (needs contract, ir, spark-adapter published
+#                            locally, plus plugin's jar directly)
 #
-# registry-client itself remains opt-in engine infrastructure — spark-adapter
-# never depends on it at compile time, only reflectively, at runtime, and
-# only for a job that actually configures a registry:// contract reference
-# (docs/CONTRACT_REGISTRY.md §7). It joins this default build sequence
-# solely because `runner`'s own DemoJobHarness.scala now has a real,
-# harness-only compile dependency on it (loadContract's own doc explains
-# why) — the underlying engine's build/test/regression story is otherwise
-# unaffected, and no server needs to be running for this script to succeed.
+# registry-client (docs/CONTRACT_REGISTRY.md) is deliberately NOT part of
+# this default sequence — opt-in engine infrastructure, the same as
+# plugin/runner/notification-kafka's own relationship to the rest of the
+# build: spark-adapter never depends on it at compile time, only
+# reflectively, at runtime, only for a job that actually configures a
+# registry:// contract reference, and this script (and thus ./dev/test)
+# never needs a registry server running to succeed. dev/registry-demo
+# builds it separately, only when actually demonstrating that feature.
 #
 # contract/ir/plugin have no dependency on each other, so they build in
 # parallel (background jobs) rather than one after another on every OS
@@ -150,10 +144,6 @@ wait_module fingerprint
 echo ""
 start_module spark-adapter "compile test assembly publishLocal"
 wait_module spark-adapter
-
-echo ""
-start_module registry-client "compile test assembly publishLocal"
-wait_module registry-client
 
 echo ""
 start_module runner "compile assembly"

@@ -3,10 +3,9 @@
 
 package com.invaract.runner
 
-import com.invaract.contract.{Contract, ContractParser, ContractVersion}
+import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
-import com.invaract.registryclient.HttpContractRegistryClient
 import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, InvaractSparkSessionExtension, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
 import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 import com.invaract.sparkadapter.registry.ContractSource
@@ -55,10 +54,11 @@ object DemoJobHarness {
     // other arguments equally.
     val dryRun = args.contains("--dry-run")
     // Only meaningful when contractPath (below) is a registry://<id>@<version>
-    // reference (dev/registry-demo's own case) - see loadContract's doc for
-    // why this harness needs it as a plain string, separate from the
-    // spark.invaract.registryUrl conf key InvaractSparkSessionExtension
-    // itself reads once the SparkSession exists.
+    // reference (dev/registry-demo's own case) - threaded straight into
+    // spark.invaract.registryUrl below, the same conf key
+    // InvaractSparkSessionExtension itself reads once the SparkSession
+    // exists (ContractSource.resolve, inside forContract's own builder
+    // closure - see that class's doc).
     val registryUrlArg = args.find(_.startsWith("--registry-url=")).map(_.stripPrefix("--registry-url="))
     val positional = args.filterNot(a => a == "--dry-run" || a.startsWith("--registry-url="))
 
@@ -83,13 +83,39 @@ object DemoJobHarness {
     @volatile var summarizingSink: Option[SummarizingNotificationSink] = None
 
     val report = Try {
-      // Loaded before the SparkSession, since ContractEnforcementRule must
-      // be installed at session-construction time (SparkSessionExtensions
-      // configuration can't be changed on an already-built session). In
-      // dry-run mode there is no contract to load at all — contractPath is
-      // ignored entirely, not just left unvalidated.
+      // A registry:// contract reference combined with a notification sink
+      // isn't supported by this harness - a real, disclosed limitation, not
+      // an oversight. The sink branch below needs a real Contract object
+      // before any SparkSession exists (ContractEnforcementRule.forContract
+      // must be installed at session-construction time), and resolving a
+      // registry:// reference at that point would mean this harness taking
+      // a direct compile dependency on registry-client rather than reaching
+      // it the way a real job does - reflectively, via --jars (see
+      // docs/CONTRACT_REGISTRY.md §7). dev/registry-demo never combines the
+      // two. Checked before configuredSink even loads its own config file,
+      // so a bad combination fails fast with a clear message.
+      val notifyConfigured = notifyConfigPath.nonEmpty
+      if (!dryRun && notifyConfigured && ContractSource.parse(contractPath).isDefined) {
+        throw new IllegalArgumentException(
+          s"'$contractPath' is a registry:// reference; combining it with a notification " +
+            "sink isn't supported by this harness yet - omit the notification config, or " +
+            "use a literal contract file path instead."
+        )
+      }
+
+      // Eagerly resolved only for the notification-sink branch (see above) -
+      // never a registry:// reference, guaranteed by the check above. The
+      // common case (no sink - what "Your First Contract" walks through)
+      // resolves its Contract only after the SparkSession exists instead
+      // (see below), reusing ContractSource.resolve - the exact function
+      // InvaractSparkSessionExtension itself calls for enforcement - rather
+      // than a second, harness-only resolution path that would have to
+      // duplicate ContractSource's registry://<id>@<version> handling and
+      // stay in sync with it by hand. In dry-run mode there is no contract
+      // to load at all — contractPath is ignored entirely, not just left
+      // unvalidated.
       //
-      // Any ref://<id> location this contract declares (see
+      // Any ref://<id> location a sink-branch contract declares (see
       // com.invaract.sparkadapter.location) is resolved automatically
       // inside ContractEnforcementRule.forContract itself, from Spark's
       // own configuration (spark.invaract.locationMap) — not here. That's
@@ -100,13 +126,14 @@ object DemoJobHarness {
       // resolver-wiring code of its own. See docs-site's "Resolve Dataset
       // Locations at Runtime" guide for how a platform attaches this
       // purely via `spark-submit --conf`, with no change to this file.
-      val contract = if (dryRun) None else Some(loadContract(contractPath, registryUrlArg))
+      val eagerContract: Option[Contract] =
+        if (dryRun || !notifyConfigured) None else Some(ContractParser.parseFile(contractPath))
 
       // Off by default (empty path -> NotificationConfig.disabled ->
       // NotificationSinkFactory.create returns None): see
       // com.invaract.sparkadapter.notification's package doc. Loaded
-      // before the SparkSession for the same reason the contract is -
-      // both the check rule and the listener below need it at
+      // before the SparkSession for the same reason a sink-branch contract
+      // is - both the check rule and the listener below need it at
       // construction time.
       //
       // Wrapped in a SummarizingNotificationSink rather than passed
@@ -118,20 +145,10 @@ object DemoJobHarness {
       // forwards first), plus one JobSummaryEvent published explicitly
       // below once the job's own outcome is known.
       val configuredSink: Option[NotificationSink] =
-        if (notifyConfigPath.isEmpty) None
+        if (!notifyConfigured) None
         else NotificationSinkFactory.create(NotificationConfig.load(notifyConfigPath))
       summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
       val notifySink: Option[NotificationSink] = summarizingSink
-
-      // Least invasive way to observe a write's real logical plan for
-      // *reporting*: a QueryExecutionListener, registered once, requires no
-      // change to how outputDf.write below is called. See spark-adapter's
-      // SparkPlanAdapter class doc / docs/SPARK_ADAPTER.md for why this
-      // extension point was chosen over SparkSessionExtensions for that
-      // purpose. It is not, however, sufficient to *gate* a write: it only
-      // fires after Spark has already executed the query. Enforcement (see
-      // below) needs a different mechanism entirely.
-      val irListener = new SparkAdapterListener(notifySink, contract)
 
       // Only dry-run mode ever writes to this; a mutable cell is the
       // simplest way to get a value out of a check-rule callback (the same
@@ -149,12 +166,14 @@ object DemoJobHarness {
       // Three ways to install the check rule, picked by what this run
       // actually needs — not an arbitrary choice per case:
       //
-      //   - A real contract, no notification config: the common case (this
-      //     is what "Your First Contract" walks through). Installed purely
-      //     via spark.sql.extensions + spark.invaract.contract, the same
+      //   - Not dry-run, no notification config: the common case (this is
+      //     what "Your First Contract" walks through). Installed purely via
+      //     spark.sql.extensions + spark.invaract.contract, the same
       //     conf-driven mechanism "Install the Enforcement Rule" leads
       //     with for any real job — see InvaractSparkSessionExtension's
-      //     class doc. No forContract call of this file's own.
+      //     class doc. No forContract call of this file's own, and no
+      //     Contract object needed yet either - see the resolution comment
+      //     above.
       //   - Dry-run mode needs a custom onInferred callback (populating
       //     this report's inferredContractYaml field below) that the
       //     conf-driven path can't express — it only logs at WARN, see
@@ -162,45 +181,60 @@ object DemoJobHarness {
       //     "Infer a Starting Contract with Dry-Run Mode" guide.
       //   - A configured notification sink needs the *same* NotificationSink
       //     instance shared between the check rule (ContractValidationEvent)
-      //     and irListener above (WriteEvent), so summarizingSink can tally
+      //     and irListener below (WriteEvent), so summarizingSink can tally
       //     both into one JobSummaryEvent below (see its own publishSummary()
       //     call) — plus this file needs irListener's own handle for the
       //     transformationIR report section. Neither is expressible purely
       //     via conf; see "Install the Enforcement Rule"'s "called
       //     explicitly in code" section for this exact case.
-      val spark = (contract, notifySink) match {
-        case (Some(_), None) =>
-          // registryUrlArg also flows into spark.invaract.registryUrl here
-          // (not just used by loadContract above) - InvaractSparkSessionExtension
-          // re-resolves contractPath itself, independently, once this session
-          // exists (ContractSource.resolve, inside forContract's own builder
-          // closure - see that class's doc), and it needs this same conf key
-          // to do it. Without it, enforcement would fail with the
-          // IllegalStateException ContractSource.fetchFromRegistry raises for
-          // a registry:// reference with no registryUrl configured, even
-          // though loadContract's own upfront fetch (for this file's
-          // reporting/irListener use) already succeeded.
-          registryUrlArg.foldLeft(
-            sessionBuilder
-              .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
-              .config(InvaractSparkSessionExtension.ContractConfKey, contractPath)
-          )((builder, url) => builder.config(ContractSource.RegistryUrlConfKey, url))
+      val spark = (dryRun, configuredSink) match {
+        case (false, None) =>
+          // registryUrlArg flows into spark.invaract.registryUrl here -
+          // InvaractSparkSessionExtension resolves contractPath itself
+          // (ContractSource.resolve, inside forContract's own builder
+          // closure - see that class's doc) once this session exists, and
+          // needs this same conf key to do it for a registry:// reference.
+          val builder = sessionBuilder
+            .config("spark.sql.extensions", classOf[InvaractSparkSessionExtension].getName)
+            .config(InvaractSparkSessionExtension.ContractConfKey, contractPath)
+          registryUrlArg.fold(builder)(url => builder.config(ContractSource.RegistryUrlConfKey, url))
             .getOrCreate()
-        case (None, _) =>
+        case (true, _) =>
           sessionBuilder
             .withExtensions(_.injectCheckRule(
               ContractEnforcementRule.dryRun(c => inferredContract = Some(c))
             ))
             .getOrCreate()
-        case (Some(c), Some(sink)) =>
+        case (false, Some(sink)) =>
           sessionBuilder
             .withExtensions(_.injectCheckRule(
-              ContractEnforcementRule.forContract(c, VerificationOptions(), sink)
+              ContractEnforcementRule.forContract(eagerContract.get, VerificationOptions(), sink)
             ))
             .getOrCreate()
       }
 
       spark.sparkContext.setLogLevel("WARN")
+
+      // Resolved now that a SparkSession exists, reusing ContractSource.resolve
+      // - the exact function InvaractSparkSessionExtension itself calls for
+      // enforcement - so this file's own reporting/irListener use and the
+      // engine's own enforcement path share one resolution, not two that
+      // would have to be kept in sync by hand. eagerContract is already
+      // populated for the notification-sink branch (never a registry://
+      // reference - see the check above), so this only makes a real
+      // resolution call for the common, no-sink case.
+      val contract: Option[Contract] =
+        if (dryRun) None else eagerContract.orElse(Some(ContractSource.resolve(contractPath, spark)))
+
+      // Least invasive way to observe a write's real logical plan for
+      // *reporting*: a QueryExecutionListener, registered once, requires no
+      // change to how outputDf.write below is called. See spark-adapter's
+      // SparkPlanAdapter class doc / docs/SPARK_ADAPTER.md for why this
+      // extension point was chosen over SparkSessionExtensions for that
+      // purpose. It is not, however, sufficient to *gate* a write: it only
+      // fires after Spark has already executed the query. Enforcement
+      // (above) needs a different mechanism entirely.
+      val irListener = new SparkAdapterListener(notifySink, contract)
       spark.listenerManager.register(irListener)
 
       // Load input
@@ -414,42 +448,6 @@ object DemoJobHarness {
 
     System.exit(if (report.status == "PASS") 0 else 1)
   }
-
-  /** Resolves `contractPath` to a real `Contract`, for this file's own
-    * upfront needs (irListener's constructor, and the `contractVerification`
-    * report fields) - needed *before* the SparkSession exists, unlike
-    * `ContractSource.resolve` (spark-adapter), which only ever runs inside
-    * the already-built session `InvaractSparkSessionExtension`/
-    * `ContractEnforcementRule.forContract` install. That means this harness
-    * can't reuse `ContractSource.resolve` itself (it takes a `SparkSession`
-    * to read `spark.invaract.registryUrl` from), so a `registry://<id>@<version>`
-    * value here is instead resolved directly via `registry-client`'s real
-    * `HttpContractRegistryClient` - a *direct* dependency, unlike
-    * spark-adapter's deliberately-reflective one, since this harness (unlike
-    * the engine) has no reason to keep registry-client off its compile-time
-    * classpath (see runner/build.sbt).
-    *
-    * Enforcement itself (the part that actually matters) does not depend on
-    * this method at all - it happens entirely inside
-    * `InvaractSparkSessionExtension`, driven by the same `contractPath` raw
-    * string and `spark.invaract.registryUrl` conf key, both threaded through
-    * to the `sessionBuilder` call below independently of this method's
-    * return value.
-    */
-  private def loadContract(contractPath: String, registryUrl: Option[String]): Contract =
-    ContractSource.parse(contractPath) match {
-      case Some((contractId, version)) =>
-        val url = registryUrl.getOrElse(throw new IllegalArgumentException(
-          s"'$contractPath' is a registry:// reference; pass --registry-url=<url> " +
-            "so this harness can resolve it (see dev/registry-demo)."
-        ))
-        val client = new HttpContractRegistryClient()
-        client.configure(url)
-        if (version == ContractSource.LatestVersion) client.getLatest(contractId)
-        else client.get(contractId, ContractVersion.parse(version))
-      case None =>
-        ContractParser.parseFile(contractPath)
-    }
 
   /** Blocks until `listener` has captured a write, or `timeoutMs` elapses.
     * QueryExecutionListener callbacks run asynchronously on Spark's own

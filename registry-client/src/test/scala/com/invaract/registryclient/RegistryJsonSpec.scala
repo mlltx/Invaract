@@ -193,11 +193,4 @@ class RegistryJsonSpec extends AnyFunSuite {
     assertThrows[RegistryJson.RegistryJsonParseException] { parse("[1, 2") }
     assertThrows[RegistryJson.RegistryJsonParseException] { parse("[1, 2}") }
   }
-
-  test("quote escapes control characters and quotes/backslashes") {
-    assert(quote("a\"b") == "\"a\\\"b\"")
-    assert(quote("a\\b") == "\"a\\\\b\"")
-    assert(quote("a\nb") == "\"a\\nb\"")
-    assert(quote("plain") == "\"plain\"")
-  }
 }

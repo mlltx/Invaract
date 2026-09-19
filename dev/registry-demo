@@ -68,11 +68,27 @@ if [ ! -d "$REGISTRY_DIR" ]; then
   exit 1
 fi
 
-echo -e "${YELLOW}Building all modules (contract/ir/fingerprint/spark-adapter/registry-client/runner)...${NC}"
+echo -e "${YELLOW}Building all modules (contract/ir/fingerprint/spark-adapter/runner)...${NC}"
 ./dev/build
 
 if [ ! -f "$PLUGIN_JAR" ] || [ ! -f "$RUNNER_JAR" ]; then
   echo -e "${RED}✗ Required JAR(s) not found - see ./dev/build output above${NC}"
+  exit 1
+fi
+
+# registry-client is deliberately NOT part of ./dev/build's default sequence
+# (opt-in engine infrastructure, same as notification-kafka - see dev/build's
+# own comment) - built here instead, and attached to the demo job the same
+# way a real platform team would attach it to any job: via --jars, never a
+# compile dependency of spark-adapter or runner (docs/CONTRACT_REGISTRY.md §7).
+REGISTRY_CLIENT_JAR="registry-client/target/scala-2.12/invaract-registry-client-0.1.0.jar"
+if [ ! -f "$REGISTRY_CLIENT_JAR" ]; then
+  echo ""
+  echo -e "${YELLOW}Building registry-client...${NC}"
+  (cd registry-client && sbt -batch compile test assembly)
+fi
+if [ ! -f "$REGISTRY_CLIENT_JAR" ]; then
+  echo -e "${RED}✗ $REGISTRY_CLIENT_JAR still not found after building registry-client${NC}"
   exit 1
 fi
 
@@ -114,17 +130,21 @@ echo -e "${GREEN}✓ Server ready: $REGISTRY_URL${NC}"
 
 echo ""
 echo -e "${YELLOW}Registering $CONTRACT_ID@$CONTRACT_VERSION (PUT $REGISTRY_URL/contracts/$CONTRACT_ID/versions/$CONTRACT_VERSION)...${NC}"
-REGISTER_STATUS=$(curl -s -o /tmp/invaract-registry-demo-register.json -w "%{http_code}" \
+# -w appends the status code after a newline, split back out below - avoids a
+# throwaway temp file just to separate status from body.
+REGISTER_RESPONSE=$(curl -s -w '\n%{http_code}' \
   -X PUT "$REGISTRY_URL/contracts/$CONTRACT_ID/versions/$CONTRACT_VERSION" \
   -H "Content-Type: application/yaml" \
   --data-binary @"$CONTRACT_FILE")
+REGISTER_STATUS="${REGISTER_RESPONSE##*$'\n'}"
+REGISTER_BODY="${REGISTER_RESPONSE%$'\n'*}"
 
 if [ "$REGISTER_STATUS" != "201" ]; then
   echo -e "${RED}✗ Registration failed with HTTP $REGISTER_STATUS${NC}"
-  cat /tmp/invaract-registry-demo-register.json
+  echo "$REGISTER_BODY"
   exit 1
 fi
-echo -e "${GREEN}✓ Registered - compatibility report: $(cat /tmp/invaract-registry-demo-register.json)${NC}"
+echo -e "${GREEN}✓ Registered - compatibility report: $REGISTER_BODY${NC}"
 
 echo ""
 echo -e "${YELLOW}Running the demo job against registry://$CONTRACT_ID@$CONTRACT_VERSION...${NC}"
@@ -133,7 +153,8 @@ echo "  spark.invaract.registryUrl=$REGISTRY_URL"
 echo "  Report: $REPORT_FILE"
 echo ""
 
-run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
+SPARK_SUBMIT_EXTRA_JARS="$REGISTRY_CLIENT_JAR" \
+  run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
   "registry://$CONTRACT_ID@$CONTRACT_VERSION" "--registry-url=$REGISTRY_URL"
 
 if [ ! -f "$REPORT_FILE" ]; then

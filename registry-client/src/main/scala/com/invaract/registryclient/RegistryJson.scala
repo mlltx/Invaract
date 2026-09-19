@@ -179,22 +179,4 @@ private[registryclient] object RegistryJson {
 
     (JNumber(text.substring(at, i).toDouble), i)
   }
-
-  /** Renders a JSON string literal (quoting/escaping only — this module
-    * never needs to serialize a full tree, only individual string
-    * values into a request body it builds by hand).
-    */
-  def quote(value: String): String = {
-    val sb = new StringBuilder("\"")
-    value.foreach {
-      case '"'  => sb.append("\\\"")
-      case '\\' => sb.append("\\\\")
-      case '\n' => sb.append("\\n")
-      case '\t' => sb.append("\\t")
-      case '\r' => sb.append("\\r")
-      case c    => sb.append(c)
-    }
-    sb.append('"')
-    sb.toString()
-  }
 }

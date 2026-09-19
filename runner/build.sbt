@@ -156,17 +156,17 @@ dependencyOverrides ++= Seq(
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.7.0",
   "com.invaract" %% "invaract-ir" % "0.4.0",
-  "com.invaract" %% "invaract-spark-adapter" % "0.5.0",
-  // Direct dependency, deliberately unlike spark-adapter's own reflective
-  // relationship to this module (docs/CONTRACT_REGISTRY.md §7) - this
-  // harness's own loadContract (DemoJobHarness.scala) needs a real
-  // ContractRegistryClient instance before any SparkSession exists, purely
-  // for its own upfront reporting/irListener bookkeeping. Enforcement
-  // itself never uses this dependency; it happens entirely inside
-  // spark-adapter's own reflective resolution, independently of runner's
-  // classpath.
-  "com.invaract" %% "invaract-registry-client" % "0.1.0"
+  "com.invaract" %% "invaract-spark-adapter" % "0.5.0"
 )
+
+// registry-client is deliberately NOT a dependency here, matching
+// spark-adapter's own purely reflective relationship to it
+// (docs/CONTRACT_REGISTRY.md §7) - DemoJobHarness.scala reaches it the same
+// way a real job would: reflectively, via --jars, never a compile
+// dependency of this module. dev/registry-demo builds registry-client's own
+// assembly jar and passes it that way (SPARK_SUBMIT_EXTRA_JARS in
+// dev/lib.sh), the same "opt-in, off spark-adapter's/runner's own
+// classpath by default" property notification-kafka already has.
 
 // plugin is harness-only (CLAUDE.md's "example integration and test
 // harness", never published to Central) - no Maven coordinate to depend on
