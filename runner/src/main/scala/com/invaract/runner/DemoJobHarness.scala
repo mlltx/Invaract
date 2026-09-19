@@ -187,7 +187,7 @@ object DemoJobHarness {
       //     transformationIR report section. Neither is expressible purely
       //     via conf; see "Install the Enforcement Rule"'s "called
       //     explicitly in code" section for this exact case.
-      val spark = (dryRun, configuredSink) match {
+      val spark = (dryRun, notifySink) match {
         case (false, None) =>
           // registryUrlArg flows into spark.invaract.registryUrl here -
           // InvaractSparkSessionExtension resolves contractPath itself
