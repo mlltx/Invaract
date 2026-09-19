@@ -79,12 +79,27 @@ run_demo_job_harness() {
     java_props="$java_props -D$kv"
   done
 
+  # Optional colon-separated extra jar paths (set via SPARK_SUBMIT_EXTRA_JARS
+  # - see dev/registry-demo, the one caller that uses it to add
+  # registry-client's own assembly jar exactly the way a real job would via
+  # --jars, per docs/CONTRACT_REGISTRY.md §7 - never a compile dependency of
+  # runner/spark-adapter). Comma-joined for spark-submit's own --jars syntax;
+  # OS-appropriate classpath separator for the java -cp fallback below.
+  # Empty by default, so every other caller is unaffected.
+  local jars="$PLUGIN_JAR" cp_extra=""
+  local cp_sep=":"
+  [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && cp_sep=";"
+  if [ -n "${SPARK_SUBMIT_EXTRA_JARS:-}" ]; then
+    jars="$jars,${SPARK_SUBMIT_EXTRA_JARS}"
+    cp_extra="${cp_sep}${SPARK_SUBMIT_EXTRA_JARS//:/$cp_sep}"
+  fi
+
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && command -v spark-submit.cmd &> /dev/null; then
     SPARK_HOME="$(cygpath -w "$SPARK_HOME")" \
       spark-submit.cmd \
         --class com.invaract.runner.DemoJobHarness \
         --master local[*] \
-        --jars "$PLUGIN_JAR" \
+        --jars "$jars" \
         $conf_args \
         "$RUNNER_JAR" \
         "$input" "$output" "$report" $contract $extra
@@ -92,7 +107,7 @@ run_demo_job_harness() {
     spark-submit \
       --class com.invaract.runner.DemoJobHarness \
       --master local[*] \
-      --jars "$PLUGIN_JAR" \
+      --jars "$jars" \
       $conf_args \
       "$RUNNER_JAR" \
       "$input" "$output" "$report" $contract $extra
@@ -101,9 +116,6 @@ run_demo_job_harness() {
     # needs on JDK 17+ (see plugin/build.sbt and spark-adapter/build.sbt
     # for the same fix applied to `sbt test`); this fallback bypasses
     # spark-submit entirely, so it needs those flags reproduced explicitly.
-    # Classpath separator is OS-dependent: ';' on Windows, ':' elsewhere.
-    local cp_sep=":"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && cp_sep=";"
     java \
       $java_props \
       --add-opens=java.base/java.lang=ALL-UNNAMED \
@@ -119,7 +131,7 @@ run_demo_job_harness() {
       --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
       --add-opens=java.base/sun.security.action=ALL-UNNAMED \
       --add-opens=java.base/sun.util.calendar=ALL-UNNAMED \
-      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR" com.invaract.runner.DemoJobHarness \
+      -cp "$PLUGIN_JAR${cp_sep}$RUNNER_JAR${cp_extra}" com.invaract.runner.DemoJobHarness \
       "$input" "$output" "$report" $contract $extra
   fi
 }

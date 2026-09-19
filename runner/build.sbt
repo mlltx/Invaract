@@ -159,6 +159,15 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-spark-adapter" % "0.5.0"
 )
 
+// registry-client is deliberately NOT a dependency here, matching
+// spark-adapter's own purely reflective relationship to it
+// (docs/CONTRACT_REGISTRY.md §7) - DemoJobHarness.scala reaches it the same
+// way a real job would: reflectively, via --jars, never a compile
+// dependency of this module. dev/registry-demo builds registry-client's own
+// assembly jar and passes it that way (SPARK_SUBMIT_EXTRA_JARS in
+// dev/lib.sh), the same "opt-in, off spark-adapter's/runner's own
+// classpath by default" property notification-kafka already has.
+
 // plugin is harness-only (CLAUDE.md's "example integration and test
 // harness", never published to Central) - no Maven coordinate to depend on
 // via libraryDependencies, so this one stays as a direct jar reference,

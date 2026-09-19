@@ -1,0 +1,180 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+source dev/lib.sh
+
+echo "======================================"
+echo "Invaract Contract Registry Demo"
+echo "======================================"
+echo ""
+echo "Starts a real invaract-registry server (mlltx/invaract-registry, a"
+echo "separate repo - docs/CONTRACT_REGISTRY.md), registers a contract into"
+echo "it over real HTTP, then runs the demo job with"
+echo "spark.invaract.contract=registry://<id>@<version> - proving"
+echo "spark-adapter's registry:// resolution"
+echo "(com.invaract.sparkadapter.registry.ContractSource) end to end against"
+echo "a real Spark job, purely via spark-submit's own --conf surface, per"
+echo "CLAUDE.md's External Attachability Requirement."
+echo ""
+
+REPORT_DIR="demo/output"
+REPORT_FILE="$REPORT_DIR/registry_report.json"
+CONTRACT_FILE="demo/contracts/invaract_output_registry.yaml"
+CONTRACT_ID="invaract_demo_output_registry"
+CONTRACT_VERSION="1.0.0"
+PORT="${REGISTRY_DEMO_PORT:-7070}"
+REGISTRY_URL="http://localhost:$PORT"
+
+# invaract-registry (mlltx/invaract-registry) is a separate repo by design
+# (docs/CONTRACT_REGISTRY.md's "two-repo split" reasoning) - not a submodule
+# or subdirectory of this one, so this script needs a local checkout of it.
+# Defaults to a sibling directory next to this repo's own root, the layout
+# `git clone` produces for both repos side by side; override with
+# INVARACT_REGISTRY_DIR if yours lives elsewhere.
+REGISTRY_DIR="${INVARACT_REGISTRY_DIR:-$(dirname "$SCRIPT_DIR")/invaract-registry}"
+
+SERVER_PID=""
+SERVER_LOG=""
+
+cleanup() {
+  local exit_code=$?
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}✕ Registry demo failed${NC}"
+    if [ -n "$SERVER_LOG" ] && [ -f "$SERVER_LOG" ]; then
+      echo -e "${RED}--- registry server log ($SERVER_LOG) ---${NC}"
+      cat "$SERVER_LOG"
+    fi
+  fi
+  return $exit_code
+}
+trap cleanup EXIT
+
+if [ ! -d "$REGISTRY_DIR" ]; then
+  echo -e "${RED}✗ No invaract-registry checkout found at $REGISTRY_DIR${NC}"
+  echo ""
+  echo "  This demo needs a local clone of the separate mlltx/invaract-registry"
+  echo "  repo (docs/CONTRACT_REGISTRY.md's server implementation) next to this"
+  echo "  one. That repo is private (docs/CONTRACT_REGISTRY.md §2) - if you have"
+  echo "  access, clone it:"
+  echo ""
+  echo "    git clone https://github.com/mlltx/invaract-registry $REGISTRY_DIR"
+  echo ""
+  echo "  or point INVARACT_REGISTRY_DIR at an existing checkout, or at a"
+  echo "  checkout of your own implementation of the wire protocol in"
+  echo "  docs/CONTRACT_REGISTRY.md §3/§4."
+  exit 1
+fi
+
+echo -e "${YELLOW}Building all modules (contract/ir/fingerprint/spark-adapter/runner)...${NC}"
+./dev/build
+
+if [ ! -f "$PLUGIN_JAR" ] || [ ! -f "$RUNNER_JAR" ]; then
+  echo -e "${RED}✗ Required JAR(s) not found - see ./dev/build output above${NC}"
+  exit 1
+fi
+
+# registry-client is deliberately NOT part of ./dev/build's default sequence
+# (opt-in engine infrastructure, same as notification-kafka - see dev/build's
+# own comment) - built here instead, and attached to the demo job the same
+# way a real platform team would attach it to any job: via --jars, never a
+# compile dependency of spark-adapter or runner (docs/CONTRACT_REGISTRY.md §7).
+REGISTRY_CLIENT_JAR="registry-client/target/scala-2.12/invaract-registry-client-0.1.0.jar"
+if [ ! -f "$REGISTRY_CLIENT_JAR" ]; then
+  echo ""
+  echo -e "${YELLOW}Building registry-client...${NC}"
+  (cd registry-client && sbt -batch compile test assembly)
+fi
+if [ ! -f "$REGISTRY_CLIENT_JAR" ]; then
+  echo -e "${RED}✗ $REGISTRY_CLIENT_JAR still not found after building registry-client${NC}"
+  exit 1
+fi
+
+SERVER_JAR="$REGISTRY_DIR/target/scala-2.12/invaract-registry-server.jar"
+if [ ! -f "$SERVER_JAR" ]; then
+  echo ""
+  echo -e "${YELLOW}Building invaract-registry server (contract resolves from this repo's own local Ivy cache - see $REGISTRY_DIR/README.md)...${NC}"
+  (cd "$REGISTRY_DIR" && sbt -batch assembly)
+fi
+
+if [ ! -f "$SERVER_JAR" ]; then
+  echo -e "${RED}✗ $SERVER_JAR still not found after building invaract-registry${NC}"
+  exit 1
+fi
+
+mkdir -p "$REPORT_DIR"
+rm -f "$REPORT_FILE"
+
+echo ""
+echo -e "${YELLOW}Starting invaract-registry server on port $PORT...${NC}"
+SERVER_LOG="$(mktemp)"
+PORT="$PORT" java -jar "$SERVER_JAR" > "$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+
+READY=""
+for _ in $(seq 1 30); do
+  if curl -s -o /dev/null -w "%{http_code}" "$REGISTRY_URL/contracts" 2>/dev/null | grep -q "^200$"; then
+    READY="yes"
+    break
+  fi
+  sleep 1
+done
+
+if [ -z "$READY" ]; then
+  echo -e "${RED}✗ invaract-registry server never became ready on $REGISTRY_URL${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✓ Server ready: $REGISTRY_URL${NC}"
+
+echo ""
+echo -e "${YELLOW}Registering $CONTRACT_ID@$CONTRACT_VERSION (PUT $REGISTRY_URL/contracts/$CONTRACT_ID/versions/$CONTRACT_VERSION)...${NC}"
+# -w appends the status code after a newline, split back out below - avoids a
+# throwaway temp file just to separate status from body.
+REGISTER_RESPONSE=$(curl -s -w '\n%{http_code}' \
+  -X PUT "$REGISTRY_URL/contracts/$CONTRACT_ID/versions/$CONTRACT_VERSION" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @"$CONTRACT_FILE")
+REGISTER_STATUS="${REGISTER_RESPONSE##*$'\n'}"
+REGISTER_BODY="${REGISTER_RESPONSE%$'\n'*}"
+
+if [ "$REGISTER_STATUS" != "201" ]; then
+  echo -e "${RED}✗ Registration failed with HTTP $REGISTER_STATUS${NC}"
+  echo "$REGISTER_BODY"
+  exit 1
+fi
+echo -e "${GREEN}✓ Registered - compatibility report: $REGISTER_BODY${NC}"
+
+echo ""
+echo -e "${YELLOW}Running the demo job against registry://$CONTRACT_ID@$CONTRACT_VERSION...${NC}"
+echo "  spark.invaract.contract=registry://$CONTRACT_ID@$CONTRACT_VERSION"
+echo "  spark.invaract.registryUrl=$REGISTRY_URL"
+echo "  Report: $REPORT_FILE"
+echo ""
+
+SPARK_SUBMIT_EXTRA_JARS="$REGISTRY_CLIENT_JAR" \
+  run_demo_job_harness "demo/input/sample.csv" "demo/output/result.parquet" "$REPORT_FILE" \
+  "registry://$CONTRACT_ID@$CONTRACT_VERSION" "--registry-url=$REGISTRY_URL"
+
+if [ ! -f "$REPORT_FILE" ]; then
+  echo -e "${RED}✗ Report file not generated${NC}"
+  exit 1
+fi
+
+STATUS=$(grep -o '"status": "[^"]*"' "$REPORT_FILE" | head -1 | cut -d'"' -f4)
+echo ""
+echo "  Status: $STATUS"
+
+if [ "$STATUS" != "PASS" ]; then
+  echo -e "${RED}✗ Registry demo failed - the job did not pass with a registry-resolved contract${NC}"
+  cat "$REPORT_FILE"
+  exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✓ registry://$CONTRACT_ID@$CONTRACT_VERSION resolved through a real invaract-registry server and verification passed${NC}"
+echo -e "${GREEN}✓ Full report: $REPORT_FILE${NC}"

@@ -25,6 +25,16 @@ part of this release process today. Publishing it to Central instead of
 requiring a manual `sbt assembly` is a reasonable future improvement, but
 a separate decision from getting the core engine onto Central.
 
+`contract` is additionally published to **GitHub Packages'** Maven
+registry (`https://maven.pkg.github.com/mlltx/Invaract`) in the same
+release.yml run, alongside its Sonatype release — see that workflow's own
+top comment and `docs/CONTRACT_REGISTRY.md`'s §2 for why: the separate
+`mlltx/invaract-registry` repo needs a real, pinnable `contract`
+coordinate to depend on, and can't wait for Sonatype namespace
+verification (below) to land first. `ir`/`spark-adapter`/`fingerprint`
+have no GitHub Packages destination — nothing outside this repo depends
+on them the way `invaract-registry` depends on `contract`.
+
 ## One-time setup (a human must do this; nothing here is automatable)
 
 1. **Create a Sonatype Central Portal account** at
@@ -107,7 +117,9 @@ project's Sonatype account.
    matters: `spark-adapter`'s own `libraryDependencies` resolve
    `contract`/`ir` from the same runner's local Ivy cache — see
    `spark-adapter/build.sbt`'s comment on that dependency, and
-   `dev/build`'s matching local-build pattern).
+   `dev/build`'s matching local-build pattern). `contract`'s step
+   additionally publishes to GitHub Packages right after its Sonatype
+   release — one tag, two destinations for that one module.
 7. Watch the workflow run in the Actions tab. `sonatypeCentralRelease`
    uploads a signed bundle to Central Portal, which validates and releases
    it automatically — no manual "close and release" step, unlike the old
