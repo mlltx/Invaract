@@ -80,8 +80,17 @@ private[sparkadapter] object VersionCompatibilityGuard {
     properties
       .flatMap(p => Option(p.getProperty(key)))
       .toList
-      .flatMap(_.split(",").map(_.trim).filter(_.nonEmpty))
+      .flatMap(splitCommaSeparated)
       .toSet
+
+  /** Splits a comma-separated config value into its trimmed, non-blank
+    * entries - the same "one string, several values" shape a
+    * `.properties` entry (`verifiedVersions`, above) and a Spark conf key
+    * (`ContractEnforcementRule.OrgPolicyOverlaysConfKey`) both use. Shared
+    * here rather than duplicated at each call site.
+    */
+  private[sparkadapter] def splitCommaSeparated(raw: String): List[String] =
+    raw.split(",").map(_.trim).filter(_.nonEmpty).toList
 
   /** Never throws: every step here is either a pure string comparison
     * against a `Try`-loaded properties file, or a `Try`-wrapped reflective

@@ -209,14 +209,72 @@ purpose of an organization-wide rule. Only whoever owns the policy document can.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | Every discovered contract satisfies every `enforce`-mode rule. A `warn` violation still prints but never fails the run. |
-| `1` | The policy document itself is invalid, a contract fails to parse, or no contract files were found. |
-| `2` | Usage error — too few arguments, or a malformed `--warn-expiring-within-days` value. |
+| `0` | Every discovered contract satisfies every `enforce`-mode rule, in every layer. A `warn` violation still prints but never fails the run. |
+| `1` | The base policy or any overlay is invalid, a contract fails to parse, or no contract files were found. |
+| `2` | Usage error — too few arguments, a malformed `--warn-expiring-within-days` value, or `--overlays` with no value. |
 
 | Flag | Meaning |
 |---|---|
-| `--warn-expiring-within-days N` | Reports any exemption whose `reviewBy` falls within the next `N` days — before it lapses, not after. Defaults to `30`; never affects the exit code, since the exemption is still fully in force. |
+| `--warn-expiring-within-days N` | Reports any exemption (in any layer) whose `reviewBy` falls within the next `N` days — before it lapses, not after. Defaults to `30`; never affects the exit code, since the exemption is still fully in force. |
+| `--overlays overlay1.yaml,overlay2.yaml` | Lints against the full [layered stack](#policy-layering) a governed job would actually run under, not just the base — see below. |
 
 See [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) for both,
 worked through in full, and [Violation Types](/reference/violation-types/) for
 `ORG_POLICY_VIOLATION`.
+
+## Policy layering
+
+A stricter business-unit (or team) policy can compose with a looser org-wide baseline,
+without the business unit's document duplicating or replacing anything the org-wide one
+already declares. An overlay is not a different document shape — it's an ordinary
+`OrgPolicy` YAML document, in every respect identical to the base, layered on top of it.
+
+```
+spark-submit \
+  --conf spark.invaract.orgPolicy=/policies/org-wide.yaml \
+  --conf spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml,/policies/team-payments.yaml \
+  ...
+```
+
+| Key | Meaning |
+|---|---|
+| `spark.invaract.orgPolicy` | The org-wide base layer — unchanged from the single-document case above. |
+| `spark.invaract.orgPolicyOverlays` | Optional, comma-separated, ordered list of additional `OrgPolicy` documents layered on top of the base. Requires `spark.invaract.orgPolicy` to also be set — an overlay with no base is rejected rather than silently treated as one. |
+
+Each layer is evaluated independently and the violations are unioned, so a stack of
+layers is always *at least as strict* as any one layer alone:
+
+- **A layer can only add, never loosen.** There is no mechanism for an overlay to
+  override, replace, or loosen a rule an earlier layer declares. A business unit
+  wanting a stricter version of a check the org-wide layer already has (e.g. tightening
+  `warn` to `enforce`) adds its own additional rule of that type — both rules are then
+  evaluated and unioned, the same as any other pair of rules.
+- **A layer's exemptions cover only that layer's own policies.** An overlay's
+  `exemptions` can grant an exception to a rule *that same overlay* declares, but it is
+  structurally incapable of exempting a rule the org-wide layer (or any other layer)
+  declares — `OrgPolicyValidator` rejects an exemption naming a policy id its own
+  document doesn't declare, and each layer's exemptions are only ever checked against
+  that layer's own policies. Only the document that owns a rule can grant an exemption
+  for it.
+- **Custom policy types stay per-layer.** Each layer resolves its own `customPolicyTypes`
+  against only its own map, so two layers can independently use the same `type:` name
+  for unrelated `CustomPolicyEvaluator` classes without colliding.
+
+<Aside type="tip" title="A policy id repeated across layers is a Warning, not a problem">
+Each layer evaluates independently, so a repeated `id` across layers doesn't cause
+shadowing or misattributed exemptions. It's still worth avoiding, though — a human
+reading two violations both attributed to `catalog-required` can't tell which layer
+produced which. Prefix a layer's own rule ids (e.g. `bu-finance-catalog-required`)
+rather than relying on `id` alone to distinguish them.
+</Aside>
+
+### Linting a layered stack
+
+```
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
+```
+
+The same base-first, comma-separated convention as the conf key — useful for a business
+unit's own CI to lint its contracts against org-wide + its own overlay, with the same
+argument shape `spark-submit` would take. Every policy document (base and overlays
+alike) is excluded from the contract sweep, the same as the single-document case.

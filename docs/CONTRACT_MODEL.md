@@ -792,50 +792,149 @@ rather than remaining a silent, forever bypass. `OrgPolicyValidator`
 warns (does not error) once a `reviewBy` has already passed, so an
 expired exemption stays visible without being fatal on its own.
 
+### Policy layering
+
+A single `OrgPolicy` document is still the whole model — nothing about its
+shape changes for layering. What's new is composing *several* of them: an
+ordered stack of layers, loosest/most general first (typically an org-wide
+baseline) to strictest/most specific last (e.g. a business unit's, or a
+team's, own overlay), so a platform team's org-wide policy and a business
+unit's own stricter additions both apply to the same contract, without the
+business unit's document having to duplicate or replace anything the
+org-wide one already declares.
+
+- **`OrgPolicyEvaluator.evaluateLayers(contract, layers, now)`** — the
+  `List[OrgPolicy]` counterpart to `evaluate`. Each layer is evaluated
+  independently, through the exact same single-document `evaluate` above,
+  and the resulting `enforceViolations`/`warnViolations` are unioned into
+  one `OrgPolicyEvaluation`. That independence, not a merged document, is
+  the whole mechanism:
+  - A layer's own `exemptions` can only ever suppress a violation produced
+    by evaluating *that same layer* — `evaluate(contract, layers(i), now)`
+    only ever consults `layers(i).exemptions` against `layers(i).policies`.
+    Combined with `OrgPolicyValidator` already rejecting (as an Error) an
+    exemption naming a policy id outside its own document's `policies`,
+    this makes it structurally impossible for a business-unit overlay to
+    exempt — i.e. loosen — a rule the org-wide layer (or any other layer)
+    declares. Only that rule's own owning document can grant an exemption
+    for it, the same "only whoever owns the policy file can" principle
+    "Exemptions" above already establishes for the single-document case,
+    now holding *per layer* rather than per document.
+  - Each layer resolves its own `customPolicyTypes` against only its own
+    map, so two layers naming the same `ruleType` for different
+    `CustomPolicyEvaluator` classes never collide — there's no shared
+    namespace to collide in.
+  - Unioning independently-evaluated violation lists is also why
+    composition is always *at least as strict* as any one layer alone:
+    adding another layer's rules can only ever add violations, never
+    remove ones an earlier layer already produced. There is deliberately
+    no cross-layer "override" or "replace" mechanism for a rule's
+    mode/properties — a layer wanting a stricter version of a check an
+    earlier layer already declares (e.g. tightening `warn` to `enforce`)
+    simply adds its own additional rule of that type; both rules are then
+    evaluated and unioned, the same as any other pair of unrelated rules.
+    A layer can only ever make the *effective* policy stricter, never
+    looser.
+- **`OrgPolicyEvaluator.applyInjectedRulesFromLayers(contract, layers)`** —
+  `layers.foldLeft(contract)(applyInjectedRules)`. A rule any layer injects
+  (base or overlay) ends up in the final `contract.rules` exactly once,
+  since `applyInjectedRules`' own per-call dedup already covers a rule
+  repeated across layers, not just within one.
+- **`OrgPolicyValidator.validateLayers(layers, now)`** — takes
+  `List[(String, OrgPolicy)]`, each layer paired with a caller-supplied
+  label (typically the file path it was loaded from), and is the single
+  entry point both real callers (`ContractEnforcementRule.enforceOrgPolicy`,
+  `OrgPolicyLintCli`) use to validate a policy-layering stack, rather than
+  each hand-rolling its own per-layer loop alongside it. Validates every
+  layer individually (`validate`, each layer's issues re-pathed with its
+  own label so a caller can tell which layer an issue came from), plus one
+  cross-layer-only check: a policy `id` repeated in more than one layer is
+  a Warning (not an Error — unlike a duplicate `id` *within* one document,
+  which stays an Error). It's not unsafe (each layer still evaluates
+  independently — a repeated id never causes shadowing or confused
+  exemption/violation attribution), but a human reading two violations
+  both attributed to id `catalog-required` — one from the org-wide layer,
+  one from a business unit's — can't tell them apart by id alone. Rather
+  than mechanically namespacing ids, the recommended fix is a naming
+  convention: a layer prefixes its own rule ids (e.g.
+  `bu-finance-catalog-required`).
+
+There is no new document shape for an overlay — it's just another ordinary
+`OrgPolicy` YAML document, parsed and validated exactly like the org-wide
+base, reusing `OrgPolicyParser`/`OrgPolicyValidator` wholesale. See
+"Enforcement in `spark-adapter`" below for how a job attaches a stack of
+layers purely via `spark-submit --conf`, and "Linting contracts without
+Spark" for the standalone lint's `--overlays` flag.
+
 ### Enforcement in `spark-adapter` — eager, "stop ASAP"
 
 `ContractEnforcementRule.forContract` reads a `spark.invaract.orgPolicy`
 Spark configuration key (the same attachability `LocationMapConfKey`/
 `RejectUndeclaredFieldsConfKey` document — see CLAUDE.md's "External
-Attachability Requirement") naming an `OrgPolicy` YAML document,
-resolved once per session build, inside `forContract`'s outer
-`session => {...}` closure — the same moment `resolveContractLocations`/
-`resolveVerificationOptions` already run, and deliberately *before*
-`forContract` returns the inner `LogicalPlan => Unit` check function.
+Attachability Requirement") naming an `OrgPolicy` YAML document — the
+org-wide base layer — plus, optionally, `spark.invaract.orgPolicyOverlays`
+(`ContractEnforcementRule.OrgPolicyOverlaysConfKey`): a comma-separated,
+ordered list of additional `OrgPolicy` documents layered on top of the
+base for policy layering/inheritance (see "Policy layering" above). Both
+are resolved once per session build (`resolveOrgPolicyLayers`), inside
+`forContract`'s outer `session => {...}` closure — the same moment
+`resolveContractLocations`/`resolveVerificationOptions` already run, and
+deliberately *before* `forContract` returns the inner
+`LogicalPlan => Unit` check function. Setting `orgPolicyOverlays` without
+`orgPolicy` also set is rejected (`resolveOrgPolicyLayers` throws) rather
+than silently treating the first overlay as the base — layering is
+additive to a named org-wide anchor, not a substitute for one, and a
+misconfigured job should lose org-wide governance loudly, not silently.
+
+```
+spark-submit \
+  --conf spark.invaract.orgPolicy=/policies/org-wide.yaml \
+  --conf spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml,/policies/team-payments.yaml \
+  ...
+```
 
 This is a deliberate design choice, not an implementation detail: unlike
 every other check in this module, an org-policy rule depends only on the
 *contract's own declared shape* — never on what a specific write actually
 does — so there is no reason to wait for a plan to exist before rejecting
-a non-compliant contract. `enforceOrgPolicy`:
+a non-compliant contract. `enforceOrgPolicy`, when at least one layer is
+configured:
 
-1. Merges `policy.inject.rules`/`minVerificationOptions` into the
-   contract/options `verifyOrThrow` will use for every subsequent plan
-   this session checks.
-2. Evaluates every policy rule. `Warn`-mode violations publish an
-   informational `VerificationResult` (status `"PASSED"`, built directly
-   rather than via `VerificationResult.of`, which would have inferred
-   `FAILED` from a non-empty violation list — nothing was actually
-   blocked) to the configured `NotificationSink`, if any, and never
-   block — the mechanism for rolling a new org-wide policy out safely: a
-   platform introduces a rule as `warn`, watches violations accumulate,
-   then flips it to `enforce`, no code change on any governed job.
-3. Any `Enforce`-mode violation throws `ContractViolationException`
-   **immediately** — through the same `Violation`/`explain`/
-   notification-sink path a structural violation already uses (a new
-   `ViolationType.OrgPolicyViolation`, `explain`'s existing four-part
-   format, `com.invaract.ir.UnknownPlan` standing in for "no real plan
-   exists yet" the same way `requireValidContract`'s own rejection
-   already does) — before `forContract` ever returns a usable check
-   function to its caller. A non-compliant contract can't even finish
-   installing, let alone reach a write.
+1. Merges every layer's `inject.rules`/`minVerificationOptions`
+   (`OrgPolicyEvaluator.applyInjectedRulesFromLayers`, `applyMinVerificationOptions`
+   folded across layers) into the contract/options `verifyOrThrow` will
+   use for every subsequent plan this session checks — an org-wide *or*
+   overlay DML rule, or a forced `VerificationOptions` flag from either,
+   applies with no further change needed there.
+2. Evaluates every layer independently and unions the violations
+   (`OrgPolicyEvaluator.evaluateLayers`). `Warn`-mode violations, from any
+   layer, publish one informational `VerificationResult` (status
+   `"PASSED"`, built directly rather than via `VerificationResult.of`,
+   which would have inferred `FAILED` from a non-empty violation list —
+   nothing was actually blocked) to the configured `NotificationSink`, if
+   any, and never block — the mechanism for rolling a new policy out
+   safely: a platform (or a business unit, for its own overlay)
+   introduces a rule as `warn`, watches violations accumulate, then flips
+   it to `enforce`, no code change on any governed job.
+3. Any `Enforce`-mode violation, from any layer, throws
+   `ContractViolationException` **immediately** — through the same
+   `Violation`/`explain`/notification-sink path a structural violation
+   already uses (a new `ViolationType.OrgPolicyViolation`, `explain`'s
+   existing four-part format, `com.invaract.ir.UnknownPlan` standing in
+   for "no real plan exists yet" the same way `requireValidContract`'s own
+   rejection already does) — before `forContract` ever returns a usable
+   check function to its caller. A non-compliant contract can't even
+   finish installing, let alone reach a write.
 
-A malformed policy document — bad YAML, or an `OrgPolicyValidator` error
-(duplicate policy ids, an exemption naming an unknown policy) — fails
-loudly via `OrgPolicyParseException` rather than silently skipping
-enforcement, the same "fail loudly, not quietly" principle
-`ContractParser`/`ContractValidator` already apply to a malformed
-contract. No `spark.invaract.orgPolicy` conf key at all means
+A malformed policy document, in any layer — bad YAML, or an
+`OrgPolicyValidator` error (duplicate policy ids, an exemption naming an
+unknown policy id — the exact mechanism that keeps one layer from
+exempting a different layer's rule, see "Policy layering" above) — fails
+loudly via `OrgPolicyParseException`, naming the specific layer's own path,
+rather than silently skipping enforcement, the same "fail loudly, not
+quietly" principle `ContractParser`/`ContractValidator` already apply to a
+malformed contract. Neither `spark.invaract.orgPolicy` nor
+`spark.invaract.orgPolicyOverlays` configured at all means
 `enforceOrgPolicy` returns `(contract, options)` completely unchanged —
 today's behavior, byte for byte, for every job that doesn't opt in.
 
@@ -847,22 +946,30 @@ standalone check with nothing but a JVM:
 
 ```
 sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml,team-payments.yaml org-policy.yaml contracts/"
 ```
 
 Recursively lints every `*.yaml`/`*.yml` contract under a directory (or a
-single file) against a policy document, printing an `[ OK ]`/`[WARN]`/
+single file) against a policy document — or, with `--overlays`, the full
+layered stack a governed job would actually run under, the same
+base-first, comma-separated, ordered-list convention
+`spark.invaract.orgPolicyOverlays` uses, evaluated via
+`OrgPolicyEvaluator.evaluateLayers` — printing an `[ OK ]`/`[WARN]`/
 `[FAIL]` line per contract and exiting non-zero on any Enforce-mode
-violation, a parse failure, or an invalid policy document (`0` otherwise).
-The policy document itself is excluded from the scan even when it lives
-alongside the contracts it governs (a real bug found and fixed while
-writing this CLI's tests — see `OrgPolicyLintCliTest`). Meant for a
-contracts repository's own CI/pre-commit gate: an author gets policy
-feedback at authoring time, not only the next time a job runs.
+violation (in any layer), a parse failure, or an invalid policy document
+(the base or any overlay) (`0` otherwise). Every policy document — base and
+overlays alike — is excluded from the scan even when it lives alongside
+the contracts it governs (a real bug found and fixed while writing this
+CLI's tests — see `OrgPolicyLintCliTest`). Meant for a contracts
+repository's own CI/pre-commit gate — including a business unit's own CI
+linting against org-wide + its own overlay, with the exact argument shape
+`spark-submit` would take — giving an author policy feedback at authoring
+time, not only the next time a job runs.
 
-Also reports, on every run, any exemption whose `reviewBy` falls within
-the next `--warn-expiring-within-days` days (default 30, backed by
-`OrgPolicyEvaluator.expiringExemptions`) — a proactive look-ahead a
-platform team can act on before an exemption lapses, rather than
+Also reports, on every run, any exemption in any layer whose `reviewBy`
+falls within the next `--warn-expiring-within-days` days (default 30,
+backed by `OrgPolicyEvaluator.expiringExemptions`) — a proactive look-ahead
+a platform team can act on before an exemption lapses, rather than
 `OrgPolicyValidator`'s Warning, which only fires once it already has.
 Never affects the exit code: the exemption named is still fully active.
 
@@ -892,10 +999,6 @@ absent:
   needs a contract registry to know about every contract in an
   organization at once, which ROADMAP.md already tracks as unbuilt Phase
   3 work.
-- **Policy layering/inheritance** — a stricter business-unit policy
-  composing with a looser org-wide one. `OrgPolicy` is deliberately flat/
-  single-document for now; revisit once a real need for layering
-  appears.
 
 ## API compatibility
 
