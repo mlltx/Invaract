@@ -648,4 +648,93 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
       OrgPolicyEvaluator.evaluate(contract(), policy, now)
     }
   }
+
+  // -- evaluateLayers (policy layering/inheritance) --------------------------
+
+  test("evaluateLayers with no layers at all produces no violations") {
+    val eval = OrgPolicyEvaluator.evaluateLayers(contract(), Nil, now)
+    assert(eval.allViolations.isEmpty)
+  }
+
+  test("evaluateLayers with one layer behaves exactly like evaluate") {
+    val orgWide = OrgPolicy("1.0", List(catalogRule))
+    assert(OrgPolicyEvaluator.evaluateLayers(contract(), List(orgWide), now) == OrgPolicyEvaluator.evaluate(contract(), orgWide, now))
+  }
+
+  test("evaluateLayers unions violations from every layer - a stricter overlay adds to, not replaces, the base") {
+    val orgWide = OrgPolicy("1.0", List(PolicyRule("owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))))
+    val buOverlay = OrgPolicy("1.0", List(PolicyRule("cost-center-required", PolicyType.RequireExtension, Map("key" -> "costCenter"))))
+    val eval = OrgPolicyEvaluator.evaluateLayers(contract(extensions = Map.empty), List(orgWide, buOverlay), now)
+    assert(eval.enforceViolations.map(_.policyId).toSet == Set("owner-required", "cost-center-required"))
+  }
+
+  test("evaluateLayers: an overlay's own rule tightening the same policy type adds an independent violation") {
+    val orgWide = OrgPolicy("1.0", List(PolicyRule("delta-only", PolicyType.RequireFormat, Map("formats" -> "delta"), scope = PolicyScope.Outputs)))
+    val buOverlay =
+      OrgPolicy("1.0", List(PolicyRule("delta-with-catalog", PolicyType.RequireCatalog, Map.empty, scope = PolicyScope.Outputs)))
+    val c = contract(outputs = List(dataset("out").copy(format = Some("delta")))) // satisfies org-wide, not the BU's catalog addition
+    val eval = OrgPolicyEvaluator.evaluateLayers(c, List(orgWide, buOverlay), now)
+    assert(eval.enforceViolations.map(_.policyId) == List("delta-with-catalog"))
+  }
+
+  test("evaluateLayers: a business-unit overlay's own exemption cannot suppress an org-wide layer's violation") {
+    val orgWide = OrgPolicy("1.0", List(catalogRule)) // no exemption here - org-wide owns this rule
+    val buOverlay = OrgPolicy(
+      "1.0",
+      exemptions = List(PolicyExemption("test_contract", List("catalog-required"), "the BU thinks this should be exempt"))
+    )
+    val eval = OrgPolicyEvaluator.evaluateLayers(contract(), List(orgWide, buOverlay), now)
+    assert(eval.enforceViolations.map(_.policyId) == List("catalog-required"), "the BU's exemption must not reach the org-wide layer's rule")
+  }
+
+  test("evaluateLayers: a business-unit overlay's exemption DOES suppress that same overlay's own violation") {
+    val orgWide = OrgPolicy("1.0", List(catalogRule))
+    val buRule = PolicyRule("bu-owner-required", PolicyType.RequireExtension, Map("key" -> "owner"))
+    val buOverlay = OrgPolicy(
+      "1.0",
+      List(buRule),
+      exemptions = List(PolicyExemption("test_contract", List("bu-owner-required"), "legacy BU contract"))
+    )
+    val c = contract(outputs = List(dataset("out", catalog = Some(CatalogRequirement(required = true)))), extensions = Map.empty)
+    val eval = OrgPolicyEvaluator.evaluateLayers(c, List(orgWide, buOverlay), now)
+    assert(eval.allViolations.isEmpty, "org-wide's own rule is satisfied, and the BU's own rule is exempted by its own layer")
+  }
+
+  test("evaluateLayers: warn-mode violations from any layer land in warnViolations, never block") {
+    val orgWide = OrgPolicy("1.0", List(catalogRule.copy(mode = PolicyMode.Warn)))
+    val buOverlay = OrgPolicy("1.0", List(PolicyRule("bu-strict", PolicyType.RequireDatasetDescription, Map.empty, scope = PolicyScope.Outputs)))
+    val eval = OrgPolicyEvaluator.evaluateLayers(contract(), List(orgWide, buOverlay), now)
+    assert(eval.warnViolations.map(_.policyId) == List("catalog-required"))
+    assert(eval.enforceViolations.map(_.policyId) == List("bu-strict"))
+  }
+
+  test("evaluateLayers: two layers independently resolving the same custom ruleType to different classes don't collide") {
+    val rule = PolicyRule("id-lowercase", "require_lowercase_id", Map.empty)
+    val orgWide = OrgPolicy("1.0", List(rule), customPolicyTypes = Map("require_lowercase_id" -> customClassName))
+    val buOverlay = OrgPolicy("1.0", List(rule.copy(id = "bu-id-lowercase")), customPolicyTypes = Map("require_lowercase_id" -> customClassName))
+    val violating = contract().copy(id = "Mixed_Case_Id")
+    val eval = OrgPolicyEvaluator.evaluateLayers(violating, List(orgWide, buOverlay), now)
+    assert(eval.enforceViolations.map(_.policyId).toSet == Set("id-lowercase", "bu-id-lowercase"))
+  }
+
+  // -- applyInjectedRulesFromLayers --------------------------------------------
+
+  test("applyInjectedRulesFromLayers is a no-op when no layer injects any rules") {
+    val c = contract(rules = List(ContractRule("compatibility", Map("mode" -> "backward"))))
+    val result = OrgPolicyEvaluator.applyInjectedRulesFromLayers(c, List(OrgPolicy("1.0"), OrgPolicy("2.0")))
+    assert(result == c)
+  }
+
+  test("applyInjectedRulesFromLayers merges injected rules from every layer, deduplicated") {
+    val c = contract(rules = Nil)
+    val orgWide = OrgPolicy("1.0", inject = InjectedDefaults(rules = List(ContractRule("forbid_unconditional_delete", Map.empty))))
+    val buOverlay = OrgPolicy(
+      "1.0",
+      inject = InjectedDefaults(rules = List(ContractRule("forbid_unconditional_delete", Map.empty), ContractRule("merge_condition", Map("columns" -> List("id")))))
+    )
+    val result = OrgPolicyEvaluator.applyInjectedRulesFromLayers(c, List(orgWide, buOverlay))
+    assert(
+      result.rules == List(ContractRule("forbid_unconditional_delete", Map.empty), ContractRule("merge_condition", Map("columns" -> List("id"))))
+    )
+  }
 }

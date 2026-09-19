@@ -214,6 +214,57 @@ every governed contract's own `rules:`. `inject.minVerificationOptions` ORs a fl
 job's `VerificationOptions` — a flag a job left `false` can be forced `true` by policy;
 the reverse never happens.
 
+## Layer a stricter policy on top of an org-wide baseline
+
+A platform team owns the org-wide baseline above, but a business unit or team often needs
+its own additional rules on top — without forking the org-wide document, and without being
+able to weaken anything it already requires. An overlay isn't a new document shape: it's an
+ordinary `OrgPolicy` YAML document, attached alongside the base via a second conf key:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.5.0.jar \
+  --conf spark.invaract.orgPolicy=/policies/org-wide.yaml \
+  --conf spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml \
+  my-real-job.jar
+```
+
+```yaml
+# bu-finance.yaml — a business unit's own overlay, on top of org-wide.yaml above
+version: "1.0"
+policies:
+  - id: bu-finance-description-required
+    type: require_dataset_description
+    scope: outputs
+    description: "Finance datasets must document what they contain, beyond org-wide's own rules."
+```
+
+Both `org-wide.yaml`'s and `bu-finance.yaml`'s rules apply to every contract this job
+governs — the violations are unioned, so a contract must satisfy *both* layers, not just
+the more specific one. `spark.invaract.orgPolicyOverlays` accepts more than one path,
+comma-separated, for org → region → business-unit → team stacking:
+
+```bash
+--conf spark.invaract.orgPolicyOverlays=/policies/region-emea.yaml,/policies/bu-finance.yaml
+```
+
+<Aside type="note" title="A layer can only add — never loosen or override">
+There is no mechanism for `bu-finance.yaml` to weaken, replace, or exempt a rule
+`org-wide.yaml` declares. Wanting a *stricter* version of an org-wide check (e.g.
+promoting `mode: warn` to `mode: enforce`)? Add another rule of that type in the overlay
+— both are evaluated and unioned. Each layer's `exemptions` can only ever suppress a
+violation from *that same layer's own* `policies` — `OrgPolicyValidator` rejects an
+exemption naming a policy id its own document doesn't declare, so a business unit's
+overlay is structurally incapable of exempting an org-wide rule. Only the org-wide
+document's own owner can grant that.
+</Aside>
+
+See [Reference → Organizational Policy Format](/reference/org-policy-format/#policy-layering)
+for the full composition rules, including how custom policy types and exemptions behave
+across layers.
+
 ## Lint contracts before they ever reach a job
 
 Because policy evaluation only ever touches the contract document — no Spark involved —
@@ -224,6 +275,13 @@ CI or a pre-commit hook:
 sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli org-policy.yaml contracts/"
 ```
 
+A business unit can lint its own contracts against the same layered stack its jobs will
+actually run under, with the exact argument shape `spark-submit` would take:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.OrgPolicyLintCli --overlays bu-finance.yaml org-policy.yaml contracts/"
+```
+
 Real, unedited output against a contract missing its `catalog:` block:
 
 ```
@@ -231,11 +289,11 @@ Real, unedited output against a contract missing its `catalog:` block:
        remediation: Add a 'catalog: {required: true}' block to dataset 'sales' in the contract.
 ```
 
-Exits `0` once every contract satisfies every `enforce`-mode rule (a `warn` violation still
-prints but never fails the run), `1` on any violation, an unparseable contract, an invalid
-policy document, or no contract files found, `2` on a usage error. The policy file itself
-is excluded from the scan even when it lives in the same directory as the contracts it
-governs.
+Exits `0` once every contract satisfies every `enforce`-mode rule in every layer (a `warn`
+violation still prints but never fails the run), `1` on any violation, an unparseable
+contract, an invalid policy document in any layer, or no contract files found, `2` on a
+usage error. Every policy file — base and overlays alike — is excluded from the scan even
+when it lives in the same directory as the contracts it governs.
 
 ## Get advance notice before an exemption lapses
 

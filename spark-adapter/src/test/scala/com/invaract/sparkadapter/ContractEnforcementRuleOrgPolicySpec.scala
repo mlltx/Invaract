@@ -61,6 +61,13 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     finally spark.conf.unset(ContractEnforcementRule.OrgPolicyConfKey)
   }
 
+  private def withOrgPolicyLayers[T](basePath: String, overlayPaths: String*)(body: => T): T =
+    withOrgPolicyConf(basePath) {
+      spark.conf.set(ContractEnforcementRule.OrgPolicyOverlaysConfKey, overlayPaths.mkString(","))
+      try body
+      finally spark.conf.unset(ContractEnforcementRule.OrgPolicyOverlaysConfKey)
+    }
+
   private val noCatalogContractYaml =
     """id: org_policy_demo
       |version: "1.0.0"
@@ -95,26 +102,6 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     val contract = parseContract(noCatalogContractYaml)
     val rule = ContractEnforcementRule.forContract(contract)
     rule(spark) // must not throw - OrgPolicyConfKey is unset
-  }
-
-  test("resolveOrgPolicy returns None when the conf key is unset") {
-    assert(ContractEnforcementRule.resolveOrgPolicy(spark).isEmpty)
-  }
-
-  test("resolveOrgPolicy parses the document named by spark.invaract.orgPolicy") {
-    val policyPath = writePolicy(
-      "basic.yaml",
-      """version: "1.0"
-        |policies:
-        |  - id: catalog-required
-        |    type: require_catalog
-        |""".stripMargin
-    )
-    val policy = withOrgPolicyConf(policyPath) {
-      ContractEnforcementRule.resolveOrgPolicy(spark)
-    }
-    assert(policy.map(_.version).contains("1.0"))
-    assert(policy.exists(_.policies.exists(_.id == "catalog-required")))
   }
 
   // -- eager, "stop ASAP" enforcement ---------------------------------------
@@ -424,5 +411,243 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
         ContractEnforcementRule.enforceOrgPolicy(contract, VerificationOptions(), spark, None, None)
       }
     }
+  }
+
+  // -- policy layering/inheritance (spark.invaract.orgPolicyOverlays) -------
+
+  test("resolveOrgPolicyLayers is Nil when neither orgPolicy nor orgPolicyOverlays is set") {
+    assert(ContractEnforcementRule.resolveOrgPolicyLayers(spark).isEmpty)
+  }
+
+  test("resolveOrgPolicyLayers returns just the base as a single-element list when no overlays are set") {
+    val basePath = writePolicy("layers_base_only.yaml", "version: \"1.0\"\n")
+    val layers = withOrgPolicyConf(basePath) {
+      ContractEnforcementRule.resolveOrgPolicyLayers(spark)
+    }
+    assert(layers.map(_._1) == List(basePath))
+  }
+
+  test("resolveOrgPolicyLayers resolves the base first, then every comma-separated overlay in order") {
+    val basePath = writePolicy("layers_base.yaml", "version: \"org\"\n")
+    val overlay1 = writePolicy("layers_overlay1.yaml", "version: \"bu-finance\"\n")
+    val overlay2 = writePolicy("layers_overlay2.yaml", "version: \"team-payments\"\n")
+    val layers = withOrgPolicyLayers(basePath, overlay1, overlay2) {
+      ContractEnforcementRule.resolveOrgPolicyLayers(spark)
+    }
+    assert(layers.map(_._1) == List(basePath, overlay1, overlay2))
+    assert(layers.map(_._2.version) == List("org", "bu-finance", "team-payments"))
+  }
+
+  test("orgPolicyOverlays set without orgPolicy throws OrgPolicyParseException rather than silently treating an overlay as the base") {
+    val overlayPath = writePolicy("layers_orphan_overlay.yaml", "version: \"1.0\"\n")
+    spark.conf.set(ContractEnforcementRule.OrgPolicyOverlaysConfKey, overlayPath)
+    try {
+      val ex = intercept[OrgPolicyParseException] {
+        ContractEnforcementRule.resolveOrgPolicyLayers(spark)
+      }
+      assert(ex.getMessage.contains(ContractEnforcementRule.OrgPolicyOverlaysConfKey))
+      assert(ex.getMessage.contains(ContractEnforcementRule.OrgPolicyConfKey))
+    } finally spark.conf.unset(ContractEnforcementRule.OrgPolicyOverlaysConfKey)
+  }
+
+  test("layering: an overlay's own stricter rule blocks even though the org-wide base is satisfied") {
+    val contract = parseContract(catalogRegisteredContractYaml) // satisfies the base's require_catalog
+    val basePath = writePolicy(
+      "layering_base_satisfied.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: catalog-required
+        |    type: require_catalog
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val overlayPath = writePolicy(
+      "layering_overlay_stricter.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: bu-description-required
+        |    type: require_dataset_description
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    val ex = withOrgPolicyLayers(basePath, overlayPath) {
+      intercept[ContractViolationException] { rule(spark) }
+    }
+    assert(ex.result.violations.exists(_.message.contains("bu-description-required")))
+    assert(!ex.result.violations.exists(_.message.contains("catalog-required")), "the base's own rule was satisfied - only the overlay's fires")
+  }
+
+  test("layering: violations from both the base and an overlay are unioned, not just the last layer's") {
+    val contract = parseContract(noCatalogContractYaml) // violates the base too
+    val basePath = writePolicy(
+      "layering_base_violated.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: catalog-required
+        |    type: require_catalog
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val overlayPath = writePolicy(
+      "layering_overlay_violated.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: bu-description-required
+        |    type: require_dataset_description
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    val ex = withOrgPolicyLayers(basePath, overlayPath) {
+      intercept[ContractViolationException] { rule(spark) }
+    }
+    assert(ex.result.violations.exists(_.message.contains("catalog-required")))
+    assert(ex.result.violations.exists(_.message.contains("bu-description-required")))
+  }
+
+  test("layering: a business-unit overlay's own exemption cannot suppress the org-wide base's violation") {
+    val contract = parseContract(noCatalogContractYaml)
+    val basePath = writePolicy(
+      "layering_base_no_exemption.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: catalog-required
+        |    type: require_catalog
+        |    scope: outputs
+        |""".stripMargin
+    )
+    // The overlay grants an exemption naming the base's own policy id - this
+    // must have no effect, since only the document that owns a rule can
+    // exempt it. It's also invalid on its own terms (OrgPolicyValidator
+    // rejects an exemption naming a policy id its own document never
+    // declares), so this must fail loudly rather than quietly no-op.
+    val overlayPath = writePolicy(
+      "layering_overlay_illegitimate_exemption.yaml",
+      """version: "1.0"
+        |exemptions:
+        |  - contractId: org_policy_demo
+        |    policyIds: [catalog-required]
+        |    reason: "the BU thinks this should be exempt"
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    val ex = withOrgPolicyLayers(basePath, overlayPath) {
+      intercept[OrgPolicyParseException] { rule(spark) }
+    }
+    assert(ex.getMessage.contains("unknown policy id"))
+  }
+
+  test("layering: a business-unit overlay's exemption DOES suppress that same overlay's own violation") {
+    val contract = parseContract(catalogRegisteredContractYaml) // satisfies the base
+    val basePath = writePolicy(
+      "layering_base_ok.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: catalog-required
+        |    type: require_catalog
+        |    scope: outputs
+        |""".stripMargin
+    )
+    val overlayPath = writePolicy(
+      "layering_overlay_self_exemption.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: bu-description-required
+        |    type: require_dataset_description
+        |    scope: outputs
+        |exemptions:
+        |  - contractId: org_policy_demo
+        |    policyIds: [bu-description-required]
+        |    reason: "legacy BU contract, migration tracked"
+        |""".stripMargin
+    )
+    val rule = ContractEnforcementRule.forContract(contract)
+    withOrgPolicyLayers(basePath, overlayPath) {
+      rule(spark) // must not throw - the overlay exempted its own rule
+    }
+  }
+
+  test("layering: inject.rules and inject.minVerificationOptions floors union across base and overlay") {
+    val contract = parseContract(catalogRegisteredContractYaml)
+    assert(contract.rules.isEmpty)
+    val basePath = writePolicy(
+      "layering_inject_base.yaml",
+      """version: "1.0"
+        |inject:
+        |  rules:
+        |    - type: forbid_unconditional_delete
+        |  minVerificationOptions:
+        |    rejectUndeclaredFields: true
+        |""".stripMargin
+    )
+    val overlayPath = writePolicy(
+      "layering_inject_overlay.yaml",
+      """version: "1.0"
+        |inject:
+        |  rules:
+        |    - type: merge_condition
+        |      columns: [id]
+        |  minVerificationOptions:
+        |    rejectUndeclaredInputs: true
+        |""".stripMargin
+    )
+    val (governedContract, governedOptions) = withOrgPolicyLayers(basePath, overlayPath) {
+      ContractEnforcementRule.enforceOrgPolicy(contract, VerificationOptions(), spark, None, None)
+    }
+    assert(
+      governedContract.rules == List(
+        ContractRule("forbid_unconditional_delete", Map.empty),
+        // YAML's own [id] list decodes as a java.util.List, the same
+        // shape RuleVerifierSpec's own merge_condition fixtures use, not
+        // a Scala List.
+        ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id")))
+      )
+    )
+    assert(governedOptions.rejectUndeclaredFields, "the base's own floor")
+    assert(governedOptions.rejectUndeclaredInputs, "the overlay's own floor")
+    assert(!governedOptions.computeFingerprint, "a floor neither layer set stays at its default")
+  }
+
+  test("layering: a malformed overlay's error message names that overlay's own path, not the base's") {
+    val contract = parseContract(catalogRegisteredContractYaml)
+    val basePath = writePolicy("layering_malformed_base.yaml", "version: \"1.0\"\n")
+    val overlayPath = writePolicy(
+      "layering_malformed_overlay.yaml",
+      """version: "1.0"
+        |policies:
+        |  - id: dup
+        |    type: require_catalog
+        |  - id: dup
+        |    type: field_naming_convention
+        |    pattern: "^[a-z]+$"
+        |""".stripMargin
+    )
+    val ex = withOrgPolicyLayers(basePath, overlayPath) {
+      intercept[OrgPolicyParseException] {
+        ContractEnforcementRule.enforceOrgPolicy(contract, VerificationOptions(), spark, None, None)
+      }
+    }
+    assert(ex.getMessage.contains(overlayPath))
+  }
+
+  test("layering: an overlay's unrecognized inject.minVerificationOptions key is attributed to the overlay's own path") {
+    val contract = parseContract(catalogRegisteredContractYaml)
+    val basePath = writePolicy("layering_typo_base.yaml", "version: \"1.0\"\n")
+    val overlayPath = writePolicy(
+      "layering_typo_overlay.yaml",
+      """version: "1.0"
+        |inject:
+        |  minVerificationOptions:
+        |    rejectUndeclredFields: true
+        |""".stripMargin
+    )
+    val ex = withOrgPolicyLayers(basePath, overlayPath) {
+      intercept[OrgPolicyParseException] {
+        ContractEnforcementRule.enforceOrgPolicy(contract, VerificationOptions(), spark, None, None)
+      }
+    }
+    assert(ex.getMessage.contains(overlayPath))
+    assert(ex.getMessage.contains("rejectUndeclredFields"))
   }
 }

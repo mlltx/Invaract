@@ -197,50 +197,106 @@ object ContractEnforcementRule {
     */
   val OrgPolicyConfKey = "spark.invaract.orgPolicy"
 
-  /** Parses the document `OrgPolicyConfKey` names, if set — `None` when the
-    * conf key is absent, so a job with no org policy attached pays no cost
-    * and sees no behavior change at all.
-    */
-  private[sparkadapter] def resolveOrgPolicy(session: SparkSession): Option[OrgPolicy] =
-    session.conf.getOption(OrgPolicyConfKey).map(OrgPolicyParser.parseFile)
-
-  /** Governs `contract`/`options` through the organizational policy named by
-    * `OrgPolicyConfKey`, if any is configured — the eager, "stop ASAP"
-    * counterpart to `resolveContractLocations`/`resolveVerificationOptions`,
-    * called once per session build rather than per plan: a policy rule
-    * depends only on the contract's own declared shape (does it declare a
-    * catalog, a required field, field names matching a convention), never on
-    * what a specific write actually does, so there's no reason to wait for a
-    * write to happen before rejecting a non-compliant contract.
+  /** Spark configuration key naming additional organizational policy
+    * documents — a comma-separated, ordered list of paths — layered on top
+    * of `OrgPolicyConfKey`'s document for policy layering/inheritance: a
+    * stricter, more specific policy (typically business-unit- or
+    * team-owned) composing with the looser org-wide baseline, rather than
+    * replacing it. See docs/CONTRACT_MODEL.md's "Policy layering" section
+    * for the full design; in short, each overlay is *just another* ordinary
+    * `OrgPolicy` YAML document (no new schema) that can only ever add
+    * policies on top of the base — there is no mechanism for an overlay to
+    * loosen, override, or exempt a rule the base (or an earlier overlay)
+    * declares; only that rule's own owning document can do that, via its
+    * own `exemptions`.
     *
-    * Three things happen, in order, when a policy is configured:
-    *   1. `policy.inject.rules` are merged into `contract.rules`
-    *      (`OrgPolicyEvaluator.applyInjectedRules`) and
-    *      `policy.inject.minVerificationOptions` floors are ORed onto
-    *      `options` (`applyMinVerificationOptions`) — so an org-wide DML
-    *      rule or a forced `VerificationOptions` flag applies to every write
+    * Attachable purely via `spark-submit --conf
+    * spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml,/policies/team-payments.yaml`
+    * alongside the existing `spark.invaract.orgPolicy=/policies/org-wide.yaml`
+    * — no change to the governed job's own source, the same attachability
+    * every other `spark.invaract.*` key in this class documents. Setting
+    * this key without `OrgPolicyConfKey` also set is rejected
+    * (`resolveOrgPolicyLayers` throws) rather than silently treating the
+    * first overlay as the base: layering is additive to a named org-wide
+    * anchor, not a substitute for one, and allowing it to silently stand in
+    * for a missing base risks a misconfigured job losing org-wide
+    * governance entirely rather than failing loudly.
+    */
+  val OrgPolicyOverlaysConfKey = "spark.invaract.orgPolicyOverlays"
+
+  /** Resolves the full, ordered stack of organizational policy layers this
+    * session has configured, each paired with the path it was loaded from
+    * (so a later validation failure can name exactly which layer it came
+    * from, not just "the" policy): `OrgPolicyConfKey`'s document first (the
+    * org-wide base), followed by each comma-separated path named by
+    * `OrgPolicyOverlaysConfKey`, in the order listed. `Nil` when neither key
+    * is set — a job with no org policy attached at all pays no cost and
+    * sees no behavior change, exactly as when only the single-document
+    * `OrgPolicyConfKey` mechanism existed.
+    *
+    * Every layer functions identically once resolved — a business-unit
+    * overlay is not a different kind of document, just another `OrgPolicy`
+    * parsed the same way as the base (see `OrgPolicyOverlaysConfKey`'s own
+    * doc for why layering needs no new document shape at all).
+    */
+  private[sparkadapter] def resolveOrgPolicyLayers(session: SparkSession): List[(String, OrgPolicy)] = {
+    val overlayPaths = session.conf.getOption(OrgPolicyOverlaysConfKey).toList.flatMap(VersionCompatibilityGuard.splitCommaSeparated)
+    (session.conf.getOption(OrgPolicyConfKey), overlayPaths) match {
+      case (None, Nil) => Nil
+      case (None, _) =>
+        throw new com.invaract.contract.OrgPolicyParseException(
+          s"'$OrgPolicyOverlaysConfKey' is set (${overlayPaths.mkString(", ")}) but '$OrgPolicyConfKey' is not - " +
+            "policy layering requires an org-wide base policy to layer onto; set both, or neither"
+        )
+      case (Some(basePath), overlays) => (basePath :: overlays).map(path => path -> OrgPolicyParser.parseFile(path))
+    }
+  }
+
+  /** Governs `contract`/`options` through the full, ordered stack of
+    * organizational policy layers configured for this session
+    * (`resolveOrgPolicyLayers`), if any — the eager, "stop ASAP" counterpart
+    * to `resolveContractLocations`/`resolveVerificationOptions`, called once
+    * per session build rather than per plan: a policy rule depends only on
+    * the contract's own declared shape (does it declare a catalog, a
+    * required field, field names matching a convention), never on what a
+    * specific write actually does, so there's no reason to wait for a write
+    * to happen before rejecting a non-compliant contract.
+    *
+    * Three things happen, in order, when at least one layer is configured:
+    *   1. Every layer's `inject.rules` are merged into `contract.rules`
+    *      (`OrgPolicyEvaluator.applyInjectedRulesFromLayers`) and every
+    *      layer's `inject.minVerificationOptions` floors are ORed onto
+    *      `options` (`applyMinVerificationOptions`, folded across layers) —
+    *      so an org-wide *or* overlay DML rule, or a forced
+    *      `VerificationOptions` flag from either, applies to every write
     *      this session's `verifyOrThrow` later checks, with no further
     *      change needed there.
-    *   2. Every policy rule is evaluated against the (already-injected)
-    *      contract. `Warn`-mode violations are published to `sink` (if any)
-    *      as an informational, non-blocking `VerificationResult` — this is
-    *      the rollout mechanism: a platform introduces a new policy in
-    *      `warn`, watches violations accumulate, then flips it to `enforce`,
-    *      no code change on any governed job.
-    *   3. Any `Enforce`-mode violation throws `ContractViolationException`
-    *      immediately, through the exact same `Violation`/`explain`/
-    *      notification-sink path a structural violation uses — before this
-    *      method returns, so before `forContract`'s caller ever gets back a
-    *      plan-check function to install. A non-compliant contract can't
-    *      even finish installing.
+    *   2. Every layer is evaluated independently and its violations unioned
+    *      (`OrgPolicyEvaluator.evaluateLayers`) against the
+    *      (already-injected) contract. `Warn`-mode violations, from any
+    *      layer, are published to `sink` (if any) as one informational,
+    *      non-blocking `VerificationResult` — this is the rollout
+    *      mechanism: a platform (or a business unit, for its own overlay)
+    *      introduces a new policy in `warn`, watches violations accumulate,
+    *      then flips it to `enforce`, no code change on any governed job.
+    *   3. Any `Enforce`-mode violation, from any layer, throws
+    *      `ContractViolationException` immediately, through the exact same
+    *      `Violation`/`explain`/notification-sink path a structural
+    *      violation uses — before this method returns, so before
+    *      `forContract`'s caller ever gets back a plan-check function to
+    *      install. A non-compliant contract can't even finish installing.
     *
-    * Throws `OrgPolicyParseException` (from parsing, from `OrgPolicyValidator`
-    * finding the policy document itself malformed — e.g. an exemption
-    * referencing an unknown policy id — or from
+    * Throws `OrgPolicyParseException` (from parsing, from
+    * `resolveOrgPolicyLayers` rejecting an overlay configured with no base,
+    * from `OrgPolicyValidator` finding a layer itself malformed — e.g. an
+    * exemption referencing a policy id outside that same layer's own
+    * `policies`, which is exactly how a layer is prevented from exempting a
+    * *different* layer's rule — or from
     * `requireKnownMinVerificationOptionKeys` rejecting an unrecognized
-    * `inject.minVerificationOptions` key) rather than silently ignoring a
-    * broken policy document, the same "fail loudly, not quietly," principle
-    * `ContractParser`/`ContractValidator` apply to a malformed contract.
+    * `inject.minVerificationOptions` key in any layer) rather than silently
+    * ignoring a broken policy document, the same "fail loudly, not
+    * quietly," principle `ContractParser`/`ContractValidator` apply to a
+    * malformed contract.
     */
   private[sparkadapter] def enforceOrgPolicy(
       contract: Contract,
@@ -249,21 +305,21 @@ object ContractEnforcementRule {
       sink: Option[NotificationSink],
       applicationId: Option[String]
   ): (Contract, VerificationOptions) =
-    resolveOrgPolicy(session) match {
-      case None => (contract, options)
-      case Some(policy) =>
-        val policyValidation = OrgPolicyValidator.validate(policy)
-        if (!policyValidation.isValid) {
+    resolveOrgPolicyLayers(session) match {
+      case Nil => (contract, options)
+      case layers =>
+        val layersValidation = OrgPolicyValidator.validateLayers(layers)
+        if (!layersValidation.isValid) {
           throw new com.invaract.contract.OrgPolicyParseException(
-            s"Organizational policy at '${session.conf.get(OrgPolicyConfKey)}' is invalid: " +
-              policyValidation.errors.mkString("; ")
+            s"Organizational policy layers are invalid: ${layersValidation.errors.mkString("; ")}"
           )
         }
-        requireKnownMinVerificationOptionKeys(policy, session)
+        layers.foreach { case (path, layer) => requireKnownMinVerificationOptionKeys(layer, path) }
 
-        val governedContract = OrgPolicyEvaluator.applyInjectedRules(contract, policy)
-        val governedOptions = applyMinVerificationOptions(options, policy)
-        val evaluation = OrgPolicyEvaluator.evaluate(governedContract, policy)
+        val policies = layers.map(_._2)
+        val governedContract = OrgPolicyEvaluator.applyInjectedRulesFromLayers(contract, policies)
+        val governedOptions = policies.foldLeft(options)(applyMinVerificationOptions)
+        val evaluation = OrgPolicyEvaluator.evaluateLayers(governedContract, policies)
 
         if (evaluation.hasBlockingViolations) {
           val violations = evaluation.enforceViolations.map(toViolation)
@@ -313,13 +369,16 @@ object ContractEnforcementRule {
     * leaving a platform team believing a flag is enforced org-wide when it
     * genuinely isn't. `contract` itself can't run this check (it has no
     * `VerificationOptions` to validate against), so it lives here, next to
-    * the one place that actually knows the real flag names.
+    * the one place that actually knows the real flag names. `policyPath`
+    * names the specific layer this `policy` was loaded from, so a typo in a
+    * business-unit overlay is attributed to that overlay's own path, not
+    * misleadingly blamed on the org-wide base.
     */
-  private[sparkadapter] def requireKnownMinVerificationOptionKeys(policy: OrgPolicy, session: SparkSession): Unit = {
+  private[sparkadapter] def requireKnownMinVerificationOptionKeys(policy: OrgPolicy, policyPath: String): Unit = {
     val unknownKeys = policy.inject.minVerificationOptions.keySet -- KnownMinVerificationOptionKeys
     if (unknownKeys.nonEmpty) {
       throw new com.invaract.contract.OrgPolicyParseException(
-        s"Organizational policy at '${session.conf.get(OrgPolicyConfKey)}' declares unrecognized " +
+        s"Organizational policy at '$policyPath' declares unrecognized " +
           s"inject.minVerificationOptions key(s): ${unknownKeys.toList.sorted.mkString(", ")} " +
           s"(known keys: ${KnownMinVerificationOptionKeys.toList.sorted.mkString(", ")})"
       )
