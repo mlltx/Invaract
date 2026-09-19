@@ -84,6 +84,18 @@ So:
   storage contract are specified; both repos implement against it rather
   than either one re-deriving the other's behavior from source.
 
+**Licensing follows the same split, deliberately.** Invaract's own core —
+`contract`/`ir`/`spark-adapter`/`fingerprint`, and `registry-client` above
+— is Apache 2.0, same as this whole repo. `invaract-registry` (the
+server) is **not** — it's a private, proprietary repo with no license
+granted, so that commercializing the reference server implementation
+stays an open option, independent of the engine's own open-source
+commitment. This is the same shape the open-core model uses elsewhere
+(client/protocol open, server implementation closed): a third party can
+still build and run their own server against the wire protocol specified
+here, using the open `registry-client` to talk to it, with no dependency
+on `invaract-registry`'s own source at all.
+
 ## 3. REST wire protocol
 
 Implemented by `invaract-registry`, consumed by `registry-client`'s
@@ -340,7 +352,10 @@ uses:
 `./dev/registry-demo` proves everything above against a real Spark job,
 not just this document's description of it (CLAUDE.md's Critical
 Requirement) — it needs a local checkout of `mlltx/invaract-registry`
-(sibling directory by default, or `INVARACT_REGISTRY_DIR`), then:
+(sibling directory by default, or `INVARACT_REGISTRY_DIR`; that repo is
+private — see §2's licensing note — so this script is for a contributor
+with access, or anyone with an equivalent implementation of §3/§4's wire
+protocol checked out at that path), then:
 
 1. Builds every module (`./dev/build`) and, separately, `registry-client`'s
    own assembly jar (not part of `./dev/build`'s default sequence — see

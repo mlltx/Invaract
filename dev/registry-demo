@@ -59,12 +59,15 @@ if [ ! -d "$REGISTRY_DIR" ]; then
   echo -e "${RED}✗ No invaract-registry checkout found at $REGISTRY_DIR${NC}"
   echo ""
   echo "  This demo needs a local clone of the separate mlltx/invaract-registry"
-  echo "  repo (docs/CONTRACT_REGISTRY.md's server implementation). Clone it"
-  echo "  next to this repo:"
+  echo "  repo (docs/CONTRACT_REGISTRY.md's server implementation) next to this"
+  echo "  one. That repo is private (docs/CONTRACT_REGISTRY.md §2) - if you have"
+  echo "  access, clone it:"
   echo ""
   echo "    git clone https://github.com/mlltx/invaract-registry $REGISTRY_DIR"
   echo ""
-  echo "  or point INVARACT_REGISTRY_DIR at an existing checkout."
+  echo "  or point INVARACT_REGISTRY_DIR at an existing checkout, or at a"
+  echo "  checkout of your own implementation of the wire protocol in"
+  echo "  docs/CONTRACT_REGISTRY.md §3/§4."
   exit 1
 fi
 

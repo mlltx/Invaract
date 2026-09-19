@@ -11,32 +11,27 @@ A contract normally comes from a file the job carries with it — but a file has
 place other jobs, CI pipelines, or platform tooling can look up, version, or govern
 independently of any one job's own deployment. `registry://<id>@<version>` lets
 `spark.invaract.contract` name a contract stored in a **contract registry** — a small HTTP
-service (a separate project, [`mlltx/invaract-registry`](https://github.com/mlltx/invaract-registry))
-that stores versions of a contract, computes a compatibility diff against the previous
-version on every new registration, and rejects a registration whose declared version bump
-doesn't match the actual scope of change unless explicitly overridden.
+service that stores versions of a contract, computes a compatibility diff against the
+previous version on every new registration, and rejects a registration whose declared
+version bump doesn't match the actual scope of change unless explicitly overridden.
 
-<Aside type="note" title="A separate repo, not a module in this one">
-Every other module in this repository is a library a Spark job embeds. A registry is a
-real, long-running deployable service with its own release/ops lifecycle — a different
-shape of artifact, so it lives in its own repo rather than Invaract's own module graph.
-See `docs/CONTRACT_REGISTRY.md`'s "Two-repo split" section (in this repository, not
-`docs-site/`) for the full reasoning.
+<Aside type="caution" title="The reference server is closed-source">
+Everything on this page other than the server itself is open, Apache 2.0, in this repo:
+the wire protocol (`docs/CONTRACT_REGISTRY.md`), and the `registry-client` library
+that speaks it. The reference server implementation (`invaract-registry`) is a
+separate, **private** repository — not published, not something you can `git clone`.
+Run your own implementation of the documented wire protocol, or reach out about
+access to the reference one; the client and the `registry://` resolution mechanism
+work against either.
 </Aside>
 
 ## What you need running
 
-A registry server, reachable over HTTP from wherever your job runs. Clone and run one:
-
-```bash
-git clone https://github.com/mlltx/invaract-registry
-cd invaract-registry
-sbt run   # starts on :7000
-```
-
-See that repo's own README for building a container image instead, and for configuring
-`REGISTRY_AUTH_TOKEN` if you want bearer-token auth on top of the default open-access
-setup.
+A registry server, reachable over HTTP from wherever your job runs, implementing the
+wire protocol `docs/CONTRACT_REGISTRY.md` documents (routes, request/response shapes,
+status codes). Nothing else in this guide, or in `spark-adapter`'s resolution
+mechanism, assumes a specific server implementation — `registry-client` only speaks
+the documented HTTP protocol.
 
 ## Register a contract
 
@@ -120,11 +115,14 @@ val spark = SparkSession.builder()
 ./dev/registry-demo
 ```
 
-Needs a local clone of `mlltx/invaract-registry` next to this repository (or
-`INVARACT_REGISTRY_DIR` pointing at one elsewhere). The script starts a real registry
-server, registers `demo/contracts/invaract_output_registry.yaml` into it over real HTTP,
-then runs `DemoJobHarness` against `registry://invaract_demo_output_registry@1.0.0` —
-confirmed against a real run, not just described. Its `contractVerification` section:
+Needs a local clone of the reference server implementation next to this repository (or
+`INVARACT_REGISTRY_DIR` pointing at one elsewhere) — see the caution above on why that
+repo isn't publicly cloneable; this script is for anyone with access to it, or an
+equivalent implementation of the documented wire protocol at that path. The script
+starts a real registry server, registers `demo/contracts/invaract_output_registry.yaml`
+into it over real HTTP, then runs `DemoJobHarness` against
+`registry://invaract_demo_output_registry@1.0.0` — confirmed against a real run, not
+just described. Its `contractVerification` section:
 
 ```json
 {
