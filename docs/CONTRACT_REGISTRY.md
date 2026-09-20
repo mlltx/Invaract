@@ -94,7 +94,12 @@ commitment. This is the same shape the open-core model uses elsewhere
 (client/protocol open, server implementation closed): a third party can
 still build and run their own server against the wire protocol specified
 here, using the open `registry-client` to talk to it, with no dependency
-on `invaract-registry`'s own source at all.
+on `invaract-registry`'s own source at all. `invaract-registry`'s own
+*documentation* is public even though its source isn't, hosted separately
+from this project's own docs-site per the Astronomer/Airflow model (a
+different governance and contributor base gets a different docs site, not
+just a different section of this one) — see
+[the Invaract Registry docs](https://mlltx.github.io/invaract-registry/).
 
 ## 3. REST wire protocol
 

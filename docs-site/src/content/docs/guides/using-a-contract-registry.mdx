@@ -19,10 +19,13 @@ version bump doesn't match the actual scope of change unless explicitly overridd
 Everything on this page other than the server itself is open, Apache 2.0, in this repo:
 the wire protocol (`docs/CONTRACT_REGISTRY.md`), and the `registry-client` library
 that speaks it. The reference server implementation (`invaract-registry`) is a
-separate, **private** repository — not published, not something you can `git clone`.
-Run your own implementation of the documented wire protocol, or reach out about
-access to the reference one; the client and the `registry://` resolution mechanism
-work against either.
+separate, **private** repository — its source isn't published, not something you can
+`git clone`. Its own documentation, however, **is** public — see
+[the Invaract Registry docs](https://mlltx.github.io/invaract-registry/) for
+installation, configuration, the full API reference, and known limitations of the
+reference implementation. Run your own implementation of the documented wire protocol,
+or reach out about access to the reference one; the client and the `registry://`
+resolution mechanism work against either.
 </Aside>
 
 ## What you need running
@@ -118,7 +121,9 @@ val spark = SparkSession.builder()
 Needs a local clone of the reference server implementation next to this repository (or
 `INVARACT_REGISTRY_DIR` pointing at one elsewhere) — see the caution above on why that
 repo isn't publicly cloneable; this script is for anyone with access to it, or an
-equivalent implementation of the documented wire protocol at that path. The script
+equivalent implementation of the documented wire protocol at that path. See [the
+Invaract Registry docs](https://mlltx.github.io/invaract-registry/getting-started/local-development/)
+for how to build and run one from a checkout you do have access to. The script
 starts a real registry server, registers `demo/contracts/invaract_output_registry.yaml`
 into it over real HTTP, then runs `DemoJobHarness` against
 `registry://invaract_demo_output_registry@1.0.0` — confirmed against a real run, not
@@ -141,5 +146,6 @@ path, is what confirms the run went through registry resolution end to end.
 A persistent registry storage backend (the reference implementation is in-memory, not
 durable across restarts), real SSO/OIDC auth, and cross-contract policies or
 fingerprint-based drift control consuming the registry are all named, disclosed future
-work — see `docs/CONTRACT_REGISTRY.md`'s "Non-goals" section and that repo's own README
+work — see `docs/CONTRACT_REGISTRY.md`'s "Non-goals" section and [the Invaract Registry
+docs' Known Limitations page](https://mlltx.github.io/invaract-registry/troubleshooting/known-limitations/)
 for the current state of each.
