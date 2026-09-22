@@ -164,6 +164,24 @@
           "default": [],
           "items": { "type": "string" },
           "description": "Open-vocabulary governance labels for this field (e.g. \"pii\", \"financial\", \"restricted\") - Invaract does not define or restrict which tags exist. spark-adapter's SensitivityLineage propagates whichever tags an input field carries to every output column that transitively derives from it, for audit/governance visibility - this is reporting, not enforcement, so a tagged field does not by itself cause verification to fail. A non-list value for this key is a ContractParser hard failure, not silently ignored."
+        },
+        "constraints": {
+          "type": "array",
+          "default": [],
+          "items": { "$ref": "#/$defs/fieldConstraint" },
+          "description": "Statically-verifiable value-domain requirements on this field (equals a constant, one of a finite set, a numeric range) - see docs/STATIC_DATA_QUALITY_VERIFICATION.md. NOT NULL needs no entry here: the existing `nullable: false` above already states it. On an input field, a constraint is an axiom the static analysis trusts; on an output field, it's an obligation the analysis attempts to prove."
+        }
+      }
+    },
+    "fieldConstraint": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Constraint kind: \"equals\" (a `value` property), \"oneOf\" (a `values` list), or \"range\" (at least one of `gte`/`gt`/`lte`/`lt`, not both gte+gt or both lte+lt). Every other key on a constraint object is constraint-specific and captured verbatim (FieldConstraint.properties). See FieldConstraintType/FieldConstraint.interpret."
         }
       }
     },
@@ -175,7 +193,7 @@
         "type": {
           "type": "string",
           "minLength": 1,
-          "description": "Rule kind, e.g. \"compatibility\", \"merge_condition\", \"forbid_unconditional_delete\", \"allowed_update_columns\". Every other key on a rule object is rule-specific and captured verbatim (ContractRule.properties). Only the latter three are interpreted and enforced today (see RuleType/ContractRule.interpret) - every other rule type is recorded but not yet verified (see ROADMAP.md)."
+          "description": "Rule kind, e.g. \"compatibility\", \"merge_condition\", \"forbid_unconditional_delete\", \"allowed_update_columns\", \"required_group_by\", \"forbid_cross_join\", \"required_join_columns\", \"required_filter_columns\". Every other key on a rule object is rule-specific and captured verbatim (ContractRule.properties). The three DML types and four plan-shape types are interpreted and enforced today (see RuleType/ContractRule.interpret) - every other rule type is recorded but not yet verified (see ROADMAP.md)."
         }
       }
     }

@@ -152,6 +152,14 @@ object ContractParser {
     // regardless of how many tags a field carries.
     if (field.sensitivityTags.nonEmpty) m.put("sensitivityTags", field.sensitivityTags.toList.sorted.asJava)
     if (field.properties.nonEmpty) m.put("properties", field.properties.map(fieldToJava).asJava)
+    if (field.constraints.nonEmpty) m.put("constraints", field.constraints.map(fieldConstraintToJava).asJava)
+    m
+  }
+
+  private def fieldConstraintToJava(constraint: FieldConstraint): java.util.Map[String, Any] = {
+    val m = new java.util.LinkedHashMap[String, Any]()
+    m.put("type", constraint.constraintType)
+    m.putAll(constraint.properties.asJava)
     m
   }
 
@@ -257,7 +265,17 @@ object ContractParser {
       case None        => Nil
     }
 
-    Field(name, fieldType, required, nullable, properties, sensitivityTags)
+    val constraints = raw.get("constraints") match {
+      case Some(value) => parseListOf(value, s"$context.constraints")(parseFieldConstraint)
+      case None        => Nil
+    }
+
+    Field(name, fieldType, required, nullable, properties, sensitivityTags, constraints)
+  }
+
+  private def parseFieldConstraint(raw: Map[String, Any], context: String): FieldConstraint = {
+    val constraintType = requireString(raw, "type", context)
+    FieldConstraint(constraintType, raw - "type")
   }
 
   private def parseRules(raw: Option[Any]): List[ContractRule] = raw match {

@@ -813,4 +813,124 @@ class ContractParserTest extends AnyFunSuite {
     val written = ContractParser.write(ContractParser.parse(yaml))
     assert(!written.contains("description"))
   }
+
+  // --- Field.constraints (static data-quality) --------------------------------
+
+  test("parse should decode a well-formed equals/oneOf/range field constraint via interpret") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: currency
+        |          type: string
+        |          constraints:
+        |            - type: equals
+        |              value: GBP
+        |        - name: status
+        |          type: string
+        |          constraints:
+        |            - type: oneOf
+        |              values: [ACTIVE, INACTIVE]
+        |        - name: amount
+        |          type: double
+        |          constraints:
+        |            - type: range
+        |              gte: 0
+        |""".stripMargin
+
+    val fields = ContractParser.parse(yaml).outputs.head.schema.fields
+    assert(fields(0).constraints.head.interpret.contains(InterpretedFieldConstraint.Equals("GBP", "string")))
+    assert(fields(1).constraints.head.interpret.contains(InterpretedFieldConstraint.OneOf(Set("ACTIVE", "INACTIVE"), "string")))
+    assert(fields(2).constraints.head.interpret.contains(InterpretedFieldConstraint.Range(gte = Some(BigDecimal(0)), gt = None, lte = None, lt = None)))
+  }
+
+  test("interpret should be None for a field constraint with malformed properties") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: currency
+        |          type: string
+        |          constraints:
+        |            - type: equals
+        |        - name: status
+        |          type: string
+        |          constraints:
+        |            - type: oneOf
+        |              values: []
+        |        - name: amount
+        |          type: double
+        |          constraints:
+        |            - type: range
+        |""".stripMargin
+
+    val fields = ContractParser.parse(yaml).outputs.head.schema.fields
+    fields.foreach(f => assert(f.constraints.head.interpret.isEmpty, s"expected malformed for ${f.name}"))
+  }
+
+  test("interpret should be None for a range constraint declaring both gte and gt") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: amount
+        |          type: double
+        |          constraints:
+        |            - type: range
+        |              gte: 0
+        |              gt: 0
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("write should round-trip a field's constraints") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: currency
+        |          type: string
+        |          constraints:
+        |            - type: equals
+        |              value: GBP
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped == original)
+  }
+
+  test("write should omit the constraints key entirely for a field that declares none") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val written = ContractParser.write(ContractParser.parse(yaml))
+    assert(!written.contains("constraints"))
+  }
 }

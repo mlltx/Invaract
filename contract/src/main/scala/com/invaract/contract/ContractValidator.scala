@@ -214,7 +214,70 @@ object ContractValidator {
       issues ++= validateField(s"$path.${nested.name}", nested)
     }
 
+    field.constraints.zipWithIndex.foreach { case (constraint, idx) =>
+      issues ++= validateFieldConstraint(s"$path.constraints[$idx]", field, constraint)
+    }
+
     issues.result()
+  }
+
+  /** Mirrors `validate`'s own `rules`-malformed-properties check, scoped to
+    * one field's `constraints` — see
+    * docs/STATIC_DATA_QUALITY_VERIFICATION.md §5.
+    */
+  private def validateFieldConstraint(path: String, field: Field, constraint: FieldConstraint): List[ValidationIssue] = {
+    val issues = List.newBuilder[ValidationIssue]
+
+    if (constraint.constraintType.trim.isEmpty) {
+      issues += ValidationIssue(ValidationSeverity.Error, path, "Constraint type must not be empty")
+    } else if (FieldConstraintType.All.contains(constraint.constraintType) && constraint.interpret.isEmpty) {
+      issues += ValidationIssue(
+        ValidationSeverity.Error,
+        path,
+        s"Constraint type '${constraint.constraintType}' has malformed or missing properties for its shape" + fieldConstraintHint(constraint.constraintType)
+      )
+    }
+    // Deliberately no "unrecognized constraintType" warning here, mirroring
+    // rules' own precedent above: a constraints entry outside this closed
+    // set is simply never interpreted, not necessarily a mistake.
+
+    (constraint.constraintType, constraint.interpret) match {
+      case (FieldConstraintType.Equals, Some(InterpretedFieldConstraint.Equals(_, literalType))) if !typesCompatible(field.fieldType, literalType) =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"constraint declares a value of type '$literalType' but the field's own declared type is '${field.fieldType}'"
+        )
+      case (FieldConstraintType.OneOf, Some(InterpretedFieldConstraint.OneOf(_, literalType))) if !typesCompatible(field.fieldType, literalType) =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"constraint declares values of type '$literalType' but the field's own declared type is '${field.fieldType}'"
+        )
+      case _ => ()
+    }
+
+    issues.result()
+  }
+
+  private val NumericFieldTypes = Set("integer", "long", "short", "byte", "double", "float", "decimal")
+
+  /** Loose on purpose: only flags a clear mismatch (a numeric constraint
+    * value against a declared string field, or vice versa) rather than
+    * requiring an exact type match (an `integer` constraint value against a
+    * `long` field is not itself a mistake worth warning about).
+    */
+  private def typesCompatible(declaredFieldType: String, constraintLiteralType: String): Boolean = {
+    val declaredNumeric = NumericFieldTypes.contains(declaredFieldType.toLowerCase)
+    val literalNumeric = NumericFieldTypes.contains(constraintLiteralType.toLowerCase)
+    declaredNumeric == literalNumeric
+  }
+
+  private def fieldConstraintHint(constraintType: String): String = constraintType match {
+    case FieldConstraintType.Equals => " (expected a 'value' property)"
+    case FieldConstraintType.OneOf  => " (expected a non-empty 'values' list)"
+    case FieldConstraintType.Range  => " (expected at least one of gte/gt/lte/lt, and not both gte+gt or both lte+lt)"
+    case _                           => ""
   }
 
   private def ruleHint(ruleType: String): String = ruleType match {

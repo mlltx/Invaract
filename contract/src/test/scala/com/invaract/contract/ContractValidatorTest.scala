@@ -233,6 +233,76 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.isValid)
   }
 
+  // -- Field.constraints (static data-quality) -----------------------------
+
+  test("validate should error when an equals field constraint has no 'value' property") {
+    val schema = Schema(List(Field("currency", "string", constraints = List(FieldConstraint(FieldConstraintType.Equals, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("equals")))
+  }
+
+  test("validate should error when a range field constraint declares no bound at all") {
+    val schema = Schema(List(Field("amount", "double", constraints = List(FieldConstraint(FieldConstraintType.Range, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("range")))
+  }
+
+  test("validate should accept a well-formed oneOf field constraint matching the field's declared type") {
+    val schema = Schema(List(Field("status", "string", constraints = List(FieldConstraint(FieldConstraintType.OneOf, Map("values" -> java.util.Arrays.asList("ACTIVE", "INACTIVE")))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should warn when a constraint's value type doesn't match the field's own declared type") {
+    val schema = Schema(List(Field("amount", "double", constraints = List(FieldConstraint(FieldConstraintType.Equals, Map("value" -> "not-a-number"))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a type mismatch is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("declared type")))
+  }
+
   test("validate should not flag an unrecognized rule type as malformed") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

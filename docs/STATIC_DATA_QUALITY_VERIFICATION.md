@@ -168,18 +168,20 @@ idiom in this codebase, generalized from one boolean fact to several independent
 property kinds each independently provable, refuted, or unknown.
 
 ```scala
-/** One column's analyzed value-domain state. `proven` and `refuted` are
-  * each a small map keyed by property *kind* (Range/OneOf/EqualsConstant
-  * each have exactly one slot; NotNull is boolean) - never both populated
-  * for the same kind on the same column (a column cannot be both proven
-  * and refuted range-bounded; see §4.7).
+/** One column's analyzed value-domain state. `equalsConstant`/`oneOf`/
+  * `range` are each `None` when nothing is known (absence of proof is not
+  * proof of absence). Only `notNull` carries a separate positive "refuted"
+  * state at this layer — whether an `equalsConstant`/`oneOf`/`range`
+  * envelope escapes a required obligation (`Violated`) is derived once, by
+  * the caller comparing this state against the contract's declared
+  * obligation (§3.6), not pre-computed and carried through every
+  * intermediate plan node.
   */
 case class ColumnPropertyState(
   notNull: NullabilityFact,                  // Proven | Refuted | Unknown - see NonDeterminism precedent
   equalsConstant: Option[Property.EqualsConstant] = None,
   oneOf: Option[Property.OneOf] = None,
-  range: Option[Property.Range] = None,       // the *envelope*: tightest proven superset of possible values
-  rangeRefuted: Boolean = false               // true only when §4.5's disjointness test fires
+  range: Option[Property.Range] = None        // the *envelope*: tightest proven superset of possible values
 )
 ```
 
