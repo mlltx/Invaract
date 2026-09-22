@@ -3068,6 +3068,23 @@ self-contained design considered needs either a registry to consult
 or producer-side metadata-stamping infrastructure that doesn’t exist
 yet, a larger, separate design decision than this sub-phase’s scope.</li>
 </ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-static-data-quality-contract-verification--design-proposed">Sub-phase: Static data-quality contract verification — design proposed,</h4><a class="sl-anchor-link" href="#sub-phase-static-data-quality-contract-verification--design-proposed"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Static data-quality contract verification — design proposed,”</span></a></div>
+<div class="sl-heading-wrapper level-h4"><h4 id="not-implemented">not implemented</h4><a class="sl-anchor-link" href="#not-implemented"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “not implemented”</span></a></div>
+<p><a href="https://github.com/mlltx/Invaract/blob/main/docs/STATIC_DATA_QUALITY_VERIFICATION.md">docs/STATIC_DATA_QUALITY_VERIFICATION.md</a>
+proposes extending this same “prove it before execution, not after” principle to a
+new class of property: not just plan <em>shape</em> (this sub-phase’s own
+<code dir="auto">required_group_by</code>/<code dir="auto">forbid_cross_join</code>/…) but per-column <em>value-domain</em> facts —
+<code dir="auto">NOT NULL</code>, <code dir="auto">= &#x3C;constant></code>, <code dir="auto">IN (...)</code>, a numeric range — statically provable (or
+refutable) from input-contract axioms propagated through the transformation’s
+semantics, architecturally a new sibling of <code dir="auto">ir.Lineage</code> rather than a parallel
+representation. Explicitly a proposal, not a sub-phase to check off: no
+<code dir="auto">Property</code>/<code dir="auto">PropertyAnalysis</code>/<code dir="auto">StaticDataQualityVerifier</code> code exists yet. The design
+doc’s own §11 names open questions (confirming Catalyst’s real <code dir="auto">IS NOT NULL</code>/<code dir="auto">IN</code>
+translation shape chief among them) that need resolving before an implementation pass
+begins, and its §8/§9 scope a deliberately narrow first slice (four property kinds;
+<code dir="auto">Aggregate</code>/<code dir="auto">Window</code> and cast-aware range/set preservation explicitly deferred, not
+because they’re hard to translate but because a wrong per-function rule there is
+exactly the false-guarantee failure mode this whole design exists to prevent).</p>
 <div class="sl-heading-wrapper level-h5"><h5 id="dependencies-3">Dependencies</h5><a class="sl-anchor-link" href="#dependencies-3"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Dependencies”</span></a></div>
 <ul>
 <li>Phase 1b completion (transformation IR) — the fingerprint’s only input</li>
