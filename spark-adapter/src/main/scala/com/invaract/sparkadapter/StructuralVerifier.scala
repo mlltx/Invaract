@@ -167,7 +167,72 @@ object ViolationType {
     * references a column a `required_filter_columns` rule declares.
     */
   val RuleRequiredFilterColumnsViolation = "RULE_REQUIRED_FILTER_COLUMNS_VIOLATION"
+
+  /** Produced by `StaticDataQualityVerifier` — the transformation's own
+    * semantics *prove* an output field's declared `nullable`/`constraints`
+    * property cannot hold (`DataQualityVerdict.Violated`), e.g. a filter's
+    * negation guarantees a column excluded by an `equals`/`oneOf`
+    * constraint can still reach the output. Only `Violated` ever becomes a
+    * `Violation` — `NotGuaranteed`/`NotStaticallyVerifiable` are reported
+    * (`VerificationResult.dataQuality`) but never block a write, since
+    * static analysis proving nothing is not the same as static analysis
+    * proving a violation (see docs/STATIC_DATA_QUALITY_VERIFICATION.md's
+    * conservatism principle).
+    */
+  val DataQualityViolation = "DATA_QUALITY_VIOLATION"
 }
+
+/** The four-state verdict `StaticDataQualityVerifier` reaches for one
+  * output field against one of its contract-declared static properties
+  * (`nullable: false`, or a `FieldConstraint`) — see
+  * docs/STATIC_DATA_QUALITY_VERIFICATION.md §2.1. Deliberately never
+  * collapsed to pass/fail: `NotGuaranteed` and `NotStaticallyVerifiable`
+  * both mean "verification did not block this write," but they are not the
+  * same claim, and `VerificationResult.dataQuality` keeps them distinct so
+  * a human or downstream tool can tell "the transformation might still
+  * violate this at runtime" apart from "this needs a runtime DQ check,
+  * static analysis has nothing to say about it at all."
+  */
+sealed trait DataQualityVerdict
+object DataQualityVerdict {
+
+  /** The transformation's own semantics prove this property holds for
+    * every possible row that reaches the output — no runtime check needed.
+    */
+  case object Guaranteed extends DataQualityVerdict
+
+  /** Static analysis could not prove the property holds, but also found no
+    * proof that it's violated. The common, honest "I don't know" result —
+    * covers everything from "this column merely passes through a filter
+    * that happens not to narrow it" to "this depends on input data static
+    * analysis correctly refuses to assume anything about." Runtime DQ
+    * checking remains necessary.
+    */
+  case object NotGuaranteed extends DataQualityVerdict
+
+  /** The transformation's own semantics prove this property CANNOT hold —
+    * becomes a `Violation` (`ViolationType.DataQualityViolation`) and
+    * blocks the write, the same as any other structural violation.
+    */
+  case object Violated extends DataQualityVerdict
+
+  /** The output column's derivation involves something this analysis
+    * deliberately does not attempt to reason about (a UDF, a window
+    * function, an aggregate, ...) — distinct from `NotGuaranteed` so a
+    * consumer can tell "nothing to prove" apart from "declined to even
+    * try, this needs a real runtime check."
+    */
+  case object NotStaticallyVerifiable extends DataQualityVerdict
+}
+
+/** One field-level static data-quality check `StaticDataQualityVerifier`
+  * performed against an output's contract-declared `nullable`/`constraints`
+  * — `constraint` is a short, human-readable rendering of what was checked
+  * (e.g. `"NOT NULL"`, `"IN (ACTIVE, INACTIVE)"`, `">= 0"`), not a
+  * machine-parseable encoding; a caller that needs the underlying shape
+  * already has it via `Contract.output(...).schema.field(field)`.
+  */
+case class DataQualityCheckResult(field: String, constraint: String, verdict: DataQualityVerdict)
 
 /** The two "unexpected X can be rejected" toggles from the check list —
   * off by default, matching how most contract/schema tooling treats an
@@ -181,11 +246,22 @@ object ViolationType {
   * default for the same reason as the other two — canonicalising and
   * hashing a whole plan on every check is real additional work this
   * module should not impose on every existing caller by default.
+  *
+  * `staticDataQuality` is a fourth, independent opt-in (see
+  * docs/STATIC_DATA_QUALITY_VERIFICATION.md): when true,
+  * `ContractEnforcementRule.verifyOrThrow` runs
+  * `StaticDataQualityVerifier.verify` against the plan being checked,
+  * populating `VerificationResult.dataQuality` and folding any
+  * `DataQualityVerdict.Violated` result into `violations`. Off by default,
+  * same reasoning as the other three: proving static data-quality
+  * properties is real additional analysis work this module should not
+  * impose on every existing caller by default.
   */
 case class VerificationOptions(
   rejectUndeclaredInputs: Boolean = false,
   rejectUndeclaredFields: Boolean = false,
-  computeFingerprint: Boolean = false
+  computeFingerprint: Boolean = false,
+  staticDataQuality: Boolean = false
 )
 
 /** `fingerprints` is `None` unless the check that produced this result ran
@@ -196,19 +272,34 @@ case class VerificationOptions(
   * transformation plan behind the synthetic `UnknownPlan` `explain` renders
   * for those, so fingerprinting it would carry no real information — see
   * docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2).
+  *
+  * `dataQuality` is `Nil` unless the check that produced this result ran
+  * with `VerificationOptions.staticDataQuality = true` — populated with
+  * one `DataQualityCheckResult` per output field with a declared
+  * `nullable: false`/`constraints` property, whatever the verdict (not
+  * only `Violated`, which is instead folded into `violations` above — see
+  * `ViolationType.DataQualityViolation`'s own doc). Report-only otherwise:
+  * a `NotGuaranteed`/`NotStaticallyVerifiable` entry here never affects
+  * `passed`.
   */
 case class VerificationResult(
   status: String,
   contract: String,
   violations: List[Violation],
-  fingerprints: Option[TransformationFingerprint] = None
+  fingerprints: Option[TransformationFingerprint] = None,
+  dataQuality: List[DataQualityCheckResult] = Nil
 ) {
   def passed: Boolean = status == "PASSED"
 }
 
 object VerificationResult {
-  def of(contractRef: String, violations: List[Violation], fingerprints: Option[TransformationFingerprint] = None): VerificationResult =
-    VerificationResult(if (violations.isEmpty) "PASSED" else "FAILED", contractRef, violations, fingerprints)
+  def of(
+      contractRef: String,
+      violations: List[Violation],
+      fingerprints: Option[TransformationFingerprint] = None,
+      dataQuality: List[DataQualityCheckResult] = Nil
+  ): VerificationResult =
+    VerificationResult(if (violations.isEmpty) "PASSED" else "FAILED", contractRef, violations, fingerprints, dataQuality)
 }
 
 /** Checks a transformation plan's actual inputs and output against a
@@ -544,7 +635,11 @@ private[sparkadapter] object StructuralVerifier {
   private def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
     outputs.find(o => locationsMatch(o.location, actualLocation))
 
-  private def collectReads(plan: Plan): List[Read] = plan match {
+  /** `private[sparkadapter]`: reused by `StaticDataQualityVerifier` to
+    * discover a plan's real `Read` scopes before matching them against
+    * `contract.inputs` — the same reason `locationsMatch` below is widened.
+    */
+  private[sparkadapter] def collectReads(plan: Plan): List[Read] = plan match {
     case r: Read => List(r)
     case other    => other.children.flatMap(collectReads)
   }

@@ -2980,4 +2980,130 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(oneText.contains("id: integer") && !oneText.contains("id: integer (optional)"), oneText)
     assert(oneText.contains("note: string (optional)"), oneText)
   }
+
+  // docs/STATIC_DATA_QUALITY_VERIFICATION.md - the Spark contract extension
+  // actually proving (or declining to prove) a contract-declared static
+  // data-quality property against a real write, opt-in via
+  // VerificationOptions.staticDataQuality. StaticDataQualityVerifierSpec
+  // already covers the underlying per-verdict logic directly against
+  // hand-built plans; these prove the real end-to-end wiring: default-off,
+  // a genuine Violated abort, the NotGuaranteed non-blocking case, and
+  // spark.invaract.staticDataQuality attached purely via conf.
+  private val dataQualityContractYaml =
+    """id: dq_demo
+      |version: "1.0.0"
+      |outputs:
+      |  - name: out
+      |    location: OUTPUT_PATH
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: long
+      |          required: true
+      |        - name: currency
+      |          type: string
+      |          required: true
+      |          constraints:
+      |            - type: equals
+      |              value: GBP
+      |""".stripMargin
+
+  test("staticDataQuality defaults to false: a write the transformation's own semantics violate still PASSES") {
+    val outputPath = scratchDir.resolve("dq_default_off.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    // The transformation always produces "USD", never "GBP" - a real,
+    // provable Violated under the constraint above - yet with the flag
+    // left at its default, this must behave exactly as before this
+    // capability existed: no data-quality analysis runs at all.
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("currency", lit("USD"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("staticDataQuality = true: a Guaranteed constant satisfying the contract's equals constraint PASSES") {
+    val outputPath = scratchDir.resolve("dq_guaranteed_pass.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml, options = VerificationOptions(staticDataQuality = true)) {
+      val df = spark.range(5).withColumn("currency", lit("GBP"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw: the transformation provably always writes "GBP"
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("staticDataQuality = true: a proven Violated constant aborts the write with a DATA_QUALITY_VIOLATION") {
+    val outputPath = scratchDir.resolve("dq_violated.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+
+    val ex = withContract(yaml, options = VerificationOptions(staticDataQuality = true), sink = Some(sink)) {
+      val df = spark.range(5).withColumn("currency", lit("USD"))
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.exists(v => v.violationType == ViolationType.DataQualityViolation && v.column.contains("currency")))
+    assert(ex.getMessage.contains("DATA_QUALITY_VIOLATION"))
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "FAILED")
+    assert(event.violations.exists(_.violationType == ViolationType.DataQualityViolation))
+  }
+
+  test("staticDataQuality = true: a NotGuaranteed column (no axiom, no proof either way) never blocks the write") {
+    val outputPath = scratchDir.resolve("dq_not_guaranteed.parquet").toString
+    // No `inputs:` declared at all, so the plain passthrough column below
+    // has no seeded axiom - PropertyAnalysis correctly proves nothing, in
+    // either direction, and NotGuaranteed must never behave like Violated.
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml, options = VerificationOptions(staticDataQuality = true)) {
+      // A plain Cast of an unaxiomed column: Cast preserves NotNull only, never
+      // EqualsConstant/OneOf/Range (see PropertyAnalysis's Cast handling), so
+      // neither the NOT NULL nor the `= GBP` check is proven in either
+      // direction - genuinely NotGuaranteed, not a disguised Violated.
+      val df = spark.range(5).withColumn("currency", col("id").cast("string"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw: neither Guaranteed nor Violated, so it doesn't block
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("resolveVerificationOptions: spark.invaract.staticDataQuality=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.StaticDataQualityConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.staticDataQuality)
+    // Only this one flag moves - the others stay at their defaults.
+    assert(!resolved.computeFingerprint)
+  }
+
+  test("forContract end-to-end: staticDataQuality attached purely via conf aborts a write that would otherwise pass") {
+    val outputPath = scratchDir.resolve("dq_conf_attached.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+    val contract = parseContract(yaml)
+
+    // A plain, unchecked write (activeContract is None outside withContract)
+    // producing "USD" - a real, provable Violated - captured purely to
+    // reuse its real analyzed plan, the same off-the-shelf-plan technique
+    // the rejectUndeclaredFields conf test above uses.
+    val df = spark.range(5).withColumn("currency", lit("USD"))
+    df.write.mode("overwrite").parquet(outputPath)
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    val rule = ContractEnforcementRule.forContract(contract) // options left at every default: staticDataQuality = false
+    rule(spark)(writePlan) // must not throw: the flag is off, so no data-quality analysis runs at all
+
+    withConf(ContractEnforcementRule.StaticDataQualityConfKey, "true") {
+      intercept[ContractViolationException] {
+        rule(spark)(writePlan)
+      }
+    }
+  }
 }

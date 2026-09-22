@@ -83,6 +83,7 @@ extensions:
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested field list, for `struct`/record types. |
 | `sensitivityTags` | no | List of governance labels (e.g. `[pii, financial]`) — see [Sensitivity tags](#sensitivity-tags) below. Defaults to none. |
+| `constraints` | no | List of `{type, ...}` static data-quality constraints (`equals`/`oneOf`/`range`) — see [Static data-quality constraints](#static-data-quality-constraints) below. Defaults to none. |
 
 ### Known types
 
@@ -140,6 +141,43 @@ transformation, not enforcement: a tagged field never causes `StructuralVerifier
 reject a write on its own — there is no "forbid this tag from reaching that output"
 rule type yet (see [What isn't part of the contract format](#what-isnt-part-of-the-contract-format)
 below).
+
+## Static data-quality constraints
+
+```yaml
+outputs:
+  - name: payments
+    location: gold.payments
+    schema:
+      fields:
+        - name: currency
+          type: string
+          constraints:
+            - type: equals
+              value: GBP
+        - name: status
+          type: string
+          constraints:
+            - type: oneOf
+              values: [ACTIVE, INACTIVE]
+        - name: amount
+          type: double
+          constraints:
+            - type: range
+              gte: 0
+```
+
+| `type` | Properties | Meaning |
+|---|---|---|
+| `equals` | `value` | The field must always equal this exact value. |
+| `oneOf` | `values` (non-empty list) | The field's value must always be one of these. |
+| `range` | any of `gte`/`gt`/`lte`/`lt` (numeric; at least one required; `gte`+`gt` or `lte`+`lt` together is malformed) | The field's numeric value must always fall within these bounds. |
+
+`NOT NULL` needs no entry here — `nullable: false` (above) already states it, and is
+proven by the same mechanism as any other constraint here. See
+[Verify Static Data Quality](/guides/verifying-static-data-quality/) for how these are
+*proven*, not merely predicted, and why an unproven constraint never fails a write on its
+own.
 
 ## Catalog registration
 
@@ -236,6 +274,12 @@ rules:
 ```
 
 See [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
+
+A third, independent mechanism — not a `rules` entry at all, but a `constraints` list on a
+*field* (see [Static data-quality constraints](#static-data-quality-constraints) above) —
+is checked by `StaticDataQualityVerifier` against per-column value-domain facts it can
+*prove* from the transformation's own semantics, opt-in via `staticDataQuality`. See
+[Verify Static Data Quality](/guides/verifying-static-data-quality/).
 
 Every other `rules` entry type (e.g. `compatibility`) is recorded on the parsed contract
 but not yet interpreted or enforced — unless it's named in `customRuleTypes`, in which case

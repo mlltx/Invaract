@@ -1,0 +1,163 @@
+---
+title: Verify Static Data Quality
+description: Prove — not predict — that a transformation's own logic guarantees a value-domain property, before any row is ever written.
+sidebar:
+  order: 4.6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A contract can already require an output field to be non-null
+(`nullable: false`). Beyond that, a field can declare that it must always equal a
+specific constant, always be one of a finite set of values, or always fall within a
+numeric range — and Invaract will attempt to *prove*, from the transformation's own
+translated logic, that the requirement holds for every possible row, not just check it
+against whatever data happened to be present on one run.
+
+<Aside type="caution" title="This proves guarantees, not predicts them">
+The objective is never "will this data quality rule probably pass?" — it's "does the
+transformation's own code *guarantee* this property?" When the analysis can't prove
+something either way, it says so honestly (`NotGuaranteed`/`NotStaticallyVerifiable`)
+rather than pretending to have checked it. A false claim of a guarantee would be worse
+than not proving one at all — see
+[the design document](https://github.com/mlltx/Invaract/blob/main/docs/STATIC_DATA_QUALITY_VERIFICATION.md)
+for the full reasoning.
+</Aside>
+
+## Declare a constraint
+
+```yaml
+outputs:
+  - name: payments
+    location: gold.payments
+    schema:
+      fields:
+        - name: customer_id
+          type: long
+          nullable: false          # NOT NULL - no separate constraint needed
+        - name: currency
+          type: string
+          constraints:
+            - type: equals
+              value: GBP
+        - name: status
+          type: string
+          constraints:
+            - type: oneOf
+              values: [ACTIVE, INACTIVE]
+        - name: amount
+          type: double
+          constraints:
+            - type: range
+              gte: 0
+```
+
+See [Reference → Contract Format](/reference/contract-format/#static-data-quality-constraints)
+for the full `constraints` shape.
+
+## Enable it
+
+Like fingerprinting, this is real additional analysis work Invaract shouldn't impose on
+every existing caller by default — off unless you turn it on, via `spark-submit --conf`:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.5.0.jar \
+  --conf spark.invaract.staticDataQuality=true \
+  my-real-job.jar
+```
+
+As long as the job already installs Invaract the ordinary way, that `--conf` is enough —
+`ContractEnforcementRule.resolveVerificationOptions` reads `spark.invaract.staticDataQuality`
+off the real `SparkSession`, the identical mechanism
+[`spark.invaract.computeFingerprint`](/guides/fingerprinting-transformations/#enable-it)
+already uses. A platform team can turn this on for a job whose source they don't control.
+
+Setting it explicitly in code works the same way too:
+
+```scala
+import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
+
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(
+    ContractEnforcementRule.forContract(contract, VerificationOptions(staticDataQuality = true))
+  ))
+  .getOrCreate()
+```
+
+## What "proven" actually means here
+
+Invaract's transformation IR already traces column-level provenance for
+[lineage](/concepts/transformation-ir/) and [sensitivity
+propagation](/reference/contract-format/#sensitivity-tags). Static data-quality
+verification adds a second, parallel trace over the same IR: instead of asking "where did
+this column's data come from," it asks "what value-domain facts can I prove hold for this
+column, given what I can trust about the input." A `nullable: false`/`constraints` entry on
+a **contract input** field seeds that trace as a trusted axiom; the trace then follows the
+plan's `Filter`/`Project`/`Conditional`/`Arithmetic`/`Join`/... nodes the same way lineage
+does, narrowing or widening what's provable at each step.
+
+A few worked examples (the full set, mechanically traced, is in
+[the design document](https://github.com/mlltx/Invaract/blob/main/docs/STATIC_DATA_QUALITY_VERIFICATION.md#7-worked-examples-walked-through-the-mechanism)):
+
+- **A `WHERE customer_id IS NOT NULL` filter** upstream of the output proves `nullable:
+  false` on `customer_id`, with no input axiom needed at all.
+- **`.withColumn("currency", lit("GBP"))`** proves `constraints: [{type: equals, value:
+  GBP}]` directly — the literal *is* the constant.
+- **A `CASE WHEN is_active THEN 'ACTIVE' ELSE 'INACTIVE' END`** proves `constraints: [{type:
+  oneOf, values: [ACTIVE, INACTIVE]}]` — both branches are constants and every case is
+  covered (there's an `ELSE`).
+- **A clamp** (`CASE WHEN amount < 0 THEN 0 ELSE amount END`) proves `constraints: [{type:
+  range, gte: 0}]`, again with no input axiom.
+- **Negating a column the input contract already guarantees non-negative** — `.withColumn("amount",
+  -col("amount"))` — provably *violates* a `gte: 0` constraint on the output: the
+  transformation's own logic guarantees the opposite of what's required, which is exactly
+  the case that aborts the write (see "The four verdicts" below).
+
+## The four verdicts
+
+Every field-level check reaches one of four verdicts — deliberately never collapsed to a
+simple pass/fail:
+
+| Verdict | Meaning | Blocks the write? |
+|---|---|---|
+| `Guaranteed` | The transformation's own logic proves the property holds for every possible row. | No — nothing to block. |
+| `Violated` | The transformation's own logic proves the property is **broken** for some possible row. | **Yes** — `DATA_QUALITY_VIOLATION`, same abort path as any other violation. |
+| `NotGuaranteed` | Neither proof nor disproof was possible — the honest, common "I don't know." | No. |
+| `NotStaticallyVerifiable` | The column's derivation involves something this analysis deliberately doesn't reason about (a UDF, a window function, an aggregate). | No. |
+
+Only `Violated` produces a real `Violation` (see [Violation
+Types](/reference/violation-types/#static-data-quality-violations)) and aborts the write —
+the same as a schema mismatch or a broken plan-shape rule.
+`Guaranteed`/`NotGuaranteed`/`NotStaticallyVerifiable` are reporting only, populating
+`VerificationResult.dataQuality`, and never affect whether the check passes on their own.
+This matters more here than for most flags: a narrow, deliberately conservative first
+implementation will legitimately return `NotGuaranteed`/`NotStaticallyVerifiable` for a
+large fraction of real transformations — most don't hit the whitelist of provable
+constructs yet — and that's expected, not a regression.
+
+## Runtime data quality is still necessary
+
+This does not replace runtime data-quality checking. Null *rate*, averages, uniqueness,
+row counts, freshness, referential integrity, and statistical distributions are facts
+about the *data*, not the *transformation's code* — nothing about a plan's shape can prove
+them, and this module correctly never tries. What it *can* prove is a narrower, but
+zero-cost, class of guarantee: properties that are true for every possible run because
+they're baked into the transformation's own logic, catchable before a single row is
+written rather than rediscovered downstream by a job that profiles the output after the
+fact.
+
+## What this doesn't check yet
+
+- **Anything involving a UDF, a window function, or an aggregate function** — always
+  `NotStaticallyVerifiable`, deliberately: guessing at arbitrary function behavior is
+  exactly the false-guarantee risk this feature exists to avoid.
+- **A `CASE WHEN` branch whose *value* is itself a computed expression** (not a bare column
+  reference or literal) doesn't get the same conditional narrowing a bare column reference
+  does — a documented MVP simplification, not a soundness gap (it only ever under-claims,
+  never over-claims, a guarantee).
+- **Sampling, historical runs, or current data** — never consulted. Every proof (or
+  disproof) comes from the transformation's translated logic and the contract's declared
+  input properties alone.

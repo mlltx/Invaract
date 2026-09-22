@@ -103,6 +103,7 @@ to require it be registered in a real data catalog, not just written to a bare p
 | `nullable` | `!required` | The field's values may be null. |
 | `properties` | — | Nested fields, for a `struct` type. |
 | `sensitivityTags` | none | Governance labels (e.g. `[pii, financial]`) — see [Reference → Contract Format](/reference/contract-format/)'s "Sensitivity tags". Declared on an *input* field, propagated to every output column derived from it — reporting only, not enforced. |
+| `constraints` | none | Static data-quality requirements (`equals`/`oneOf`/`range`) — see [Verify Static Data Quality](/guides/verifying-static-data-quality/). Unlike `sensitivityTags`, this *is* enforced (opt-in, via `staticDataQuality`) — but only when the transformation's own logic provably guarantees a violation, never merely predicts one. |
 
 <Aside type="caution">
 Marking a field both `required: true` and `nullable: true` is legal — Invaract warns

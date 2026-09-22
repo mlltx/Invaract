@@ -73,6 +73,19 @@ rather than one extracted DML operation:
 | `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION` | No join's condition anywhere in the plan establishes an equality match on every column a `required_join_columns` rule declares. |
 | `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION` | No filter anywhere in the plan references a column a `required_filter_columns` rule declares. |
 
+## Static data-quality violations
+
+Produced when a contract declares an output field's `nullable: false` or a
+[static data-quality constraint](/guides/verifying-static-data-quality/) and the
+transformation's own semantics *prove* it cannot hold — never merely that it
+might fail, which is reported (not enforced) instead. Only checked when
+`staticDataQuality` is enabled (off by default; see the guide linked above for
+both ways to enable it, the identical mechanism `computeFingerprint` uses).
+
+| Type | Meaning |
+|---|---|
+| `DATA_QUALITY_VIOLATION` | The transformation's own logic provably guarantees an output field can produce a value that violates its declared `nullable: false`/`equals`/`oneOf`/`range` constraint — e.g. a filter's negation, or an arithmetic operation, that demonstrably crosses a declared bound. |
+
 ## Organizational policy violations
 
 Produced when a [`spark.invaract.orgPolicy`-configured organizational

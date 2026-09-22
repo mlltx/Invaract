@@ -169,6 +169,13 @@ object ContractEnforcementRule {
   val RejectUndeclaredFieldsConfKey = "spark.invaract.rejectUndeclaredFields"
   val ComputeFingerprintConfKey = "spark.invaract.computeFingerprint"
 
+  /** Attaches `VerificationOptions.staticDataQuality` — see that field's own
+    * doc and docs/STATIC_DATA_QUALITY_VERIFICATION.md — the same
+    * `spark-submit --conf spark.invaract.staticDataQuality=true`
+    * attachability every other flag in this block documents.
+    */
+  val StaticDataQualityConfKey = "spark.invaract.staticDataQuality"
+
   /** Overlays the three conf keys above onto `options` — `||`, not a
     * replacement: a flag ends up `true` if *either* the caller's own
     * `VerificationOptions` already set it, or the matching conf key is
@@ -182,7 +189,8 @@ object ContractEnforcementRule {
     options.copy(
       rejectUndeclaredInputs = options.rejectUndeclaredInputs || confFlag(RejectUndeclaredInputsConfKey),
       rejectUndeclaredFields = options.rejectUndeclaredFields || confFlag(RejectUndeclaredFieldsConfKey),
-      computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey)
+      computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey),
+      staticDataQuality = options.staticDataQuality || confFlag(StaticDataQualityConfKey)
     )
   }
 
@@ -360,7 +368,7 @@ object ContractEnforcementRule {
     * can validate against exactly the same list `applyMinVerificationOptions`
     * consults, with no risk of the two drifting apart.
     */
-  private val KnownMinVerificationOptionKeys = Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint")
+  private val KnownMinVerificationOptionKeys = Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality")
 
   /** Fails loudly on a `policy.inject.minVerificationOptions` key outside
     * `KnownMinVerificationOptionKeys` — a typo (e.g.
@@ -402,7 +410,8 @@ object ContractEnforcementRule {
     options.copy(
       rejectUndeclaredInputs = floor("rejectUndeclaredInputs", options.rejectUndeclaredInputs),
       rejectUndeclaredFields = floor("rejectUndeclaredFields", options.rejectUndeclaredFields),
-      computeFingerprint = floor("computeFingerprint", options.computeFingerprint)
+      computeFingerprint = floor("computeFingerprint", options.computeFingerprint),
+      staticDataQuality = floor("staticDataQuality", options.staticDataQuality)
     )
   }
 
@@ -637,7 +646,20 @@ object ContractEnforcementRule {
             }
             Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
           } else None
-        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations ++ planRuleViolations, fingerprints)
+        // See VerificationOptions.staticDataQuality's own doc and
+        // docs/STATIC_DATA_QUALITY_VERIFICATION.md: dataQualityResults is
+        // report-only (every verdict, kept for VerificationResult.dataQuality),
+        // while only its Violated entries become real Violations that can
+        // fail this check and abort the write - the same "distinct from
+        // NotGuaranteed" principle DataQualityVerdict's own doc explains.
+        val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, translated.plan) else Nil
+        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults)
+        val result = VerificationResult.of(
+          structuralResult.contract,
+          structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations,
+          fingerprints,
+          dataQualityResults
+        )
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
