@@ -2966,6 +2966,25 @@ job has to keep rediscovering against real data, run after run.
       or producer-side metadata-stamping infrastructure that doesn't exist
       yet, a larger, separate design decision than this sub-phase's scope.
 
+#### Sub-phase: Static data-quality contract verification — design proposed,
+#### not implemented
+
+[docs/STATIC_DATA_QUALITY_VERIFICATION.md](docs/STATIC_DATA_QUALITY_VERIFICATION.md)
+proposes extending this same "prove it before execution, not after" principle to a
+new class of property: not just plan *shape* (this sub-phase's own
+`required_group_by`/`forbid_cross_join`/...) but per-column *value-domain* facts —
+`NOT NULL`, `= <constant>`, `IN (...)`, a numeric range — statically provable (or
+refutable) from input-contract axioms propagated through the transformation's
+semantics, architecturally a new sibling of `ir.Lineage` rather than a parallel
+representation. Explicitly a proposal, not a sub-phase to check off: no
+`Property`/`PropertyAnalysis`/`StaticDataQualityVerifier` code exists yet. The design
+doc's own §11 names open questions (confirming Catalyst's real `IS NOT NULL`/`IN`
+translation shape chief among them) that need resolving before an implementation pass
+begins, and its §8/§9 scope a deliberately narrow first slice (four property kinds;
+`Aggregate`/`Window` and cast-aware range/set preservation explicitly deferred, not
+because they're hard to translate but because a wrong per-function rule there is
+exactly the false-guarantee failure mode this whole design exists to prevent).
+
 ##### Dependencies
 
 - Phase 1b completion (transformation IR) — the fingerprint's only input
