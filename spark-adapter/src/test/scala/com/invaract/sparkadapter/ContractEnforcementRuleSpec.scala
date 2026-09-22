@@ -2156,6 +2156,216 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the UPDATE must be aborted before touching the table, not merely reported as failed")
   }
 
+  // --- Plan-shape rules (PlanRuleVerifier): required_group_by,
+  // forbid_cross_join, required_join_columns, required_filter_columns -
+  // checked against the whole translated ir.Plan, independent of whether
+  // the write is DML at all. Full PlanRuleVerifierSpec coverage of each
+  // rule's own logic is pure-Scala; these prove the wiring through
+  // ContractEnforcementRule actually blocks a real Spark write, the same
+  // end-to-end proof every other rule family gets here.
+
+  test("PASS: a groupBy().agg() write satisfying its contract's required_group_by rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_group_by_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: customer_id
+         |          type: long
+         |          required: true
+         |          nullable: true
+         |        - name: total
+         |          type: long
+         |          required: true
+         |          nullable: true
+         |rules:
+         |  - type: required_group_by
+         |    columns: [customer_id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(10).withColumn("customer_id", col("id") % 3)
+      val grouped = df.groupBy("customer_id").agg(sum("id").as("total"))
+      grouped.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a plain (non-grouped) write violates its contract's required_group_by rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_group_by_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_group_by
+         |    columns: [id]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredGroupByViolation))
+  }
+
+  test("PASS: a conditioned join satisfying its contract's forbid_cross_join rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_no_cross_join_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: forbid_cross_join
+         |""".stripMargin
+
+    withContract(yaml) {
+      val left = spark.range(5).toDF("id")
+      val right = spark.range(5).toDF("id2")
+      val joined = left.join(right, left("id") === right("id2")).select(left("id"))
+      joined.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: an unconditioned (cartesian-product) join violates its contract's forbid_cross_join rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_cross_join_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: forbid_cross_join
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val left = spark.range(3).toDF("id")
+      val right = spark.range(3).toDF("id2")
+      intercept[ContractViolationException] {
+        left.crossJoin(right).select(left("id")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleCrossJoinViolation))
+  }
+
+  test("FAIL: a join violating its contract's required_join_columns rule is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_join_columns_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_join_columns
+         |    columns: [region]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val left = spark.range(5).toDF("id").withColumn("region", col("id") % 2)
+      val right = spark.range(5).toDF("id2").withColumn("region2", col("id2") % 2)
+      intercept[ContractViolationException] {
+        left.join(right, left("id") === right("id2")).select(left("id")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredJoinColumnsViolation))
+  }
+
+  test("PASS: a filter satisfying its contract's required_filter_columns rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_filter_columns_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_filter_columns
+         |    columns: [is_deleted]
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("is_deleted", lit(false)).filter(!col("is_deleted")).select(col("id"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a write with no filter on the declared column violates its contract's required_filter_columns rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_filter_columns_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_filter_columns
+         |    columns: [is_deleted]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredFilterColumnsViolation))
+  }
+
   // Closes the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
   // coverage ledger flagged: .format("delta").saveAsTable() on a NEW
   // table, .saveAsTable()/.insertInto() appending to an EXISTING table,

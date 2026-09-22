@@ -145,6 +145,28 @@ object ViolationType {
     * specifically rather than the write as a whole.
     */
   val RuleUnverifiableDml = "RULE_UNVERIFIABLE_DML"
+
+  /** Produced by `PlanRuleVerifier` — no `Aggregate` node anywhere in the
+    * plan groups by every column a `required_group_by` rule declares.
+    */
+  val RuleRequiredGroupByViolation = "RULE_REQUIRED_GROUP_BY_VIOLATION"
+
+  /** Produced by `PlanRuleVerifier` — the plan contains a cartesian-product
+    * join (a `CROSS JOIN`, or any join with no condition at all) under a
+    * contract declaring `forbid_cross_join`.
+    */
+  val RuleCrossJoinViolation = "RULE_CROSS_JOIN_VIOLATION"
+
+  /** Produced by `PlanRuleVerifier` — no `Join` node's condition anywhere
+    * in the plan establishes an equality match on every column a
+    * `required_join_columns` rule declares.
+    */
+  val RuleRequiredJoinColumnsViolation = "RULE_REQUIRED_JOIN_COLUMNS_VIOLATION"
+
+  /** Produced by `PlanRuleVerifier` — no `Filter` node anywhere in the plan
+    * references a column a `required_filter_columns` rule declares.
+    */
+  val RuleRequiredFilterColumnsViolation = "RULE_REQUIRED_FILTER_COLUMNS_VIOLATION"
 }
 
 /** The two "unexpected X can be rejected" toggles from the check list —

@@ -2806,14 +2806,150 @@ format limitation (`ContractParser`/the JSON Schema already accepted an
       the per-output/any-candidate behavior instead of implying a single
       declared output.
 - [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
-      Requirement: full `contract` suite (281 tests) and full
-      `spark-adapter` suite pass; scoped Stryker mutation testing on
-      `StructuralVerifier.scala` clears the 70% bar; `./dev/build` and
-      `./dev/test` both pass against real `spark-submit`, `demo/output/report.json`
-      reporting `Status: PASS` and `contractVerification.status: PASSED` —
-      this change is a strict generalization of existing single-output
-      behavior, so the real demo pipeline (still single-output) is
-      unaffected by construction, confirmed rather than assumed.
+      Requirement: full `contract` suite (281 tests, including two new
+      `ContractValidatorTest` cases) and full `spark-adapter` suite (609
+      tests, including the 7 new `StructuralVerifierSpec` multi-output
+      cases) both pass. Scoped Stryker mutation testing on
+      `StructuralVerifier.scala` alone: **92.75%** (64/69 non-excluded
+      mutants killed) — well above the 70% bar. The 5 survivors are all one
+      thing: the `contract.outputs.size == 1` branch that picks between the
+      single-output-worded and multi-output-worded `message`/`remediation`
+      text for `OUTPUT_LOCATION_MISMATCH` (lines 383/389) — `violationType`/
+      `expected`/`actual` are identical either way, so this is the same
+      "mutant only changes human-readable message text" category
+      `strykerExcludedMutations := Seq("StringLiteral")` already
+      disclose-excludes elsewhere in this module, left as-is rather than
+      chased with brittle exact-message-text tests. `./dev/build` and
+      `./dev/test` both pass against real `spark-submit`,
+      `demo/output/report.json` reporting `Status: PASS` and
+      `contractVerification.status: PASSED` — this change is a strict
+      generalization of existing single-output behavior, so the real demo
+      pipeline (still single-output) is unaffected by construction,
+      confirmed rather than assumed.
+
+#### Sub-phase: Transformation shape rules — required_group_by,
+#### forbid_cross_join, required_join_columns, required_filter_columns
+#### (done)
+
+The first slice of the "Transformation checks beyond structural" future
+item this file's own Phase 1c `Scope (Future)` section named
+(join/aggregation/filter semantics against contract expectations) — a
+second, independent rule family alongside the three row-level-DML types
+(`merge_condition`/`forbid_unconditional_delete`/`allowed_update_columns`),
+checked against a transformation's whole `ir.Plan` rather than one
+extracted `ir.RowMutation`. The premise: baking a quality expectation
+into the contract as a structural, pre-execution check — "this output
+must be grouped by X," "no join may be a cartesian product" — makes the
+class of bug it guards against (a silently dropped `GROUP BY`, a missing
+join condition fanning every row out against every other row) impossible
+to ship, rather than something a separate post-execution data-quality
+job has to keep rediscovering against real data, run after run.
+
+- [x] **`RuleType`/`InterpretedRule` gained four new members**
+      (`RuleType.PlanShapeTypes`, `contract/ContractModel.scala`):
+      `required_group_by`/`forbid_cross_join`/`required_join_columns`/
+      `required_filter_columns`, decoded by `ContractRule.interpret` the
+      same way the three DML types already were. `RuleType.All` is now
+      `DmlTypes ++ PlanShapeTypes`; `ContractValidator`'s existing
+      malformed-properties check (already generic over `RuleType.All`)
+      covers the four new types for free, needing only new `ruleHint`
+      entries.
+- [x] **`PlanRuleVerifier`** (new,
+      `spark-adapter/src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala`) —
+      the counterpart to `RuleVerifier` for this family. Walks the whole
+      plan (not just its root) collecting every `Aggregate`/`Join`/`Filter`
+      node; each rule is satisfied if *any* matching node satisfies it:
+      `required_group_by` needs an `Aggregate` whose `groupBy` (resolved to
+      column names via `Expr.references`) is a superset of the declared
+      columns; `forbid_cross_join` rejects any `Join` with `JoinType.Cross`
+      or no condition at all (confirmed empirically that Spark reports a
+      condition-less `.join(other)` this way too, not only
+      `.crossJoin(other)`); `required_join_columns` reuses the exact same
+      equality-pairing logic `merge_condition` uses; `required_filter_columns`
+      only requires each declared column be *referenced* by some `Filter`'s
+      condition, deliberately weaker than the equality-pairing the other
+      two require, since "the plan filters on this column somewhere"
+      doesn't presume what the filter should assert.
+- [x] **`EqualityConditions`** (new,
+      `spark-adapter/src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala`) —
+      `equalityPairedColumns`/`requiredEqualities`/`isCrossSideMatch`
+      extracted out of `RuleVerifier` (unchanged logic, generalized
+      wording only) so `merge_condition` and the new `required_join_columns`
+      share one implementation instead of two that could drift apart the
+      way this module's own history already shows duplicated logic can.
+      `RuleVerifier.checkMergeCondition` now calls it instead of a private
+      copy; `RuleVerifier`'s own `appliesTo` (a compile-time exhaustiveness
+      guard over every `InterpretedRule`) gained explicit `false` cases for
+      the four new plan-shape types — they're never the reason an
+      `Unverifiable` DML classification should fail closed.
+- [x] **Wired into `ContractEnforcementRule.verifyOrThrow`**: a new
+      `planRuleViolations = PlanRuleVerifier.verify(contract.rules,
+      translated.plan)` runs unconditionally alongside the existing
+      structural/DML-rule checks (not gated on `rowMutationClassification`,
+      since these rules apply to any write, DML or not) and folds into the
+      same `VerificationResult`/abort path every other violation already
+      uses.
+- [x] **New violation types**: `RULE_REQUIRED_GROUP_BY_VIOLATION`,
+      `RULE_CROSS_JOIN_VIOLATION`, `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION`,
+      `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION` (`StructuralVerifier.ViolationType`,
+      reused rather than duplicated since violations from every verifier
+      share one vocabulary/JSON shape).
+- [x] **Tests**: `contract`'s `ContractParserTest`/`ContractValidatorTest`
+      gained interpret/malformed-properties coverage for all four new
+      types (287 → contract module total, all passing); `spark-adapter`
+      gained a new pure-Scala `PlanRuleVerifierSpec` (24 tests, no Spark
+      session needed — hand-built `ir.Plan`/`ir.Expr`, mirroring
+      `RuleVerifierSpec`'s own style) covering every rule's PASS/FAIL shape,
+      nested-node discovery, and any-match-among-several semantics; and 8
+      new end-to-end `ContractEnforcementRuleSpec` PASS/FAIL cases proving
+      the wiring actually aborts a real Spark write (a `groupBy().agg()`,
+      a `.crossJoin()`, an unconditioned `.join()`, a join missing a
+      declared match column, a write with no filter on a declared column)
+      before any data is written, not merely reported as failed.
+- [x] **CI**: both new files added to `.github/workflows/test.yml`'s
+      `mutation-testing-spark-adapter` shard lists per CLAUDE.md's
+      requirement (`EqualityConditions.scala` → shard-2,
+      `PlanRuleVerifier.scala` → shard-3, the two shards tied for
+      smallest file count before this change).
+- [x] **Documentation**: new docs-site guide
+      [Enforce Transformation Shape Rules](docs-site/src/content/docs/guides/enforcing-transformation-rules.mdx)
+      (mirroring "Enforce Row-Level DML Rules"' structure); that DML-rules
+      guide's own stale "no rule vocabulary exists yet" line for
+      join/aggregation/filter shape corrected to point at the new one;
+      `reference/contract-format.mdx`'s "Interpreted rules" section and
+      `reference/violation-types.md` extended with the new family/types;
+      `guides/writing-a-contract.mdx` and `introduction/what-is-this.md`
+      updated to mention the second rule family exists; docs/CONTRACT_MODEL.md
+      gained a "Plan-shape rules" section mirroring its existing DML-rules
+      treatment.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: full `contract` suite (287 tests) and full
+      `spark-adapter` suite (640 tests) both pass; scoped Stryker mutation
+      testing on `PlanRuleVerifier.scala` and `EqualityConditions.scala`
+      clears the 70% bar; `./dev/build` and `./dev/test` both pass against
+      real `spark-submit`, `demo/output/report.json` reporting
+      `Status: PASS` and `contractVerification.status: PASSED` — the real
+      demo pipeline declares no plan-shape rules, so it's unaffected by
+      construction, confirmed rather than assumed.
+
+#### Scope (Future), continued
+
+- [ ] A custom-rule-type escape hatch for this family (`PlanRuleVerifier`
+      has none yet — `CustomRuleVerifier` is shaped around `RowMutation`,
+      not `Plan`, so a plan-shape custom rule type needs its own extension
+      trait; not started).
+- [ ] Which specific aggregation a `required_group_by` rule refers to when
+      a plan has several — satisfied today if *any* of them matches, not
+      necessarily the "final"/"outermost" one.
+- [ ] A `required_join_columns`/`merge_condition` match expressed inside a
+      `CASE WHEN` — same limitation as `merge_condition`'s own, for the
+      same reason (the equality only holds conditionally).
+- [ ] Dependency version constraints on a contract's declared inputs
+      (pinning a minimum/required version of whatever upstream contract or
+      table produced an input) — deliberately not attempted: every
+      self-contained design considered needs either a registry to consult
+      or producer-side metadata-stamping infrastructure that doesn't exist
+      yet, a larger, separate design decision than this sub-phase's scope.
 
 ##### Dependencies
 

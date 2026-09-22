@@ -2376,7 +2376,9 @@ overhead. The two levers above reduced wasted time around that core cost
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a 4-way matrix job
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
-scoped to a fixed subset of the module's 27 source files
+scoped to a fixed subset of the module's source files (29 as of
+`PlanRuleVerifier`/`EqualityConditions`, added to shard-3/shard-2
+respectively)
 (`strategy.matrix.include`, one entry per shard). This doesn't reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
 once per mutant, exactly as before — it parallelizes it across four

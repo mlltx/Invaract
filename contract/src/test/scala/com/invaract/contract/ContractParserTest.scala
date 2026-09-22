@@ -264,6 +264,60 @@ class ContractParserTest extends AnyFunSuite {
     assert(rules(2).interpret.contains(InterpretedRule.AllowedUpdateColumns(List("status", "updated_at"))))
   }
 
+  test("parse should decode a well-formed plan-shape rule (required_group_by/forbid_cross_join/required_join_columns/required_filter_columns) via interpret") {
+    val yaml =
+      """id: plan_shape_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |rules:
+        |  - type: required_group_by
+        |    columns: [customer_id]
+        |  - type: forbid_cross_join
+        |  - type: required_join_columns
+        |    columns: [order_id]
+        |  - type: required_filter_columns
+        |    columns: [is_deleted]
+        |""".stripMargin
+
+    val rules = ContractParser.parse(yaml).rules
+    assert(rules.size == 4)
+    assert(rules(0).interpret.contains(InterpretedRule.RequiredGroupBy(List("customer_id"))))
+    assert(rules(1).interpret.contains(InterpretedRule.ForbidCrossJoin))
+    assert(rules(2).interpret.contains(InterpretedRule.RequiredJoinColumns(List("order_id"))))
+    assert(rules(3).interpret.contains(InterpretedRule.RequiredFilterColumns(List("is_deleted"))))
+  }
+
+  test("interpret should be None for a plan-shape rule type with malformed properties") {
+    val yaml =
+      """id: plan_shape_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |rules:
+        |  - type: required_group_by
+        |  - type: required_join_columns
+        |    columns: []
+        |  - type: required_filter_columns
+        |    columns: []
+        |""".stripMargin
+
+    val rules = ContractParser.parse(yaml).rules
+    assert(rules(0).interpret.isEmpty)
+    assert(rules(1).interpret.isEmpty)
+    assert(rules(2).interpret.isEmpty)
+  }
+
   test("interpret should be None for a known rule type with malformed properties") {
     val yaml =
       """id: dml_contract

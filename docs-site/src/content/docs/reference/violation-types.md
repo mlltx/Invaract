@@ -59,6 +59,20 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 | `RULE_UNCONDITIONAL_DELETE` | A `DELETE` (or DSv2 `DeleteFromTable`) removes every row it reaches, with no filtering predicate, under a `forbid_unconditional_delete` rule. |
 | `RULE_DISALLOWED_UPDATE_COLUMN` | A standalone `UPDATE` assigns a column outside an `allowed_update_columns` rule's declared list. |
 
+## Transformation shape rule violations
+
+Produced when a contract declares one of the [transformation shape
+rules](/guides/enforcing-transformation-rules/) and the plan's structure doesn't satisfy
+it — a separate rule family from DML rules above, checked against the plan's whole shape
+rather than one extracted DML operation:
+
+| Type | Meaning |
+|---|---|
+| `RULE_REQUIRED_GROUP_BY_VIOLATION` | No aggregation anywhere in the plan groups by every column a `required_group_by` rule declares. |
+| `RULE_CROSS_JOIN_VIOLATION` | The plan contains a cartesian-product join (a `CROSS JOIN`, or any join with no condition at all) under a `forbid_cross_join` rule. |
+| `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION` | No join's condition anywhere in the plan establishes an equality match on every column a `required_join_columns` rule declares. |
+| `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION` | No filter anywhere in the plan references a column a `required_filter_columns` rule declares. |
+
 ## Organizational policy violations
 
 Produced when a [`spark.invaract.orgPolicy`-configured organizational

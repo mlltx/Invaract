@@ -220,6 +220,9 @@ object ContractValidator {
   private def ruleHint(ruleType: String): String = ruleType match {
     case RuleType.MergeCondition        => " (expected a non-empty 'columns' list of column names)"
     case RuleType.AllowedUpdateColumns  => " (expected a non-empty 'columns' list of column names)"
+    case RuleType.RequiredGroupBy       => " (expected a non-empty 'columns' list of column names)"
+    case RuleType.RequiredJoinColumns   => " (expected a non-empty 'columns' list of column names)"
+    case RuleType.RequiredFilterColumns => " (expected a non-empty 'columns' list of column names)"
     case _                              => ""
   }
 

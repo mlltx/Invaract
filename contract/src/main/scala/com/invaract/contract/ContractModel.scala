@@ -148,16 +148,18 @@ case class Dataset(
 /** Rule types Invaract itself knows how to interpret during verification
   * (see `InterpretedRule`, and `RuleVerifier` in `spark-adapter`) —
   * deliberately a narrow, closed set (the concrete first step
-  * ROADMAP.md's "Full semantic DML verification" item names), not a
-  * general rule-expression language. A `ContractRule.ruleType` outside
-  * this set is not necessarily inert, though: if `Contract.customRuleTypes`
-  * names a `CustomRuleVerifier` implementation for it (`spark-adapter`),
-  * `RuleVerifier` dispatches to that instead — the same
-  * plug-in-without-a-source-change escape hatch
+  * ROADMAP.md's "Full semantic DML verification" item names, plus a
+  * second family — see below), not a general rule-expression language. A
+  * `ContractRule.ruleType` outside this set is not necessarily inert,
+  * though: if `Contract.customRuleTypes` names a `CustomRuleVerifier`
+  * implementation for it (`spark-adapter`), `RuleVerifier` dispatches to
+  * that instead — the same plug-in-without-a-source-change escape hatch
   * `OrgPolicy.customPolicyTypes`/`CustomPolicyEvaluator` already give
   * organizational policy types (see docs/CONTRACT_MODEL.md's
   * "Organizational Policy" section and docs/SPARK_ADAPTER.md's "Custom
-  * rule types" section). A `ruleType` matching neither this set nor
+  * rule types" section) — that escape hatch currently covers only the
+  * three row-level-DML types below, not the four plan-shape ones (see
+  * their own doc). A `ruleType` matching neither this set nor
   * `customRuleTypes` is still recorded on `Contract.rules` but never
   * acted on.
   */
@@ -176,11 +178,47 @@ object RuleType {
     */
   val AllowedUpdateColumns = "allowed_update_columns"
 
-  val All: Set[String] = Set(MergeCondition, ForbidUnconditionalDelete, AllowedUpdateColumns)
+  /** The transformation must aggregate (`GROUP BY`) by at least these
+    * columns somewhere in its plan — see `spark-adapter`'s
+    * `PlanRuleVerifier`.
+    */
+  val RequiredGroupBy = "required_group_by"
+
+  /** No join in the transformation's plan may be a cartesian product — a
+    * `CROSS JOIN`, or any join with no condition at all, regardless of its
+    * declared type. Takes no properties, the same shape as
+    * `ForbidUnconditionalDelete`.
+    */
+  val ForbidCrossJoin = "forbid_cross_join"
+
+  /** At least one join in the transformation's plan must be conditioned on
+    * an equality match covering these columns.
+    */
+  val RequiredJoinColumns = "required_join_columns"
+
+  /** At least one filter in the transformation's plan must reference each
+    * of these columns — e.g. "the plan must filter out nulls/soft-deletes
+    * on this column somewhere," without requiring a specific predicate
+    * shape.
+    */
+  val RequiredFilterColumns = "required_filter_columns"
+
+  /** The three row-level-DML rule types (`RuleVerifier`, checked against
+    * one extracted `ir.RowMutation`).
+    */
+  val DmlTypes: Set[String] = Set(MergeCondition, ForbidUnconditionalDelete, AllowedUpdateColumns)
+
+  /** The four plan-shape rule types (`PlanRuleVerifier`, checked against a
+    * transformation's whole `ir.Plan`, independent of whether it's DML at
+    * all).
+    */
+  val PlanShapeTypes: Set[String] = Set(RequiredGroupBy, ForbidCrossJoin, RequiredJoinColumns, RequiredFilterColumns)
+
+  val All: Set[String] = DmlTypes ++ PlanShapeTypes
 }
 
 /** A `ContractRule`, decoded into one of the shapes Invaract currently
-  * knows how to verify. Deliberately narrow, mirroring `RuleType`'s three
+  * knows how to verify. Deliberately narrow, mirroring `RuleType`'s seven
   * members — not a general rule-expression language.
   */
 sealed trait InterpretedRule
@@ -188,6 +226,10 @@ object InterpretedRule {
   case class MergeCondition(columns: List[String]) extends InterpretedRule
   case object ForbidUnconditionalDelete extends InterpretedRule
   case class AllowedUpdateColumns(columns: List[String]) extends InterpretedRule
+  case class RequiredGroupBy(columns: List[String]) extends InterpretedRule
+  case object ForbidCrossJoin extends InterpretedRule
+  case class RequiredJoinColumns(columns: List[String]) extends InterpretedRule
+  case class RequiredFilterColumns(columns: List[String]) extends InterpretedRule
 }
 
 /** A declarative rule attached to the contract (e.g. compatibility mode,
@@ -219,6 +261,14 @@ case class ContractRule(ruleType: String, properties: Map[String, Any]) {
       Some(InterpretedRule.ForbidUnconditionalDelete)
     case RuleType.AllowedUpdateColumns =>
       ContractRule.stringList(properties.get("columns")).map(InterpretedRule.AllowedUpdateColumns)
+    case RuleType.RequiredGroupBy =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredGroupBy)
+    case RuleType.ForbidCrossJoin =>
+      Some(InterpretedRule.ForbidCrossJoin)
+    case RuleType.RequiredJoinColumns =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredJoinColumns)
+    case RuleType.RequiredFilterColumns =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredFilterColumns)
     case _ => None
   }
 }

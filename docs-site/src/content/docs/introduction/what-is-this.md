@@ -47,6 +47,9 @@ Invaract's checks are **structural**, not semantic:
 - Does its schema match — field presence, type, nullability?
 - Does the write use the declared format and save mode?
 - For declared DML rules: does a `MERGE`/`UPDATE`/`DELETE` respect them?
+- For declared transformation shape rules: does the plan group, join, or filter on the
+  right columns? See
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
 
 It does **not** yet verify the transformation's business logic (that a `SUM` is the
 *correct* sum, for instance), governance rules (masking, residency), or compatibility

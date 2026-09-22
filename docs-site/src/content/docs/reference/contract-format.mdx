@@ -110,7 +110,7 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Field `type` not in the known-types set (and not a struct) | Warning |
 | Field marked both `required` and `nullable` | Warning |
 | Rule with empty `type` | Error |
-| Interpretable rule type (`merge_condition`, `forbid_unconditional_delete`, `allowed_update_columns`) with malformed/missing properties | Error |
+| Interpretable rule type (the three [DML rule types](/guides/enforcing-dml-rules/) or the four [transformation shape rule types](/guides/enforcing-transformation-rules/)) with malformed/missing properties | Error |
 
 Validation recurses into nested struct fields, so a warning on a deeply nested field
 reports its full dotted path (e.g. `outputs[0].schema.address.zip`).
@@ -204,6 +204,12 @@ warns about it (see below) — the first one declared wins the match.
 
 ## Interpreted rules
 
+Two independent families, checked by two different verifiers against two different things —
+see each guide for the full semantics.
+
+Row-level DML rules (`RuleVerifier`, checked against one extracted `MERGE`/`UPDATE`/
+`DELETE` operation):
+
 ```yaml
 rules:
   - type: merge_condition
@@ -213,12 +219,29 @@ rules:
     columns: [status, updated_at]
 ```
 
-See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for the full
-semantics of each. Every other `rules` entry type (e.g. `compatibility`) is recorded on
-the parsed contract but not yet interpreted or enforced — unless it's named in
-`customRuleTypes`, in which case it's dispatched to a reflectively-resolved
-`CustomRuleVerifier` instead. See [Write your own rule
-type](/guides/enforcing-dml-rules/#write-your-own-rule-type).
+See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/).
+
+Transformation shape rules (`PlanRuleVerifier`, checked against the transformation's whole
+plan, independent of whether it's DML at all):
+
+```yaml
+rules:
+  - type: required_group_by
+    columns: [customer_id]
+  - type: forbid_cross_join
+  - type: required_join_columns
+    columns: [order_id]
+  - type: required_filter_columns
+    columns: [is_deleted]
+```
+
+See [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
+
+Every other `rules` entry type (e.g. `compatibility`) is recorded on the parsed contract
+but not yet interpreted or enforced — unless it's named in `customRuleTypes`, in which case
+it's dispatched to a reflectively-resolved `CustomRuleVerifier` instead (row-level DML rule
+types only — see [Write your own rule
+type](/guides/enforcing-dml-rules/#write-your-own-rule-type)).
 
 ## JSON Schema
 

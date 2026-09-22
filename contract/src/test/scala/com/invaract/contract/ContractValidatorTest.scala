@@ -166,6 +166,73 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.isValid)
   }
 
+  test("validate should error when a required_group_by rule has no 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredGroupBy, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_group_by")))
+  }
+
+  test("validate should error when a required_join_columns rule has an empty 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredJoinColumns, Map("columns" -> new java.util.ArrayList[String]()))),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_join_columns")))
+  }
+
+  test("validate should error when a required_filter_columns rule has no 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredFilterColumns, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_filter_columns")))
+  }
+
+  test("validate should accept a well-formed forbid_cross_join rule with no properties") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "good_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.ForbidCrossJoin, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+  }
+
   test("validate should not flag an unrecognized rule type as malformed") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

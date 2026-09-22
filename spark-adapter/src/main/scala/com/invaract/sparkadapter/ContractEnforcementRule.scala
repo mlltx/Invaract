@@ -606,6 +606,14 @@ object ContractEnforcementRule {
             if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind)) else Nil
           case None => Nil
         }
+        // Independent of the DML-shaped ruleViolations above: PlanRuleVerifier
+        // checks the other rule family (RuleType.PlanShapeTypes - grouping,
+        // join, filter shape) against the whole translated plan, not against
+        // a RowMutation, so it runs unconditionally rather than being gated
+        // on rowMutationClassification the way ruleViolations is. A rule
+        // outside both families (unrecognized, or DML-shaped) contributes
+        // nothing here - see PlanRuleVerifier.checkOne's own doc.
+        val planRuleViolations = PlanRuleVerifier.verify(contract.rules, translated.plan)
         // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
         // one branch with a real, complete ir.Plan already in hand
         // (`translated.plan`, produced above for structural verification
@@ -629,7 +637,7 @@ object ContractEnforcementRule {
             }
             Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
           } else None
-        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations, fingerprints)
+        val result = VerificationResult.of(structuralResult.contract, structuralResult.violations ++ ruleViolations ++ planRuleViolations, fingerprints)
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
           throw new ContractViolationException(result, explain(contract, translated.plan, result))
