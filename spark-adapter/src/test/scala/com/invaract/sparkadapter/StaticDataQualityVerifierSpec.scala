@@ -167,6 +167,23 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
       "an explicit alias still resolves against the input's location via locationsMatch, exactly like StructuralVerifier's own input matching")
   }
 
+  test("NOT NULL is NotGuaranteed, not Guaranteed, when the matched input field is itself nullable (no axiom to seed)") {
+    // Mirrors the "propagates from a matched input's nullable = false" test above, but with the
+    // input field left nullable (the default) - proving fieldAxiomState doesn't seed a Proven
+    // axiom for every input field regardless of its own declared nullability.
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("customer_id", "long"))),
+      List(dataset("out", "gold.out", notNullField("customer_id")))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      project(Read(DatasetRef("raw.orders")), "customer_id", col("customer_id", Some("raw.orders")))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("customer_id", "NOT NULL", DataQualityVerdict.NotGuaranteed)))
+  }
+
   // --- EqualsConstant (Example 2) -----------------------------------------
 
   test("an equals constraint is Guaranteed when the plan produces exactly that constant (Example 2)") {
@@ -192,6 +209,14 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
 
     val results = StaticDataQualityVerifier.verify(contract, plan)
     assert(results == List(DataQualityCheckResult("currency", "= GBP", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("an equals constraint is NotStaticallyVerifiable, not NotGuaranteed, when the column derives from a UDF") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("currency", "string", constraints = List(equalsConstraint("GBP"))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "currency", UDF(Some("myFn"), List(col("raw_currency")))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("currency", "= GBP", DataQualityVerdict.NotStaticallyVerifiable)))
   }
 
   // --- OneOf (Example 3) --------------------------------------------------
@@ -255,6 +280,65 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
 
     val results = StaticDataQualityVerifier.verify(contract, plan)
     assert(results == List(DataQualityCheckResult("amount", "> 0", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a range constraint is NotStaticallyVerifiable, not NotGuaranteed, when the column derives from a UDF") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("amount", "integer", constraints = List(rangeConstraint(gte = Some(0)))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "amount", UDF(Some("myFn"), List(col("raw_amount")))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("amount", ">= 0", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a range constraint is Violated when both sides have a genuine lower bound and the proven one is strictly looser") {
+    // Both proven and required carry only a lower bound (no upper bound on either side), so this
+    // exercises escapesBelow's real (Some, Some) numeric comparison directly, distinct from the
+    // boundary-tie test above (which ties exactly and never distinguishes < from <= or >).
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("amount", "integer", constraints = List(rangeConstraint(gte = Some(-10)))))),
+      List(dataset("out", "gold.out", Field("amount", "integer", constraints = List(rangeConstraint(gte = Some(0))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "amount", col("amount", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("amount", ">= 0", DataQualityVerdict.Violated)))
+  }
+
+  test("a range constraint is Violated when the proven side is unbounded above but the required side is bounded") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("amount", "integer", constraints = List(rangeConstraint(gte = Some(0)))))),
+      List(dataset("out", "gold.out", Field("amount", "integer", constraints = List(FieldConstraint(FieldConstraintType.Range, Map("lte" -> 10))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "amount", col("amount", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("amount", "<= 10", DataQualityVerdict.Violated)))
+  }
+
+  test("a range constraint is Violated when both sides have a genuine upper bound and the proven one is strictly looser") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("amount", "integer", constraints = List(FieldConstraint(FieldConstraintType.Range, Map("lte" -> 100)))))),
+      List(dataset("out", "gold.out", Field("amount", "integer", constraints = List(FieldConstraint(FieldConstraintType.Range, Map("lte" -> 50))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "amount", col("amount", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("amount", "<= 50", DataQualityVerdict.Violated)))
+  }
+
+  test("an upper-bound tie between an exclusive proven bound's value and an inclusive required bound is NotGuaranteed, not Violated") {
+    // Both sides' upper bound resolve to the same raw number (50), but proven is `lte` (inclusive)
+    // while required is `lt` (exclusive) - escapesAbove's plain numeric comparison ties (50 > 50 is
+    // false), the same tie-conservative principle the lower-bound boundary test above documents,
+    // this time exercising escapesAbove's (Some, Some) branch specifically rather than escapesBelow's.
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("amount", "integer", constraints = List(FieldConstraint(FieldConstraintType.Range, Map("lte" -> 50)))))),
+      List(dataset("out", "gold.out", Field("amount", "integer", constraints = List(FieldConstraint(FieldConstraintType.Range, Map("lt" -> 50))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "amount", col("amount", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("amount", "< 50", DataQualityVerdict.NotGuaranteed)))
   }
 
   // --- violations() itself -------------------------------------------------
