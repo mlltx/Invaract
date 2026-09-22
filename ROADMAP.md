@@ -2926,16 +2926,21 @@ job has to keep rediscovering against real data, run after run.
       Requirement: full `contract` suite (287 tests) and full
       `spark-adapter` suite (641 tests) both pass; scoped Stryker mutation
       testing on `PlanRuleVerifier.scala`/`EqualityConditions.scala`
-      together: 88.37% on the first pass (38/43 non-excluded mutants); the
-      4 initial survivors were all confined to `checkRequiredGroupBy`'s
-      `message`/`actual` text-selection branches (`aggregates.isEmpty`/
-      `groupings.isEmpty`), never `violationType` — the same accepted
-      "message-text-only" category `spark-adapter`'s
+      together: **90.7%** (39/43 non-excluded mutants) after one fix. The
+      first pass (88.37%, 38/43) surfaced a real gap: an `Option[Expr]
+      .exists`/`.forall` confusion in `checkRequiredJoinColumns` that would
+      have let a join with no condition at all vacuously satisfy
+      `required_join_columns` (`None.forall(p) == true`, wrongly read as
+      "satisfied" instead of `None.exists(p) == false`) — closed with one
+      added test (a join with `condition = None` must be rejected, not
+      silently passed), confirmed to kill it on rerun. The 4 remaining
+      survivors, on both passes, are all confined to
+      `checkRequiredGroupBy`'s `message`/`actual` text-selection branches
+      (`aggregates.isEmpty`/`groupings.isEmpty`), never `violationType` —
+      the same accepted "message-text-only" category `spark-adapter`'s
       `strykerExcludedMutations` already disclose-excludes elsewhere, left
-      as-is; the 5th (an `Option[Expr].exists`/`.forall` confusion in
-      `checkRequiredJoinColumns` that would have let an unconditioned join
-      vacuously satisfy `required_join_columns`) was a real gap, closed
-      with one added test, confirmed to kill it on rerun. `./dev/build`
+      as-is rather than chased with brittle exact-message-text tests.
+      `./dev/build`
       and `./dev/test` both pass against real `spark-submit`,
       `demo/output/report.json` reporting `Status: PASS` and
       `contractVerification.status: PASSED` — the real demo pipeline
