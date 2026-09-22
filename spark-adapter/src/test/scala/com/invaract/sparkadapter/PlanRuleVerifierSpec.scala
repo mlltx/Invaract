@@ -165,6 +165,16 @@ class PlanRuleVerifierSpec extends AnyFunSuite {
     assert(PlanRuleVerifier.verify(requiredJoinColumns("id"), plan).isEmpty)
   }
 
+  test("required_join_columns fails for a join with no condition at all, not vacuously satisfied by it") {
+    // A join with condition = None must never count as satisfying the rule
+    // (an Option[Expr].forall over None would wrongly say "satisfied" -
+    // this guards specifically against that confusion with .exists).
+    val plan = Join(baseRead, baseRead, JoinType.Inner, condition = None)
+    val violations = PlanRuleVerifier.verify(requiredJoinColumns("id"), plan)
+    assert(violations.size == 1)
+    assert(violations.head.violationType == ViolationType.RuleRequiredJoinColumnsViolation)
+  }
+
   // --- required_filter_columns -------------------------------------------------
 
   private def requiredFilterColumns(columns: String*) =

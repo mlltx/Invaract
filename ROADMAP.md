@@ -2897,7 +2897,7 @@ job has to keep rediscovering against real data, run after run.
 - [x] **Tests**: `contract`'s `ContractParserTest`/`ContractValidatorTest`
       gained interpret/malformed-properties coverage for all four new
       types (287 → contract module total, all passing); `spark-adapter`
-      gained a new pure-Scala `PlanRuleVerifierSpec` (24 tests, no Spark
+      gained a new pure-Scala `PlanRuleVerifierSpec` (25 tests, no Spark
       session needed — hand-built `ir.Plan`/`ir.Expr`, mirroring
       `RuleVerifierSpec`'s own style) covering every rule's PASS/FAIL shape,
       nested-node discovery, and any-match-among-several semantics; and 8
@@ -2924,13 +2924,23 @@ job has to keep rediscovering against real data, run after run.
       treatment.
 - [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
       Requirement: full `contract` suite (287 tests) and full
-      `spark-adapter` suite (640 tests) both pass; scoped Stryker mutation
-      testing on `PlanRuleVerifier.scala` and `EqualityConditions.scala`
-      clears the 70% bar; `./dev/build` and `./dev/test` both pass against
-      real `spark-submit`, `demo/output/report.json` reporting
-      `Status: PASS` and `contractVerification.status: PASSED` — the real
-      demo pipeline declares no plan-shape rules, so it's unaffected by
-      construction, confirmed rather than assumed.
+      `spark-adapter` suite (641 tests) both pass; scoped Stryker mutation
+      testing on `PlanRuleVerifier.scala`/`EqualityConditions.scala`
+      together: 88.37% on the first pass (38/43 non-excluded mutants); the
+      4 initial survivors were all confined to `checkRequiredGroupBy`'s
+      `message`/`actual` text-selection branches (`aggregates.isEmpty`/
+      `groupings.isEmpty`), never `violationType` — the same accepted
+      "message-text-only" category `spark-adapter`'s
+      `strykerExcludedMutations` already disclose-excludes elsewhere, left
+      as-is; the 5th (an `Option[Expr].exists`/`.forall` confusion in
+      `checkRequiredJoinColumns` that would have let an unconditioned join
+      vacuously satisfy `required_join_columns`) was a real gap, closed
+      with one added test, confirmed to kill it on rerun. `./dev/build`
+      and `./dev/test` both pass against real `spark-submit`,
+      `demo/output/report.json` reporting `Status: PASS` and
+      `contractVerification.status: PASSED` — the real demo pipeline
+      declares no plan-shape rules, so it's unaffected by construction,
+      confirmed rather than assumed.
 
 #### Scope (Future), continued
 
