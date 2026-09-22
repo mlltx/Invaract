@@ -33,7 +33,7 @@ Download the three jars you need:
 
 ```bash
 RELEASE="https://github.com/mlltx/Invaract/releases/download/spark-jars-latest"
-curl -fLO "$RELEASE/invaract-contract-0.7.0.jar"
+curl -fLO "$RELEASE/invaract-contract-0.8.0.jar"
 curl -fLO "$RELEASE/invaract-ir-0.4.0.jar"
 curl -fLO "$RELEASE/invaract-spark-adapter-0.5.0.jar"
 ```
@@ -80,9 +80,9 @@ classpath. Register them with Maven:
 
    ```bash
    mvn install:install-file \
-     -Dfile=invaract-contract-0.7.0.jar \
+     -Dfile=invaract-contract-0.8.0.jar \
      -DgroupId=com.invaract -DartifactId=invaract-contract \
-     -Dversion=0.7.0 -Dpackaging=jar
+     -Dversion=0.8.0 -Dpackaging=jar
 
    mvn install:install-file \
      -Dfile=invaract-ir-0.4.0.jar \
@@ -105,7 +105,7 @@ classpath. Register them with Maven:
    <dependency>
      <groupId>com.invaract</groupId>
      <artifactId>invaract-contract</artifactId>
-     <version>0.7.0</version>
+     <version>0.8.0</version>
      <scope>provided</scope>
    </dependency>
    <dependency>
@@ -139,7 +139,7 @@ classpath. Register them with Maven:
    spark-submit \
      --class com.example.MySparkJob \
      --master local[*] \
-     --jars invaract-contract-0.7.0.jar,invaract-ir-0.4.0.jar,invaract-spark-adapter-0.5.0.jar \
+     --jars invaract-contract-0.8.0.jar,invaract-ir-0.4.0.jar,invaract-spark-adapter-0.5.0.jar \
      target/my-job.jar \
      ...
    ```
