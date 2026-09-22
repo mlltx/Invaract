@@ -82,6 +82,40 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("Duplicate output dataset name 'out'")))
   }
 
+  test("validate should warn (not error) when two distinctly-named outputs declare the same location") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "dup_output_locations",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out_a", "gold.shared_location", None, schema), Dataset("out_b", "gold.shared_location", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, s"expected no errors, got: ${result.errors}")
+    assert(result.warnings.exists(_.message.contains("Multiple outputs declare the same location 'gold.shared_location'")))
+  }
+
+  test("validate should not warn when a multi-output contract's outputs all declare distinct locations") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "distinct_outputs",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out_a", "gold.a", None, schema), Dataset("out_b", "gold.b", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
   test("validate should error when a merge_condition rule has no 'columns' list") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

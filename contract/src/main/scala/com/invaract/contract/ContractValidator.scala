@@ -73,6 +73,21 @@ object ContractValidator {
       issues += ValidationIssue(ValidationSeverity.Error, "outputs", s"Duplicate output dataset name '$name'")
     }
 
+    // A Warning, not an Error: `spark-adapter`'s StructuralVerifier matches
+    // a plan's actual write against whichever declared output shares its
+    // location (see its "Multi-output contracts" doc), so two outputs
+    // declaring the same location are ambiguous - StructuralVerifier picks
+    // whichever comes first rather than rejecting the contract outright,
+    // and this warns the author rather than silently accepting it.
+    val duplicateOutputLocations = duplicateNames(contract.outputs.map(_.location))
+    duplicateOutputLocations.foreach { location =>
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        "outputs",
+        s"Multiple outputs declare the same location '$location'; verification will match whichever is declared first"
+      )
+    }
+
     contract.rules.zipWithIndex.foreach { case (rule, idx) =>
       if (rule.ruleType.trim.isEmpty) {
         issues += ValidationIssue(ValidationSeverity.Error, s"rules[$idx]", "Rule type must not be empty")

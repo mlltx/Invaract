@@ -150,6 +150,164 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(violation.actual.contains("demo/output/somewhere_else.parquet"))
   }
 
+  // --- Multi-output contracts: a contract declaring several outputs, and
+  // matching a plan's single actual write against whichever declared
+  // output its location corresponds to - see StructuralVerifier.verify's
+  // own "Multi-output contracts" doc.
+
+  private def twoOutputContract(): com.invaract.contract.Contract =
+    ContractParser.parse(
+      """id: multi_output_demo
+        |version: "1.0.0"
+        |outputs:
+        |  - name: silver
+        |    location: warehouse/silver.parquet
+        |    format: parquet
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |          nullable: false
+        |  - name: gold
+        |    location: warehouse/gold.parquet
+        |    format: delta
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |          nullable: false
+        |        - name: total
+        |          type: integer
+        |          required: true
+        |          nullable: false
+        |""".stripMargin
+    )
+
+  private def writePlan(location: String, format: Option[String] = None): com.invaract.ir.Write =
+    com.invaract.ir.Write(
+      DatasetRef(location),
+      com.invaract.ir.Project(
+        Read(DatasetRef("raw.source")),
+        List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id"))))
+      ),
+      format = format
+    )
+
+  test("multi-output PASS: a write matching the second declared output is checked against that output, not the first") {
+    val contract = twoOutputContract()
+    val plan = writePlan("warehouse/gold.parquet", format = Some("delta"))
+    val outputSchema = new StructType().add("id", IntegerType, nullable = false).add("total", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(result.passed, s"expected PASSED, got violations: ${result.violations}")
+  }
+
+  test("multi-output PASS: a write matching the first declared output is checked against that output") {
+    val contract = twoOutputContract()
+    val plan = writePlan("warehouse/silver.parquet", format = Some("parquet"))
+    val outputSchema = new StructType().add("id", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(result.passed, s"expected PASSED, got violations: ${result.violations}")
+  }
+
+  test("multi-output: schema violations are reported against the matched output specifically, not every declared output") {
+    val contract = twoOutputContract()
+    // Matches 'gold', which requires both 'id' and 'total' - only 'id' is
+    // actually present. Must report MISSING_OUTPUT_FIELD for 'total' (gold's
+    // own requirement), and must NOT report anything about 'silver' (whose
+    // own schema - just 'id' - this actual output already satisfies).
+    val plan = writePlan("warehouse/gold.parquet")
+    val outputSchema = new StructType().add("id", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(!result.passed)
+    assert(result.violations.exists(v => v.violationType == ViolationType.MissingOutputField && v.column.contains("total")))
+  }
+
+  test("multi-output: format is checked against the matched output's own declared format") {
+    val contract = twoOutputContract()
+    // Matches 'gold' (format: delta), but actually written as parquet -
+    // must report the mismatch against 'delta', not 'silver's parquet.
+    val plan = writePlan("warehouse/gold.parquet", format = Some("parquet"))
+    val outputSchema = new StructType().add("id", IntegerType, nullable = false).add("total", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputFormatMismatch).get
+    assert(violation.expected.contains("delta"))
+    assert(violation.actual.contains("parquet"))
+  }
+
+  test("multi-output OUTPUT_LOCATION_MISMATCH: a write matching none of the declared outputs names every candidate location") {
+    val contract = twoOutputContract()
+    val plan = writePlan("warehouse/somewhere_else.parquet")
+    val outputSchema = new StructType().add("id", IntegerType, nullable = false)
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+
+    assert(!result.passed)
+    val violation = result.violations.find(_.violationType == ViolationType.OutputLocationMismatch).get
+    assert(violation.actual.contains("warehouse/somewhere_else.parquet"))
+    assert(violation.expected.exists(_.contains("warehouse/silver.parquet")))
+    assert(violation.expected.exists(_.contains("warehouse/gold.parquet")))
+    // No schema check is possible against an ambiguous/unmatched target.
+    assert(!result.violations.exists(v => v.violationType == ViolationType.MissingOutputField))
+  }
+
+  test("multi-output MISSING_OUTPUT: a plan with no write at all reports one violation per declared output") {
+    val contract = twoOutputContract()
+    val bareProject = com.invaract.ir.Project(
+      Read(DatasetRef("raw.source")),
+      List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id"))))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      bareProject,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("id", IntegerType, nullable = false)
+    )
+
+    assert(!result.passed)
+    val missing = result.violations.filter(_.violationType == ViolationType.MissingOutput)
+    assert(missing.size == 2, s"expected one MISSING_OUTPUT per declared output, got: $missing")
+    assert(missing.exists(_.location.contains("warehouse/silver.parquet")))
+    assert(missing.exists(_.location.contains("warehouse/gold.parquet")))
+  }
+
+  test("multi-output verifyStateChange: a state-changing operation is scoped against whichever declared output its location matches") {
+    val contract = twoOutputContract()
+
+    val matchesGold = StructuralVerifier.verifyStateChange(
+      contract,
+      location = "warehouse/gold.parquet",
+      resultingSchema = new StructType().add("id", IntegerType, nullable = false) // missing 'total', which only 'gold' requires
+    )
+    assert(!matchesGold.passed)
+    assert(matchesGold.violations.exists(v => v.violationType == ViolationType.MissingOutputField && v.column.contains("total")))
+
+    val matchesSilver = StructuralVerifier.verifyStateChange(
+      contract,
+      location = "warehouse/silver.parquet",
+      resultingSchema = new StructType().add("id", IntegerType, nullable = false) // satisfies 'silver' exactly
+    )
+    assert(matchesSilver.passed, s"expected PASSED, got violations: ${matchesSilver.violations}")
+
+    val matchesNeither = StructuralVerifier.verifyStateChange(
+      contract,
+      location = "warehouse/unrelated_table",
+      resultingSchema = new StructType() // would fail every declared output's schema if checked
+    )
+    assert(matchesNeither.passed, "a location matching no declared output must not be this contract's concern")
+  }
+
   test("MISSING_OUTPUT_FIELD: a required output field the contract declares is absent from the actual output") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()

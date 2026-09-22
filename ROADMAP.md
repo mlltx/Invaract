@@ -2740,6 +2740,81 @@ is detected even when the output schema stays identical.
       directly against a real instance, per this branch's own "retract
       rather than force it" discipline for an unconfirmed hypothesis.
 
+#### Sub-phase: Multi-output contract matching (done)
+
+Closes the gap the "Structural verification" sub-phase above left open on
+purpose: a `Contract` declaring more than one output (`outputs: List`) used
+to have every write checked against `contract.outputs.head` unconditionally,
+regardless of which declared output it actually corresponded to — a
+single-output assumption baked into `StructuralVerifier`, not a contract-
+format limitation (`ContractParser`/the JSON Schema already accepted an
+`outputs:` list of any length).
+
+- [x] **`StructuralVerifier.verify`/`verifyStateChange` now match a plan's
+      actual write location against every declared output, not just the
+      first.** A new private `matchOutput` helper (shared by both methods,
+      so they can't drift into two different notions of "which output does
+      this location belong to") finds the declared output whose `location`
+      matches, via the same `locationsMatch` normalized-suffix rule used
+      everywhere else in this module.
+    - Exactly one declared output matches → format/saveMode/catalog/schema
+      are all checked against *that* output specifically (proven by a
+      dedicated test: a two-output contract where the matched output's
+      required field is missing fails, and the *other* declared output's
+      own schema is never consulted).
+    - No declared output matches → `OUTPUT_LOCATION_MISMATCH`, naming every
+      declared output location as a candidate (`expected` is their
+      comma-joined list) rather than a single wrong "expected" location — a
+      single-output contract reduces to exactly the original message shape,
+      confirmed by the pre-existing `OUTPUT_LOCATION_MISMATCH` test passing
+      unchanged. No schema check runs, since there's no non-ambiguous output
+      left to check it against.
+    - The plan produces no write at all → `MISSING_OUTPUT` once per
+      declared output, generalizing the single-output contract's original
+      one-violation behavior.
+    - `verifyStateChange` (state-changing CALLs — see the "Verify
+      `rollback_to_snapshot`" sub-phase above) picks up the same matching
+      for free: a location matching no declared output is still a clean
+      pass (not this contract's concern), exactly as it already was for a
+      single-output contract; a location matching one of several declared
+      outputs is now scoped and schema-checked against that one instead of
+      always `outputs.head`.
+- [x] **`ContractValidator` warns (not errors) when two declared outputs
+      share the same `location`** — a contract-authoring ambiguity the new
+      location-based matching makes real for the first time (`verify`
+      picks whichever comes first); previously harmless since only
+      `outputs.head` was ever consulted.
+- [x] 9 new tests: `StructuralVerifierSpec` (a two-output contract matching
+      its second declared output correctly, matching its first, a schema
+      violation attributed to the matched output only, a format mismatch
+      checked against the matched output's own declared format,
+      `OUTPUT_LOCATION_MISMATCH` naming every candidate when none match,
+      `MISSING_OUTPUT` once per declared output when the plan writes
+      nothing, and `verifyStateChange` scoped correctly across matching-
+      first/matching-second/matching-neither) and `ContractValidatorTest`
+      (the new duplicate-output-location Warning, and a distinct-locations
+      multi-output contract producing none). All pre-existing single-output
+      tests pass unchanged — this is a strict generalization, not a
+      behavior change for the single-output case.
+- [x] **Documentation**: `StructuralVerifier`'s own "Multi-output
+      contracts" doc rewritten to describe the matching behavior instead of
+      disclaiming it as future work; docs-site's
+      [Contract Format](/reference/contract-format/) reference gained a
+      "Multiple outputs" subsection under "Location matching" plus the new
+      validator-check table row; [Violation Types](/reference/violation-types/)'s
+      `MISSING_OUTPUT`/`OUTPUT_LOCATION_MISMATCH` rows reworded to describe
+      the per-output/any-candidate behavior instead of implying a single
+      declared output.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: full `contract` suite (281 tests) and full
+      `spark-adapter` suite pass; scoped Stryker mutation testing on
+      `StructuralVerifier.scala` clears the 70% bar; `./dev/build` and
+      `./dev/test` both pass against real `spark-submit`, `demo/output/report.json`
+      reporting `Status: PASS` and `contractVerification.status: PASSED` —
+      this change is a strict generalization of existing single-output
+      behavior, so the real demo pipeline (still single-output) is
+      unaffected by construction, confirmed rather than assumed.
+
 ##### Dependencies
 
 - Phase 1b completion (transformation IR) — the fingerprint's only input

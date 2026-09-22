@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{CatalogRequirement, Contract, Field => ContractField}
+import com.invaract.contract.{CatalogRequirement, Contract, Dataset, Field => ContractField}
 import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.ir.{CatalogIdentity, Plan, Read, Write}
 
@@ -92,7 +92,9 @@ object ViolationType {
     * plan is even checked against it. Found via a real crash: a contract
     * missing `outputs` entirely used to reach `StructuralVerifier.verify`
     * unvalidated and fail with an unguarded `NoSuchElementException` at
-    * `contract.outputs.head`, rather than a clean, actionable rejection.
+    * `contract.outputs.head` (the pre-multi-output-matching lookup this
+    * module used before the "Multi-output contracts" behavior described on
+    * `verify` below existed), rather than a clean, actionable rejection.
     */
   val InvalidContract = "INVALID_CONTRACT"
 
@@ -237,11 +239,40 @@ object VerificationResult {
   * ## Multi-output contracts
   *
   * A `Contract` can declare multiple outputs (`contract.outputs: List`),
-  * but one verification run only ever observes one `Write`. This checks
-  * the plan's single output against `contract.outputs.head` — the same
-  * single-output assumption the rest of this demo pipeline makes. Checking
-  * a plan against whichever of several declared outputs it actually
-  * produced is future work, not exercised by anything in this repo today.
+  * but one verification run only ever observes one `Write` — each write a
+  * job performs triggers its own, independent check (see
+  * `ContractEnforcementRule`'s "Fires on every analyzed plan" doc), so there
+  * is never more than one actual output to reconcile against a contract's
+  * several declared ones in a single `verify` call.
+  *
+  * The plan's actual write location is matched against every declared
+  * output's `location` (via the same `locationsMatch` normalized-suffix
+  * rule used everywhere else in this method), not just `contract.outputs.head`:
+  *
+  *   - A contract with exactly one declared output keeps its original
+  *     behavior unchanged: format/saveMode/catalog/schema are all checked
+  *     against that one output regardless of whether its location matches
+  *     the actual write (a location mismatch is reported *in addition to*,
+  *     not instead of, those other checks) — a real test relies on this
+  *     (a contract deliberately declaring a location that never matches
+  *     any real write, purely to check catalog identity independent of
+  *     location).
+  *   - A contract with more than one declared output has no such single
+  *     default to fall back to. Exactly one declared output matching the
+  *     write's location → every other check (format, saveMode, catalog,
+  *     schema) runs against *that* output specifically. No declared output
+  *     matching → `OUTPUT_LOCATION_MISMATCH`, naming every declared output
+  *     location as a candidate, and no format/saveMode/catalog/schema check
+  *     runs at all — there is no non-ambiguous output left to check them
+  *     against.
+  *   - The plan produces no write at all → `MISSING_OUTPUT` once per
+  *     declared output (for a single-output contract, exactly the original
+  *     one violation).
+  *
+  * A contract with two declared outputs sharing the same `location` is
+  * flagged by `ContractValidator` as a Warning (ambiguous, not rejected —
+  * see its own doc); `verify` picks whichever matches first when that
+  * happens, and doesn't special-case it further.
   *
   * ## Visibility
   *
@@ -325,75 +356,108 @@ private[sparkadapter] object StructuralVerifier {
       }
     }
 
-    val expectedOutput = contract.outputs.head
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
       case Write(dataset, _, actualFormat, actualSaveMode, actualCatalog) =>
-        val locationViolation =
-          if (locationsMatch(expectedOutput.location, dataset.location)) Nil
-          else
+        val matched = matchOutput(contract.outputs, dataset.location)
+        // A single-output contract keeps its pre-existing behavior exactly:
+        // format/saveMode/catalog/schema are always checked against
+        // contract.outputs.head, regardless of whether the location itself
+        // matches - a real test relies on this (a contract deliberately
+        // declaring a location that never matches any real write, purely to
+        // check catalog identity independent of location - see
+        // HiveConnectorSpec's `assertBothRejectedForWrongTechnology`).
+        // A multi-output contract has no such single default to fall back
+        // to: if the write's location doesn't identify which declared
+        // output it belongs to, there is no non-ambiguous output left to
+        // check the rest against.
+        val expectedOutputOpt: Option[Dataset] =
+          if (contract.outputs.size == 1) Some(contract.outputs.head) else matched
+
+        val locationViolation = matched match {
+          case Some(_) => Nil
+          case None =>
+            val candidateLocations = contract.outputs.map(_.location)
             List(
               Violation(
                 ViolationType.OutputLocationMismatch,
-                s"contract declares output location '${expectedOutput.location}' but the plan writes to '${dataset.location}'",
+                if (contract.outputs.size == 1)
+                  s"contract declares output location '${candidateLocations.head}' but the plan writes to '${dataset.location}'"
+                else
+                  s"the plan writes to '${dataset.location}', which does not match any of the contract's " +
+                    s"${contract.outputs.size} declared output locations (${candidateLocations.mkString(", ")})",
                 remediation =
-                  s"Write to '${expectedOutput.location}' instead, or update the contract's declared output location to '${dataset.location}' if this location change is intentional.",
-                expected = Some(expectedOutput.location),
+                  if (contract.outputs.size == 1)
+                    s"Write to '${candidateLocations.head}' instead, or update the contract's declared output location to '${dataset.location}' if this location change is intentional."
+                  else
+                    s"Write to one of the contract's declared output locations (${candidateLocations.mkString(", ")}) instead, or add '${dataset.location}' as a new declared output if this is intentional.",
+                expected = Some(candidateLocations.mkString(", ")),
                 actual = Some(dataset.location)
               )
             )
-        // Only checked when both sides are known: a contract that doesn't
-        // declare a format isn't opting into this check at all, and a plan
-        // whose format the adapter couldn't determine (formatOf returned
-        // None) can't be compared without risking a false rejection on a
-        // write this IR simply doesn't have precise format information
-        // for yet.
-        val formatViolation = (expectedOutput.format, actualFormat) match {
-          case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
-            List(
-              Violation(
-                ViolationType.OutputFormatMismatch,
-                s"contract declares output format '$expected' but the plan writes in format '$actual'",
-                remediation =
-                  s"Write in '$expected' format instead, or update the contract's declared format to '$actual' if this format change is intentional.",
-                expected = Some(expected),
-                actual = Some(actual)
-              )
-            )
-          case _ => Nil
         }
-        // Same both-sides-known convention as formatViolation above.
-        val saveModeViolation = (expectedOutput.saveMode, actualSaveMode) match {
-          case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
-            List(
-              Violation(
-                ViolationType.OutputSaveModeMismatch,
-                s"contract declares output save mode '$expected' but the plan writes with save mode '$actual'",
-                remediation =
-                  s"Write with save mode '$expected' instead, or update the contract's declared saveMode to '$actual' if this change is intentional.",
-                expected = Some(expected),
-                actual = Some(actual)
-              )
-            )
-          case _ => Nil
+
+        val (formatViolation, saveModeViolation, catalogViolation, schemaViolations) = expectedOutputOpt match {
+          case None => (Nil, Nil, Nil, Nil)
+          case Some(expectedOutput) =>
+            // Only checked when both sides are known: a contract that
+            // doesn't declare a format isn't opting into this check at all,
+            // and a plan whose format the adapter couldn't determine
+            // (formatOf returned None) can't be compared without risking a
+            // false rejection on a write this IR simply doesn't have
+            // precise format information for yet.
+            val format = (expectedOutput.format, actualFormat) match {
+              case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
+                List(
+                  Violation(
+                    ViolationType.OutputFormatMismatch,
+                    s"contract declares output format '$expected' but the plan writes in format '$actual'",
+                    remediation =
+                      s"Write in '$expected' format instead, or update the contract's declared format to '$actual' if this format change is intentional.",
+                    expected = Some(expected),
+                    actual = Some(actual)
+                  )
+                )
+              case _ => Nil
+            }
+            // Same both-sides-known convention as format above.
+            val saveMode = (expectedOutput.saveMode, actualSaveMode) match {
+              case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
+                List(
+                  Violation(
+                    ViolationType.OutputSaveModeMismatch,
+                    s"contract declares output save mode '$expected' but the plan writes with save mode '$actual'",
+                    remediation =
+                      s"Write with save mode '$expected' instead, or update the contract's declared saveMode to '$actual' if this change is intentional.",
+                    expected = Some(expected),
+                    actual = Some(actual)
+                  )
+                )
+              case _ => Nil
+            }
+            // Same both-sides-known, opt-in-per-dataset convention: only
+            // checked when the contract's output declares `catalog:` at all.
+            val catalog = expectedOutput.catalog match {
+              case Some(req) => catalogViolations(req, actualCatalog, dataset.location, "OUTPUT")
+              case None       => Nil
+            }
+            val schema = checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields)
+            (format, saveMode, catalog, schema)
         }
-        // Same both-sides-known, opt-in-per-dataset convention: only
-        // checked when the contract's output declares `catalog:` at all.
-        val catalogViolation = expectedOutput.catalog match {
-          case Some(req) => catalogViolations(req, actualCatalog, dataset.location, "OUTPUT")
-          case None       => Nil
-        }
-        (
-          locationViolation ++ formatViolation ++ saveModeViolation ++ catalogViolation,
-          checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields)
-        )
+
+        (locationViolation ++ formatViolation ++ saveModeViolation ++ catalogViolation, schemaViolations)
       case _ =>
-        val violation = Violation(
-          ViolationType.MissingOutput,
-          s"the plan does not produce a write; expected output '${expectedOutput.name}' (${expectedOutput.location})",
-          remediation = s"Add a write to '${expectedOutput.location}' to the transformation.",
-          location = Some(expectedOutput.location)
+        // No write at all: every declared output is unsatisfied by this
+        // plan - one MissingOutput violation each (a single-output contract
+        // reduces to exactly the original one violation).
+        val violations = contract.outputs.map(expectedOutput =>
+          Violation(
+            ViolationType.MissingOutput,
+            s"the plan does not produce a write; expected output '${expectedOutput.name}' (${expectedOutput.location})",
+            remediation = s"Add a write to '${expectedOutput.location}' to the transformation.",
+            location = Some(expectedOutput.location)
+          )
         )
-        (List(violation), Nil)
+        (violations, Nil)
     }
 
     val violations =
@@ -426,21 +490,37 @@ private[sparkadapter] object StructuralVerifier {
     * operation IS the contract's concern - reuses `checkSchema` directly
     * rather than duplicating it, same rules/violation types/remediation
     * wording as every other output check in this file.
+    *
+    * Multi-output contracts: the same `matchOutput` lookup `verify` uses
+    * above decides which declared output (if any) this location belongs
+    * to - a contract declaring several outputs is scoped exactly the same
+    * way a single-output one already was, just checked against whichever
+    * one actually matches instead of always `contract.outputs.head`.
     */
   private[sparkadapter] def verifyStateChange(
     contract: Contract,
     location: String,
     resultingSchema: StructType,
     options: VerificationOptions = VerificationOptions()
-  ): VerificationResult = {
-    val expectedOutput = contract.outputs.head
-    if (!locationsMatch(expectedOutput.location, location))
-      VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
-    else {
-      val schemaViolations = checkSchema(expectedOutput.schema.fields, resultingSchema, "OUTPUT", options.rejectUndeclaredFields)
-      VerificationResult.of(s"${contract.id}@${contract.version}", schemaViolations)
+  ): VerificationResult =
+    matchOutput(contract.outputs, location) match {
+      case None => VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
+      case Some(expectedOutput) =>
+        val schemaViolations = checkSchema(expectedOutput.schema.fields, resultingSchema, "OUTPUT", options.rejectUndeclaredFields)
+        VerificationResult.of(s"${contract.id}@${contract.version}", schemaViolations)
     }
-  }
+
+  /** The declared output (if any) whose location matches `actualLocation`,
+    * via the same `locationsMatch` normalized-suffix rule every other
+    * location check in this file uses. Shared by `verify` and
+    * `verifyStateChange` so the two can't drift into using two different
+    * notions of "which output does this location belong to." Returns the
+    * first match when more than one declared output shares a location
+    * (see `verify`'s "Multi-output contracts" doc) - `outputs` is a `List`,
+    * not a `Set`, specifically so this stays deterministic.
+    */
+  private def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
+    outputs.find(o => locationsMatch(o.location, actualLocation))
 
   private def collectReads(plan: Plan): List[Read] = plan match {
     case r: Read => List(r)

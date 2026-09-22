@@ -37,8 +37,8 @@ flag in the same case class, the identical way).
 
 | Type | Meaning |
 |---|---|
-| `MISSING_OUTPUT` | The contract's declared output was never written by the plan. |
-| `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match the contract's declared location. |
+| `MISSING_OUTPUT` | A declared output was never written by the plan. One violation per declared output the plan didn't produce a matching write for. |
+| `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match any of the contract's declared output locations. |
 | `OUTPUT_FORMAT_MISMATCH` | The write's actual format doesn't match the contract's declared format. Only checked when both are known. |
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |
 | `MISSING_OUTPUT_FIELD` | A required output field is absent from the actual output schema. |

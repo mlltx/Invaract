@@ -103,6 +103,7 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | No `outputs` declared | Error |
 | Empty/missing dataset `name` or `location` | Error |
 | Duplicate dataset name within `inputs` or `outputs` | Error |
+| Two `outputs` entries declaring the same `location` | Warning |
 | Schema with zero fields | Error |
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
@@ -188,6 +189,18 @@ convention, not something `ContractParser`/the JSON Schema interpret specially: 
 and validation see it as an ordinary non-empty string either way. See
 [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/) for the full
 mechanism.
+
+### Multiple outputs
+
+`outputs` is a list — a contract can declare more than one. Each write a job performs is
+checked on its own (Invaract verifies one write at a time, as it happens), and is matched
+against whichever declared output's `location` it corresponds to, using the same
+location-matching rule above. Format, `saveMode`, catalog, and schema are all then checked
+against *that* matched output specifically — a write matching your `gold` output is never
+checked against `silver`'s schema, or vice versa. A write matching none of the declared
+output locations is rejected (`OUTPUT_LOCATION_MISMATCH`, naming every declared candidate);
+two outputs sharing the same `location` is legal but ambiguous, and `ContractValidator`
+warns about it (see below) — the first one declared wins the match.
 
 ## Interpreted rules
 
