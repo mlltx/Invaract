@@ -356,11 +356,20 @@ Comparison(">"/">="/"<"/"<=", ColumnReference(c), Literal(v, t)) asserted true
   and asserted false      → { c -> Range(<the negated bound — see the small inversion
                                 table below; this is what makes Example 4's ELSE
                                 branch provable>) }
-Function("isnotnull"/"isnull", [ColumnReference(c)]) asserted true/false
+Function("ISNOTNULL"/"ISNULL", [ColumnReference(c)]) asserted true/false
                            → { c -> NotNull Proven } / { c -> NotNull Refuted }
-                             (exact Spark function name(s) TO CONFIRM empirically
-                             against a real translated `IS NOT NULL` — see §7's
-                             open questions; do not assume without checking)
+                             (confirmed empirically — SparkPlanAdapterSpec already
+                             has a passing assertion for `Function("ISNULL", ...)`;
+                             `Function("ISNOTNULL", ...)` confirmed directly via a
+                             throwaway probe, since deleted)
+Function("IN", ColumnReference(c) :: literals) asserted true
+                           → { c -> OneOf(literals.map(_.value).toSet, type) }
+                             (confirmed empirically via a throwaway probe, since
+                             deleted: `IN (...)` stays as its own `Function("IN", ...)`
+                             node in the analyzed plan — Spark does not desugar it to
+                             an OR-of-equalities until the optimizer, which this
+                             translator never sees — so this needs no OR-chain
+                             special case)
 everything else            → {}
 ```
 
@@ -609,9 +618,9 @@ case class VerificationResult(
 ## 7. Worked examples, walked through the mechanism
 
 **Example 1 (NOT NULL via filter).** `Read(source)` — no input contract axiom shown,
-so `customer_id`'s `notNull = Unknown`. `Filter(_, Function("isnotnull",
-[ColumnReference(customer_id)]))` (pending the empirical confirmation flagged in §3.4)
-merges in `{ customer_id -> NotNull Proven }` via `requiredFacts`. `Project`'s
+so `customer_id`'s `notNull = Unknown`. `Filter(_, Function("ISNOTNULL",
+[ColumnReference(customer_id)]))` merges in `{ customer_id -> NotNull Proven }` via
+`requiredFacts` (confirmed translation shape, §3.4). `Project`'s
 `customer_id = customer_id` (a plain passthrough) inherits that. Obligation `NOT NULL`
 on `output.customer_id` → §3.6 rule 1 → **`GUARANTEED`**. Removing the filter leaves
 `notNull = Unknown` with no unsupported-construct flag → **`NOT_GUARANTEED`**.
@@ -824,17 +833,15 @@ property kind, each covering its own `GUARANTEED`/`NOT_GUARANTEED`/`VIOLATED`/
 
 ## 11. Open questions to resolve before implementation
 
-1. **Confirm empirically** (per this codebase's own strong "confirmed empirically, not
-   assumed" convention throughout `SPARK_ADAPTER.md`) exactly how Catalyst's analyzed
-   plan represents `IS NOT NULL`/`IS NULL`/`IN (...)` once translated through
-   `SparkPlanAdapter.translateExpr` — §3.4 assumes `Function("isnotnull"/"isnull",
-   [...])` for the first two based on an existing test name
-   ("`IS NULL` via the generic expression fallback") glimpsed in this codebase, and
-   makes no assumption yet about `IN (...)`'s translated shape (likely a
-   `BooleanExpr("OR", ...)` chain of `Comparison("=", ...)`, in which case `OneOf`
-   narrowing needs its own `requiredFacts` case for an `OR`-of-equalities-on-the-same-
-   column, distinct from the general "`OR` asserted true proves nothing" rule) —
-   needs a real probe before §3.4's table is trusted as written.
+1. ~~Confirm empirically how `IS NOT NULL`/`IS NULL`/`IN (...)` translate.~~ **Resolved**:
+   `IS NOT NULL`/`IS NULL` translate via the generic `Function` fallback to
+   `Function("ISNOTNULL", [...])`/`Function("ISNULL", [...])` (the latter already
+   covered by an existing `SparkPlanAdapterSpec` assertion; the former confirmed via a
+   throwaway probe). `IN (...)` stays as its own `Function("IN", value :: literals)`
+   node in the *analyzed* plan — Spark does not desugar it to an OR-of-equalities
+   until the optimizer, which this translator never sees (per ADR-002, only the
+   analyzed plan is translated) — so §3.4's table now includes a direct `IN` →
+   `OneOf` narrowing rule, no OR-chain special case needed.
 2. **Where does `DataQualityCheckResult` surface in `demo/output/report.json`/the web
    UI**, and does the harness need a demo contract exercising this? (Likely yes, per
    this repo's own "prove it against a real Spark job, not just unit tests" discipline
