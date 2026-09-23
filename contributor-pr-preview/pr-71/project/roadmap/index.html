@@ -3502,6 +3502,156 @@ Quality</a> guide’s
 “What this doesn’t check yet” bullet rewritten to describe the new capability
 precisely instead of the old blanket “can’t trace into a struct” claim.</li>
 </ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-string-length-constraints-done">Sub-phase: String length constraints (done)</h4><a class="sl-anchor-link" href="#sub-phase-string-length-constraints-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: String length constraints (done)”</span></a></div>
+<p>A separately-approved follow-up, the same shape as the existing <code dir="auto">range</code> constraint but
+for string length: <code dir="auto">exact</code>/<code dir="auto">min</code>/<code dir="auto">max</code> on a string-typed field.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Contract side</strong>: <code dir="auto">FieldConstraintType.Length = "length"</code>,
+<code dir="auto">InterpretedFieldConstraint.Length(exact, min, max)</code>, parsed in
+<code dir="auto">FieldConstraint.interpret</code> via a new <code dir="auto">FieldConstraint.nonNegativeInt</code> helper.
+<code dir="auto">ContractValidator</code> gained a type-compatibility warning for <code dir="auto">length</code> on a
+non-string field, and a <code dir="auto">fieldConstraintHint</code> case.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">ir</code> side</strong>: <code dir="auto">Property.Length</code> (<code dir="auto">tighten</code>/<code dir="auto">widen</code>, mirroring <code dir="auto">Property.Range</code>’s
+<code dir="auto">exact</code>/<code dir="auto">min</code>/<code dir="auto">max</code> shape but without a <code dir="auto">gt</code>/<code dir="auto">lt</code> exclusive variant — length has no
+such thing), added to <code dir="auto">ColumnPropertyState</code> as its last constructor parameter
+(binary-compatible for existing positional call sites). <code dir="auto">PropertyAnalysis</code> gained
+real transfer functions: string literals populate <code dir="auto">length</code> directly; <code dir="auto">LENGTH</code>/
+<code dir="auto">CHAR_LENGTH</code>/<code dir="auto">CHARACTER_LENGTH</code> bridge to a numeric <code dir="auto">Range</code> equal to the
+argument’s own <code dir="auto">Length</code> envelope; <code dir="auto">UPPER</code>/<code dir="auto">LOWER</code> preserve <code dir="auto">length</code> verbatim
+(case conversion never changes character count); <code dir="auto">TRIM</code>/<code dir="auto">LTRIM</code>/<code dir="auto">RTRIM</code> narrow to
+an upper bound only (how much whitespace is actually removed is never knowable
+statically). The primary value path needed <strong>no</strong> new transfer function at all —
+<code dir="auto">ColumnPropertyState.length</code> flows generically through every existing combinator
+(<code dir="auto">tightenWith</code>/<code dir="auto">unionWith</code>), so an input contract’s own declared length constraint,
+passed through unchanged, is provable for free, the same mechanism <code dir="auto">nullable:     false</code>/<code dir="auto">range</code> already use for Example 5’s shape.
+<code dir="auto">ir</code> bumped 0.4.0 → 0.5.0 — a real, deliberate MiMa break (<code dir="auto">ColumnPropertyState</code>
+gained a field), documented with <code dir="auto">mimaBinaryIssueFilters</code> per this repo’s
+established pattern.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">spark-adapter</code> wiring</strong>: <code dir="auto">StaticDataQualityVerifier.fieldAxiomState</code> seeds a
+<code dir="auto">length</code> axiom from an input field’s own declared constraint; a new <code dir="auto">lengthVerdict</code>
+check mirrors <code dir="auto">rangeVerdict</code>’s own structure and tie-breaking conventions exactly
+(<code dir="auto">Guaranteed</code> when <code dir="auto">state.length</code>’s envelope is already at least as tight as
+<code dir="auto">required</code>’s; <code dir="auto">Violated</code> only on a provable strict escape on either side;
+<code dir="auto">NotGuaranteed</code>/<code dir="auto">NotStaticallyVerifiable</code> otherwise).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Tests</strong>: <code dir="auto">ir</code>’s <code dir="auto">PropertySpec</code>/<code dir="auto">PropertyAnalysisSpec</code>/<code dir="auto">LineageSpec</code>/
+<code dir="auto">PlanPrinterSpec</code> gained struct- and <code dir="auto">Length</code>-related cases (221 <code dir="auto">ir</code> tests total).
+<code dir="auto">contract</code>’s <code dir="auto">ContractParserTest</code>/<code dir="auto">ContractValidatorTest</code> gained 10 cases (305
+<code dir="auto">contract</code> tests total). <code dir="auto">spark-adapter</code>’s <code dir="auto">StaticDataQualityVerifierSpec</code> gained 12
+cases, including a denormalized-representation test (<code dir="auto">Property.Length(min=Some(10),     max=Some(10))</code>, structurally distinct from but numerically identical to
+<code dir="auto">Property.Length(exact=Some(10))</code>) constructed specifically to isolate
+<code dir="auto">lengthEscapesBelow</code>/<code dir="auto">lengthEscapesAbove</code>’s strict comparison operators from
+<code dir="auto">||</code>-masking.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified per CLAUDE.md’s Mutation Testing Requirement, API Compatibility
+Requirement, and Coverage Gating Requirement: scoped Stryker on
+<code dir="auto">StaticDataQualityVerifier.scala</code> reached <strong>95.56%</strong> (of total)/<strong>97.73%</strong> (of
+covered code) — the 2 remaining mutants (<code dir="auto">case (_, None) => false</code> in
+<code dir="auto">lengthEscapesBelow</code>/<code dir="auto">lengthEscapesAbove</code>, when <code dir="auto">required</code> declares no bound on
+that axis) are genuinely equivalent, documented with a code comment explaining why
+(<code dir="auto">Length.tighten</code>’s own bound computation already resolves to <code dir="auto">p</code>’s own value on an
+unconstrained axis, so <code dir="auto">p.tighten(required) == p</code> already succeeds there by
+construction — confirmed by construction, not just asserted). <code dir="auto">spark-adapter</code>
+coverage re-measured after the wiring: <strong>94.63%</strong> stmt/<strong>91.05%</strong> branch, still
+above its 92/88 gate. <code dir="auto">ir</code>/<code dir="auto">fingerprint</code> MiMa clean; <code dir="auto">ir</code>’s one deliberate break
+documented as above. <code dir="auto">./dev/test</code> (<code dir="auto">Status: PASS</code>) and <code dir="auto">./dev/regression</code> (4/4
+cases) both re-confirmed against the final wiring.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: <code dir="auto">docs/STATIC_DATA_QUALITY_VERIFICATION.md</code> gained §3.9 (full
+section) — the property algebra (§2.2), not <code dir="auto">docs/TRANSFORMATION_IR.md</code>’s
+expression-node table, is where <code dir="auto">Property.Length</code> belongs, the same place
+<code dir="auto">Range</code>/<code dir="auto">OneOf</code>/<code dir="auto">EqualsConstant</code> already live; no new <code dir="auto">ir.Expr</code> node was added for
+this feature, so <code dir="auto">docs/SPARK_ADAPTER.md</code>’s translation tables needed no change
+either. docs-site’s <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx">Verify Static Data
+Quality</a> guide
+gained a worked example and a “What this doesn’t check yet” bullet; <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/reference/contract-format.mdx">Contract
+Format</a> reference gained
+a <code dir="auto">length</code> constraint row/example.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Two real CI-only regressions found and fixed</strong> during this sub-phase (see the
+PR’s own description for full detail): <code dir="auto">fingerprint</code>’s branch coverage was, for
+real, below its own gate (relying on <code dir="auto">PropertyBasedSpec</code>’s randomized ScalaCheck
+generation for coverage a struct-generator extension diluted below the gate) —
+fixed with ~20 deterministic tests; and a genuine Ivy-cache coordinate collision in
+the <code dir="auto">api-compatibility</code> CI job (<code dir="auto">fingerprint</code>’s own declared version unchanged
+despite its declared <em>dependency</em> on <code dir="auto">ir</code> changing) — fixed by bumping
+<code dir="auto">fingerprint</code> 0.2.0 → 0.3.0, not a MiMa break.</li>
+</ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-nested-fieldproperties-obligations--real-tracing-done">Sub-phase: Nested <code dir="auto">Field.properties</code> obligations — real tracing (done)</h4><a class="sl-anchor-link" href="#sub-phase-nested-fieldproperties-obligations--real-tracing-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Nested Field.properties obligations — real tracing (done)”</span></a></div>
+<p>A further separately-approved follow-up, connecting the nested-struct-field-recursion
+sub-phase above (which recognized a nested field’s own declared obligation but always
+reported it <code dir="auto">NotStaticallyVerifiable</code>, unconditionally) to the real resolution the
+struct-member-access sub-phase’s <code dir="auto">StructField(StructConstruct(...), ...)</code> transfer
+function made possible for a <em>flat</em> output column.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>A real, independent bug fix surfaced along the way</strong>: <code dir="auto">resolveExprT</code>’s
+<code dir="auto">StructField</code> resolution only ever unwrapped <em>one</em> level of <code dir="auto">StructConstruct</code> —
+<code dir="auto">StructField(StructField(StructConstruct(...), "geo"), "code")</code> (a struct-of-struct
+access, e.g. <code dir="auto">struct(geo = struct(code = "XYZ")).geo.code</code>) fell through to the
+unsupported catch-all even though every level involved is a real, traceable
+<code dir="auto">StructConstruct</code>. This predates this sub-phase (it was already reachable by a
+<em>flat</em> output column whose own expression happened to be doubly nested) — this
+sub-phase’s first 2-level-deep test is simply what first exercised it. Fixed with a
+new <code dir="auto">reduceToStructConstruct</code> helper that recursively reduces a <code dir="auto">StructField</code> chain
+to its own <code dir="auto">StructConstruct</code> shape, to any depth, replacing the previous
+single-level pattern match; <code dir="auto">resolveExprT</code>’s <code dir="auto">StructField</code> case now calls it once
+instead of pattern-matching <code dir="auto">StructConstruct</code> directly.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Two new small public entry points on <code dir="auto">ir.PropertyAnalysis</code></strong>:
+<code dir="auto">definingExpr(plan, name): Option[(Expr, Plan)]</code>, the raw <code dir="auto">Expr</code> that defines a
+named column immediately produced by <code dir="auto">plan</code> (walking the same rename-preserving
+pass-through nodes <code dir="auto">resolveInScopeT</code> already does — <code dir="auto">Filter</code>/<code dir="auto">Sort</code>/<code dir="auto">Limit</code>/
+<code dir="auto">Write</code> — and chasing a bare <code dir="auto">ColumnReference</code> rename back to <em>its own</em> defining
+<code dir="auto">Expr</code>, the same way <code dir="auto">resolveExprT</code>’s own <code dir="auto">ColumnReference</code> case would), paired
+with the <code dir="auto">Plan</code> any <code dir="auto">ColumnReference</code> inside it should resolve against; and
+<code dir="auto">analyzeExpr(expr, input, axioms): ColumnPropertyState</code>, the same per-<code dir="auto">Expr</code>
+resolution every <code dir="auto">analyze</code> result is already computed from, exposed for a caller
+that already has an <code dir="auto">Expr</code> rather than a whole <code dir="auto">Plan</code>. Deliberately narrow, the
+same scope <code dir="auto">resolveExprT</code>’s own <code dir="auto">StructField(StructConstruct(...), ...)</code> case
+commits to: <code dir="auto">None</code> for an <code dir="auto">Aggregate</code>/<code dir="auto">Window</code>/<code dir="auto">Union</code>/<code dir="auto">Join</code> output (none has one
+single defining <code dir="auto">Expr</code> in the same sense) or a bare <code dir="auto">Read</code> (declares no output list
+of its own).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">StaticDataQualityVerifier.checksForField</code> connected to it</strong>: recovers a
+top-level field’s own defining <code dir="auto">Expr</code> via <code dir="auto">PropertyAnalysis.definingExpr</code>; for each
+<code dir="auto">field.properties</code> child, wraps that <code dir="auto">Expr</code> in one more <code dir="auto">StructField(_,     child.name)</code> access and resolves it via <code dir="auto">PropertyAnalysis.analyzeExpr</code>, carrying
+the wrapped <code dir="auto">Expr</code>/<code dir="auto">Plan</code> pair down through further nesting so recursion reaches
+arbitrary depth (<code dir="auto">"address.geo.code"</code>) the same way the dotted-path recursion
+already did. A nested field declared on the contract but absent from the actual
+struct construction resolves safely to <code dir="auto">Unknown</code>-with-<code dir="auto">unsupported</code>, not a crash.
+Every case <code dir="auto">definingExpr</code> doesn’t reach still gets the same honest
+<code dir="auto">NotStaticallyVerifiable</code> the pre-existing unconditional behavior already gave —
+no regression for the cases genuinely out of scope, only new coverage for the case
+now in scope (a struct the transformation’s own logic constructs, through any
+number of pass-through renames).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Deliberately still deferred, disclosed, not silently dropped</strong>: propagating an
+<em>input</em> contract’s own nested-field obligation through to an output struct column
+passed through unchanged, with no <code dir="auto">StructConstruct</code> anywhere in the plan — needs
+<code dir="auto">buildAxioms</code> to seed nested <code dir="auto">ColumnRef</code> axioms (not just flat, <code dir="auto">Read</code>-scoped ones)
+and <code dir="auto">resolveExprT</code>’s <code dir="auto">StructField(struct, _)</code> catch-all case to consult them. A
+real, scoped follow-up, not a signal this sub-phase is incomplete for the case it
+targets.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Tests</strong>: <code dir="auto">ir</code>’s <code dir="auto">PropertyAnalysisSpec</code> gained 12 cases directly exercising
+<code dir="auto">definingExpr</code>/<code dir="auto">analyzeExpr</code> (direct <code dir="auto">Project</code> definition; single- and
+multi-level <code dir="auto">ColumnReference</code> chasing through an intervening <code dir="auto">Filter</code>; <code dir="auto">Sort</code>/
+<code dir="auto">Limit</code> pass-through; <code dir="auto">None</code> for a name the top <code dir="auto">Project</code> doesn’t define, a bare
+<code dir="auto">Read</code> with no intervening <code dir="auto">Project</code>, a <code dir="auto">ColumnReference</code> chain bottoming out at a
+bare <code dir="auto">Read</code>, and each of <code dir="auto">Aggregate</code>/<code dir="auto">Window</code>/<code dir="auto">Union</code>/<code dir="auto">Join</code>).
+<code dir="auto">spark-adapter</code>’s <code dir="auto">StaticDataQualityVerifierSpec</code> gained 7 cases (a nested field’s
+own constraint reaching real <code dir="auto">Guaranteed</code>/<code dir="auto">Violated</code>, including via <code dir="auto">length</code>; a
+nested field absent from the actual construction staying <code dir="auto">NotStaticallyVerifiable</code>
+rather than crashing; two-level-deep nested tracing; resolution correctly chasing
+through a <code dir="auto">ColumnReference</code> passthrough rename above the real <code dir="auto">StructConstruct</code>;
+the documented out-of-scope bare-<code dir="auto">Read</code> case confirmed still <code dir="auto">NotStaticallyVerifiable</code>)
+plus one existing test’s expectation corrected (a nested field’s own <code dir="auto">NOT NULL</code>
+check, previously asserted <code dir="auto">NotStaticallyVerifiable</code>, is now correctly <code dir="auto">Guaranteed</code>
+when built via <code dir="auto">StructConstruct</code> — the intended improvement, not a regression).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified per CLAUDE.md’s Mutation Testing Requirement, API Compatibility
+Requirement, and Coverage Gating Requirement, and <code dir="auto">./dev/test</code>/<code dir="auto">./dev/regression</code>
+re-run against the final wiring.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: <code dir="auto">docs/STATIC_DATA_QUALITY_VERIFICATION.md</code>’s §3.8 rewritten
+again to describe what’s now actually resolvable for a nested field (real tracing
+through a same-plan <code dir="auto">StructConstruct</code>) versus what remains deferred (an axiom for a
+nested field on a struct read directly from an input <code dir="auto">Read</code>), §8’s MVP scope list
+updated to match. docs-site’s <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx">Verify Static Data
+Quality</a>
+guide’s nested-field bullet rewritten to describe the new capability, plus a new
+worked example.</li>
+</ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
 <div class="sl-heading-wrapper level-h3"><h3 id="objective-4">Objective</h3><a class="sl-anchor-link" href="#objective-4"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Objective”</span></a></div>
