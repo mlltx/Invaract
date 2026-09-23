@@ -877,10 +877,11 @@ coverage (see the sub-phase above for the first three).
 The first of several regression-testing guardrails identified when
 assessing what "market leading" regression coverage would need beyond the
 example-based suites above: property-based fuzzing, mutation testing,
-API-compatibility checking, and a multi-Spark-version compatibility
-matrix are done (this sub-phase, the one below it, "API compatibility
-checking" further down, and "Spark version compatibility matrix" further
-below); coverage gating remains future scope. (An initial
+API-compatibility checking, a multi-Spark-version compatibility matrix,
+and coverage gating are all done (this sub-phase, the one below it, "API
+compatibility checking" further down, "Spark version compatibility
+matrix" further below, and "Coverage gating" at the end of this phase).
+(An initial
 idea to add golden-file snapshots of `report.json` was reconsidered and
 redirected — that file is an internal test-harness artifact with no
 external consumers, not a public interface worth pinning; the JSON Schema
@@ -3250,6 +3251,63 @@ same gap once traced to what CI actually runs.
       abort, both confirmed directly in the script's own output and the published
       notification events — not merely asserted by the script silently passing.
       `docs-site`'s `npm run build` succeeds.
+
+#### Sub-phase: Coverage gating (done)
+
+The last of the regression-testing guardrails the "Property-based fuzzing of the
+Spark adapter" sub-phase's own scoping comment had flagged as future scope,
+alongside the two `ARCHITECTURE.md`/`CLAUDE.md` claims this PR's own earlier
+fix had already corrected (a multi-Spark-version compatibility matrix and
+API-compatibility checking — both, it turned out, already existed). Line/branch
+coverage answers a genuinely different question than mutation testing: not
+"does this code have tests that would catch a change" but "does this code have
+tests exercising it at all" — a module could clear every mutation threshold on
+a few thoroughly-tested files while another sits completely untested, and
+mutation testing alone would never catch that.
+
+- [x] **`sbt-scoverage`** added to `contract`/`ir`/`spark-adapter`/`fingerprint`
+      (`project/coverage.sbt`, each module — the same "one small file per
+      concern" convention `mima.sbt`/`stryker4s.sbt` already use).
+      `coverageScalacPluginVersion` pins the exact `scalac-scoverage-plugin`
+      runtime release confirmed reachable from this environment after several
+      others (including sbt-scoverage's own auto-selected default) hit a
+      persistent, edge-cached 429 on Maven Central for that one specific
+      artifact path while neighboring versions resolved fine — not a real
+      incompatibility with this project's Scala version, confirmed by direct
+      HTTP checks against several published versions before picking one, not
+      assumed.
+- [x] **Thresholds measured for real**, via `sbt coverage test coverageReport`
+      against each module's actual suite, then pinned a few points below - the
+      same "measure first, then pin" discipline `strykerThresholdsBreak`
+      already follows, not a guessed round number:
+      - `contract`: stmt 89.03% → gate 87, branch 81.22% → gate 79
+      - `ir`: stmt 86.13% → gate 84, branch 80.90% → gate 78
+      - `fingerprint`: stmt 93.30% → gate 91, branch 89.10% → gate 87
+      - `spark-adapter`: stmt 94.58% → gate 92, branch 90.88% → gate 88 (its
+        full 681-test real-Spark suite, confirming coverage instrumentation
+        doesn't break real `SparkSession` execution)
+- [x] **The gate genuinely fails, confirmed with a negative control**: a
+      temporary, session-only `coverageMinimumStmtTotal := 99` override on
+      `ir` produced a real `(coverageReport) Coverage minimum was not reached`
+      failure with exit code 1 — the mechanism was proven to actually enforce
+      something before being trusted, not just assumed to from
+      `coverageFailOnMinimum := true` being set.
+- [x] **New CI job `coverage-gating`** (`.github/workflows/test.yml`), added to
+      `summary`'s `needs` list — runs all four modules' `sbt coverage test
+      coverageReport` in dependency order (mirroring `api-compatibility`'s own
+      `publishLocal` ordering: contract, ir, fingerprint, then spark-adapter
+      last), each cross-module `publishLocal` a plain, uninstrumented build so
+      a downstream module never compiles against scoverage-instrumented
+      bytecode or has its own coverage measurement polluted by classes that
+      aren't its.
+- [x] **Documentation**: CLAUDE.md gained a "Coverage Gating Requirement"
+      section (mirroring "Mutation Testing Requirement"'s own structure —
+      what to do when a change drops coverage below the pinned gate, the
+      deliberate-and-disclosed pattern for lowering a threshold instead of
+      silently disabling the check). `ARCHITECTURE.md`'s "Guardrails still
+      outstanding" line — already narrowed to just coverage gating by this
+      PR's earlier fix — updated to note nothing remains outstanding from
+      that list.
 
 ---
 

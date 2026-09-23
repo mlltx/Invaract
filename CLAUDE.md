@@ -191,10 +191,48 @@ smallest — or CI's `mutation-shard-drift-check` job will fail on a change
 that otherwise looks unrelated to it.
 
 This bar — and every other regression-testing guardrail in this repo
-(property-based fuzzing, mutation testing, API-compatibility checking, and
-the still-outstanding compatibility matrix / coverage gating) — is scoped
-to `contract`/`ir`/`spark-adapter`/`fingerprint`. It does not apply to
-`plugin`/`runner`, which are example/test code, not the engine.
+(property-based fuzzing, mutation testing, API-compatibility checking, the
+Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — is
+scoped to `contract`/`ir`/`spark-adapter`/`fingerprint`. It does not apply
+to `plugin`/`runner`, which are example/test code, not the engine.
+
+## Coverage Gating Requirement
+
+`contract`, `ir`, `spark-adapter`, and `fingerprint` are checked for
+line/branch coverage with [sbt-scoverage](https://github.com/scoverage/sbt-scoverage)
+(CI's `coverage-gating` job, `.github/workflows/test.yml`). It answers a
+different question than mutation testing: not "does this code have tests
+that would catch a change" (mutation testing's job), but "does this code
+have tests exercising it at all" — a module could clear every mutation
+threshold in this file on the strength of a few files' thorough tests while
+another file sits completely untested, and mutation testing alone would
+never catch that, since Stryker4s only ever mutates lines a test already
+reaches.
+
+Each module's own `build.sbt` sets `coverageMinimumStmtTotal`/
+`coverageMinimumBranchTotal` (with `coverageFailOnMinimum := true`, so
+`sbt coverage test coverageReport` fails outright below either), pinned a
+few points below a real measured run — the same "measure first, then pin"
+discipline `strykerThresholdsBreak` already follows above, not a guessed
+round number. `coverageScalacPluginVersion` pins the exact
+`scalac-scoverage-plugin` runtime release confirmed reachable from this
+environment (Maven Central's CDN has been observed serving a persistent
+429 on a specific, otherwise-real artifact path while neighboring versions
+resolve fine — not a real incompatibility with this project's Scala
+version); if that pinned version ever stops resolving, pick another
+version genuinely published for `scalac-scoverage-plugin_2.12.18` (check
+`https://repo1.maven.org/maven2/org/scoverage/scalac-scoverage-plugin_2.12.18/maven-metadata.xml`)
+rather than assuming the pinned one is special.
+
+When a feature adds or changes code in one of these four modules and
+lowers that module's own real coverage below its pinned threshold, you MUST
+either add tests bringing coverage back above it, or — only if the
+uncovered code is genuinely unreachable in tests for a documented reason
+(e.g. a defensive branch no realistic input can trigger) — lower the
+threshold in the same PR with a comment explaining why, the same honest
+"deliberate, disclosed" pattern the API Compatibility Requirement above
+uses for a deliberate MiMa break. Never disable `coverageFailOnMinimum` or
+delete the threshold to make a failure go away.
 
 ## API Compatibility Requirement
 

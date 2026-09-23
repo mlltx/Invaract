@@ -1027,8 +1027,12 @@ strykerThresholdsBreak := 70
 
 // Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
 // comment for coverageScalacPluginVersion's own reasoning and the "measure
-// first, then pin" discipline behind the two thresholds below.
+// first, then pin" discipline behind the two thresholds below (measured
+// stmt=94.58%, branch=90.88% via a real `sbt coverage test coverageReport`
+// run against the full 681-test real-Spark suite).
 coverageScalacPluginVersion := "2.4.2"
+coverageMinimumStmtTotal := 92
+coverageMinimumBranchTotal := 88
 coverageFailOnMinimum := true
 coverageHighlighting := true
 

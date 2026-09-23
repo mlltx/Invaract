@@ -525,10 +525,18 @@ Testing Requirement." Summary:
   `spark-version-matrix`/`delta-version-matrix`/`iceberg-version-matrix`
   jobs) and **API-compatibility checking** (CI's `api-compatibility` job,
   MiMa — see CLAUDE.md's "API Compatibility Requirement").
+- **Line/branch coverage gating** (CI's `coverage-gating` job, sbt-scoverage)
+  across `contract`/`ir`/`spark-adapter`/`fingerprint` — a different,
+  complementary question from mutation testing's own "does this code have
+  tests that would catch a change": "does this code have tests at all." Each
+  module's own `coverageMinimumStmtTotal`/`coverageMinimumBranchTotal`
+  (`build.sbt`) is measured against its real suite and pinned a few points
+  below, the same "measure first, then pin" discipline
+  `strykerThresholdsBreak` already follows — see CLAUDE.md's "Coverage
+  Gating Requirement."
 
-Guardrails still outstanding (ROADMAP.md, scoped to `contract`/`ir`/
-`spark-adapter`): coverage gating (line/branch coverage thresholds,
-distinct from mutation testing, which this repo already enforces).
+No guardrails remain outstanding from this file's own prior list — the last
+one, coverage gating, is covered above.
 
 ## Performance Characteristics
 
