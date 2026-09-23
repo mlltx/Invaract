@@ -1,0 +1,534 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Adding a Spark Connector | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-71/design/adding-a-spark-connector/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-71/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-71/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.2"/><meta name="generator" content="Starlight v0.41.11"/><meta property="og:title" content="Adding a Spark Connector"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-71/design/adding-a-spark-connector/"/><meta property="og:locale" content="en"/><meta property="og:description" content="This is the reusable process for giving spark-adapter full read/write support for a data source it doesn't yet understand — Delta Lake today (see docs/c..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="This is the reusable process for giving spark-adapter full read/write support for a data source it doesn't yet understand — Delta Lake today (see docs/c..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-71/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-71/_astro/common.LobgrqhU.css"><style>@layer starlight.components{.card:where(.astro-zts4jgjd){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-zts4jgjd):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-zts4jgjd):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-zts4jgjd):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-zts4jgjd):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-zts4jgjd){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-zts4jgjd) .icon:where(.astro-zts4jgjd){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-zts4jgjd) .body:where(.astro-zts4jgjd){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-71/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-gqpr5s5a"><header class="header astro-gqpr5s5a"><div class="header astro-nczgtkxc"><div class="title-wrapper sl-flex astro-nczgtkxc"><a href="/Invaract/contributor-pr-preview/pr-71/" class="site-title sl-flex astro-clw6ags5"><img class="light:sl-hidden print:hidden astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-71/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-clw6ags5" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-71/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-clw6ags5" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-nczgtkxc"><site-search class="astro-nczgtkxc astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-71/_astro/Search.astro_astro_type_script_index_0_lang.BwwdTy3H.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-nczgtkxc"><div class="sl-flex social-icons astro-nczgtkxc"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-gqpr5s5a" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-gqpr5s5a"><div class="sidebar-content sl-flex astro-gqpr5s5a"><sl-sidebar-state-persist data-hash="1rhn85s" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-ojxuodky"><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Project</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/project/roadmap/" class="astro-ojxuodky"><span class="astro-ojxuodky">Roadmap</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/project/architecture/" class="astro-ojxuodky"><span class="astro-ojxuodky">Architecture</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Design Docs</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/design/contract-model/" class="astro-ojxuodky"><span class="astro-ojxuodky">Contract Model</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/design/transformation-ir/" class="astro-ojxuodky"><span class="astro-ojxuodky">Transformation IR</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/design/spark-adapter/" class="astro-ojxuodky"><span class="astro-ojxuodky">Spark Adapter</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/design/semantic-lineage-fingerprinting/" class="astro-ojxuodky"><span class="astro-ojxuodky">Semantic Lineage Fingerprinting</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/design/adding-a-spark-connector/" aria-current="page" class="astro-ojxuodky"><span class="astro-ojxuodky">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Connectors</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/delta/" class="astro-ojxuodky"><span class="astro-ojxuodky">Delta Lake</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/iceberg/" class="astro-ojxuodky"><span class="astro-ojxuodky">Iceberg</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/hive/" class="astro-ojxuodky"><span class="astro-ojxuodky">Hive</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/parquet/" class="astro-ojxuodky"><span class="astro-ojxuodky">Parquet</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/avro/" class="astro-ojxuodky"><span class="astro-ojxuodky">Avro</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/csv/" class="astro-ojxuodky"><span class="astro-ojxuodky">CSV</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/connectors/clickhouse/" class="astro-ojxuodky"><span class="astro-ojxuodky">ClickHouse</span></a></li></ul></details></li><li class="astro-ojxuodky"><details open class="astro-ojxuodky"><summary class="astro-ojxuodky"><span class="group-label astro-ojxuodky"><span class="large astro-ojxuodky">Process</span></span><svg aria-hidden="true" class="caret astro-ojxuodky astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-ojxuodky"><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/process/versioning/" class="astro-ojxuodky"><span class="astro-ojxuodky">Versioning</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/process/compatibility/" class="astro-ojxuodky"><span class="astro-ojxuodky">Compatibility</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/process/releasing/" class="astro-ojxuodky"><span class="astro-ojxuodky">Releasing</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/process/governance/" class="astro-ojxuodky"><span class="astro-ojxuodky">Governance</span></a></li><li class="astro-ojxuodky"><a href="/Invaract/contributor-pr-preview/pr-71/process/cve-remediation/" class="astro-ojxuodky"><span class="astro-ojxuodky">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-cg55etiy"><span class="sr-only astro-cg55etiy">GitHub</span><svg aria-hidden="true" class="astro-cg55etiy astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></div></nav><div class="main-frame astro-gqpr5s5a"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#what-fails-closed-means-and-doesnt" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">What “fails closed” means (and doesn’t)</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-operation-surface-canonical-checklist" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The operation surface (canonical checklist)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-feature-surface-format-specific-behaviors" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The feature surface (format-specific behaviors)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#definition-of-done" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Definition of done</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#the-coverage-ledger--mandatory-not-optional" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">The coverage ledger — mandatory, not optional</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-investigation-methodology" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The investigation methodology</span></a><ul class="isMobile astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#1-add-the-dependency-as--test-only" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">1. Add the dependency as % &quot;test&quot; only</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#2-probe-with-both-spark-extension-points-not-one" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">2. Probe with both Spark extension points, not one</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#3-reflectively-survey-the-connectors-command-classes" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">3. Reflectively survey the connector’s Command classes</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#4-classify-every-class-the-survey-found" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">4. Classify every class the survey found</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#5-verify-dont-assert" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">5. Verify, don’t assert</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#6-test-the-feature-surface-not-just-the-operation-surface" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">6. Test the feature surface, not just the operation surface</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#known-limitations-the-general-pattern-not-connector-specific" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Known limitations (the general pattern, not connector-specific)</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-71/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#what-fails-closed-means-and-doesnt" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">What “fails closed” means (and doesn’t)</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-operation-surface-canonical-checklist" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The operation surface (canonical checklist)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-feature-surface-format-specific-behaviors" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The feature surface (format-specific behaviors)</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#definition-of-done" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Definition of done</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#the-coverage-ledger--mandatory-not-optional" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">The coverage ledger — mandatory, not optional</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#the-investigation-methodology" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">The investigation methodology</span></a><ul class="astro-cxyftcne" style="--depth: 1;"><li style="--depth: 1;" class="astro-cxyftcne"><a href="#1-add-the-dependency-as--test-only" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">1. Add the dependency as % &quot;test&quot; only</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#2-probe-with-both-spark-extension-points-not-one" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">2. Probe with both Spark extension points, not one</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#3-reflectively-survey-the-connectors-command-classes" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">3. Reflectively survey the connector’s Command classes</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#4-classify-every-class-the-survey-found" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">4. Classify every class the survey found</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#5-verify-dont-assert" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">5. Verify, don’t assert</span></a></li><li style="--depth: 1;" class="astro-cxyftcne"><a href="#6-test-the-feature-surface-not-just-the-operation-surface" style="--depth: 1;" class="astro-cxyftcne"><span style="--depth: 1;" class="astro-cxyftcne">6. Test the feature surface, not just the operation surface</span></a></li></ul></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#known-limitations-the-general-pattern-not-connector-specific" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Known limitations (the general pattern, not connector-specific)</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-71/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-2sm4b3ln">Adding a Spark Connector</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/ADDING_A_SPARK_CONNECTOR.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>This is the reusable process for giving <code dir="auto">spark-adapter</code> full read/write
+support for a data source it doesn’t yet understand — Delta Lake today
+(see docs/connectors/delta.md and docs/SPARK_ADAPTER.md’s “Fail-closed on
+unverifiable writes” section), Iceberg, ClickHouse, Avro, or anything
+else a future contributor wants to add. Per-connector write-ups and
+coverage ledgers live under docs/connectors/ — see
+docs/SPARK_ADAPTER.md’s “Connector support” section for the index.</p>
+<p>It exists because Delta support was built twice: once for <code dir="auto">.save(...)</code>
+writes, then again — separately — for <code dir="auto">.saveAsTable(...)</code> and the
+fail-closed policy, because the first pass didn’t survey the connector’s
+full operation surface before calling it done. Both gaps were real: a
+Delta write silently passing a broken contract, and <code dir="auto">.saveAsTable(...)</code>
+falling through to the same silent no-op. This document is how the next
+connector gets that surveyed up front instead of discovered incident by
+incident.</p>
+<p>The same investigation also surfaced <em>why</em> those gaps kept recurring:
+translation, enforcement, and reporting each recognized write commands
+with their own independent match statement, so a write shape added to
+one could silently go missing from another. That’s since been fixed —
+see docs/SPARK_ADAPTER.md’s “Write command recognition: a single
+registry” — so adding a write shape now touches one file
+(<code dir="auto">WriteCommandSupport.scala</code>), not three. Step 4 below reflects this.</p>
+<p>There is also a Claude Code skill (<code dir="auto">add-spark-connector</code>) that walks
+through this process interactively — see its <code dir="auto">SKILL.md</code> for the
+step-by-step version of what’s described here.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="what-fails-closed-means-and-doesnt">What “fails closed” means (and doesn’t)</h3><a class="sl-anchor-link" href="#what-fails-closed-means-and-doesnt"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What “fails closed” means (and doesn’t)”</span></a></div>
+<p>Easy to misread the coverage ledger below as: ✅ = done, 🚫 = also done
+(just a different flavor — “not supported, and that’s fine”), ❓ =
+the only real gap. <strong>That reading is wrong, and defeats the point of the
+policy.</strong> Fail-closed exists to catch operations Invaract <em>hasn’t gotten
+around to translating yet</em> — a deliberate safety net so an unrecognized
+write aborts loudly instead of silently passing an unverified contract.
+It was never meant to be a resting state equivalent to “we’ve decided not
+to support this.” A 🚫 row is <em>always</em> implicitly future work: either
+real translation is worth adding later (the common case — most 🚫 rows
+exist because this pass ran out of scope, not because the operation is
+somehow unworthy of support), or there’s a specific, rare, documented
+reason it should stay rejected forever (an operation whose semantics are
+genuinely ambiguous, or arbitrary passthrough to an external system that
+can’t be classified either way). Silence on which of those two a 🚫 row
+is is exactly the gap this section exists to close — see “The coverage
+ledger” below, which requires a next step for 🚫 the same way it already
+does for ❓.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-operation-surface-canonical-checklist">The operation surface (canonical checklist)</h2><a class="sl-anchor-link" href="#the-operation-surface-canonical-checklist"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The operation surface (canonical checklist)”</span></a></div>
+<p>Every investigation, and the coverage ledger below, is scoped against
+this exact list — not “whatever operations came up.” An item that
+doesn’t apply to a given connector (e.g. no catalog, no streaming) is
+still listed and marked N/A with why, not silently dropped.</p>
+<p><strong>Read:</strong></p>
+<ol>
+<li><code dir="auto">.read.format(x).load(path)</code> — direct path read</li>
+<li>Catalog table reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>) — if
+the connector registers a catalog</li>
+<li>Time travel / snapshot reads (<code dir="auto">VERSION AS OF</code>/<code dir="auto">TIMESTAMP AS OF</code> or
+equivalent) — if the format versions data</li>
+<li>Streaming read (<code dir="auto">readStream</code>)</li>
+<li>Change-data-feed / incremental read — if the format supports one</li>
+</ol>
+<p><strong>Write:</strong></p>
+<ol>
+<li><code dir="auto">.save(path)</code> — each save mode (<code dir="auto">append</code>/<code dir="auto">overwrite</code>/<code dir="auto">ignore</code>/<code dir="auto">error</code>)
+that produces a different plan shape</li>
+<li><code dir="auto">.saveAsTable(...)</code> — a <em>new</em> table</li>
+<li><code dir="auto">.saveAsTable(...)</code> — an <em>existing</em> table (append)</li>
+<li><code dir="auto">.insertInto(...)</code> — an existing table</li>
+<li><code dir="auto">.writeTo(...)</code> (DataFrameWriterV2) — <code dir="auto">.append()</code>/<code dir="auto">.overwrite(cond)</code>/
+<code dir="auto">.overwritePartitions()</code>/<code dir="auto">.create()</code>/<code dir="auto">.createOrReplace()</code>/<code dir="auto">.replace()</code></li>
+<li>Format-specific DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>/<code dir="auto">UPSERT</code>)</li>
+<li>Streaming write (<code dir="auto">writeStream</code>)</li>
+<li>Maintenance operations that touch data (compaction, vacuum, restore,
+clone, format conversion, or equivalent)</li>
+</ol>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-feature-surface-format-specific-behaviors">The feature surface (format-specific behaviors)</h2><a class="sl-anchor-link" href="#the-feature-surface-format-specific-behaviors"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The feature surface (format-specific behaviors)”</span></a></div>
+<p>The operation surface above is about plan <em>shapes</em> — is a <code dir="auto">.saveAsTable()</code>
+recognized, does a <code dir="auto">MERGE</code> get matched at all. It says nothing about
+whether a recognized write shape stays correct once the <em>format’s own</em>
+distinguishing features are in play. Those are a second, orthogonal axis,
+and it’s the one that produced two real, found-and-fixed bugs during
+Delta’s own “the operation surface is fully covered” pass: <code dir="auto">target.schema</code>
+silently being the pre-merge schema under schema evolution, and a
+generated column silently never appearing in any DataFrame-facing schema
+at all. Both bugs existed on operation-surface rows that were already
+marked ✅ Covered — closing every row of “The operation surface” is
+necessary, not sufficient.</p>
+<p>Unlike the operation surface, there is no fixed, connector-independent
+list here — each format has its own distinguishing behaviors. Spend real
+time (the connector’s own docs, changelog, and “what makes this format
+different from plain Parquet/CSV” framing) enumerating this connector’s
+actual list before writing any code, the same deliberateness Phase 0
+already asks for scoping the operation surface. Categories worth checking
+for, not a checklist to fill in blindly — most formats have some subset:</p>
+<ul>
+<li><strong>Schema-affecting behaviors the writer doesn’t fully control</strong>: schema
+evolution/merge-on-write, computed/generated columns, identity/auto-
+increment columns, default values applied server-side. Anything where
+the schema Invaract can read <em>before</em> a write differs from the schema
+the write actually commits is a candidate for exactly the false-
+rejection (or worse, false-pass) bug class Delta’s schema evolution and
+generated-columns fixes both were.</li>
+<li><strong>Storage/representation mechanisms that shouldn’t change verification
+behavior, but might</strong>: deletion vectors or other soft-delete
+representations, column mapping / physical-vs-logical name
+indirection, clustering or partitioning strategies, compaction/
+optimization operations. The bar here is usually “confirm this doesn’t
+break anything,” not “implement new handling” — but “usually” isn’t
+“always,” and it isn’t proven without a real write against a real table
+with the feature turned on.</li>
+<li><strong>Constraints or invariants the format enforces itself</strong>: <code dir="auto">CHECK</code>
+constraints, <code dir="auto">NOT NULL</code>, foreign-key-like relationships, uniqueness. The
+question to answer for each is specifically the boundary: does
+Invaract’s own structural verification interact with the format’s
+enforcement at all (double-check, silently duplicate, silently
+conflict), or are they genuinely orthogonal — confirm with a test that
+exercises <em>both</em> a satisfying and a violating write, the way Delta’s
+<code dir="auto">CHECK</code>-constraint test does (Invaract passes both; the format itself
+then rejects the violating one).</li>
+<li><strong>Versioning/time-travel semantics</strong>, if not already covered by “The
+operation surface“‘s time-travel read row.</li>
+</ul>
+<p>For each item found: <strong>write a real test against a real
+connector-enabled table with the feature turned on, and check what
+Invaract actually reports</strong> — never reason from the format’s
+documentation about what “should” happen. A throwaway probe is the right
+first move (same as the operation-surface investigation), but <strong>a probe
+is not the deliverable and never stands in as the evidence for a coverage
+ledger row.</strong> Every scenario a probe touches — including ones where the
+probe’s answer was “this is already fine, no fix needed” — gets promoted
+into a permanent test in the connector’s <code dir="auto">*Spec.scala</code> file before the
+probe is deleted. “We tried it once and it worked” is not the same
+confidence level as “there is a test in the suite that will fail if this
+regresses,” and this document exists specifically because “should work,
+never actually verified” was allowed to pass as done twice already.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="definition-of-done">Definition of done</h2><a class="sl-anchor-link" href="#definition-of-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Definition of done”</span></a></div>
+<p>A connector is <strong>not</strong> done because compilation succeeds or because one
+<code dir="auto">.save(...)</code> call round-trips. It’s done when every item below is true —
+each with something to point at, not just an assertion — <strong>and</strong> the
+coverage ledger this section ends with is complete.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Every read path the connector supports is investigated</strong>, not
+assumed: <code dir="auto">.read.format(x).load(path)</code>, and a catalog table
+reference (<code dir="auto">spark.table(...)</code>/<code dir="auto">SELECT * FROM t</code>) if the connector
+registers a catalog. For each one found to matter, <code dir="auto">locationOf</code>
+and <code dir="auto">translatePlan</code>’s <code dir="auto">LogicalRelation</code>/relation-specific handling
+either translates it precisely, or there’s a documented reason it
+falls back to the generic <code dir="auto">catalogTable</code>/<code dir="auto">toString</code> fallback.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Every write path is investigated</strong>: <code dir="auto">.save(path)</code> (all four save
+modes if they change the plan shape), <code dir="auto">.saveAsTable(...)</code> against
+both a <em>new</em> and an <em>existing</em> table, <code dir="auto">.insertInto(...)</code>,
+DataFrameWriterV2 (<code dir="auto">.writeTo(...)</code>), and any format-specific DML
+(<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>/<code dir="auto">UPSERT</code>) or streaming write the format
+supports. For each, one of two things is true and documented:
+it’s translated to <code dir="auto">ir.Write</code> and verified, or it’s deliberately
+left untranslated with a stated reason (most often: it doesn’t fit
+<code dir="auto">ir.Write</code>’s “write a dataset to a location” shape — see
+“Known limitations” below).</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>A real reflective survey of the connector’s own <code dir="auto">Command</code>
+classes was performed</strong>, not skipped because “we tried the obvious
+operations.” This is what caught <code dir="auto">CreateDataSourceTableAsSelectCommand</code>
+and Delta’s <code dir="auto">MergeIntoCommand</code> — neither was the first thing anyone
+tried. See “The investigation methodology” below for the exact
+technique.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Every reachable <code dir="auto">Command</code>-shaped plan is classified</strong>: translated
+write, added to <code dir="auto">FailClosedCommands</code>’s known-safe list (with the
+same “does it change a table’s committed row content?” reasoning
+every existing entry has), or deliberately left off both — which
+means it fails closed, not silently passes.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Zero added runtime or compile-time dependency</strong> for a user who
+doesn’t use this connector. The new connector’s library is a
+<code dir="auto">% "test"</code> dependency only, unless a real investigation shows the
+plan shapes genuinely require a type only that library defines
+(uncommon — <code dir="auto">SaveIntoDataSourceCommand</code>/<code dir="auto">DataSourceRegister</code> covers
+most “arbitrary external format” cases with zero connector-specific
+code at all; see “Delta Lake support” for why).</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>A translation test and a PASS/FAIL enforcement pair exist for
+every write shape actually translated</strong>, against a real
+connector-enabled <code dir="auto">SparkSession</code> — no mocking (see
+ARCHITECTURE.md’s ADR-005).</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>A fail-closed test exists for at least one real, concrete
+operation the connector supports that Invaract deliberately
+doesn’t translate</strong> (if any exist), proving it’s rejected — and
+that nothing was written — rather than silently passed.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>A regression test proves the connector’s own non-data
+administrative commands aren’t blocked</strong> by the fail-closed policy,
+under a contract that would reject anything it actually checked.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Every item on “The feature surface” this connector actually has
+was tested against a real table with the feature enabled, not
+assumed from documentation, and every finding — including “this is
+already fine” — is a permanent test in the suite, not just a
+throwaway probe’s output.</strong> A feature found to genuinely need a fix
+(the schema-affecting-behavior category is the likely source, per
+Delta’s schema-evolution and generated-columns bugs) has both the
+fix and a test proving it; a feature confirmed transparent has a
+test proving that too, so a future regression doesn’t have to be
+rediscovered from scratch. See “The feature surface (format-specific
+behaviors)” above.</li>
+<li class="task-list-item"><input type="checkbox" disabled> Mutation testing scoped to the changed/added files clears 70% (see
+CLAUDE.md’s “Mutation Testing Requirement”); <code dir="auto">mimaReportBinaryIssues</code>
+is clean.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">./dev/build</code>, <code dir="auto">./dev/test</code>, and <code dir="auto">./dev/regression</code> all pass against
+real <code dir="auto">spark-submit</code> (see CLAUDE.md’s “Critical Requirement”) —
+including once with the new connector’s dependency present and once
+without, to prove the “zero added dependency for non-users” claim
+isn’t just asserted.</li>
+<li class="task-list-item"><input type="checkbox" disabled> A <code dir="auto">docs/connectors/&#x3C;connector>.md</code> file exists (mirroring
+<code dir="auto">docs/connectors/delta.md</code>), plus a ROADMAP.md sub-phase — each
+stating plainly what <em>is</em> and <em>isn’t</em> covered, the same way this
+document’s own retrospective does for Delta.</li>
+</ul>
+<p>If any box can’t be checked, the connector isn’t done — it’s a partial
+read or partial write shape, and the honest thing to do is say so in
+“Known limitations,” the same way Delta’s row-level DML and streaming
+writes are called out today rather than implied to work.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="the-coverage-ledger--mandatory-not-optional">The coverage ledger — mandatory, not optional</h3><a class="sl-anchor-link" href="#the-coverage-ledger--mandatory-not-optional"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The coverage ledger — mandatory, not optional”</span></a></div>
+<p>This is the rule this document exists to enforce, added after Delta’s
+own onboarding was declared “done” twice while a majority of “The
+operation surface” list above had never been touched: <strong>no pass through
+this process — full or partial, a brand-new connector or one line item
+on an existing one — ends without producing a complete ledger against
+every item in “The operation surface.”</strong> Every single item gets exactly
+one of these three dispositions, and every disposition needs something
+concrete to point at:</p>
+<ul>
+<li><strong>✅ Covered</strong> — translated and verified. Cite the translation test and
+the PASS/FAIL enforcement pair.</li>
+<li><strong>🚫 Fails closed</strong> — not yet translated, verified to abort rather than
+silently pass. Cite the fail-closed test, <strong>and</strong> state the next step:
+either what real translation work would close it (the default
+assumption — see “What ‘fails closed’ means” above), or, in the rare
+case it should never be translated, the specific reason why. A 🚫 row
+with no next step reads as “not supported, and that’s fine” — which is
+precisely the framing this section exists to rule out.</li>
+<li><strong>❓ Not investigated</strong> — state <em>why</em> (out of scope for this pass, ran
+out of the checkpoint’s approved scope, genuinely deferred) and the
+<em>next step</em> (what a future pass needs to do, not just “TODO”).</li>
+</ul>
+<p><strong>“Not investigated” is an allowed answer. A missing row is not.</strong> A
+narrowly-scoped invocation — “just check whether reads have the write
+side’s bug,” say — is completely legitimate, but it still has to open by
+stating which rows of the operation surface it intends to touch, and it
+still has to close with the full ledger, marking everything outside its
+scope ❓ with “out of scope for this pass” rather than leaving it
+unmentioned. The failure this section exists to prevent isn’t scoping a
+pass narrowly — it’s a narrow pass’s silence being later read as “this
+connector is done.” Silence is exactly what let Delta’s write support
+ship as if <code dir="auto">.saveAsTable()</code> didn’t exist, and later let “let’s support
+Delta reads” ship as if <code dir="auto">.insertInto()</code>/<code dir="auto">.writeTo()</code>/streaming/time
+travel didn’t exist either — both times because nothing forced an
+explicit accounting of what the pass <em>didn’t</em> cover.</p>
+<p>The same requirement applies to “The feature surface” above, with the
+same three dispositions adapted to what a feature check actually
+produces: <strong>✅ Confirmed</strong> (tested against a real table with the feature
+on, permanent test exists — whether or not a fix was needed), <strong>🔧 Found
+and fixed</strong> (a real bug was found; cite the fix and the test proving it),
+or <strong>❓ Not investigated / not testable</strong> (state why — out of scope, or,
+like Delta’s identity columns, genuinely can’t be exercised in this
+environment — and the next step). A feature surface with rows that only
+cite a deleted probe’s remembered output, rather than a live test in the
+suite, does not satisfy this — see “The feature surface” above for why a
+probe alone was ruled out as sufficient evidence.</p>
+<p>A “done” connector’s docs/connectors/<connector>.md file and ROADMAP.md
+sub-phase (below) are exactly these two ledgers, formatted for their
+audience — never a blanket “full support” sentence standing in for
+either.</connector></p>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-investigation-methodology">The investigation methodology</h2><a class="sl-anchor-link" href="#the-investigation-methodology"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The investigation methodology”</span></a></div>
+<p>This is the part that’s easy to shortcut and expensive to shortcut. Every
+step below was learned by getting it wrong first during the Delta work —
+follow them in order.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="1-add-the-dependency-as--test-only">1. Add the dependency as <code dir="auto">% "test"</code> only</h3><a class="sl-anchor-link" href="#1-add-the-dependency-as--test-only"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “1. Add the dependency as % "test" only”</span></a></div>
+<p>Never <code dir="auto">compile</code>/<code dir="auto">provided</code> on the first attempt. Most connectors that
+implement Spark’s public provider interfaces
+(<code dir="auto">CreatableRelationProvider</code>, <code dir="auto">RelationProvider</code>, <code dir="auto">DataSourceRegister</code>)
+need <strong>zero</strong> connector-specific code to translate — the plan node Spark
+produces (<code dir="auto">SaveIntoDataSourceCommand</code>, <code dir="auto">LogicalRelation</code>) is already a
+plain <code dir="auto">org.apache.spark.sql</code> class. Only reach for a compile-time
+dependency after a real investigation (steps 2–4 below) shows a plan
+shape that genuinely can’t be represented without a type the connector’s
+own library defines — and even then, prefer matching by
+<code dir="auto">getClass.getName</code> string (see <code dir="auto">SparkPlanAdapter.jdbcLocationOf</code>/
+<code dir="auto">unwrapWriteWrapper</code>, <code dir="auto">FailClosedCommands</code>) over a hard import, so a user
+who doesn’t have that library on their runtime classpath never hits a
+<code dir="auto">ClassNotFoundException</code>.</p>
+<p>Pin the version deliberately, not to “latest” — check the connector’s own
+issue tracker for known bugs against this repo’s pinned Scala/Spark
+combination first (Delta 3.2.1 had exactly this kind of bug against Scala
+2.12 + Spark 3.5.1 — see docs/SPARK_ADAPTER.md’s citation).</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="2-probe-with-both-spark-extension-points-not-one">2. Probe with <em>both</em> Spark extension points, not one</h3><a class="sl-anchor-link" href="#2-probe-with-both-spark-extension-points-not-one"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “2. Probe with both Spark extension points, not one”</span></a></div>
+<p>This module has two different ways of observing a plan, and <strong>they see
+different things</strong>:</p>
+<ul>
+<li><code dir="auto">QueryExecutionListener.onSuccess</code> — execution-level, fires only after
+a query’s action (<code dir="auto">.collect()</code>, <code dir="auto">.save()</code>, …) has already run.</li>
+<li><code dir="auto">SparkSessionExtensions.injectCheckRule</code> — analysis-level, fires
+earlier, on <em>every</em> analyzed plan a <code dir="auto">Dataset</code> construction produces,
+including ones a caller never acts on.</li>
+</ul>
+<p><code dir="auto">ContractEnforcementRule</code> uses the second one. A probe built only around
+the first can make a plan look absent when the check rule would actually
+see it (confirmed directly this way: a bare <code dir="auto">CREATE TABLE ... (no data)</code>
+never fired <code dir="auto">QueryExecutionListener.onSuccess</code> in testing, but did reach
+the check rule). Build a throwaway probe test using <code dir="auto">injectCheckRule</code> (a
+function that just logs the plan’s runtime class instead of throwing) —
+that’s the mechanism whose output actually matters for the fail-closed
+policy.</p>
+<p>Exercise, at minimum, everything in “Every write path is investigated”
+above, plus: a plain read, a non-<code dir="auto">AS SELECT</code> <code dir="auto">CREATE TABLE</code>, <code dir="auto">ANALYZE TABLE</code>, and <code dir="auto">SHOW TABLES</code> — the last three are what prove the fail-closed
+policy won’t have false positives once step 4 classifies them.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="3-reflectively-survey-the-connectors-command-classes">3. Reflectively survey the connector’s <code dir="auto">Command</code> classes</h3><a class="sl-anchor-link" href="#3-reflectively-survey-the-connectors-command-classes"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “3. Reflectively survey the connector’s Command classes”</span></a></div>
+<p>Don’t rely on what step 2’s probe happened to trigger — enumerate what
+<em>exists</em>. Open every relevant jar (the connector’s own, plus
+<code dir="auto">spark-sql</code>/<code dir="auto">spark-catalyst</code> if the connector adds SQL commands that
+route through Spark’s own command types) with <code dir="auto">java.util.jar.JarFile</code>,
+<code dir="auto">Class.forName</code> each <code dir="auto">.class</code> entry, and keep the ones where
+<code dir="auto">classOf[org.apache.spark.sql.catalyst.plans.logical.Command].isAssignableFrom(clazz)</code>
+and <code dir="auto">!clazz.isInterface</code>. This is exactly the technique that found
+Delta’s <code dir="auto">MergeIntoCommand</code> and <code dir="auto">CreateDataSourceTableAsSelectCommand</code> —
+neither showed up by just trying the operations someone thought to try.</p>
+<p>Expect Spark’s own <code dir="auto">Command</code> hierarchy to give <strong>no reliable signal</strong>
+about which of these write data — <code dir="auto">SaveIntoDataSourceCommand</code> (writes
+data) and <code dir="auto">CreateDataSourceTableCommand</code> (schema-only <code dir="auto">CREATE TABLE</code>, no
+data) implement the exact same <code dir="auto">LeafRunnableCommand</code> trait. Don’t try to
+find a structural shortcut here; there isn’t one. Classification (step 4)
+has to be done by reading each class’s documented SQL semantics.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="4-classify-every-class-the-survey-found">4. Classify every class the survey found</h3><a class="sl-anchor-link" href="#4-classify-every-class-the-survey-found"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “4. Classify every class the survey found”</span></a></div>
+<p>For each concrete <code dir="auto">Command</code> class found:</p>
+<ul>
+<li><strong>Translates to a real write this connector needs</strong> → implement one
+more <code dir="auto">PartialFunction[LogicalPlan, WriteCommandInfo]</code> in
+<code dir="auto">WriteCommandSupport.scala</code>, following the existing three
+(<code dir="auto">InsertIntoHadoopFsRelationCommand</code> for <code dir="auto">FileFormat</code>-based writes,
+<code dir="auto">SaveIntoDataSourceCommand</code> for <code dir="auto">CreatableRelationProvider</code>-based
+<code dir="auto">.save(...)</code>, <code dir="auto">CreateDataSourceTableAsSelectCommand</code> for new-table
+<code dir="auto">.saveAsTable(...)</code>) as templates, and chain it into <code dir="auto">combined</code>. That
+one registry is what <code dir="auto">SparkPlanAdapter</code>, <code dir="auto">ContractEnforcementRule</code>, and
+<code dir="auto">SparkAdapterListener</code> all consult — nothing else needs a matching
+change (see docs/SPARK_ADAPTER.md’s “Write command recognition: a
+single registry”). Most connectors need zero entries here at all: the
+point of the Delta investigation was that <code dir="auto">SaveIntoDataSourceCommand</code>
+already covers any <code dir="auto">CreatableRelationProvider</code>-based <code dir="auto">.save(...)</code>,
+connector-specific or not — only add one when a connector genuinely
+introduces a write-command <em>shape</em> Spark doesn’t already have a generic
+node for.</li>
+<li><strong>Confirmed not to change a table’s committed row content</strong> (schema/
+namespace/function DDL, <code dir="auto">SHOW</code>/<code dir="auto">DESCRIBE</code>/<code dir="auto">ANALYZE</code>/<code dir="auto">CACHE</code>, session
+config, storage maintenance like compaction) → add its fully-qualified
+class name to <code dir="auto">FailClosedCommands</code>’s safe list, with the same one-line
+reasoning style every existing entry has.</li>
+<li><strong>Genuinely changes data, but doesn’t fit <code dir="auto">ir.Write</code>’s shape, or this
+pass doesn’t have scope to translate it now</strong> (row-level <code dir="auto">MERGE</code>/
+<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>, <code dir="auto">LOAD DATA</code>, <code dir="auto">TRUNCATE</code>, catalog-destructive <code dir="auto">DROP</code>/
+<code dir="auto">REPLACE</code>, connector maintenance ops with real data-mutating semantics)
+→ leave it off both the translation code and the safe list. It fails
+closed automatically — but that’s a safety net catching an
+<em>unimplemented</em> operation, not a verdict that it doesn’t deserve
+support (see “What ‘fails closed’ means” above). Document it as a known
+limitation <em>with a next step</em> (what translating it would take), not
+just a bare mention that it’s rejected.</li>
+</ul>
+<p>When genuinely uncertain whether a class mutates data, leave it off the
+safe list. <code dir="auto">FailClosedCommands</code>’s own doc comment explains why this
+asymmetry is deliberate: a safe command missing from the list costs one
+loud, cheap-to-fix rejection; a data-mutating command wrongly added would
+silently defeat the entire feature.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="5-verify-dont-assert">5. Verify, don’t assert</h3><a class="sl-anchor-link" href="#5-verify-dont-assert"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “5. Verify, don’t assert”</span></a></div>
+<p>Every claim in the “Definition of done” checklist needs the same kind of
+evidence the Delta work produced: a real test against a real
+connector-enabled session (never a mock — see ARCHITECTURE.md’s ADR-005),
+a real <code dir="auto">unzip -l</code>/jar inspection to confirm the “zero added dependency”
+claim, a real mutation-testing run with the actual score cited (not
+“should be fine”), and a real <code dir="auto">./dev/test</code>/<code dir="auto">./dev/regression</code> run through
+real <code dir="auto">spark-submit</code>. If something wasn’t actually checked — the read
+side, streaming, a specific DML operation — say so explicitly rather than
+letting a reader assume “full support” covers it. “Do we now have 100%
+coverage?” should always be answerable precisely, operation by operation,
+not with a yes/no guess.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="6-test-the-feature-surface-not-just-the-operation-surface">6. Test the feature surface, not just the operation surface</h3><a class="sl-anchor-link" href="#6-test-the-feature-surface-not-just-the-operation-surface"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “6. Test the feature surface, not just the operation surface”</span></a></div>
+<p>Steps 1–5 prove every write/read <em>shape</em> is recognized. That leaves the
+question “The feature surface” above exists for: does recognition stay
+correct once this format’s own distinguishing behaviors are actually
+exercised? Enumerate them (see “The feature surface” for the categories
+to check), then for each one, build a throwaway probe exactly like step
+2’s — same technique, same disposability — against a real table with the
+feature turned on, and read what <code dir="auto">WriteCommandSupport</code>/<code dir="auto">StructuralVerifier</code>
+actually report.</p>
+<p>The one place this step differs from steps 1–5: <strong>the probe’s job ends
+the moment you have an answer, not when the code is confirmed correct.</strong>
+“This is already fine, no fix needed” is a legitimate, common outcome —
+Delta’s deletion vectors, column mapping, liquid clustering, and <code dir="auto">CHECK</code>
+constraints were all exactly that. It is not, on its own, a stopping
+point: convert the scenario the probe just exercised into a permanent
+test in the connector’s <code dir="auto">*Spec.scala</code> file (a <code dir="auto">PASS</code> test asserting the
+write succeeds and the contract holds, mirroring the existing PASS/FAIL
+pairs), <em>then</em> delete the probe. A probe’s output is memory of what was
+once true; a test in the suite is a standing check that it’s still true.
+Treat “I tried it and it worked” as equivalent to “untested” until it’s
+been turned into something CI runs on every future change — the
+difference is exactly what separates a real coverage-ledger row from a
+sentence in a chat transcript nobody can re-run.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="known-limitations-the-general-pattern-not-connector-specific">Known limitations (the general pattern, not connector-specific)</h2><a class="sl-anchor-link" href="#known-limitations-the-general-pattern-not-connector-specific"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Known limitations (the general pattern, not connector-specific)”</span></a></div>
+<p>This section is updated as each limitation is closed — treat a claim
+here as current, not historical; <strong>an unrevised copy of this section is
+exactly how “DataSourceV2 catalog writes are unsolved” would have kept
+looking true after Delta’s own work solved the general case.</strong> Verify
+against <code dir="auto">WriteCommandSupport.scala</code> directly if this section and the
+code seem to disagree.</p>
+<ul>
+<li><strong>Row-level DML (<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>) has <em>structural</em>
+verification only, not full semantic verification.</strong> <code dir="auto">WriteCommandSupport</code>’s
+<code dir="auto">deltaRowLevelDml</code> case (Delta-specific today, matched by reflection)
+checks the operation’s target against a contract’s declared output
+location and current schema — but the actual row-level logic (the
+merge condition, which columns an <code dir="auto">UPDATE</code> touches, whether a <code dir="auto">DELETE</code>
+is unconditional) has no IR representation and isn’t checked.
+<code dir="auto">ir.Write</code> models “write a dataset to a location,” not “conditionally
+mutate existing rows” — closing this for real needs a <code dir="auto">com.invaract.ir</code>
+design decision (a new IR node, e.g. <code dir="auto">ir.Merge</code>/<code dir="auto">ir.RowMutation</code>, plus
+contract <code dir="auto">rules</code> vocabulary to check it against — see
+docs/CONTRACT_MODEL.md’s <code dir="auto">rules</code> field and ROADMAP.md’s “Full semantic
+DML verification” item for the concrete design sketch), not a small
+addition to this file. A <em>second</em> connector’s row-level DML (if it
+exists and takes a genuinely different shape than Delta’s — see
+“Row-level operations” note below) is a real opportunity to find out
+whether <code dir="auto">deltaRowLevelDml</code>’s structural approach generalizes past one
+connector, or whether it was accidentally Delta-shaped.</li>
+<li><strong>Streaming writes</strong>: closed for Delta specifically (<code dir="auto">WriteToStream</code> is
+a real <code dir="auto">WriteCommandSupport</code> entry — see docs/SPARK_ADAPTER.md’s
+“Delta Lake support” write-shape ledger). Not yet confirmed
+connector-agnostic: <code dir="auto">WriteToStream</code>’s location/format resolution
+(<code dir="auto">streamSinkLocationAndFormat</code>) has fallback branches written and
+tested against Delta’s specific sink shapes (a populated
+<code dir="auto">catalogTable</code>, or <code dir="auto">DeltaSink</code>’s reflective <code dir="auto">path()</code> accessor) — a
+second connector’s streaming sink is the first real test of whether
+those fallbacks (or the generic <code dir="auto">sink.name()</code> tier) are sufficient, or
+whether they were unknowingly Delta-specific too.</li>
+<li><strong>DataSourceV2 catalog writes</strong>: <code dir="auto">AppendData</code>/<code dir="auto">OverwriteByExpression</code>/
+<code dir="auto">ReplaceTableAsSelect</code> are closed as real, connector-agnostic
+<code dir="auto">WriteCommandSupport</code> entries (matched on Spark’s own generic classes,
+not anything Delta-specific — see docs/SPARK_ADAPTER.md’s “Write
+command recognition: a single registry”), so any DSv2-catalog
+connector using plain append/overwrite/CTAS-RTAS should be recognized
+“for free,” pending empirical confirmation per-connector (Phase 2 of
+this process, never assumed). <strong>Still open</strong>: <code dir="auto">OverwritePartitionsDynamic</code>,
+and DSv2’s dedicated <em>row-level operation</em> commands
+(<code dir="auto">ReplaceData</code>/<code dir="auto">WriteDelta</code>, produced by Spark’s
+<code dir="auto">RewriteRowLevelOperation</code> optimizer rule family for connectors that
+implement <code dir="auto">SupportsRowLevelOperations</code> instead of a proprietary
+command class the way Delta’s <code dir="auto">MergeIntoCommand</code>/<code dir="auto">UpdateCommand</code>/
+<code dir="auto">DeleteCommand</code> do) — no <code dir="auto">WriteCommandSupport</code> case exists for either
+yet. A connector whose <code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code> goes through this
+standard DSv2 mechanism (rather than connector-proprietary commands
+like Delta’s) needs this closed as new, connector-agnostic
+<code dir="auto">WriteCommandSupport</code> cases — a stronger outcome than Delta’s
+reflection-based <code dir="auto">deltaRowLevelDml</code>, since <code dir="auto">ReplaceData</code>/<code dir="auto">WriteDelta</code>
+are stable public Spark classes, not connector-internal ones requiring
+reflection at all.</li>
+</ul>
+<hr>
+<p><strong>Last Updated:</strong> 2026-08-24</p></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs/ADDING_A_SPARK_CONNECTOR.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/contributor-pr-preview/pr-71/design/semantic-lineage-fingerprinting/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Semantic Lineage Fingerprinting</span></span></a><a href="/Invaract/contributor-pr-preview/pr-71/connectors/delta/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Delta Lake</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
