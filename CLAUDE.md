@@ -733,7 +733,7 @@ If `./dev/test` fails:
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
 - `contract/target/scala-2.12/invaract-contract-0.8.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.5.0.jar`
-- `fingerprint/target/scala-2.12/invaract-fingerprint-0.2.0.jar`
+- `fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar`
 - `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.7.0.jar` — via
   `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
   same as `contract`/`ir`), this fat jar already contains

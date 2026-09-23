@@ -1,5 +1,5 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.2.0"
+ThisBuild / version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -38,6 +38,29 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
 )
 
+// The 0.2.0 -> 0.3.0 bump (this file's version above): NOT a MiMa break -
+// this module's own compiled classes/public API are byte-for-byte
+// unchanged (sbt mimaReportBinaryIssues stays clean either way). The real,
+// deliberate reason is narrower: this file's own `invaract-ir` dependency
+// pin below moved 0.4.0 -> 0.5.0 (following ir's own deliberate break for
+// string-constraint support), and `versionScheme := Some("early-semver")`
+// on `ir` makes sbt treat two different MINOR versions of it appearing
+// together as a hard conflict, not a silent eviction. The
+// `api-compatibility` CI job publishes base-ref's own module builds
+// alongside the PR's, all into the same shared local Ivy cache under each
+// module's own currently-declared version - base-ref's `fingerprint`
+// still pins `ir % 0.4.0` (unchanged on main), so if PR-head's
+// `fingerprint` published under the *same* "0.2.0" coordinate (now
+// declaring `ir % 0.5.0`), whichever publish ran last would silently
+// clobber the other's POM, and a downstream module resolving both
+// `ir % 0.4.0` directly and `ir % 0.5.0` transitively via that clobbered
+// `fingerprint` coordinate hits exactly this "found version conflict(s)"
+// failure - confirmed directly against a real CI run, not assumed. Version
+// coordinates for the SAME artifact name need to differ whenever what a
+// POM declares differs, even with zero code change, precisely so two
+// different dependency graphs can never collide under one coordinate like
+// this.
+
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
 // spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
 // "early-semver" is the accurate scheme.
@@ -71,7 +94,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.2.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.3.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the
