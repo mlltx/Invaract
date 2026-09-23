@@ -120,7 +120,8 @@ private[sparkadapter] object StaticDataQualityVerifier {
       notNull = if (!field.nullable) NullabilityFact.Proven else NullabilityFact.Unknown,
       equalsConstant = interpreted.collectFirst { case InterpretedFieldConstraint.Equals(v, t) => Property.EqualsConstant(v, t) },
       oneOf = interpreted.collectFirst { case InterpretedFieldConstraint.OneOf(vs, t) => Property.OneOf(vs, t) },
-      range = interpreted.collectFirst { case InterpretedFieldConstraint.Range(gte, gt, lte, lt) => Property.Range(gte, gt, lte, lt) }
+      range = interpreted.collectFirst { case InterpretedFieldConstraint.Range(gte, gt, lte, lt) => Property.Range(gte, gt, lte, lt) },
+      length = interpreted.collectFirst { case InterpretedFieldConstraint.Length(exact, min, max) => Property.Length(exact, min, max) }
     )
   }
 
@@ -134,12 +135,20 @@ private[sparkadapter] object StaticDataQualityVerifier {
       case r @ InterpretedFieldConstraint.Range(_, _, _, _) =>
         val required = Property.Range(r.gte, r.gt, r.lte, r.lt)
         DataQualityCheckResult(path, describeRange(required), rangeVerdict(state, required))
+      case l @ InterpretedFieldConstraint.Length(_, _, _) =>
+        val required = Property.Length(l.exact, l.min, l.max)
+        DataQualityCheckResult(path, describeLength(required), lengthVerdict(state, required))
     }
     notNullCheck ++ constraintChecks
   }
 
   private def describeRange(r: Property.Range): String =
     List(r.gte.map(v => s">= $v"), r.gt.map(v => s"> $v"), r.lte.map(v => s"<= $v"), r.lt.map(v => s"< $v")).flatten.mkString(" and ")
+
+  private def describeLength(l: Property.Length): String = l.exact match {
+    case Some(n) => s"LENGTH = $n"
+    case None    => List(l.min.map(v => s"LENGTH >= $v"), l.max.map(v => s"LENGTH <= $v")).flatten.mkString(" and ")
+  }
 
   private def notNullVerdict(state: ColumnPropertyState): DataQualityVerdict = state.notNull match {
     case NullabilityFact.Proven  => DataQualityVerdict.Guaranteed
@@ -197,6 +206,38 @@ private[sparkadapter] object StaticDataQualityVerifier {
   private def escapesAbove(p: Property.Range, required: Property.Range): Boolean = (upperValue(p), upperValue(required)) match {
     case (_, None)          => false
     case (None, Some(_))    => true
+    case (Some(pv), Some(rv)) => pv > rv
+  }
+
+  /** Exactly `rangeVerdict`'s own structure and tie-breaking conventions —
+    * `Guaranteed` when `state.length`'s envelope is already at least as
+    * tight as `required`'s (`p.tighten(required) == p`, the same
+    * `Property.Range.tighten` idiom `Property.Length.tighten` mirrors),
+    * `Violated` only when `p` provably *escapes* `required` on either
+    * side, `NotGuaranteed`/`NotStaticallyVerifiable` otherwise. Simpler
+    * than `rangeVerdict`: `Length` has no `gt`/`lt` exclusive-bound
+    * variant, so `exact.orElse(min)`/`exact.orElse(max)` are the whole of
+    * each side's own "lower"/"upper" value, with no inclusive/exclusive
+    * distinction to carry through an escape check.
+    */
+  private def lengthVerdict(state: ColumnPropertyState, required: Property.Length): DataQualityVerdict = state.length match {
+    case Some(p) if p.tighten(required) == p                                         => DataQualityVerdict.Guaranteed
+    case Some(p) if lengthEscapesBelow(p, required) || lengthEscapesAbove(p, required) => DataQualityVerdict.Violated
+    case _                                                                             => if (state.unsupported) DataQualityVerdict.NotStaticallyVerifiable else DataQualityVerdict.NotGuaranteed
+  }
+
+  private def lengthLowerValue(l: Property.Length): Option[Int] = l.exact.orElse(l.min)
+  private def lengthUpperValue(l: Property.Length): Option[Int] = l.exact.orElse(l.max)
+
+  private def lengthEscapesBelow(p: Property.Length, required: Property.Length): Boolean = (lengthLowerValue(p), lengthLowerValue(required)) match {
+    case (_, None)            => false // required has no lower bound: nothing to escape below
+    case (None, Some(_))      => true  // p is unbounded below, required is not: p can escape
+    case (Some(pv), Some(rv)) => pv < rv // strict: an exact tie is not a proven escape
+  }
+
+  private def lengthEscapesAbove(p: Property.Length, required: Property.Length): Boolean = (lengthUpperValue(p), lengthUpperValue(required)) match {
+    case (_, None)            => false
+    case (None, Some(_))      => true
     case (Some(pv), Some(rv)) => pv > rv
   }
 }

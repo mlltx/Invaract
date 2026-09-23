@@ -83,7 +83,7 @@ extensions:
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested field list, for `struct`/record types. |
 | `sensitivityTags` | no | List of governance labels (e.g. `[pii, financial]`) — see [Sensitivity tags](#sensitivity-tags) below. Defaults to none. |
-| `constraints` | no | List of `{type, ...}` static data-quality constraints (`equals`/`oneOf`/`range`) — see [Static data-quality constraints](#static-data-quality-constraints) below. Defaults to none. |
+| `constraints` | no | List of `{type, ...}` static data-quality constraints (`equals`/`oneOf`/`range`/`length`) — see [Static data-quality constraints](#static-data-quality-constraints) below. Defaults to none. |
 
 ### Known types
 
@@ -165,6 +165,11 @@ outputs:
           constraints:
             - type: range
               gte: 0
+        - name: identifier
+          type: string
+          constraints:
+            - type: length
+              exact: 10
 ```
 
 | `type` | Properties | Meaning |
@@ -172,6 +177,7 @@ outputs:
 | `equals` | `value` | The field must always equal this exact value. |
 | `oneOf` | `values` (non-empty list) | The field's value must always be one of these. |
 | `range` | any of `gte`/`gt`/`lte`/`lt` (numeric; at least one required; `gte`+`gt` or `lte`+`lt` together is malformed) | The field's numeric value must always fall within these bounds. |
+| `length` | `exact`, or either/both of `min`/`max` (non-negative integers; at least one required; `exact` combined with `min`/`max` is malformed, as is `min` > `max`) | The field's string length must always match `exact`, or fall within `min`/`max` (inclusive). |
 
 `NOT NULL` needs no entry here — `nullable: false` (above) already states it, and is
 proven by the same mechanism as any other constraint here. See

@@ -549,12 +549,60 @@ non-null, and now `struct(...)` itself proves it too).
 Connecting `checksForField`'s nested-field recursion to real tracing — resolving a
 declared nested obligation (`address.zip`'s own `nullable`/`constraints`) against the
 *actual* expression that produced `address`, not just marking it unconditionally
-unsupported — remains deferred, the same way §8/§9 already defer string constraints and
-cross-column relationship rules: it needs a way to recover the raw `ir.Expr` behind a
-named output column (not just its already-resolved `ColumnPropertyState`, all
-`PropertyAnalysis.analyze` returns today), then propagate an axiom through an *input*
-struct column's own nested-field declaration — a genuinely different, non-trivial slice
-of work, not a small addition to bolt onto this pass.
+unsupported — remains deferred, the same way §8/§9 defer cross-column relationship
+rules: it needs a way to recover the raw `ir.Expr` behind a named output column (not
+just its already-resolved `ColumnPropertyState`, all `PropertyAnalysis.analyze` returns
+today), then propagate an axiom through an *input* struct column's own nested-field
+declaration — a genuinely different, non-trivial slice of work, not a small addition to
+bolt onto this pass.
+
+### 3.9 String length constraints
+
+The brief's own worked example, `length(identifier) = 10`, named string length as a
+category to *investigate* — investigated and, for the `length` case specifically
+(pattern/regex remain out of scope; see §8/§9), now implemented: a new `Property`
+kind, `Property.Length(exact: Option[Int], min: Option[Int], max: Option[Int])`,
+mirroring `Range`'s own `exact`-or-`min`/`max` shape but simpler — a length is always a
+non-negative integer, so there's no `gt`/`lt` exclusive-bound variant to carry. The
+contract-facing side is `InterpretedFieldConstraint.Length`, decoded from a `length`
+`FieldConstraint` the same "closed vocabulary, malformed → `None`" way `Equals`/`OneOf`/
+`Range` already are (§5) — `exact` combined with `min`/`max` is rejected as
+contradictory, and (unlike `Property.Length` itself — see below) a declared `min > max`
+is rejected too, since a *human-authored* impossible range is a real mistake worth an
+`Error`, not something to represent and silently propagate.
+
+**The primary value path needed no new transfer function at all.** `ColumnPropertyState`
+gained a `length: Option[Property.Length]` field, combined by `tightenWith`/`unionWith`
+the same way `range` already is (`Length.tighten`/`Length.widen`, mirroring
+`Range.tighten`/`Range.widen`'s own "AND narrows, Union/CASE widens" roles). Since every
+existing plan/expression combinator (`Filter` narrowing, `Join` demotion, `Union`/
+`Conditional` widening, a pure passthrough `ColumnReference`/`Alias`) already threads the
+*whole* `ColumnPropertyState` through generically, an input contract's own declared
+`length` constraint on a field — seeded as an axiom by `StaticDataQualityVerifier`'s
+`fieldAxiomState`, the same way `notNull`/`range`/`oneOf`/`equalsConstant` already are —
+is provable through a pure passthrough for free (Example 5's own shape, now for length).
+`StaticDataQualityVerifier` gained one matching piece: `lengthVerdict`, structurally
+identical to `rangeVerdict` (§3.6) — `Guaranteed` when the proven envelope is already at
+least as tight as required (`p.tighten(required) == p`), `Violated` only when `p`
+provably *escapes* required on either side, `NotGuaranteed`/`NotStaticallyVerifiable`
+otherwise — simpler than `rangeVerdict` only in that there's no inclusive/exclusive
+distinction to carry through the escape check, so (unlike `Range`'s own boundary-tie
+case) an *exact* numeric tie between a proven and a required bound genuinely proves the
+constraint here, not merely a `NotGuaranteed` near-miss.
+
+A handful of expression-level transfer functions add real, deeper analysis beyond pure
+passthrough: a string `Literal` is provably its own exact length; `LENGTH`/
+`CHAR_LENGTH`/`CHARACTER_LENGTH` bridge a known `Length` fact on their argument to a
+numeric `Range` fact on their own result (a length-envelope fact and a value-range fact
+about a *different*, derived integer column, connected by one honest rule); `UPPER`/
+`LOWER` preserve length exactly (case conversion never changes character count); `TRIM`/
+`LTRIM`/`RTRIM` narrow to an upper bound only (trimming can only shrink a string, never
+grow it, and the amount actually removed is never statically knowable). `Cast` drops
+`length` entirely, the same "only `notNull` survives" MVP rule every other property
+already follows. This is deliberately not the full string-function transfer-function
+table §8/§9 originally scoped as a *second* MVP slice (`SUBSTRING`, `CONCAT`, `REPLACE`,
+...) — six functions covering the realistic "identifier normalization" shape, plus the
+axiom-passthrough path that needed no new code at all, not an attempt at completeness.
 
 ---
 
@@ -741,10 +789,9 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
 
 **In scope:**
 
-- Property kinds: `NotNull`, `EqualsConstant`, `OneOf`, `Range` (numeric only — no
-  string-length or pattern properties in MVP, despite the brief listing
-  `length(identifier) = 10` as a category to *investigate*; investigated and deferred,
-  see §9).
+- Property kinds: `NotNull`, `EqualsConstant`, `OneOf`, `Range` (numeric), `Length`
+  (string length — `exact` or `min`/`max`, added in a follow-up pass; see §3.9. Pattern/
+  regex properties remain out of scope, see below).
 - Plan nodes: `Read`, `Project`, `Filter`, `Join` (nullability-demotion only, per
   §3.5), `Union`, `Sort`, `Limit`, `Write`. `Aggregate`/`Window` deliberately return
   `Unknown` for every produced column in MVP (§3.2) — not because they're unsupported
@@ -773,6 +820,9 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   and `PropertyAnalysis` resolves the "construct, then extract, in the same plan"
   pattern to a real `Guaranteed`/`Violated`/`NotGuaranteed` verdict for a *top-level*
   output field whose own expression takes that shape. See §3.8.
+- String `length` constraints (`exact`/`min`/`max`) — axiom propagation through every
+  existing combinator for free, plus real transfer functions for `LENGTH`/
+  `CHAR_LENGTH`/`CHARACTER_LENGTH`/`UPPER`/`LOWER`/`TRIM`/`LTRIM`/`RTRIM`. See §3.9.
 
 **Explicitly outside the MVP** (§9 gives the reasoning, not just the list):
 
@@ -793,10 +843,14 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   treatment is in MVP).
 - Cast-aware preservation of `EqualsConstant`/`OneOf`/`Range` (only `NotNull`
   survives a `Cast` in MVP).
-- String constraints (`length`, pattern/regex) — genuinely useful (the brief lists
-  `length(identifier) = 10`), but needs its own small property kind and its own
-  transfer-function table per string function (`substring`, `concat`, `upper`,
-  `trim`, ...); a second, later MVP slice, not this one.
+- Pattern/regex string constraints — a genuinely different property shape (a finite
+  automaton or a `java.util.regex.Pattern`, not a bound), needing its own
+  representation entirely; not attempted alongside `length`.
+- The *remaining* string-function transfer functions (`SUBSTRING`, `CONCAT`,
+  `REPLACE`, `LPAD`/`RPAD`, ...) beyond the six §3.9 covers (`LENGTH` family, `UPPER`/
+  `LOWER`, `TRIM` family) — each needs its own, individually-reasoned rule the same
+  way `LENGTH`'s Length→Range bridge and `TRIM`'s upper-bound-only narrowing each
+  were; a further slice, not attempted here.
 - Expression-derived relationship properties (`total = quantity * price`) — this is
   a *different shape* of rule (a relationship between two output columns, or an
   output column and an input column, not a value-domain fact about one column in
@@ -834,14 +888,16 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   overflow and truncate; a `string` → `int` cast can produce a different-looking
   failure entirely) — correctly modeling that per type pair is real work, and getting
   it wrong produces a false `Guaranteed`, again the one thing to avoid above all.
-- **String properties are a second MVP, not this one**, even though the brief lists
-  `length(identifier) = 10` as investigate-worthy: it needs its own `Property` kind,
-  its own transfer functions per string `Function`, and doesn't share machinery with
-  `Range`/`OneOf`/`EqualsConstant` cleanly enough to bolt on for free. Landing four
-  well-tested kinds first, then a fifth once the pattern is proven (mirroring exactly
-  how the row-level-DML rules shipped three types first, and the plan-shape rules
-  shipped a second family only once that pattern held up), is the same discipline
-  this repo already applies elsewhere.
+- **String length landed as a real fifth `Property` kind, once the first four
+  proved the pattern out** — mirroring exactly how the row-level-DML rules shipped
+  three types first, and the plan-shape rules shipped a second family only once that
+  pattern held up (§3.9). It turned out to share more machinery with `Range` than
+  originally assumed: `Length.tighten`/`Length.widen` mirror `Range.tighten`/
+  `Range.widen` directly, and `ColumnPropertyState`'s generic combining meant the
+  primary (axiom-passthrough) value path needed zero new transfer-function code —
+  only the handful of real string-function rules (`LENGTH` family, `UPPER`/`LOWER`,
+  `TRIM` family) were genuinely new work. Pattern/regex properties remain a real
+  second MVP: they don't share `Range`'s bound-based shape at all.
 - **Expression-derived relationships (`total = quantity * price`) are a different
   question from every other rule in scope** — every other rule in this design is
   "does this one output column's value always lie in a set," checked via the

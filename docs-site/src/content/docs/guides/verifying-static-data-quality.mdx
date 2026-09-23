@@ -9,10 +9,11 @@ import { Aside } from '@astrojs/starlight/components';
 
 A contract can already require an output field to be non-null
 (`nullable: false`). Beyond that, a field can declare that it must always equal a
-specific constant, always be one of a finite set of values, or always fall within a
-numeric range — and Invaract will attempt to *prove*, from the transformation's own
-translated logic, that the requirement holds for every possible row, not just check it
-against whatever data happened to be present on one run.
+specific constant, always be one of a finite set of values, always fall within a
+numeric range, or (for a string-typed field) always have a specific length — and
+Invaract will attempt to *prove*, from the transformation's own translated logic, that
+the requirement holds for every possible row, not just check it against whatever data
+happened to be present on one run.
 
 <Aside type="caution" title="This proves guarantees, not predicts them">
 The objective is never "will this data quality rule probably pass?" — it's "does the
@@ -50,6 +51,11 @@ outputs:
           constraints:
             - type: range
               gte: 0
+        - name: identifier
+          type: string
+          constraints:
+            - type: length
+              exact: 10
 ```
 
 See [Reference → Contract Format](/reference/contract-format/#static-data-quality-constraints)
@@ -111,6 +117,10 @@ A few worked examples (the full set, mechanically traced, is in
   covered (there's an `ELSE`).
 - **A clamp** (`CASE WHEN amount < 0 THEN 0 ELSE amount END`) proves `constraints: [{type:
   range, gte: 0}]`, again with no input axiom.
+- **An input contract declaring `constraints: [{type: length, exact: 10}]` on an
+  `identifier` field**, passed straight through unchanged, proves the same `length: exact:
+  10` constraint on the output — the axiom flows through a pure passthrough for free, the
+  same mechanism `nullable: false`/`range` already use for Example 5's shape.
 - **Negating a column the input contract already guarantees non-negative** — `.withColumn("amount",
   -col("amount"))` — provably *violates* a `gte: 0` constraint on the output: the
   transformation's own logic guarantees the opposite of what's required, which is exactly
@@ -190,6 +200,12 @@ fact.
   column produced by extracting one field straight back out of a struct built in the same
   expression (e.g. `struct(col("zip"), col("city")).getField("zip")`) is checked for
   real too, the same as any other computed column.
+- **String constraints beyond `length`** — pattern/regex requirements aren't supported at
+  all. `length` itself is proven through a pure passthrough (an unchanged input column),
+  a string literal, `LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH`, `UPPER`/`LOWER`, and
+  `TRIM`/`LTRIM`/`RTRIM` — not the full string-function surface (`SUBSTRING`, `CONCAT`,
+  `REPLACE`, ... all resolve to `NotGuaranteed`, the same honest "I don't know" every
+  other unrecognized construct gets).
 - **Sampling, historical runs, or current data** — never consulted. Every proof (or
   disproof) comes from the transformation's translated logic and the contract's declared
   input properties alone.

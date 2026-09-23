@@ -43,6 +43,8 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
   private def oneOfConstraint(values: String*) = FieldConstraint(FieldConstraintType.OneOf, Map("values" -> java.util.Arrays.asList(values: _*)))
   private def rangeConstraint(gte: Option[Any] = None, lte: Option[Any] = None) =
     FieldConstraint(FieldConstraintType.Range, (gte.map("gte" -> _) ++ lte.map("lte" -> _)).toMap)
+  private def lengthConstraint(exact: Option[Any] = None, min: Option[Any] = None, max: Option[Any] = None) =
+    FieldConstraint(FieldConstraintType.Length, (exact.map("exact" -> _) ++ min.map("min" -> _) ++ max.map("max" -> _)).toMap)
 
   // --- Non-Write / non-matching plans -----------------------------------
 
@@ -339,6 +341,113 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
 
     val results = StaticDataQualityVerifier.verify(contract, plan)
     assert(results == List(DataQualityCheckResult("amount", "< 50", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  // --- Length constraints (§3.9) -------------------------------------------
+
+  test("a length constraint is Guaranteed from a string literal with the required exact length, with no input axiom at all") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("code", "string", constraints = List(lengthConstraint(exact = Some(10)))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "code", Literal("ABCDEFGHIJ", "string")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("code", "LENGTH = 10", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a length constraint propagates from a matched contract input's own declared length, through a pure passthrough (Example 5's shape)") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("identifier", "string", constraints = List(lengthConstraint(exact = Some(10)))))),
+      List(dataset("out", "gold.out", Field("identifier", "string", constraints = List(lengthConstraint(exact = Some(10))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "identifier", col("identifier", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("identifier", "LENGTH = 10", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a length constraint is Guaranteed when a proven min/max envelope is fully within a wider required min/max") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(min = Some(5), max = Some(10)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(min = Some(1), max = Some(50))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH >= 1 and LENGTH <= 50", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a length constraint is NotGuaranteed, not Violated, for a plain passthrough with no axiom at all") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(exact = Some(10)))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH = 10", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a length constraint is NotStaticallyVerifiable, not NotGuaranteed, when the column derives from a UDF") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(exact = Some(10)))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", UDF(Some("myFn"), List(col("raw_name")))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH = 10", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a length constraint is Violated when both sides have a genuine min and the proven one is strictly looser") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(min = Some(1)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(min = Some(5))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH >= 5", DataQualityVerdict.Violated)))
+  }
+
+  test("a length constraint is Violated when the proven side is unbounded above but the required side is bounded") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(min = Some(0)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(max = Some(20))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH <= 20", DataQualityVerdict.Violated)))
+  }
+
+  test("a length constraint is Violated when both sides have a genuine max and the proven one is strictly looser") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(max = Some(100)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(max = Some(50))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH <= 50", DataQualityVerdict.Violated)))
+  }
+
+  test("a length constraint sitting exactly on the required boundary is Guaranteed, an exact tie is a real proof (unlike Range's exclusive/inclusive tie)") {
+    // Length has no gt/lt exclusive variant, so an exact numeric tie between the proven and
+    // required bound genuinely proves the constraint - deliberately distinct from rangeVerdict's
+    // own boundary-tie test, which stays NotGuaranteed only because Range's exclusive/inclusive
+    // distinction makes an equal-valued tie NOT a proof there.
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(min = Some(5)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(min = Some(5))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH >= 5", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a length constraint's Violated verdict becomes a real Violation, the same as any other constraint kind") {
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", Field("code", "string", constraints = List(lengthConstraint(exact = Some(5)))))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "code", Literal("TOOLONG", "string")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("code", "LENGTH = 5", DataQualityVerdict.Violated)))
+    val violations = StaticDataQualityVerifier.violations(results)
+    assert(violations.size == 1)
+    assert(violations.head.violationType == ViolationType.DataQualityViolation)
   }
 
   // --- Struct/nested fields (checksForField's recursion) -------------------
