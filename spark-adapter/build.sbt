@@ -1025,6 +1025,13 @@ strykerThresholdsHigh := 90
 strykerThresholdsLow := 80
 strykerThresholdsBreak := 70
 
+// Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
+// comment for coverageScalacPluginVersion's own reasoning and the "measure
+// first, then pin" discipline behind the two thresholds below.
+coverageScalacPluginVersion := "2.4.2"
+coverageFailOnMinimum := true
+coverageHighlighting := true
+
 // API compatibility (MiMa) - see contract/build.sbt's comment for the full
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
