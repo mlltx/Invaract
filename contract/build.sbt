@@ -112,6 +112,18 @@ assembly / assemblyMergeStrategy := {
   case x => MergeStrategy.first
 }
 
+// Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
+// comment for coverageScalacPluginVersion's own reasoning (pins a runtime
+// release confirmed reachable from this environment, not chosen for any
+// technical reason over another) and the "measure first, then pin"
+// discipline behind the two thresholds below (measured stmt=89.03%,
+// branch=81.22% via a real `sbt coverage test coverageReport` run).
+coverageScalacPluginVersion := "2.4.2"
+coverageMinimumStmtTotal := 87
+coverageMinimumBranchTotal := 79
+coverageFailOnMinimum := true
+coverageHighlighting := true
+
 // API compatibility (MiMa): fails `sbt mimaReportBinaryIssues` if this
 // module's public API (Contract/Dataset/Schema/Field/ContractVersion/
 // ContractRule and ContractParser/ContractValidator/ContractCompatibility's

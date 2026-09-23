@@ -81,3 +81,14 @@ strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerThresholdsHigh := 80
 strykerThresholdsLow := 60
 strykerThresholdsBreak := 50
+
+// Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
+// comment for coverageScalacPluginVersion's own reasoning and the "measure
+// first, then pin" discipline behind the two thresholds below (measured
+// stmt=93.30%, branch=89.10% via a real `sbt coverage test coverageReport`
+// run).
+coverageScalacPluginVersion := "2.4.2"
+coverageMinimumStmtTotal := 91
+coverageMinimumBranchTotal := 87
+coverageFailOnMinimum := true
+coverageHighlighting := true

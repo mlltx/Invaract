@@ -96,6 +96,31 @@ strykerThresholdsHigh := 80
 strykerThresholdsLow := 60
 strykerThresholdsBreak := 50
 
+// Line/branch coverage gating (sbt-scoverage) - the guardrail CLAUDE.md's
+// Testing Strategy section (via ARCHITECTURE.md) had disclosed as still
+// outstanding: mutation testing above answers "does this code have tests
+// that would catch a change," a different, complementary question from
+// "does this code have tests at all." coverageScalacPluginVersion pins the
+// exact scalac-scoverage-plugin runtime release known reachable from this
+// environment (2.5.2, sbt-scoverage's own auto-selected default for this
+// Scala version, repeatedly hit a stale/edge-cached 429 on Maven Central
+// when resolved directly - confirmed by hand via direct HTTP HEAD requests
+// against several published versions - 2.4.2 does not) rather than a
+// version chosen for any technical reason over another; revisit if the
+// pinned version ever stops resolving instead of assuming this one is
+// special.
+coverageScalacPluginVersion := "2.4.2"
+// Measured via a real `sbt coverage test coverageReport` run against this
+// module's actual suite (statement 86.13%, branch 80.90%), then set a few
+// points below each - the same "measure first, then pin" discipline
+// `strykerThresholdsBreak` above already follows, not a guessed round
+// number, with headroom for minor fluctuation rather than pinning to the
+// exact measured value.
+coverageMinimumStmtTotal := 84
+coverageMinimumBranchTotal := 78
+coverageFailOnMinimum := true
+coverageHighlighting := true
+
 // API compatibility (MiMa) - see contract/build.sbt's comment for the full
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
 // compares against the PR's own base branch instead) and
