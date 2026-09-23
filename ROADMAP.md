@@ -3160,6 +3160,55 @@ that does reach every check regardless of outcome.
       `./dev/regression`'s pass/fail pair proves schema-level enforcement only, not a
       DQ-specific `Violated` abort via a real Docker regression run.
 
+#### Sub-phase: Static data-quality — nested struct field recursion (done)
+
+The first of the two gaps the sub-phase above surfaced: `contract.Field` already
+supports nesting (`properties: List[Field]`, docs/CONTRACT_MODEL.md), but
+`StaticDataQualityVerifier.verify` only walked `output.schema.fields` at the top
+level — a nested field's declared `nullable`/`constraints` produced no
+`DataQualityCheckResult` at all, not even an honest `NotStaticallyVerifiable`,
+silently doing nothing for something the contract model already promised a user
+could declare.
+
+- [x] **`checksForField` recursion** (`StaticDataQualityVerifier.scala`): recurses
+      into `field.properties` at any depth, reporting every nested field's own
+      declared obligation as `NotStaticallyVerifiable` — the same verdict an
+      unsupported construct (a UDF, a non-allowlisted function) already gets, since
+      `ir.PropertyAnalysis` has no `ir.Expr` node for struct member access
+      (`GetStructField`) and genuinely cannot trace into one yet. Never
+      `NotGuaranteed` (which would wrongly imply analysis was attempted and simply
+      inconclusive) and never silence (indistinguishable from "no constraints
+      declared"). A struct field's own top-level `nullable`/`constraints` are
+      unaffected, still checked through real `PropertyAnalysis` the same as any
+      other column. Reported under the full dotted path (`"address.geo.code"`) at
+      any nesting depth.
+- [x] **No MiMa impact**: `StaticDataQualityVerifier` is `private[sparkadapter]`,
+      not part of the checked public API surface — no version bump needed.
+- [x] **Tests**: `StaticDataQualityVerifierSpec` gained 6 cases — a nested NOT NULL
+      constraint, a nested value constraint (dotted path), two-level-deep recursion,
+      a struct field's own top-level check staying real/unaffected, a struct with no
+      constrained fields at all contributing nothing, and only-constrained-siblings
+      producing entries (unconstrained ones skipped) — 33/33 passing.
+- [x] **Documentation**: docs/STATIC_DATA_QUALITY_VERIFICATION.md gained a new §3.8
+      ("Struct/nested fields") and updated §8's MVP scope (in-scope: honest
+      `NotStaticallyVerifiable` recognition; explicitly-deferred: actually tracing
+      into struct member access, a `GetStructField` IR node/transfer function, a
+      genuinely separate slice of work per §9's own reasoning). docs-site's
+      [Verify Static Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx)
+      guide gained a matching bullet under "What this doesn't check yet."
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: scoped Stryker on `StaticDataQualityVerifier.scala` reached
+      **100%** (25/25 non-excluded mutants, zero survivors). `spark-adapter`'s full
+      suite passed (681/681). `./dev/build`/`./dev/test` both pass against real
+      `spark-submit`, `Status: PASS` — the real demo pipeline still declares no
+      struct fields, so unaffected by construction, confirmed rather than assumed.
+- [ ] **Still open** (the second of the two gaps the prior sub-phase surfaced, not
+      this one's to fix): no `demo/contracts/*.yaml` fixture exercises static data
+      quality — struct or flat — through a real `spark-submit` run at all; and
+      `./dev/regression` has no DQ-specific `Violated`-abort case. Both remain their
+      own follow-up.
+
 ---
 
 ## Phase 2 — Multi-Engine Support
