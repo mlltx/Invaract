@@ -32,7 +32,8 @@ import com.invaract.ir._
   */
 private[sparkadapter] object StaticDataQualityVerifier {
 
-  /** One `DataQualityCheckResult` per output field with a declared
+  /** One `DataQualityCheckResult` per output field (and, recursively, per
+    * nested struct field — see `checksForField`) with a declared
     * `nullable: false` and/or `constraints` property, against whichever of
     * `contract.outputs` `plan`'s `Write` matches (the same `matchOutput`
     * location-based rule `StructuralVerifier.verify` itself uses — a
@@ -48,10 +49,37 @@ private[sparkadapter] object StaticDataQualityVerifier {
         case Some(output) =>
           val axioms = buildAxioms(contract, plan)
           val analyzed = PropertyAnalysis.analyze(plan, axioms).map(r => r.output.name -> r.state).toMap
-          output.schema.fields.flatMap(field => checksFor(field, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown)))
+          output.schema.fields.flatMap(field => checksForField(field, field.name, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown)))
       }
     case _ => Nil
   }
+
+  /** Checks `field` itself against `state` (the real, analyzed state for a
+    * top-level field; an honestly-`unsupported` one for anything nested —
+    * see below), then recurses into `field.properties` for a struct/record
+    * field.
+    *
+    * `ir.PropertyAnalysis` has no `ir.Expr` node representing "access field
+    * X of a struct-valued column" — `Contract`'s schema model already
+    * supports declaring `nullable`/`constraints` on a nested field
+    * (`Field.properties`, see docs/CONTRACT_MODEL.md), but nothing in this
+    * analysis can trace *into* a struct's own member access to prove or
+    * refute anything about it. Every nested field (at any depth) therefore
+    * gets `ColumnPropertyState(unsupported = true)` — the same "genuinely
+    * analyzed but this construct is opaque" signal a UDF or an
+    * unrecognized function already produces, which resolves to
+    * `NotStaticallyVerifiable` below (see `notNullVerdict`/`setVerdict`/
+    * `rangeVerdict`) — never silently producing no `DataQualityCheckResult`
+    * at all (indistinguishable from "this field declares no constraints")
+    * and never `NotGuaranteed` (which would wrongly imply analysis was
+    * attempted and simply inconclusive, rather than never attempted).
+    * `path` is the dotted field path (`"address.zip"`) used as this
+    * result's own `field` name, so a violation or report entry for a
+    * nested field is still unambiguous.
+    */
+  private def checksForField(field: Field, path: String, state: ColumnPropertyState): List[DataQualityCheckResult] =
+    checksFor(field, path, state) ++
+      field.properties.flatMap(child => checksForField(child, s"$path.${child.name}", ColumnPropertyState(unsupported = true)))
 
   /** `Violation`s for every `Violated` entry in `results` — the only
     * verdict that ever blocks a write; see `ViolationType.DataQualityViolation`'s
@@ -96,16 +124,16 @@ private[sparkadapter] object StaticDataQualityVerifier {
     )
   }
 
-  private def checksFor(field: Field, state: ColumnPropertyState): List[DataQualityCheckResult] = {
-    val notNullCheck = if (!field.nullable) List(DataQualityCheckResult(field.name, "NOT NULL", notNullVerdict(state))) else Nil
+  private def checksFor(field: Field, path: String, state: ColumnPropertyState): List[DataQualityCheckResult] = {
+    val notNullCheck = if (!field.nullable) List(DataQualityCheckResult(path, "NOT NULL", notNullVerdict(state))) else Nil
     val constraintChecks = field.constraints.flatMap(_.interpret).map {
       case InterpretedFieldConstraint.Equals(v, _) =>
-        DataQualityCheckResult(field.name, s"= $v", setVerdict(state, Set(v)))
+        DataQualityCheckResult(path, s"= $v", setVerdict(state, Set(v)))
       case InterpretedFieldConstraint.OneOf(vs, _) =>
-        DataQualityCheckResult(field.name, s"IN (${vs.mkString(", ")})", setVerdict(state, vs))
+        DataQualityCheckResult(path, s"IN (${vs.mkString(", ")})", setVerdict(state, vs))
       case r @ InterpretedFieldConstraint.Range(_, _, _, _) =>
         val required = Property.Range(r.gte, r.gt, r.lte, r.lt)
-        DataQualityCheckResult(field.name, describeRange(required), rangeVerdict(state, required))
+        DataQualityCheckResult(path, describeRange(required), rangeVerdict(state, required))
     }
     notNullCheck ++ constraintChecks
   }

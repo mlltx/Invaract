@@ -341,6 +341,74 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     assert(results == List(DataQualityCheckResult("amount", "< 50", DataQualityVerdict.NotGuaranteed)))
   }
 
+  // --- Struct/nested fields (checksForField's recursion) -------------------
+
+  test("a NOT NULL constraint on a nested struct field is NotStaticallyVerifiable, not silently skipped") {
+    val nested = Field("zip", "string", nullable = false)
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", col("address")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a value constraint on a nested struct field is NotStaticallyVerifiable, with a dotted field path") {
+    val nested = Field("country", "string", constraints = List(equalsConstraint("US")))
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", col("address")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.country", "= US", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("recursion into nested fields goes arbitrarily deep, dotting the full path") {
+    val leaf = Field("code", "string", nullable = false)
+    val mid = Field("geo", "struct", properties = List(leaf))
+    val top = Field("address", "struct", properties = List(mid))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", top)))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", col("address")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.geo.code", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a struct field's own NOT NULL check still uses real top-level analysis, unaffected by nested recursion") {
+    val nested = Field("zip", "string") // nullable = true, no constraints of its own - contributes nothing
+    val struct = Field("address", "struct", nullable = false, properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val filtered = Filter(Read(DatasetRef("raw.orders")), Function("ISNOTNULL", List(col("address"))))
+    val plan = Write(DatasetRef("gold.out"), project(filtered, "address", col("address")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address", "NOT NULL", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a struct field with no declared constraints of its own, and no constrained nested fields, contributes nothing") {
+    val nested = Field("zip", "string") // nullable = true (default), no constraints
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", col("address")))
+
+    assert(StaticDataQualityVerifier.verify(contract, plan).isEmpty)
+  }
+
+  test("only constrained nested fields produce entries; unconstrained siblings are skipped, in declaration order") {
+    val zip = Field("zip", "string", nullable = false)
+    val city = Field("city", "string") // nothing to prove
+    val country = Field("country", "string", constraints = List(equalsConstraint("US")))
+    val struct = Field("address", "struct", properties = List(zip, city, country))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", col("address")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(
+      DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable),
+      DataQualityCheckResult("address.country", "= US", DataQualityVerdict.NotStaticallyVerifiable)
+    ))
+  }
+
   // --- violations() itself -------------------------------------------------
 
   test("violations extracts only the Violated entries, in order, leaving Guaranteed/NotGuaranteed/NotStaticallyVerifiable out") {

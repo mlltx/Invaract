@@ -494,6 +494,39 @@ an otherwise-`Unknown` result reports `NotStaticallyVerifiable` instead of
 `NotGuaranteed` — "we don't know because we couldn't look," not "we looked and it
 isn't there."
 
+### 3.8 Struct/nested fields
+
+`Field.properties` (docs/CONTRACT_MODEL.md) already lets a contract author declare
+`nullable`/`constraints` on a *nested* field of a struct/record-typed column — the
+schema model doesn't distinguish a top-level field from a nested one at all. This
+analysis does, though: `PropertyAnalysis`/`ir.Expr` has no node representing "access
+field X of a struct-valued column" (no Catalyst `GetStructField` translation exists
+in `SparkPlanAdapter` either), so nothing here can trace *into* a struct's own member
+access to prove or refute anything about it.
+
+Rather than silently producing no `DataQualityCheckResult` for a nested field's
+declared obligation at all — indistinguishable from "this field declares no
+constraints," and a real, if narrow, gap in what a contract author reasonably
+expects a declared constraint to do — `StaticDataQualityVerifier.checksForField`
+recurses into every output field's `properties`, at any depth, and reports every
+nested field's own declared `nullable`/`constraints` obligations as
+`NotStaticallyVerifiable`: the same verdict an unsupported construct (a UDF, a
+non-allowlisted function) already gets *before* this recursion existed, applying
+§3.7's own principle one more time — "we don't know because we couldn't look," never
+a false `NotGuaranteed` implying analysis was attempted and simply inconclusive. A
+nested field's *own* nested fields (a struct within a struct) recurse the same way,
+each reported under its full dotted path (`"address.geo.code"`). The struct field
+itself, at the top level, is unaffected — its own `nullable`/`constraints` still go
+through real `PropertyAnalysis`, the same as any other top-level column (e.g. a
+`WHERE address IS NOT NULL` filter still proves the whole struct column non-null).
+
+Actually tracing *into* struct member access — a real `ir.Expr` node, a
+`SparkPlanAdapter` translation case, and a `PropertyAnalysis` transfer function for
+it — is deferred the same way §8/§9 already defer string constraints and
+cross-column relationship rules: a genuinely different, non-trivial slice of work
+(constructing a struct, projecting a field back out through it, propagating an input
+axiom through a `GetStructField` node), not a small addition to bolt onto this pass.
+
 ---
 
 ## 4. Where this lives: module boundaries
@@ -701,9 +734,18 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
 - The four-state verdict, with `Violated` wired into real enforcement
   (`ViolationType.DataQualityViolation`) and the other three reporting-only.
 - `spark.invaract.staticDataQuality` conf key (External Attachability).
+- A nested (`Field.properties`) field's own declared `nullable`/`constraints`
+  obligations are recognized and reported — as `NotStaticallyVerifiable`, honestly,
+  never silently skipped nor a false `NotGuaranteed` — added in a follow-up pass
+  after this design's initial implementation shipped; see §3.8.
 
 **Explicitly outside the MVP** (§9 gives the reasoning, not just the list):
 
+- Actually *tracing into* struct member access — an `ir.Expr` node for
+  `GetStructField`, a `SparkPlanAdapter` translation case, and a `PropertyAnalysis`
+  transfer function for it, so a nested field's obligation could reach `Guaranteed`/
+  `Violated` the same way a top-level one already can. §3.8 covers what *is* in scope
+  today (honest `NotStaticallyVerifiable` recognition) and why the rest is deferred.
 - `Aggregate`/`Window` value-domain rules (only their *nullability-safe-Unknown*
   treatment is in MVP).
 - Cast-aware preservation of `EqualsConstant`/`OneOf`/`Range` (only `NotNull`

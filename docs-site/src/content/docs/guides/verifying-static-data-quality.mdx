@@ -179,6 +179,12 @@ fact.
   reference or literal) doesn't get the same conditional narrowing a bare column reference
   does — a documented MVP simplification, not a soundness gap (it only ever under-claims,
   never over-claims, a guarantee).
+- **A constraint declared on a nested (struct/record) field** — `constraints`/`nullable:
+  false` on a field's own [nested `properties`](/reference/contract-format/) — is
+  recognized rather than silently ignored, but always reports `NotStaticallyVerifiable`:
+  this analysis can't yet trace into a struct column's own member access to prove or
+  refute anything about a field inside it. The struct field *itself* (at the top level)
+  is unaffected — its own `nullable`/`constraints` are checked normally.
 - **Sampling, historical runs, or current data** — never consulted. Every proof (or
   disproof) comes from the transformation's translated logic and the contract's declared
   input properties alone.
