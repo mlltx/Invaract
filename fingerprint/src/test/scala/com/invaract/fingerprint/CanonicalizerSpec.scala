@@ -286,6 +286,50 @@ class CanonicalizerSpec extends AnyFunSuite {
   }
 
   // -----------------------------------------------------------------
+  // StructField / StructConstruct
+  // -----------------------------------------------------------------
+
+  test("StructField's fieldName participates in the encoding") {
+    val struct = ColumnReference(ColumnRef("address"))
+    assert(encodeExpr(StructField(struct, "zip")) != encodeExpr(StructField(struct, "city")))
+  }
+
+  test("StructField's own struct expression participates in the encoding") {
+    val a = ColumnReference(ColumnRef("a"))
+    val b = ColumnReference(ColumnRef("b"))
+    assert(encodeExpr(StructField(a, "zip")) != encodeExpr(StructField(b, "zip")))
+  }
+
+  test("StructField and a plain Function of the same name/args do not collide in the encoding") {
+    val struct = ColumnReference(ColumnRef("address"))
+    assert(encodeExpr(StructField(struct, "zip")) != encodeExpr(Function("zip", List(struct))))
+  }
+
+  test("StructConstruct field ORDER DOES affect the encoding (not normalised, unlike Aggregate.groupBy)") {
+    val a = "a" -> ColumnReference(ColumnRef("a")): (String, Expr)
+    val b = "b" -> ColumnReference(ColumnRef("b")): (String, Expr)
+    assert(encodeExpr(StructConstruct(List(a, b))) != encodeExpr(StructConstruct(List(b, a))))
+  }
+
+  test("StructConstruct field NAMEs participate in the encoding, not just values") {
+    val value = Literal(1, "integer")
+    assert(encodeExpr(StructConstruct(List("a" -> value))) != encodeExpr(StructConstruct(List("b" -> value))))
+  }
+
+  test("StructConstruct field VALUEs participate in the encoding, not just names") {
+    assert(encodeExpr(StructConstruct(List("a" -> Literal(1, "integer")))) != encodeExpr(StructConstruct(List("a" -> Literal(2, "integer")))))
+  }
+
+  test("an empty StructConstruct has a stable, non-crashing encoding, distinguishable from a single-field one") {
+    assert(encodeExpr(StructConstruct(Nil)) != encodeExpr(StructConstruct(List("a" -> Literal(1, "integer")))))
+  }
+
+  test("StructField(StructConstruct(...), name) round-trips through the encoder deterministically") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    assert(encodeExpr(StructField(built, "zip")) == encodeExpr(StructField(built, "zip")))
+  }
+
+  // -----------------------------------------------------------------
   // Deep expression resolution through nested/passthrough Projects
   // -----------------------------------------------------------------
 
@@ -448,5 +492,34 @@ class CanonicalizerSpec extends AnyFunSuite {
     val outerSwapped = Project(Join(customers, orders, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("id")))))
     assert(Canonicalizer.resolvedOutputs(outerOriginal)("out") == ColumnReference(ColumnRef("id", Some("raw.orders"))))
     assert(Canonicalizer.resolvedOutputs(outerSwapped)("out") == ColumnReference(ColumnRef("id", Some("raw.customers"))))
+  }
+
+  // -----------------------------------------------------------------
+  // Deep resolution reaches inside StructField / StructConstruct too
+  // -----------------------------------------------------------------
+
+  test("resolveExprDeep reaches through a StructField's own struct expression to inline a passthrough reference") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val inner = Project(orders, List(NamedExpr("amt", Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(BigDecimal("1.1"), "decimal"))))))
+    val built = StructConstruct(List("total" -> ColumnReference(ColumnRef("amt"))))
+    val outer = Project(inner, List(NamedExpr("out", StructField(built, "total"))))
+
+    val resolved = Canonicalizer.resolvedOutputs(outer)("out")
+    resolved match {
+      case StructField(StructConstruct(List(("total", Arithmetic("*", _)))), "total") => // expected: the passthrough "amt" reference was inlined to its real computation
+      case other => fail(s"expected the struct's own field value to be deeply resolved, got $other")
+    }
+  }
+
+  test("resolveExprDeep reaches through every field of a StructConstruct, not only the first") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val inner = Project(orders, List(NamedExpr("a", Arithmetic("+", List(ColumnReference(ColumnRef("x", Some("raw.orders"))), Literal(1, "integer"))))))
+    val built = StructConstruct(List("first" -> Literal(0, "integer"), "second" -> ColumnReference(ColumnRef("a"))))
+    val outer = Project(inner, List(NamedExpr("out", built)))
+
+    Canonicalizer.resolvedOutputs(outer)("out") match {
+      case StructConstruct(List(("first", Literal(0, "integer")), ("second", Arithmetic("+", _)))) => // expected
+      case other => fail(s"expected the second field's passthrough reference to be deeply resolved too, got $other")
+    }
   }
 }

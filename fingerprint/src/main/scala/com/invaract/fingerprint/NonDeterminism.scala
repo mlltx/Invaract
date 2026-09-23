@@ -78,6 +78,8 @@ object NonDeterminism {
       // An unrepresented construct is exactly as unknowable here as a UDF
       // - this module cannot say whether it's deterministic either.
       combine(None :: children.map(classify))
+    case StructField(struct, _) => classify(struct)
+    case StructConstruct(fields) => combine(Some(false) :: fields.map(f => classify(f._2)))
   }
 
   /** Combines several classifications conservatively: any `None` makes the

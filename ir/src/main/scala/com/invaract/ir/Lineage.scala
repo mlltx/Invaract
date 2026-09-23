@@ -266,6 +266,16 @@ object Lineage {
       // is opaque by definition, the same "opaque anywhere wins" rule a
       // nested UDF gets.
       traverseT(children)(resolveExprT(_, input)).map(ps => combineOperation(ps).copy(derivation = DerivationKind.Opaque))
+    case StructField(struct, _) =>
+      // A field projection is a real operation on the struct's own
+      // provenance (never Direct, even when the struct itself is), the
+      // same treatment Cast already gets - accessing .zip is itself a
+      // computation step, not a pure passthrough of the whole struct.
+      tailcall(resolveExprT(struct, input)).map(p => combineOperation(List(p)))
+    case StructConstruct(fields) =>
+      // Building a struct from its field values, the same treatment
+      // Function's own argument list gets.
+      traverseT(fields.map(_._2))(resolveExprT(_, input)).map(combineOperation)
   }
 
   /** Combines the resolved provenances of a real operation's operands

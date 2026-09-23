@@ -409,6 +409,41 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     ))
   }
 
+  test("a top-level field built by struct(...) is itself provably NOT NULL via the new StructConstruct resolution, even though its own nested fields stay NotStaticallyVerifiable") {
+    val nested = Field("zip", "string", nullable = false)
+    val struct = Field("address", "struct", nullable = false, properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // The top-level NOT NULL is now a real Guaranteed (a freshly-constructed
+    // struct is provably non-null - ir.PropertyAnalysis's new StructConstruct
+    // case), while the nested "address.zip" check stays
+    // NotStaticallyVerifiable: checksForField's own recursion into
+    // Field.properties is deliberately unconnected to this - see its own doc
+    // for why (no axiom representation for a struct's internal fields).
+    assert(results == List(
+      DataQualityCheckResult("address", "NOT NULL", DataQualityVerdict.Guaranteed),
+      DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)
+    ))
+  }
+
+  test("a top-level field that extracts one of its own just-constructed fields is checked with a real, proven verdict") {
+    // e.g. `struct(col("zip"), col("city")).getField("zip").as("just_zip")` -
+    // a flat (non-nested-in-the-contract) output field whose own expression
+    // happens to be StructField(StructConstruct(...), name); this is exactly
+    // the "construct, then extract, in the same plan" pattern
+    // ir.PropertyAnalysis's new resolution traces through.
+    val field = Field("just_zip", "string", constraints = List(equalsConstraint("94107")))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", field)))
+    val built = StructConstruct(List("zip" -> Literal("94107", "string"), "city" -> Literal("SF", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "just_zip", StructField(built, "zip")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("just_zip", "= 94107", DataQualityVerdict.Guaranteed)))
+  }
+
   // --- violations() itself -------------------------------------------------
 
   test("violations extracts only the Violated entries, in order, leaving Guaranteed/NotGuaranteed/NotStaticallyVerifiable out") {

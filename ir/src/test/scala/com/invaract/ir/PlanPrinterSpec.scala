@@ -252,4 +252,13 @@ class PlanPrinterSpec extends AnyFunSuite {
     val withoutSpec = Window(orders, windowExprs)
     assert(PlanPrinter.render(withoutSpec).contains("Window()"))
   }
+
+  test("render shows StructField as dotted-field access, and StructConstruct as a named STRUCT(...) literal") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val built = StructConstruct(List("zip" -> Literal("94107", "string"), "city" -> ColumnReference(ColumnRef("city", Some("raw.orders")))))
+    val plan = Project(orders, List(NamedExpr("z", StructField(built, "zip"))))
+
+    val rendered = PlanPrinter.render(plan)
+    assert(rendered.contains("z = STRUCT(zip: 94107, city: raw.orders.city).zip"))
+  }
 }

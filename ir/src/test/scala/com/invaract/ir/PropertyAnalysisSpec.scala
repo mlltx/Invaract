@@ -408,6 +408,65 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     assert(results.size == 1, s"expected alignment to the narrowest (1-column) branch, got ${results.size} columns")
   }
 
+  // --- Struct/nested fields: construct-then-extract (§3.8) --------------------
+
+  test("StructField(StructConstruct(...), name): resolves straight through to the matching field's own value state") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string"), "city" -> Literal("SF", "string")))
+    val state = analyzeOne(project(read(), "z", StructField(built, "zip")))
+    assert(state.equalsConstant.contains(Property.EqualsConstant("94107", "string")))
+    assert(!state.unsupported)
+  }
+
+  test("StructField(StructConstruct(...), name): picks the field actually named, not merely the first one") {
+    val built = StructConstruct(List("a" -> Literal(1, "integer"), "b" -> Literal(2, "integer")))
+    val stateA = analyzeOne(project(read(), "x", StructField(built, "a")))
+    val stateB = analyzeOne(project(read(), "x", StructField(built, "b")))
+    assert(stateA.equalsConstant.contains(Property.EqualsConstant(1, "integer")))
+    assert(stateB.equalsConstant.contains(Property.EqualsConstant(2, "integer")))
+  }
+
+  test("StructField(StructConstruct(...), name): a real axiom-backed range flows through the extracted field too") {
+    val axioms = Map(ColumnRef("amount", Some(source.location)) -> ColumnPropertyState(range = Some(Property.Range(gte = Some(0)))))
+    val built = StructConstruct(List("amt" -> col("amount", Some(source.location))))
+    val state = analyzeOne(project(read(), "x", StructField(built, "amt")), axioms)
+    assert(state.range.contains(Property.Range(gte = Some(0))))
+  }
+
+  test("StructField(StructConstruct(...), name): a name not present among the constructed fields is Unknown-with-unsupported") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val state = analyzeOne(project(read(), "x", StructField(built, "missing_field")))
+    assert(state == ColumnPropertyState.Unknown.copy(unsupported = true))
+  }
+
+  test("StructField(other, name): any non-StructConstruct struct expression is Unknown-with-unsupported, even over a Proven-axiom column") {
+    val axioms = Map(ColumnRef("address", Some(source.location)) -> ColumnPropertyState(notNull = NullabilityFact.Proven))
+    val state = analyzeOne(project(read(), "x", StructField(col("address", Some(source.location)), "zip")), axioms)
+    assert(state.unsupported)
+    assert(state.notNull == NullabilityFact.Unknown, "the input struct's own axiom must not leak into an unresolvable nested-field access")
+  }
+
+  test("StructField(other, name): a struct value wrapped in a UDF stays Unknown-with-unsupported, not a crash") {
+    val state = analyzeOne(project(read(), "x", StructField(UDF(Some("f"), Nil), "zip")))
+    assert(state.unsupported)
+  }
+
+  test("StructConstruct: a freshly-built struct is provably NotNull, regardless of any individual field's own nullability") {
+    val built = StructConstruct(List("zip" -> Literal(null, "string"), "city" -> Literal("SF", "string")))
+    val state = analyzeOne(project(read(), "addr", built))
+    assert(state.notNull == NullabilityFact.Proven, "constructing the struct itself never yields SQL NULL, independent of its fields")
+  }
+
+  test("StructConstruct: NotNull holds even when a field's own value is opaque (a UDF)") {
+    val built = StructConstruct(List("risk" -> UDF(Some("f"), Nil)))
+    val state = analyzeOne(project(read(), "addr", built))
+    assert(state.notNull == NullabilityFact.Proven)
+  }
+
+  test("StructConstruct: an empty struct construction is still provably NotNull") {
+    val state = analyzeOne(project(read(), "addr", StructConstruct(Nil)))
+    assert(state.notNull == NullabilityFact.Proven)
+  }
+
   test("Conditional: a later branch's narrowing correctly inherits an EARLIER branch's condition negated, not asserted true") {
     // WHEN amount < 0 THEN -1
     // WHEN amount < 10 THEN amount   -- must be narrowed by NOT(amount < 0) i.e. amount >= 0, combined with amount < 10

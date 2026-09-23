@@ -498,34 +498,63 @@ isn't there."
 
 `Field.properties` (docs/CONTRACT_MODEL.md) already lets a contract author declare
 `nullable`/`constraints` on a *nested* field of a struct/record-typed column — the
-schema model doesn't distinguish a top-level field from a nested one at all. This
-analysis does, though: `PropertyAnalysis`/`ir.Expr` has no node representing "access
-field X of a struct-valued column" (no Catalyst `GetStructField` translation exists
-in `SparkPlanAdapter` either), so nothing here can trace *into* a struct's own member
-access to prove or refute anything about it.
+schema model doesn't distinguish a top-level field from a nested one at all.
 
-Rather than silently producing no `DataQualityCheckResult` for a nested field's
-declared obligation at all — indistinguishable from "this field declares no
-constraints," and a real, if narrow, gap in what a contract author reasonably
-expects a declared constraint to do — `StaticDataQualityVerifier.checksForField`
-recurses into every output field's `properties`, at any depth, and reports every
-nested field's own declared `nullable`/`constraints` obligations as
-`NotStaticallyVerifiable`: the same verdict an unsupported construct (a UDF, a
-non-allowlisted function) already gets *before* this recursion existed, applying
-§3.7's own principle one more time — "we don't know because we couldn't look," never
-a false `NotGuaranteed` implying analysis was attempted and simply inconclusive. A
-nested field's *own* nested fields (a struct within a struct) recurse the same way,
-each reported under its full dotted path (`"address.geo.code"`). The struct field
-itself, at the top level, is unaffected — its own `nullable`/`constraints` still go
-through real `PropertyAnalysis`, the same as any other top-level column (e.g. a
-`WHERE address IS NOT NULL` filter still proves the whole struct column non-null).
+Struct member access is now a real, first-class part of the IR: `ir.Expr` gained
+`StructField(struct: Expr, fieldName: String)` and `StructConstruct(fields: List[(String,
+Expr)])`, `SparkPlanAdapter` translates Catalyst's `GetStructField`/`CreateNamedStruct`
+into them (matched *before* the generic `Function`/`UnknownExpression` fallback — both
+constructs' own `prettyName`s are unhelpful/generic, `"getstructfield"` and
+`"named_struct"`, which would otherwise lose the actual field name entirely), and
+`ir.Lineage`/`ir.PlanPrinter`/`fingerprint`'s `Canonicalizer`/`NonDeterminism` all carry
+real cases for both. This closes a genuine, independent mistranslation bug (a struct
+field access or construction used to be silently absorbed into a lossy `Function`/
+`UnknownExpression` node), regardless of what it enables for data-quality verification.
 
-Actually tracing *into* struct member access — a real `ir.Expr` node, a
-`SparkPlanAdapter` translation case, and a `PropertyAnalysis` transfer function for
-it — is deferred the same way §8/§9 already defer string constraints and
-cross-column relationship rules: a genuinely different, non-trivial slice of work
-(constructing a struct, projecting a field back out through it, propagating an input
-axiom through a `GetStructField` node), not a small addition to bolt onto this pass.
+`PropertyAnalysis` builds on this with one deliberately bounded transfer function: the
+*"construct, then immediately extract one of its own fields, in the same plan"* pattern
+— `StructField(StructConstruct(fields), fieldName)` — resolves straight through to that
+field's own value expression, exactly like Example 3's `CASE WHEN` resolution but for a
+struct field instead of a flat column. A freshly-built `StructConstruct` is also
+unconditionally `notNull = Proven` (constructing a struct is never itself SQL `NULL`,
+independent of any individual field's own nullability). Both are exercised automatically
+by `StaticDataQualityVerifier.verify`'s existing top-level `PropertyAnalysis.analyze`
+call — no `StaticDataQualityVerifier` code change was needed for a *top-level* output
+field whose own expression happens to take this shape (e.g. `struct(col("zip"),
+col("city")).getField("zip").as("just_zip")` now resolves to a real `Guaranteed`/
+`Violated`/`NotGuaranteed` verdict, not `NotStaticallyVerifiable`).
+
+Any *other* struct-valued expression — a bare reference to a struct-typed column (e.g.
+one read straight from a `Read`, with no `StructConstruct` in the same expression), the
+result of a UDF, or a nested `StructField` reached through one of those — still resolves
+to `Unknown`-with-`unsupported`: this analysis has no axiom representation for a struct's
+own *internal* fields (axioms are seeded per flat `Read`-scoped column only, never per
+nested field of a struct-typed one), so nothing here can prove or refute anything reached
+through it. That is exactly the harder case `Field.properties` recursion below still
+defers.
+
+`StaticDataQualityVerifier.checksForField`'s own recursion into `Field.properties` is
+unchanged by any of this and remains deliberately disconnected from the new
+`StructField`/`StructConstruct` resolution: it still unconditionally reports every
+nested field's own declared `nullable`/`constraints` obligations (at any depth, each
+under its full dotted path, e.g. `"address.geo.code"`) as `NotStaticallyVerifiable` —
+the same verdict an unsupported construct (a UDF, a non-allowlisted function) already
+gets, applying §3.7's own principle — "we don't know because we couldn't look," never a
+false `NotGuaranteed` implying analysis was attempted and simply inconclusive. The struct
+field itself, at the top level, is unaffected either way — its own `nullable`/
+`constraints` still go through real `PropertyAnalysis`, the same as any other top-level
+column (e.g. a `WHERE address IS NOT NULL` filter still proves the whole struct column
+non-null, and now `struct(...)` itself proves it too).
+
+Connecting `checksForField`'s nested-field recursion to real tracing — resolving a
+declared nested obligation (`address.zip`'s own `nullable`/`constraints`) against the
+*actual* expression that produced `address`, not just marking it unconditionally
+unsupported — remains deferred, the same way §8/§9 already defer string constraints and
+cross-column relationship rules: it needs a way to recover the raw `ir.Expr` behind a
+named output column (not just its already-resolved `ColumnPropertyState`, all
+`PropertyAnalysis.analyze` returns today), then propagate an axiom through an *input*
+struct column's own nested-field declaration — a genuinely different, non-trivial slice
+of work, not a small addition to bolt onto this pass.
 
 ---
 
@@ -738,14 +767,28 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   obligations are recognized and reported — as `NotStaticallyVerifiable`, honestly,
   never silently skipped nor a false `NotGuaranteed` — added in a follow-up pass
   after this design's initial implementation shipped; see §3.8.
+- Struct member access is now a real `ir.Expr` node (`StructField`/`StructConstruct`),
+  translated by `SparkPlanAdapter` from Catalyst's `GetStructField`/`CreateNamedStruct`
+  — a genuine translation-correctness fix independent of data-quality verification —
+  and `PropertyAnalysis` resolves the "construct, then extract, in the same plan"
+  pattern to a real `Guaranteed`/`Violated`/`NotGuaranteed` verdict for a *top-level*
+  output field whose own expression takes that shape. See §3.8.
 
 **Explicitly outside the MVP** (§9 gives the reasoning, not just the list):
 
-- Actually *tracing into* struct member access — an `ir.Expr` node for
-  `GetStructField`, a `SparkPlanAdapter` translation case, and a `PropertyAnalysis`
-  transfer function for it, so a nested field's obligation could reach `Guaranteed`/
-  `Violated` the same way a top-level one already can. §3.8 covers what *is* in scope
-  today (honest `NotStaticallyVerifiable` recognition) and why the rest is deferred.
+- Connecting `checksForField`'s nested (`Field.properties`) recursion to the new
+  `StructField`/`StructConstruct` tracing — resolving a *nested* field's own declared
+  obligation against the actual expression that produced its parent struct, so it could
+  reach `Guaranteed`/`Violated` the same way a top-level field already can, instead of
+  the unconditional `NotStaticallyVerifiable` it still gets today. §3.8 covers what *is*
+  in scope now (top-level construct-then-extract resolution, and honest
+  `NotStaticallyVerifiable` recognition for everything else) and why the rest is
+  deferred.
+- Any struct-valued expression that isn't a `StructConstruct` built in the same
+  expression — a bare reference to an existing struct-typed column (e.g. one read
+  straight from a `Read`), the result of a UDF, or a `StructField` reached through one of
+  those — stays `Unknown`-with-`unsupported`: no axiom representation exists for a
+  struct's own internal fields.
 - `Aggregate`/`Window` value-domain rules (only their *nullability-safe-Unknown*
   treatment is in MVP).
 - Cast-aware preservation of `EqualsConstant`/`OneOf`/`Range` (only `NotNull`

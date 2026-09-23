@@ -15,7 +15,9 @@ import org.apache.spark.sql.catalyst.expressions.{
   BinaryComparison,
   CaseWhen,
   Cast,
+  CreateNamedStruct,
   Expression,
+  GetStructField,
   If,
   NamedExpression,
   Not,
@@ -787,6 +789,31 @@ private[sparkadapter] object SparkPlanAdapter {
 
       case c: Cast =>
         ir.Cast(translateExpr(c.child), typeNameOf(c.dataType))
+
+      // Struct field access (`col("address").getField("zip")`, or plain
+      // dot syntax `col("address.zip")`) - matched before the generic
+      // Expression fallback since GetStructField.prettyName is the
+      // unhelpful "getstructfield", which would otherwise translate to
+      // ir.Function("GETSTRUCTFIELD", ...) with no trace of *which* field
+      // was accessed at all. `.name` is populated whenever the struct's
+      // own schema is resolvable (confirmed directly against a real
+      // analyzed plan, not assumed) - the childSchema lookup is the same
+      // fallback Catalyst's own `GetStructField.name` getter uses
+      // internally for the rare case it isn't.
+      case gsf: GetStructField =>
+        val fieldName = gsf.name.getOrElse(gsf.childSchema(gsf.ordinal).name)
+        ir.StructField(translateExpr(gsf.child), fieldName)
+
+      // Struct construction (`struct(...)`/`F.struct(...)`) - matched for
+      // the same reason as GetStructField above: CreateNamedStruct
+      // .prettyName is "named_struct", and its `children` are a flat,
+      // alternating [nameLiteral1, value1, nameLiteral2, value2, ...] list
+      // only CreateNamedStruct itself knows the pairing convention for.
+      // `.names`/`.valExprs` are CreateNamedStructLike's own convenience
+      // accessors over that same pairing, confirmed directly against a
+      // real analyzed plan rather than hand-parsing `children`.
+      case cns: CreateNamedStruct =>
+        ir.StructConstruct(cns.names.map(String.valueOf).zip(cns.valExprs.map(translateExpr)).toList)
 
       // The window spec (partition/order/frame) is captured once at the
       // plan level by ir.Window; re-representing it per expression here

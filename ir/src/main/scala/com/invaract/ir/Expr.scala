@@ -185,6 +185,45 @@ case class AggregateCall(function: String, arg: Expr, distinct: Boolean = false)
   def references: Set[ColumnRef] = arg.references
 }
 
+/** Access to a single named field of a struct/record-valued expression —
+  * Catalyst's `GetStructField`. Broken out from `Function` for the same
+  * reason `Cast`/`Arithmetic`/`Comparison` already are: this is a
+  * distinct, universally-recognized operation (a fixed field-name
+  * projection out of a nested value), not a named function applied to
+  * arguments — and unlike those, `Function`'s generic fallback would
+  * actively lose information here: Catalyst's own `GetStructField
+  * .prettyName` is the unhelpful `"getstructfield"`, which carries no
+  * trace of *which* field was accessed at all, silently discarding
+  * exactly the one piece of information (`fieldName`) any lineage trace,
+  * semantic fingerprint, or contract check needs to make sense of the
+  * access afterward.
+  *
+  * `struct` is usually an `ir.StructConstruct` (a struct literally built
+  * in the same plan) or an `ir.ColumnReference` (an existing struct-typed
+  * column, e.g. one read from the input), but is deliberately typed as
+  * the general `Expr` — any expression that evaluates to a struct is a
+  * legal target, including a nested `StructField` itself (a struct within
+  * a struct).
+  */
+case class StructField(struct: Expr, fieldName: String) extends Expr {
+  def references: Set[ColumnRef] = struct.references
+}
+
+/** Constructs a struct/record value from named fields — Catalyst's
+  * `CreateNamedStruct` (what `struct(...)`/`F.struct(...)` compiles to).
+  * Broken out from `Function` for the same reason `StructField` above is:
+  * `CreateNamedStruct.prettyName` is `"named_struct"`, and its `children`
+  * are a flat, alternating `[nameLiteral1, value1, nameLiteral2, value2,
+  * ...]` list — a shape only `CreateNamedStruct` itself knows the pairing
+  * convention for. Representing it as `fields: List[(String, Expr)]`
+  * (paired up front, once, at translation time) means nothing downstream
+  * (lineage tracing, fingerprinting, property analysis) needs to
+  * rediscover that pairing convention itself.
+  */
+case class StructConstruct(fields: List[(String, Expr)]) extends Expr {
+  def references: Set[ColumnRef] = fields.flatMap(_._2.references).toSet
+}
+
 /** An expression a front-end translator could not represent in this IR's
   * vocabulary — the expression-level counterpart to `UnknownPlan`.
   * Contributes no known column references, so lineage tracing degrades to

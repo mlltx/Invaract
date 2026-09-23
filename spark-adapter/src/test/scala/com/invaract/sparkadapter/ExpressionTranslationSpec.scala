@@ -391,6 +391,45 @@ class ExpressionTranslationSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   // ---- Multiple aggregates and grouping columns in one Aggregate node ------
 
+  // ---- Struct construction and field access --------------------------------
+
+  test("struct(...) translates as StructConstruct with every field name and value preserved") {
+    val df = baseDf().select(struct(col("id"), col("name")).as("addr"))
+    projectColumns(df).find(_.name == "addr").get.expr match {
+      case StructConstruct(List(("id", ColumnReference(ColumnRef("id", _, _))), ("name", ColumnReference(ColumnRef("name", _, _))))) => // expected
+      case other => fail(s"unexpected StructConstruct translation: $other")
+    }
+  }
+
+  test("struct(...).getField(...) in the same expression translates as StructField over a real StructConstruct, not a generic Function") {
+    val df = baseDf().select(struct(col("id"), col("name")).getField("name").as("extracted"))
+    projectColumns(df).find(_.name == "extracted").get.expr match {
+      case StructField(StructConstruct(fields), "name") =>
+        assert(fields.map(_._1) == List("id", "name"), s"expected both constructed fields preserved, got $fields")
+      case other => fail(s"unexpected GetStructField-over-CreateNamedStruct translation: $other")
+    }
+  }
+
+  test("a dotted field access on a struct column materialized by a prior Project translates as StructField over a ColumnReference, with the field name preserved") {
+    val df = baseDf()
+      .select(struct(col("id"), col("name")).as("addr"))
+      .select(col("addr.name").as("extracted"))
+    projectColumns(df).find(_.name == "extracted").get.expr match {
+      case StructField(ColumnReference(ColumnRef("addr", _, _)), "name") => // expected: the field name survives, not lost to GetStructField's own unhelpful prettyName
+      case other => fail(s"unexpected dotted-access translation: $other")
+    }
+  }
+
+  test("a nested struct-of-struct field access preserves both levels of field names") {
+    val df = baseDf()
+      .select(struct(struct(col("id")).as("inner"), col("name")).as("outer"))
+      .select(col("outer.inner.id").as("deep"))
+    projectColumns(df).find(_.name == "deep").get.expr match {
+      case StructField(StructField(ColumnReference(ColumnRef("outer", _, _)), "inner"), "id") => // expected
+      case other => fail(s"unexpected nested struct-field-access translation: $other")
+    }
+  }
+
   test("multiple aggregates over the same grouping key all appear as distinct declared outputs") {
     val df = baseDf().groupBy("active").agg(
       count("*").as("cnt"),

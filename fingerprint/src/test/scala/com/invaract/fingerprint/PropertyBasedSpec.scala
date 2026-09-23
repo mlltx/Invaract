@@ -14,11 +14,12 @@ import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
   * over many generated shapes, rather than a handful of hand-picked ones.
   *
   * `genExpr` covers every `Expr` node kind (including `Conditional`,
-  * `Function`, `UDF`, `AggregateCall`, and `UnknownExpression` — not just
-  * the arithmetic/comparison subset an earlier version of this file
-  * generated) and `genPlan` covers every `Plan` node kind, so the
-  * determinism/round-trip properties below actually exercise the whole
-  * canonicalisation surface, not a narrow slice of it.
+  * `Function`, `UDF`, `AggregateCall`, `UnknownExpression`, `StructField`,
+  * and `StructConstruct` — not just the arithmetic/comparison subset an
+  * earlier version of this file generated) and `genPlan` covers every
+  * `Plan` node kind, so the determinism/round-trip properties below
+  * actually exercise the whole canonicalisation surface, not a narrow
+  * slice of it.
   */
 class PropertyBasedSpec extends AnyFunSuite with ScalaCheckDrivenPropertyChecks {
 
@@ -87,7 +88,15 @@ class PropertyBasedSpec extends AnyFunSuite with ScalaCheckDrivenPropertyChecks 
         1 -> (for {
           sourceType <- Gen.oneOf("SomeUnknownExpr", "OtherKind")
           children <- Gen.listOfN(1, genExpr(depth - 1))
-        } yield UnknownExpression("generated", sourceType, children))
+        } yield UnknownExpression("generated", sourceType, children)),
+        1 -> (for {
+          struct <- genExpr(depth - 1)
+          fieldName <- Gen.oneOf("zip", "city", "total")
+        } yield StructField(struct, fieldName)),
+        1 -> (for {
+          fieldNames <- Gen.listOfN(2, Gen.oneOf("zip", "city", "total"))
+          values <- Gen.listOfN(2, genExpr(depth - 1))
+        } yield StructConstruct(fieldNames.zip(values)))
       )
 
   private val genDatasetLocation: Gen[String] = Gen.oneOf("raw.orders", "raw.customers")

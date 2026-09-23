@@ -194,6 +194,44 @@ object PropertyAnalysis {
 
     case UnknownExpression(_, _, children) =>
       traverseT(children)(c => tailcall(resolveExprT(c, input, axioms))).map(_ => ColumnPropertyState.Unknown.copy(unsupported = true))
+
+    case StructField(StructConstruct(fields), fieldName) =>
+      // The one case this analysis can actually trace through: a struct
+      // built right here (StructConstruct) and immediately having one of
+      // its own named fields extracted back out - resolve straight
+      // through to that field's own value expression, the same as any
+      // other nested expression. This is deliberately narrow: it proves
+      // exactly the "construct, then extract, in the same plan" pattern
+      // (Example 3's own oneOf/CASE WHEN shape, now for a struct field
+      // instead of a flat column) — see docs/STATIC_DATA_QUALITY_VERIFICATION.md
+      // §3.8/§9 for why the harder case (an axiom for a nested field on an
+      // *input* struct column, propagated through arbitrary plan shapes)
+      // stays out of scope here.
+      fields.find(_._1 == fieldName) match {
+        case Some((_, value)) => tailcall(resolveExprT(value, input, axioms))
+        case None              => done(ColumnPropertyState.Unknown.copy(unsupported = true))
+      }
+
+    case StructField(struct, _) =>
+      // Any other struct-valued expression (a column reference to an
+      // existing struct - e.g. one read from the input - the result of a
+      // UDF, a nested StructField, ...): this analysis has no axiom
+      // representation for a struct's own internal fields (axioms are
+      // seeded per flat Read-scoped column only), so nothing here can be
+      // proven or refuted about a field reached through it. Still resolves
+      // (and discards) the struct expression itself so a well-formed plan
+      // terminates safely rather than short-circuiting.
+      tailcall(resolveExprT(struct, input, axioms)).map(_ => ColumnPropertyState.Unknown.copy(unsupported = true))
+
+    case StructConstruct(fields) =>
+      // A struct literal is itself never SQL NULL, even when one of its
+      // own fields is - constructing the struct is what StructField above
+      // actually reaches into; this case only handles a StructConstruct
+      // resolved as a column's own top-level value (e.g. a `nullable:
+      // false` check directly on a struct-typed output column), where
+      // Proven is a real, sound fact, not a guess.
+      traverseT(fields.map(_._2))(v => tailcall(resolveExprT(v, input, axioms)))
+        .map(_ => ColumnPropertyState(notNull = NullabilityFact.Proven))
   }
 
   /** A `CASE WHEN ... END` with no `ELSE` produces SQL `NULL` for a

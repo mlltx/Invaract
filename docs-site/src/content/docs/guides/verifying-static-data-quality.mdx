@@ -182,9 +182,14 @@ fact.
 - **A constraint declared on a nested (struct/record) field** — `constraints`/`nullable:
   false` on a field's own [nested `properties`](/reference/contract-format/) — is
   recognized rather than silently ignored, but always reports `NotStaticallyVerifiable`:
-  this analysis can't yet trace into a struct column's own member access to prove or
-  refute anything about a field inside it. The struct field *itself* (at the top level)
-  is unaffected — its own `nullable`/`constraints` are checked normally.
+  this analysis has no way yet to trace a declared obligation on a nested field back to
+  the real expression that produced its parent struct column. The struct field *itself*
+  (at the top level) is unaffected — its own `nullable`/`constraints` are checked
+  normally, and now include a struct the transformation itself builds (e.g.
+  `struct(col("zip"), col("city"))`), which is always provably non-null. A flat output
+  column produced by extracting one field straight back out of a struct built in the same
+  expression (e.g. `struct(col("zip"), col("city")).getField("zip")`) is checked for
+  real too, the same as any other computed column.
 - **Sampling, historical runs, or current data** — never consulted. Every proof (or
   disproof) comes from the transformation's translated logic and the contract's declared
   input properties alone.
