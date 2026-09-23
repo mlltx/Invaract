@@ -413,6 +413,45 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     assert(results == List(DataQualityCheckResult("name", "LENGTH <= 20", DataQualityVerdict.Violated)))
   }
 
+  test("a length constraint is Violated when the proven side is unbounded below but the required side has a genuine lower bound") {
+    // The direct mirror of the "unbounded above" test above, isolating
+    // lengthEscapesBelow's own (None, Some(_)) => true case specifically:
+    // required's upper is left unset so escapesAbove independently reports
+    // no escape, meaning only escapesBelow's own correctness can be what
+    // drives this Violated verdict.
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(max = Some(20)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(min = Some(5))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH >= 5", DataQualityVerdict.Violated)))
+  }
+
+  test("a length constraint's strict escape checks (not just the boundary tie) are exercised on both sides by a denormalized min/max proven state") {
+    // A contract can declare an input's own length as `{min: 10, max: 10}`
+    // instead of `{exact: 10}` - both interpret to the same real value
+    // domain, but Property.Length keeps them as genuinely distinct case
+    // class shapes (min/max is never auto-collapsed to exact once built -
+    // only Length.tighten/widen's own fromBounds does that normalization).
+    // Against an `exact: 10` requirement, this denormalized {min:10,max:10}
+    // proven state fails the `tighten(required) == p` structural-equality
+    // check even though the real numeric envelopes are identical, forcing
+    // resolution through lengthEscapesBelow/lengthEscapesAbove - both of
+    // which must correctly report "no escape" (10 is not < 10, and not >
+    // 10) for the verdict to be the honest NotGuaranteed it should be,
+    // rather than a false Violated.
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(min = Some(10), max = Some(10)))))),
+      List(dataset("out", "gold.out", Field("name", "string", constraints = List(lengthConstraint(exact = Some(10))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "name", col("name", Some("raw.orders"))))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("name", "LENGTH = 10", DataQualityVerdict.NotGuaranteed)))
+  }
+
   test("a length constraint is Violated when both sides have a genuine max and the proven one is strictly looser") {
     val contract = contractWith(
       List(dataset("orders", "raw.orders", Field("name", "string", constraints = List(lengthConstraint(max = Some(100)))))),

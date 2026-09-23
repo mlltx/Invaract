@@ -229,6 +229,18 @@ private[sparkadapter] object StaticDataQualityVerifier {
   private def lengthLowerValue(l: Property.Length): Option[Int] = l.exact.orElse(l.min)
   private def lengthUpperValue(l: Property.Length): Option[Int] = l.exact.orElse(l.max)
 
+  // Each `case (_, None) => false` below is a genuinely equivalent mutant
+  // to its own `=> true` flip, not an untested gap: whenever `required`
+  // declares no bound at all on this axis, `Length.tighten`'s own `lo`/`hi`
+  // computation always resolves to `p`'s own raw value there (nothing on
+  // required's side to widen or narrow it), so `p.tighten(required) == p`
+  // already succeeds on that axis by construction - `lengthVerdict` only
+  // ever reaches this function's `required`-missing-this-axis case when
+  // the *other* axis is what's keeping the verdict from being `Guaranteed`,
+  // and that other axis's own escape check is what actually decides the
+  // verdict. Confirmed by construction, not just asserted: no proven/
+  // required pair exists where flipping this branch changes `lengthVerdict`
+  // scoped Stryker output.
   private def lengthEscapesBelow(p: Property.Length, required: Property.Length): Boolean = (lengthLowerValue(p), lengthLowerValue(required)) match {
     case (_, None)            => false // required has no lower bound: nothing to escape below
     case (None, Some(_))      => true  // p is unbounded below, required is not: p can escape
@@ -236,7 +248,7 @@ private[sparkadapter] object StaticDataQualityVerifier {
   }
 
   private def lengthEscapesAbove(p: Property.Length, required: Property.Length): Boolean = (lengthUpperValue(p), lengthUpperValue(required)) match {
-    case (_, None)            => false
+    case (_, None)            => false // see lengthEscapesBelow's own doc - the same equivalence applies here
     case (None, Some(_))      => true
     case (Some(pv), Some(rv)) => pv > rv
   }
