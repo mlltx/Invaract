@@ -1023,10 +1023,11 @@ in-memory-database read (<code dir="auto">SparkPlanAdapterSpec</code>’s <code 
 <p>The first of several regression-testing guardrails identified when
 assessing what “market leading” regression coverage would need beyond the
 example-based suites above: property-based fuzzing, mutation testing,
-API-compatibility checking, and a multi-Spark-version compatibility
-matrix are done (this sub-phase, the one below it, “API compatibility
-checking” further down, and “Spark version compatibility matrix” further
-below); coverage gating remains future scope. (An initial
+API-compatibility checking, a multi-Spark-version compatibility matrix,
+and coverage gating are all done (this sub-phase, the one below it, “API
+compatibility checking” further down, “Spark version compatibility
+matrix” further below, and “Coverage gating” at the end of this phase).
+(An initial
 idea to add golden-file snapshots of <code dir="auto">report.json</code> was reconsidered and
 redirected — that file is an internal test-harness artifact with no
 external consumers, not a public interface worth pinning; the JSON Schema
@@ -3346,6 +3347,61 @@ including Case 3’s <code dir="auto">Guaranteed</code> verdict and Case 4’s <
 abort, both confirmed directly in the script’s own output and the published
 notification events — not merely asserted by the script silently passing.
 <code dir="auto">docs-site</code>’s <code dir="auto">npm run build</code> succeeds.</li>
+</ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-coverage-gating-done">Sub-phase: Coverage gating (done)</h4><a class="sl-anchor-link" href="#sub-phase-coverage-gating-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Coverage gating (done)”</span></a></div>
+<p>The last of the regression-testing guardrails the “Property-based fuzzing of the
+Spark adapter” sub-phase’s own scoping comment had flagged as future scope,
+alongside the two <code dir="auto">ARCHITECTURE.md</code>/<code dir="auto">CLAUDE.md</code> claims this PR’s own earlier
+fix had already corrected (a multi-Spark-version compatibility matrix and
+API-compatibility checking — both, it turned out, already existed). Line/branch
+coverage answers a genuinely different question than mutation testing: not
+“does this code have tests that would catch a change” but “does this code have
+tests exercising it at all” — a module could clear every mutation threshold on
+a few thoroughly-tested files while another sits completely untested, and
+mutation testing alone would never catch that.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">sbt-scoverage</code></strong> added to <code dir="auto">contract</code>/<code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code>
+(<code dir="auto">project/coverage.sbt</code>, each module — the same “one small file per
+concern” convention <code dir="auto">mima.sbt</code>/<code dir="auto">stryker4s.sbt</code> already use).
+<code dir="auto">coverageScalacPluginVersion</code> pins the exact <code dir="auto">scalac-scoverage-plugin</code>
+runtime release confirmed reachable from this environment after several
+others (including sbt-scoverage’s own auto-selected default) hit a
+persistent, edge-cached 429 on Maven Central for that one specific
+artifact path while neighboring versions resolved fine — not a real
+incompatibility with this project’s Scala version, confirmed by direct
+HTTP checks against several published versions before picking one, not
+assumed.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Thresholds measured for real</strong>, via <code dir="auto">sbt coverage test coverageReport</code>
+against each module’s actual suite, then pinned a few points below - the
+same “measure first, then pin” discipline <code dir="auto">strykerThresholdsBreak</code>
+already follows, not a guessed round number:
+- <code dir="auto">contract</code>: stmt 89.03% → gate 87, branch 81.22% → gate 79
+- <code dir="auto">ir</code>: stmt 86.13% → gate 84, branch 80.90% → gate 78
+- <code dir="auto">fingerprint</code>: stmt 93.30% → gate 91, branch 89.10% → gate 87
+- <code dir="auto">spark-adapter</code>: stmt 94.58% → gate 92, branch 90.88% → gate 88 (its
+full 681-test real-Spark suite, confirming coverage instrumentation
+doesn’t break real <code dir="auto">SparkSession</code> execution)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>The gate genuinely fails, confirmed with a negative control</strong>: a
+temporary, session-only <code dir="auto">coverageMinimumStmtTotal := 99</code> override on
+<code dir="auto">ir</code> produced a real <code dir="auto">(coverageReport) Coverage minimum was not reached</code>
+failure with exit code 1 — the mechanism was proven to actually enforce
+something before being trusted, not just assumed to from
+<code dir="auto">coverageFailOnMinimum := true</code> being set.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>New CI job <code dir="auto">coverage-gating</code></strong> (<code dir="auto">.github/workflows/test.yml</code>), added to
+<code dir="auto">summary</code>’s <code dir="auto">needs</code> list — runs all four modules’ <code dir="auto">sbt coverage test     coverageReport</code> in dependency order (mirroring <code dir="auto">api-compatibility</code>’s own
+<code dir="auto">publishLocal</code> ordering: contract, ir, fingerprint, then spark-adapter
+last), each cross-module <code dir="auto">publishLocal</code> a plain, uninstrumented build so
+a downstream module never compiles against scoverage-instrumented
+bytecode or has its own coverage measurement polluted by classes that
+aren’t its.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: CLAUDE.md gained a “Coverage Gating Requirement”
+section (mirroring “Mutation Testing Requirement“‘s own structure —
+what to do when a change drops coverage below the pinned gate, the
+deliberate-and-disclosed pattern for lowering a threshold instead of
+silently disabling the check). <code dir="auto">ARCHITECTURE.md</code>’s “Guardrails still
+outstanding” line — already narrowed to just coverage gating by this
+PR’s earlier fix — updated to note nothing remains outstanding from
+that list.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>

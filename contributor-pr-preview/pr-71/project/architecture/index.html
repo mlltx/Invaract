@@ -464,10 +464,18 @@ job’s matrix, and again via Docker in the separate <code dir="auto">docker-reg
 <code dir="auto">spark-version-matrix</code>/<code dir="auto">delta-version-matrix</code>/<code dir="auto">iceberg-version-matrix</code>
 jobs) and <strong>API-compatibility checking</strong> (CI’s <code dir="auto">api-compatibility</code> job,
 MiMa — see CLAUDE.md’s “API Compatibility Requirement”).</li>
+<li><strong>Line/branch coverage gating</strong> (CI’s <code dir="auto">coverage-gating</code> job, sbt-scoverage)
+across <code dir="auto">contract</code>/<code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code> — a different,
+complementary question from mutation testing’s own “does this code have
+tests that would catch a change”: “does this code have tests at all.” Each
+module’s own <code dir="auto">coverageMinimumStmtTotal</code>/<code dir="auto">coverageMinimumBranchTotal</code>
+(<code dir="auto">build.sbt</code>) is measured against its real suite and pinned a few points
+below, the same “measure first, then pin” discipline
+<code dir="auto">strykerThresholdsBreak</code> already follows — see CLAUDE.md’s “Coverage
+Gating Requirement.”</li>
 </ul>
-<p>Guardrails still outstanding (ROADMAP.md, scoped to <code dir="auto">contract</code>/<code dir="auto">ir</code>/
-<code dir="auto">spark-adapter</code>): coverage gating (line/branch coverage thresholds,
-distinct from mutation testing, which this repo already enforces).</p>
+<p>No guardrails remain outstanding from this file’s own prior list — the last
+one, coverage gating, is covered above.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="performance-characteristics">Performance Characteristics</h2><a class="sl-anchor-link" href="#performance-characteristics"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Performance Characteristics”</span></a></div>
 
 
