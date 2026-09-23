@@ -3403,6 +3403,105 @@ outstanding” line — already narrowed to just coverage gating by this
 PR’s earlier fix — updated to note nothing remains outstanding from
 that list.</li>
 </ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-struct-member-access-getstructfieldcreatenamedstruct-done">Sub-phase: Struct member access (<code dir="auto">GetStructField</code>/<code dir="auto">CreateNamedStruct</code>) (done)</h4><a class="sl-anchor-link" href="#sub-phase-struct-member-access-getstructfieldcreatenamedstruct-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Struct member access (GetStructField/CreateNamedStruct) (done)”</span></a></div>
+<p>The third and last item of the original 3-item static-data-quality follow-up plan,
+deferred at the time the nested-struct-field-recursion sub-phase above shipped: struct
+member access — <code dir="auto">.getField(...)</code>/dotted access, and <code dir="auto">struct(...)</code> construction — had no
+<code dir="auto">ir.Expr</code> representation at all, so both Catalyst nodes silently fell through to the
+generic <code dir="auto">Function</code>/<code dir="auto">UnknownExpression</code> translation, losing which field was actually
+accessed or constructed (<code dir="auto">GetStructField.prettyName</code>/<code dir="auto">CreateNamedStruct.prettyName</code> are
+both generic — <code dir="auto">"getstructfield"</code>/<code dir="auto">"named_struct"</code> — carrying no trace of the real field
+name). Closing this is a genuine, independent translation-correctness fix, not only a
+data-quality-verification improvement.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Two new <code dir="auto">ir.Expr</code> nodes</strong>: <code dir="auto">StructField(struct: Expr, fieldName: String)</code> and
+<code dir="auto">StructConstruct(fields: List[(String, Expr)])</code>, added to <code dir="auto">Expr.scala</code>. Every
+exhaustive match over <code dir="auto">Expr</code> across <code dir="auto">ir</code>/<code dir="auto">fingerprint</code> gained real cases:
+<code dir="auto">Lineage.resolveExprT</code> (a field projection is never <code dir="auto">Direct</code>, the same treatment
+<code dir="auto">Cast</code> already gets; a <code dir="auto">StructConstruct</code> field with a UDF anywhere makes the whole
+construct <code dir="auto">Opaque</code>), <code dir="auto">PlanPrinter.renderExpr</code> (<code dir="auto">struct.field</code> / <code dir="auto">STRUCT(name: val,     ...)</code>), <code dir="auto">fingerprint</code>’s <code dir="auto">Canonicalizer</code> (two matches: <code dir="auto">canonicalizeExprT</code> and
+<code dir="auto">resolveExprDeepT</code>, field order deliberately preserved, never sorted), and
+<code dir="auto">fingerprint</code>’s <code dir="auto">NonDeterminism.classify</code>. <code dir="auto">ir.PredicateFacts</code> and
+<code dir="auto">spark-adapter</code>’s <code dir="auto">EqualityConditions</code> needed no change (both already have safe
+default fallbacks).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Real Catalyst translation</strong> (<code dir="auto">SparkPlanAdapter.scala</code>): <code dir="auto">GetStructField</code> →
+<code dir="auto">ir.StructField</code> (<code dir="auto">fieldName</code> from <code dir="auto">.name</code> when resolvable, else the same
+<code dir="auto">childSchema(ordinal).name</code> fallback Catalyst’s own getter uses internally,
+confirmed via a throwaway probe script against a real analyzed plan, not
+assumed), <code dir="auto">CreateNamedStruct</code> → <code dir="auto">ir.StructConstruct</code> (<code dir="auto">.names</code>/<code dir="auto">.valExprs</code> are
+<code dir="auto">CreateNamedStructLike</code>’s own pairing accessors over its flat, alternating
+<code dir="auto">children</code> list — <code dir="auto">.names</code> returns <code dir="auto">Seq[Any]</code>, not <code dir="auto">Seq[String]</code>, a real compile
+error caught and fixed with <code dir="auto">.map(String.valueOf)</code>). Both matched ahead of the
+generic <code dir="auto">Function</code>/<code dir="auto">UnknownExpression</code> fallback.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">PropertyAnalysis</code> transfer function</strong>, deliberately bounded: the “construct a
+struct, then immediately extract one of its own fields, in the same plan” pattern
+— <code dir="auto">StructField(StructConstruct(fields), fieldName)</code> — resolves straight through to
+that field’s own value expression, the same mechanism Example 3’s <code dir="auto">CASE WHEN</code>
+resolution already uses, now for a struct field instead of a flat column. A
+freshly-built <code dir="auto">StructConstruct</code> is also unconditionally <code dir="auto">notNull = Proven</code>
+(constructing a struct is never itself SQL <code dir="auto">NULL</code>, independent of any field’s own
+nullability) — a genuine bonus fact, not something the task explicitly asked for.
+Both are exercised automatically by <code dir="auto">StaticDataQualityVerifier.verify</code>’s existing
+top-level <code dir="auto">PropertyAnalysis.analyze</code> call, with <strong>no <code dir="auto">StaticDataQualityVerifier</code>
+code change needed</strong> for a top-level output field whose own expression takes this
+shape. Any <em>other</em> struct-valued expression (a bare reference to an existing
+struct-typed column, a UDF result, a <code dir="auto">StructField</code> reached through one of those)
+stays <code dir="auto">Unknown</code>-with-<code dir="auto">unsupported</code> — this analysis has no axiom representation for
+a struct’s own internal fields. <code dir="auto">checksForField</code>’s nested (<code dir="auto">Field.properties</code>)
+recursion remains deliberately unconnected to this new resolution — propagating an
+axiom through an <em>input</em> struct column’s own nested-field declaration is a
+genuinely different, still-deferred piece (see docs/STATIC_DATA_QUALITY_VERIFICATION.md’s
+updated §3.8/§8).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Tests</strong>: <code dir="auto">ExpressionTranslationSpec</code> gained 4 real-Spark-session cases (struct
+construction preserves every field name/value; <code dir="auto">struct(...).getField(...)</code> in one
+expression resolves to <code dir="auto">StructField</code> over a real <code dir="auto">StructConstruct</code>, not a generic
+<code dir="auto">Function</code>; a dotted access on a struct materialized by a prior <code dir="auto">Project</code>; a
+nested struct-of-struct access preserving both field names).
+<code dir="auto">PropertyAnalysisSpec</code> gained 8 cases (construct-then-extract resolving a real
+<code dir="auto">equalsConstant</code>/<code dir="auto">range</code> fact; picking the correctly-named field among several, not
+just the first; a missing field name; any non-<code dir="auto">StructConstruct</code> struct expression
+staying <code dir="auto">unsupported</code> even over a Proven-axiom column; a UDF-wrapped struct; a
+freshly-built struct’s <code dir="auto">NotNull = Proven</code>, including with an opaque field value and
+with zero fields). <code dir="auto">LineageSpec</code>/<code dir="auto">PlanPrinterSpec</code> gained cases for the two new
+<code dir="auto">Expr</code> nodes’ own classification/rendering. <code dir="auto">fingerprint</code>’s <code dir="auto">CanonicalizerSpec</code>
+gained cases for encoding (field order/name/value all participate;
+<code dir="auto">StructField</code>/<code dir="auto">Function</code> don’t collide) and <code dir="auto">resolveExprDeep</code> reaching through both
+new nodes; <code dir="auto">NonDeterminismSpec</code> gained cases for the two new <code dir="auto">classify</code> arms;
+<code dir="auto">PropertyBasedSpec</code>’s own generative <code dir="auto">genExpr</code> extended to generate the two new
+node kinds too (previously silently excluded, a real gap in its own “covers every
+<code dir="auto">Expr</code> node kind” claim, fixed in the same pass). <code dir="auto">StaticDataQualityVerifierSpec</code>
+gained 2 cases proving the new resolution flows through this module automatically
+with zero code changes there, while nested <code dir="auto">Field.properties</code> stays unaffected.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified per CLAUDE.md’s Mutation Testing Requirement and API Compatibility
+Requirement: scoped Stryker on <code dir="auto">ir</code>’s touched files (<code dir="auto">Expr.scala</code>/<code dir="auto">Lineage.scala</code>/
+<code dir="auto">PlanPrinter.scala</code>/<code dir="auto">PropertyAnalysis.scala</code>) reached <strong>85.57%</strong> overall/<strong>90.22%</strong>
+of covered code (194 mutants, zero survivors on the new struct-related lines — every
+survivor traced back to pre-existing code, confirmed by line number). <code dir="auto">fingerprint</code>’s
+touched files (<code dir="auto">Canonicalizer.scala</code>/<code dir="auto">NonDeterminism.scala</code>) reached <strong>96%</strong> with 3
+survivors, all <code dir="auto">StringLiteral</code> mutants on the <code dir="auto">CTag</code> tag-name constants
+(<code dir="auto">"StructField"</code>/<code dir="auto">"StructConstruct"</code>/<code dir="auto">"Field"</code>) — unlike the message-text survivors
+already accepted elsewhere in this module, these tag strings are load-bearing for
+collision-avoidance between node kinds, so a direct exact-shape assertion test was
+added to kill them (the same pattern <code dir="auto">CanonicalizerSpec</code>’s own pre-existing
+<code dir="auto">ColumnRef</code> test already uses), not merely accepted. <code dir="auto">spark-adapter</code>’s scoped
+Stryker on <code dir="auto">SparkPlanAdapter.scala</code> reached <strong>90.7%</strong> overall/<strong>92.86%</strong> of covered
+code (110 mutants, 4 survivors, all in pre-existing JDBC/Hive relation-location
+detection code far from the new struct-translation lines, confirmed by line number).
+<code dir="auto">spark-adapter</code>’s full suite passed <strong>687/687</strong>. <code dir="auto">ir</code>/<code dir="auto">fingerprint</code>/<code dir="auto">spark-adapter</code>
+MiMa all pass clean (the new sealed-trait case classes are additive and
+binary-safe).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: <code dir="auto">docs/STATIC_DATA_QUALITY_VERIFICATION.md</code>’s §3.8 rewritten to
+describe what’s now actually resolvable (top-level construct-then-extract) versus
+what remains deferred (nested nested-field tracing, any non-<code dir="auto">StructConstruct</code>
+struct expression), §8’s MVP scope list updated to match.
+<code dir="auto">docs/SPARK_ADAPTER.md</code>’s translation-coverage table gained rows for
+<code dir="auto">GetStructField</code>/<code dir="auto">CreateNamedStruct</code>. <code dir="auto">docs/TRANSFORMATION_IR.md</code>’s expression-node
+table gained rows for <code dir="auto">StructField</code>/<code dir="auto">StructConstruct</code>. docs-site’s <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx">Verify Static
+Data
+Quality</a> guide’s
+“What this doesn’t check yet” bullet rewritten to describe the new capability
+precisely instead of the old blanket “can’t trace into a struct” claim.</li>
+</ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
 <div class="sl-heading-wrapper level-h3"><h3 id="objective-4">Objective</h3><a class="sl-anchor-link" href="#objective-4"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Objective”</span></a></div>
