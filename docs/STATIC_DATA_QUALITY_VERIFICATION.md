@@ -630,6 +630,82 @@ table §8/§9 originally scoped as a *second* MVP slice (`SUBSTRING`, `CONCAT`, 
 ...) — six functions covering the realistic "identifier normalization" shape, plus the
 axiom-passthrough path that needed no new code at all, not an attempt at completeness.
 
+### 3.10 Cross-field / row-level constraints
+
+Every constraint kind above compares a field against a *literal* — a constant, a set, a
+numeric or length interval. A common real-world data-quality rule instead compares two
+fields of the *same output row* against each other — `end_date >= start_date`,
+`discount_price <= list_price`. `FieldConstraintType.FieldRange`/
+`InterpretedFieldConstraint.FieldRange` add exactly this: `Range`'s own `gte`/`gt`/`lte`/
+`lt` shape, unchanged, except each bound's *value* is another field's name in the same
+schema rather than a numeric literal — a single constraint can combine two bounds against
+two different fields, the same way `Range` combines two literal bounds into one interval:
+
+```yaml
+schema:
+  fields:
+    - name: start_date
+      type: long
+    - name: end_date
+      type: long
+      constraints:
+        - type: fieldRange
+          gte: start_date
+    - name: price
+      type: double
+      constraints:
+        - type: fieldRange
+          gte: min_price
+          lte: max_price
+```
+
+**This needed no new `Property`, no new `ColumnPropertyState` field, and no `ir`
+changes at all** — a genuinely smaller addition than `Length` was. `PropertyAnalysis.analyze`
+already computes every top-level output field's own `range` in one pass;
+`StaticDataQualityVerifier.verify` already holds that whole `analyzed` map in scope. A
+`fieldRange` bound's own proof is a direct comparison between the constrained field's own
+`Property.Range` and the *referenced* field's own `Property.Range`, both already sitting in
+that map — no new fact needs to flow through the plan at all.
+
+**The proof itself** is sound, not merely plausible: to prove `field >= other` for every
+row, it's enough that `field`'s own proven lower bound is already `>=` `other`'s own proven
+upper bound (`field >= fieldLower >= otherUpper >= other`, for every row, regardless of the
+specific values either column actually takes). Violation is the mirror: `field`'s own proven
+upper bound strictly `<` `other`'s own proven lower bound forces `field < other` for every
+row, breaking `field >= other` unconditionally. Both directions reuse `rangeVerdict`'s own
+established "strict, tie-conservative" convention (§3.6) — an exact boundary tie between the
+two sides' bounds is `NotGuaranteed`, not `Violated`, for a non-strict `gte`/`lte` bound (the
+tie could still be satisfied), while it *is* `Violated` for a strict `gt`/`lt` bound (the tie
+already breaks strict inequality). `lte`/`lt` reuse the exact same two comparison functions
+(`gteClause`/`gtClause`) with the two sides swapped, rather than two more near-duplicate
+implementations — `field <= other` is exactly `other >= field`.
+
+A constraint with multiple bounds (`gte` + `lte` together) combines them the same way a
+compound `Range` does conceptually, but *not* via `Range.tighten` — each bound can name a
+*different* field, so there's no single "other side's interval" to tighten against. Instead
+each clause resolves independently to holds/violated/unknown, then combines: `Violated` if
+*any* clause is provably violated (one broken required bound already breaks the whole
+constraint, regardless of what the others prove), `Guaranteed` only if *every declared*
+clause provably holds, `NotStaticallyVerifiable`/`NotGuaranteed` otherwise (per the usual
+`unsupported`-flag distinction).
+
+**Deliberately scoped to top-level output fields only, on both sides of the comparison.**
+`StaticDataQualityVerifier.checksForField` only threads the top-level `analyzed` map down
+into the *outermost* call's own `checksFor`; every recursive call into `field.properties`
+passes an empty sibling map instead. A `fieldRange` constraint declared on a *nested* field
+therefore always resolves to `NotStaticallyVerifiable` — deliberately, not an oversight: a
+nested field's own bare name could otherwise accidentally collide with an unrelated
+top-level field sharing the same name, silently comparing against the wrong column.
+`ContractValidator` discloses this at author-time too (a `Warning`, since it degrades
+safely rather than breaking the contract) — see §5.
+
+**Type scope mirrors `Range`'s own**: proof only ever comes from each side's own
+`Property.Range`, which `PropertyAnalysis` only ever populates for numeric-typed values —
+the same scope `range`/`length`-via-`LENGTH()` already have. `ContractValidator` warns (not
+errors) when either the constrained field or a referenced field isn't numeric-typed, the
+same "structurally valid, degrades to `NotStaticallyVerifiable`, never a crash" pattern
+`Length` on a non-string field already establishes.
+
 ---
 
 ## 4. Where this lives: module boundaries
@@ -851,6 +927,12 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
 - String `length` constraints (`exact`/`min`/`max`) — axiom propagation through every
   existing combinator for free, plus real transfer functions for `LENGTH`/
   `CHAR_LENGTH`/`CHARACTER_LENGTH`/`UPPER`/`LOWER`/`TRIM`/`LTRIM`/`RTRIM`. See §3.9.
+- Cross-field/row-level `fieldRange` constraints (`gte`/`gt`/`lte`/`lt`, each bound
+  naming another field in the same schema rather than a literal — `end_date >=
+  start_date`) — a direct comparison between two already-analyzed `Property.Range`s,
+  needing no new `Property`/`ir` changes at all. Scoped to top-level, numeric-typed
+  output fields on both sides of the comparison; a `fieldRange` on a nested field
+  always resolves `NotStaticallyVerifiable`, deliberately. See §3.10.
 
 **Explicitly outside the MVP** (§9 gives the reasoning, not just the list):
 
@@ -877,12 +959,17 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   `LOWER`, `TRIM` family) — each needs its own, individually-reasoned rule the same
   way `LENGTH`'s Length→Range bridge and `TRIM`'s upper-bound-only narrowing each
   were; a further slice, not attempted here.
-- Expression-derived relationship properties (`total = quantity * price`) — this is
-  a *different shape* of rule (a relationship between two output columns, or an
-  output column and an input column, not a value-domain fact about one column in
-  isolation) and needs its own representation (likely a new `FieldConstraint` kind
-  referencing another field by name) and its own analysis pass; flagged as a natural
-  second slice, not attempted here.
+- Expression-derived *formula* relationships between fields (`total = quantity *
+  price`, an arithmetic identity, not an ordering) — genuinely different from
+  `fieldRange` (§3.10): an ordering bound is provable from each side's own
+  already-analyzed `Range` alone, while a formula identity would need to trace
+  *how* one column's expression relates to another's (symbolic algebra over
+  `Expr`, not a value-domain fact comparison) — a real, still-unaddressed
+  second slice of "relationship between two output columns," not attempted here.
+  Also still out of scope: a `fieldRange`-style bound against an *input* field
+  (rather than a sibling *output* field), and any cross-field comparison
+  involving a nested (`Field.properties`) field on either side (§3.10's own
+  scoping note).
 - A `customRuleTypes`-style pluggable extension point for property kinds or transfer
   functions. The brief's own closing principle ("false claims of guarantees are worse
   than failing to prove a guarantee") argues for keeping this a closed, reviewed set

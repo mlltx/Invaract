@@ -1026,6 +1026,168 @@ class ContractParserTest extends AnyFunSuite {
     fields.foreach(f => assert(f.constraints.head.interpret.isEmpty, s"expected malformed for ${f.name}"))
   }
 
+  test("parse should decode a well-formed fieldRange field constraint (single and multiple bounds) via interpret") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: start_date
+        |        - name: price
+        |          type: double
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: min_price
+        |              lte: max_price
+        |""".stripMargin
+
+    val fields = ContractParser.parse(yaml).outputs.head.schema.fields
+    assert(fields(0).constraints.head.interpret.contains(InterpretedFieldConstraint.FieldRange(Some("start_date"), None, None, None)))
+    assert(fields(1).constraints.head.interpret.contains(InterpretedFieldConstraint.FieldRange(Some("min_price"), None, Some("max_price"), None)))
+  }
+
+  test("interpret should trim whitespace around a fieldRange bound's referenced field name") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: " start_date "
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.contains(InterpretedFieldConstraint.FieldRange(Some("start_date"), None, None, None)))
+  }
+
+  test("interpret should be None for a fieldRange constraint with no bound at all") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a fieldRange constraint declaring both gte and gt") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: start_date
+        |              gt: start_date
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a fieldRange constraint declaring both lte and lt") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: start_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              lte: end_date
+        |              lt: end_date
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a fieldRange constraint whose bound is not a string") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: 5
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a fieldRange constraint whose bound is a blank/whitespace-only field name") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: "   "
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a fieldRange constraint with an unrecognized property key") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: end_date
+        |          type: long
+        |          constraints:
+        |            - type: fieldRange
+        |              gte: start_date
+        |              field: start_date
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
   test("write should round-trip a field's constraints") {
     val yaml =
       """id: dq_contract

@@ -170,6 +170,11 @@ outputs:
           constraints:
             - type: length
               exact: 10
+        - name: end_date
+          type: long
+          constraints:
+            - type: fieldRange
+              gte: start_date
 ```
 
 | `type` | Properties | Meaning |
@@ -178,6 +183,7 @@ outputs:
 | `oneOf` | `values` (non-empty list) | The field's value must always be one of these. |
 | `range` | any of `gte`/`gt`/`lte`/`lt` (numeric; at least one required; `gte`+`gt` or `lte`+`lt` together is malformed) | The field's numeric value must always fall within these bounds. |
 | `length` | `exact`, or either/both of `min`/`max` (non-negative integers; at least one required; `exact` combined with `min`/`max` is malformed, as is `min` > `max`) | The field's string length must always match `exact`, or fall within `min`/`max` (inclusive). |
+| `fieldRange` | any of `gte`/`gt`/`lte`/`lt` (each naming another field in the *same* schema; at least one required; `gte`+`gt` or `lte`+`lt` together is malformed) | The field's numeric value must always satisfy these bounds *relative to another field's own value* on the same row (e.g. `end_date >= start_date`). Only proven for top-level, numeric-typed output fields on both sides — see the guide below. |
 
 `NOT NULL` needs no entry here — `nullable: false` (above) already states it, and is
 proven by the same mechanism as any other constraint here. See

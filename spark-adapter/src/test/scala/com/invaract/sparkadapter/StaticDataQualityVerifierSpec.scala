@@ -45,6 +45,9 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     FieldConstraint(FieldConstraintType.Range, (gte.map("gte" -> _) ++ lte.map("lte" -> _)).toMap)
   private def lengthConstraint(exact: Option[Any] = None, min: Option[Any] = None, max: Option[Any] = None) =
     FieldConstraint(FieldConstraintType.Length, (exact.map("exact" -> _) ++ min.map("min" -> _) ++ max.map("max" -> _)).toMap)
+  private def fieldRangeConstraint(gte: Option[String] = None, gt: Option[String] = None, lte: Option[String] = None, lt: Option[String] = None) =
+    FieldConstraint(FieldConstraintType.FieldRange, (gte.map("gte" -> _) ++ gt.map("gt" -> _) ++ lte.map("lte" -> _) ++ lt.map("lt" -> _)).toMap)
+  private def projectFields(input: Plan, fields: (String, Expr)*): Plan = Project(input, fields.map { case (n, e) => NamedExpr(n, e) }.toList)
 
   // --- Non-Write / non-matching plans -----------------------------------
 
@@ -487,6 +490,239 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     val violations = StaticDataQualityVerifier.violations(results)
     assert(violations.size == 1)
     assert(violations.head.violationType == ViolationType.DataQualityViolation)
+  }
+
+  // --- FieldRange constraints (cross-field/row-level) -----------------------
+
+  test("a fieldRange gte constraint is Guaranteed when the field's own proven value is strictly above the sibling's") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> Literal(20L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= start_date", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a fieldRange gte constraint is Guaranteed at an exact tie - the boundary is inclusive") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> Literal(10L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= start_date", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a fieldRange gte constraint is Violated when the field's own proven value is strictly below the sibling's") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> Literal(5L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= start_date", DataQualityVerdict.Violated)))
+    val violations = StaticDataQualityVerifier.violations(results)
+    assert(violations.map(_.column) == List(Some("end_date")), "the violation is attributed to the constrained field, not the sibling it's compared against")
+  }
+
+  test("a fieldRange gt constraint is Violated at an exact tie - the bound is strict, unlike gte") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gt = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> Literal(10L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", "> start_date", DataQualityVerdict.Violated)))
+  }
+
+  test("a fieldRange gt constraint is Guaranteed when strictly above, and not Guaranteed merely by tying") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gt = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> Literal(11L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", "> start_date", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a fieldRange lte constraint is Guaranteed - the bound direction is flipped relative to gte") {
+    // Field being checked is "start_date" here, referencing "end_date" - proves lte reuses
+    // gteClause with the two sides swapped, not merely gte's own code path by coincidence.
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("end_date", "long"), Field("start_date", "long", constraints = List(fieldRangeConstraint(lte = Some("end_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "end_date" -> Literal(20L, "long"), "start_date" -> Literal(10L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("start_date", "<= end_date", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a fieldRange lte constraint is Violated when the field's own proven value exceeds the sibling's") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("end_date", "long"), Field("start_date", "long", constraints = List(fieldRangeConstraint(lte = Some("end_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "end_date" -> Literal(20L, "long"), "start_date" -> Literal(25L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("start_date", "<= end_date", DataQualityVerdict.Violated)))
+  }
+
+  test("a fieldRange lt constraint is Violated at an exact tie, mirroring gt's own strictness for the flipped direction") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("end_date", "long"), Field("start_date", "long", constraints = List(fieldRangeConstraint(lt = Some("end_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "end_date" -> Literal(20L, "long"), "start_date" -> Literal(20L, "long"))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("start_date", "< end_date", DataQualityVerdict.Violated)))
+  }
+
+  test("a fieldRange constraint is NotGuaranteed, not a false Guaranteed or Violated, when only one side's bound is known") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("start_date", "long", constraints = List(rangeConstraint(gte = Some(0)))))),
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))))
+    )
+    // start_date only has a proven LOWER bound (no upper); end_date has no proven bound at all -
+    // gteClause needs end_date's own lower AND start_date's own upper, neither of which is known.
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(
+        Read(DatasetRef("raw.orders")),
+        "start_date" -> col("start_date", Some("raw.orders")),
+        "end_date" -> col("end_date", Some("raw.orders"))
+      )
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= start_date", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a fieldRange constraint is NotStaticallyVerifiable, not NotGuaranteed, when the constrained field itself derives from a UDF") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(10L, "long"), "end_date" -> UDF(Some("myFn"), Nil))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= start_date", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a fieldRange constraint is NotStaticallyVerifiable when it references a field name absent from the output entirely") {
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("nonexistent"))))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "end_date", Literal(10L, "long")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("end_date", ">= nonexistent", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("a fieldRange constraint combining two bounds is Guaranteed only when both hold, describing both in order") {
+    val contract = contractWith(
+      Nil,
+      List(dataset(
+        "out",
+        "gold.out",
+        Field("min_price", "double"),
+        Field("max_price", "double"),
+        Field("price", "double", constraints = List(fieldRangeConstraint(gte = Some("min_price"), lte = Some("max_price"))))
+      ))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(
+        Read(DatasetRef("raw.orders")),
+        "min_price" -> Literal(0.0, "double"),
+        "max_price" -> Literal(100.0, "double"),
+        "price" -> Literal(50.0, "double")
+      )
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("price", ">= min_price and <= max_price", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a fieldRange constraint combining two bounds is Violated when either one breaks, even though the other holds") {
+    val contract = contractWith(
+      Nil,
+      List(dataset(
+        "out",
+        "gold.out",
+        Field("min_price", "double"),
+        Field("max_price", "double"),
+        Field("price", "double", constraints = List(fieldRangeConstraint(gte = Some("min_price"), lte = Some("max_price"))))
+      ))
+    )
+    // price (150) satisfies gte(min_price=0) but breaks lte(max_price=100) - the overall
+    // verdict must be Violated, not masked by the gte clause independently holding.
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(
+        Read(DatasetRef("raw.orders")),
+        "min_price" -> Literal(0.0, "double"),
+        "max_price" -> Literal(100.0, "double"),
+        "price" -> Literal(150.0, "double")
+      )
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("price", ">= min_price and <= max_price", DataQualityVerdict.Violated)))
+  }
+
+  test("a fieldRange constraint declared on a nested field is always NotStaticallyVerifiable, even when the referenced name genuinely exists at the top level") {
+    val nested = Field("end_date", "long", constraints = List(fieldRangeConstraint(gte = Some("start_date"))))
+    val struct = Field("period", "struct", properties = List(nested))
+    val contract = contractWith(
+      Nil,
+      List(dataset("out", "gold.out", Field("start_date", "long"), struct))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "start_date" -> Literal(5L, "long"), "period" -> StructConstruct(List("end_date" -> Literal(10L, "long"))))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // Would be Guaranteed (10 >= 5) if nested fieldRange resolution wrongly consulted the
+    // top-level "start_date" sibling - it must not, so this stays NotStaticallyVerifiable.
+    assert(results == List(DataQualityCheckResult("period.end_date", ">= start_date", DataQualityVerdict.NotStaticallyVerifiable)))
   }
 
   // --- Struct/nested fields (checksForField's recursion) -------------------

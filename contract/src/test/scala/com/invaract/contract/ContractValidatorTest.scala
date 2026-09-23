@@ -354,6 +354,152 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.warnings.exists(_.message.contains("not 'string'")))
   }
 
+  test("validate should accept a well-formed fieldRange constraint referencing an existing numeric sibling, with no warning") {
+    val schema = Schema(List(
+      Field("start_date", "long"),
+      Field("end_date", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "start_date"))))
+    ))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should error when a fieldRange field constraint declares no bound at all") {
+    val schema = Schema(List(Field("end_date", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("fieldRange")))
+  }
+
+  test("validate should warn when a fieldRange constraint is declared on a non-numeric field") {
+    val schema = Schema(List(
+      Field("start_date", "long"),
+      Field("label", "string", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "start_date"))))
+    ))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a type mismatch is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("not a numeric type")))
+  }
+
+  test("validate should warn when a fieldRange constraint references its own field") {
+    val schema = Schema(List(Field("amount", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "amount"))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a self-reference is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("references its own field")))
+  }
+
+  test("validate should warn when a fieldRange constraint references a field that doesn't exist in the schema") {
+    val schema = Schema(List(Field("end_date", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "start_date"))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a missing reference is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("does not exist in this dataset's schema")))
+  }
+
+  test("validate should warn when a fieldRange constraint references an existing but non-numeric sibling field") {
+    val schema = Schema(List(
+      Field("label", "string"),
+      Field("amount", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "label"))))
+    ))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a referenced-type mismatch is a Warning, not an Error")
+    assert(result.warnings.exists(w => w.message.contains("field 'label'") && w.message.contains("not a numeric type")))
+  }
+
+  test("validate should warn when a fieldRange constraint is declared on a nested field") {
+    val nested = Field("end_date", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "start_date"))))
+    val schema = Schema(List(Field("period", "struct", properties = List(nested))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "an unresolvable-nested-field is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("nested field is never resolved")))
+  }
+
+  test("validate should report both a self-reference and a missing-reference warning when a single fieldRange constraint has both") {
+    val schema = Schema(List(Field("amount", "long", constraints = List(FieldConstraint(FieldConstraintType.FieldRange, Map("gte" -> "amount", "lte" -> "missing_field"))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.warnings.exists(_.message.contains("references its own field")))
+    assert(result.warnings.exists(_.message.contains("does not exist in this dataset's schema")))
+  }
+
   test("validate should not flag an unrecognized rule type as malformed") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

@@ -10,10 +10,11 @@ import { Aside } from '@astrojs/starlight/components';
 A contract can already require an output field to be non-null
 (`nullable: false`). Beyond that, a field can declare that it must always equal a
 specific constant, always be one of a finite set of values, always fall within a
-numeric range, or (for a string-typed field) always have a specific length — and
-Invaract will attempt to *prove*, from the transformation's own translated logic, that
-the requirement holds for every possible row, not just check it against whatever data
-happened to be present on one run.
+numeric range, always fall within a range *relative to another field on the same row*
+(e.g. `end_date >= start_date`), or (for a string-typed field) always have a specific
+length — and Invaract will attempt to *prove*, from the transformation's own translated
+logic, that the requirement holds for every possible row, not just check it against
+whatever data happened to be present on one run.
 
 <Aside type="caution" title="This proves guarantees, not predicts them">
 The objective is never "will this data quality rule probably pass?" — it's "does the
@@ -56,6 +57,13 @@ outputs:
           constraints:
             - type: length
               exact: 10
+        - name: start_date
+          type: long
+        - name: end_date
+          type: long
+          constraints:
+            - type: fieldRange
+              gte: start_date
 ```
 
 See [Reference → Contract Format](/reference/contract-format/#static-data-quality-constraints)
@@ -129,6 +137,12 @@ A few worked examples (the full set, mechanically traced, is in
   with `constraints: [{type: equals, value: US}]` declared on `address.country`'s own
   [nested `properties`](/reference/contract-format/) — proves `Guaranteed` the same way a
   flat column does, by tracing into the struct the transformation itself just built.
+- **A cross-field bound** — an `end_date` field with `constraints: [{type: fieldRange,
+  gte: start_date}]` proves `Guaranteed` whenever `end_date`'s own proven lower bound is
+  already `>=` `start_date`'s own proven upper bound (e.g. an input contract declaring
+  `start_date`'s own `range: {lte: 1000}` alongside `end_date`'s own `range: {gte:
+  1000}`, both passed straight through) — a direct comparison between each field's own
+  already-analyzed value range, not a new kind of tracing.
 
 ## The four verdicts
 
@@ -217,3 +231,14 @@ fact.
 - **Sampling, historical runs, or current data** — never consulted. Every proof (or
   disproof) comes from the transformation's translated logic and the contract's declared
   input properties alone.
+- **A `fieldRange` constraint on a nested field, or referencing a nested field** —
+  always `NotStaticallyVerifiable`: cross-field comparison only resolves between
+  top-level output fields, deliberately, to avoid an ambiguous match against an
+  unrelated field that happens to share a nested field's bare name. Both the
+  constrained field and the field it references must also be numeric-typed — the
+  proof is a direct comparison of each side's own analyzed numeric range.
+- **A formula relationship between fields** (`total = quantity * price`, an arithmetic
+  identity, not an ordering) — genuinely different from `fieldRange`: an ordering bound
+  is proven from each side's own already-known value range alone, while a formula
+  identity would need to trace how one column's expression actually relates to
+  another's. Not supported.

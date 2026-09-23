@@ -174,14 +174,22 @@ object ContractValidator {
       issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", s"Duplicate field name '$name'")
     }
 
+    val topLevelFieldsByName: Map[String, Field] = dataset.schema.fields.map(f => f.name -> f).toMap
     dataset.schema.fields.foreach { field =>
-      issues ++= validateField(s"$path.schema.${field.name}", field)
+      issues ++= validateField(s"$path.schema.${field.name}", field, Some(topLevelFieldsByName - field.name))
     }
 
     issues.result()
   }
 
-  private def validateField(path: String, field: Field): List[ValidationIssue] = {
+  /** `siblingFields`: the other top-level fields of this same dataset,
+    * keyed by name, available for a `fieldRange` constraint to reference —
+    * `None` for a nested field (recursed into via `field.properties`
+    * below), since cross-field comparison is only ever resolved by
+    * `StaticDataQualityVerifier` for a top-level output field (see
+    * `validateFieldRange`'s own doc).
+    */
+  private def validateField(path: String, field: Field, siblingFields: Option[Map[String, Field]]): List[ValidationIssue] = {
     val issues = List.newBuilder[ValidationIssue]
 
     if (field.name.trim.isEmpty) {
@@ -211,11 +219,11 @@ object ContractValidator {
     }
 
     field.properties.foreach { nested =>
-      issues ++= validateField(s"$path.${nested.name}", nested)
+      issues ++= validateField(s"$path.${nested.name}", nested, None)
     }
 
     field.constraints.zipWithIndex.foreach { case (constraint, idx) =>
-      issues ++= validateFieldConstraint(s"$path.constraints[$idx]", field, constraint)
+      issues ++= validateFieldConstraint(s"$path.constraints[$idx]", field, constraint, siblingFields)
     }
 
     issues.result()
@@ -225,7 +233,7 @@ object ContractValidator {
     * one field's `constraints` — see
     * docs/STATIC_DATA_QUALITY_VERIFICATION.md §5.
     */
-  private def validateFieldConstraint(path: String, field: Field, constraint: FieldConstraint): List[ValidationIssue] = {
+  private def validateFieldConstraint(path: String, field: Field, constraint: FieldConstraint, siblingFields: Option[Map[String, Field]]): List[ValidationIssue] = {
     val issues = List.newBuilder[ValidationIssue]
 
     if (constraint.constraintType.trim.isEmpty) {
@@ -260,7 +268,72 @@ object ContractValidator {
           path,
           s"a length constraint is declared but the field's own declared type is '${field.fieldType}', not 'string'"
         )
+      case (FieldConstraintType.FieldRange, Some(fr @ InterpretedFieldConstraint.FieldRange(_, _, _, _))) =>
+        issues ++= validateFieldRange(path, field, fr, siblingFields)
       case _ => ()
+    }
+
+    issues.result()
+  }
+
+  /** `fieldRange`'s own checks beyond "well-formed shape" (already covered
+    * above by the generic malformed-properties check): the constrained
+    * field's own declared type must be numeric (the only kind
+    * `StaticDataQualityVerifier` can ever prove a cross-field bound for —
+    * see docs/STATIC_DATA_QUALITY_VERIFICATION.md), each referenced field
+    * must actually exist as a *sibling* (same dataset, same nesting level)
+    * and must itself be numeric, and a field referencing itself is
+    * degenerate (never a meaningful comparison). `siblingFields = None`
+    * (a nested field) can't be resolved at all — see this constraint's own
+    * doc for why cross-field comparison is scoped to top-level fields.
+    * Every issue here is a Warning, not an Error: exactly like `Length` on
+    * a non-string field, none of these make the contract structurally
+    * invalid — `StaticDataQualityVerifier` degrades safely to
+    * `NotStaticallyVerifiable` for all of them, never a crash or a false
+    * guarantee.
+    */
+  private def validateFieldRange(
+    path: String,
+    field: Field,
+    fr: InterpretedFieldConstraint.FieldRange,
+    siblingFields: Option[Map[String, Field]]
+  ): List[ValidationIssue] = {
+    val issues = List.newBuilder[ValidationIssue]
+
+    if (!NumericFieldTypes.contains(field.fieldType.toLowerCase)) {
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        path,
+        s"a fieldRange constraint is declared but the field's own declared type is '${field.fieldType}', not a numeric type"
+      )
+    }
+
+    val referencedNames = List(fr.gte, fr.gt, fr.lte, fr.lt).flatten
+    siblingFields match {
+      case None =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          "a fieldRange constraint on a nested field is never resolved by static verification (always NotStaticallyVerifiable) - " +
+            "cross-field comparison only supports top-level output fields"
+        )
+      case Some(bySiblingName) =>
+        referencedNames.foreach { name =>
+          if (name == field.name) {
+            issues += ValidationIssue(ValidationSeverity.Warning, path, s"fieldRange constraint references its own field '$name' - this is never a meaningful comparison")
+          } else
+            bySiblingName.get(name) match {
+              case None =>
+                issues += ValidationIssue(ValidationSeverity.Warning, path, s"fieldRange constraint references field '$name', which does not exist in this dataset's schema")
+              case Some(other) if !NumericFieldTypes.contains(other.fieldType.toLowerCase) =>
+                issues += ValidationIssue(
+                  ValidationSeverity.Warning,
+                  path,
+                  s"fieldRange constraint references field '$name' of type '${other.fieldType}', not a numeric type"
+                )
+              case _ => ()
+            }
+        }
     }
 
     issues.result()
@@ -284,6 +357,7 @@ object ContractValidator {
     case FieldConstraintType.OneOf  => " (expected a non-empty 'values' list)"
     case FieldConstraintType.Range  => " (expected at least one of gte/gt/lte/lt, and not both gte+gt or both lte+lt)"
     case FieldConstraintType.Length => " (expected 'exact', or at least one of 'min'/'max' with min <= max, and not 'exact' combined with 'min'/'max')"
+    case FieldConstraintType.FieldRange => " (expected at least one of gte/gt/lte/lt naming another field in the same schema, and not both gte+gt or both lte+lt)"
     case _                           => ""
   }
 

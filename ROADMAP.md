@@ -3565,6 +3565,83 @@ function made possible for a *flat* output column.
       guide's nested-field bullet rewritten to describe the new capability, plus a new
       worked example.
 
+#### Sub-phase: Cross-field/row-level constraints (`fieldRange`) (done)
+
+A user-suggested, common real-world data-quality rule this design's own §8/§9 had
+already flagged as a natural "second slice" of cross-field relationships when it was
+first written: one field's value compared against *another field on the same row*
+(`end_date >= start_date`, `discount_price <= list_price`), not against a literal.
+
+- [x] **`contract` side**: `FieldConstraintType.FieldRange = "fieldRange"`,
+      `InterpretedFieldConstraint.FieldRange(gte, gt, lte, lt: Option[String])` —
+      exactly `Range`'s own shape, except each bound's value is another field's name
+      rather than a numeric literal (a single constraint can combine two bounds against
+      two different fields, e.g. `gte: min_price, lte: max_price`).
+      `ContractValidator` gained `validateFieldRange`: a `Warning` when the constrained
+      field or a referenced field isn't numeric-typed, when a referenced field doesn't
+      exist in the same schema, when a constraint references its own field, or when a
+      `fieldRange` is declared on a nested field at all (never resolvable — see below) —
+      every case degrades safely to `NotStaticallyVerifiable`, never a crash, so none of
+      these are `Error`s.
+      `contract` bumped 0.8.0 → 0.9.0 — not a MiMa break (purely additive: a new sealed-
+      trait case, a new `val`), but needed anyway for the same Ivy-cache coordinate-
+      collision reason `fingerprint`'s own 0.2.0 → 0.3.0 bump documents: `spark-adapter`/
+      `runner` both declare a real compile-time `invaract-contract` version dependency.
+- [x] **`spark-adapter` side — no `ir` changes needed at all**, a genuinely smaller
+      addition than `Length` was: `PropertyAnalysis.analyze` already computes every
+      top-level output field's own `Property.Range` in one pass, and
+      `StaticDataQualityVerifier.verify` already holds that whole `analyzed` map in
+      scope — a `fieldRange` bound's proof is a direct comparison between two
+      already-analyzed `Range`s, no new fact-propagation machinery required.
+      `checksForField`/`checksFor` thread that map down as `siblings`, but *only* for
+      the outermost (top-level-field) call — every recursive call into
+      `field.properties` passes `Map.empty` instead, so a `fieldRange` constraint on a
+      *nested* field always resolves `NotStaticallyVerifiable` rather than risking an
+      accidental match against an unrelated top-level field sharing the same bare name.
+      New `gteClause`/`gtClause` helpers decide each bound clause's own
+      `Holds`/`Violated`/`Unknown` verdict, reusing `rangeVerdict`'s own established
+      strict/tie-conservative convention exactly; `lte`/`lt` reuse both functions with
+      the two sides swapped (`field <= other` is exactly `other >= field`) rather than
+      two more near-duplicate implementations. `fieldRangeVerdict` combines a
+      constraint's (up to four) independent bound clauses: `Violated` if any clause is
+      provably violated, `Guaranteed` only if every declared clause provably holds,
+      `NotStaticallyVerifiable`/`NotGuaranteed` otherwise.
+- [x] **Tests**: `contract`'s `ContractParserTest` gained 8 cases (well-formed
+      single/multiple bounds, whitespace trimming, no-bound/both-gte-gt/both-lte-lt/
+      non-string-bound/blank-bound/unrecognized-key malformed cases).
+      `ContractValidatorTest` gained 8 cases (well-formed no-warning case, no-bound
+      `Error`, non-numeric-constrained-field warning, self-reference warning,
+      missing-reference warning, non-numeric-referenced-field warning, nested-field
+      warning, and a single constraint carrying two independent warnings at once).
+      `spark-adapter`'s `StaticDataQualityVerifierSpec` gained 16 cases: `gte`/`gt`/
+      `lte`/`lt` each Guaranteed and Violated (including the exact-tie boundary cases
+      proving `gte`/`lte` are inclusive while `gt`/`lt` are strict — a tie Violates a
+      strict bound); `lte`/`lt` specifically proven to reuse `gteClause`/`gtClause`
+      with sides swapped, not a coincidentally-similar independent implementation;
+      `NotGuaranteed` when only one side's bound is known; `NotStaticallyVerifiable`
+      for a UDF-derived constrained field and for a reference to a field absent from
+      the output entirely; two-bound combination both-hold-Guaranteed and
+      one-side-Violated-wins-over-the-other-holding; and a nested-field fieldRange
+      constraint confirmed to stay `NotStaticallyVerifiable` even when the referenced
+      name genuinely exists at the top level (proving no accidental leakage into the
+      wrong field, not just asserting the documented scope by inspection).
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement, API Compatibility
+      Requirement, and Coverage Gating Requirement (`contract` MiMa clean, confirmed;
+      `spark-adapter` MiMa clean — `StaticDataQualityVerifier` is `private[sparkadapter]`),
+      and `./dev/test`/`./dev/regression` re-run against the final wiring.
+- [x] **Documentation**: `docs/STATIC_DATA_QUALITY_VERIFICATION.md` gained §3.10 (full
+      section — the proof mechanism, the multi-bound-clause combination rule, and both
+      scoping decisions: top-level-fields-only, numeric-types-only), §8's MVP scope
+      list updated to match (moving this out of the "explicitly outside the MVP" list
+      it was pre-emptively flagged in when that section was first written, and
+      narrowing that list's remaining "expression-derived relationship" bullet to the
+      genuinely-still-unaddressed *formula* case, `total = quantity * price`, distinct
+      from the ordering case now covered). docs-site's [Verify Static Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx)
+      guide gained a worked example and a "What this doesn't check yet" update;
+      [Contract Format](docs-site/src/content/docs/reference/contract-format.mdx)
+      reference gained a `fieldRange` row/example.
+
 ---
 
 ## Phase 2 — Multi-Engine Support
