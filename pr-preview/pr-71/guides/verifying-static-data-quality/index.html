@@ -197,10 +197,15 @@ does — a documented MVP simplification, not a soundness gap (it only ever unde
 never over-claims, a guarantee).</li>
 <li><strong>A constraint declared on a nested (struct/record) field</strong> — <code dir="auto">constraints</code>/<code dir="auto">nullable: false</code> on a field’s own <a href="/Invaract/pr-preview/pr-71/reference/contract-format/">nested <code dir="auto">properties</code></a> — is
 recognized rather than silently ignored, but always reports <code dir="auto">NotStaticallyVerifiable</code>:
-this analysis can’t yet trace into a struct column’s own member access to prove or
-refute anything about a field inside it. The struct field <em>itself</em> (at the top level)
-is unaffected — its own <code dir="auto">nullable</code>/<code dir="auto">constraints</code> are checked normally.</li>
+this analysis has no way yet to trace a declared obligation on a nested field back to
+the real expression that produced its parent struct column. The struct field <em>itself</em>
+(at the top level) is unaffected — its own <code dir="auto">nullable</code>/<code dir="auto">constraints</code> are checked
+normally, and now include a struct the transformation itself builds (e.g.
+<code dir="auto">struct(col("zip"), col("city"))</code>), which is always provably non-null. A flat output
+column produced by extracting one field straight back out of a struct built in the same
+expression (e.g. <code dir="auto">struct(col("zip"), col("city")).getField("zip")</code>) is checked for
+real too, the same as any other computed column.</li>
 <li><strong>Sampling, historical runs, or current data</strong> — never consulted. Every proof (or
 disproof) comes from the transformation’s translated logic and the contract’s declared
 input properties alone.</li>
-</ul></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-09-23T12:36:03.000Z">Sep 23, 2026</time></p></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
+</ul></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-09-23T14:55:18.000Z">Sep 23, 2026</time></p></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
