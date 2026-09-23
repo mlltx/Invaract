@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A variant of demo/contracts/invaract_output.yaml declaring a static
+    data-quality constraint the real InvaractPlugin transformation
+    provably violates, for ./dev/regression's data-quality Case 3/4 (see
+    docs/STATIC_DATA_QUALITY_VERIFICATION.md). value_tier's own
+    `CASE WHEN value > 50 THEN 'high' ELSE 'low' END` provably produces
+    'low' on its ELSE branch, which this contract deliberately excludes
+    from its declared oneOf set — a real DataQualityViolation
+    (ViolationType.DataQualityViolation), aborting the write before any
+    data is written, the same proof docs/SPARK_ADAPTER.md's other broken
+    example gives for a structural violation. Not wired into ./dev/test —
+    the real demo pipeline is expected to pass its real contract, not this
+    one.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_dq_fail.parquet
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+          constraints:
+            - type: oneOf
+              values: [high]
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

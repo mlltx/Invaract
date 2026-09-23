@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A variant of demo/contracts/invaract_output.yaml declaring a static
+    data-quality constraint the real InvaractPlugin transformation
+    provably satisfies, for ./dev/regression's data-quality Case 3/4 (see
+    docs/STATIC_DATA_QUALITY_VERIFICATION.md). value_tier's own
+    `CASE WHEN value > 50 THEN 'high' ELSE 'low' END` is a two-branch CASE
+    with an ELSE, both branches constants — exactly the shape Example 3 in
+    the design doc proves Guaranteed, with no change to InvaractPlugin
+    itself. Not wired into ./dev/test — see that script's own contract for
+    the default install path; this exists purely to prove
+    spark.invaract.staticDataQuality=true through a real spark-submit run,
+    the same way demo/contracts/invaract_output_location_ref.yaml proves
+    spark.invaract.locationMap.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_dq_pass.parquet
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+          constraints:
+            - type: oneOf
+              values: [high, low]
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

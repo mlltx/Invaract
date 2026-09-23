@@ -851,8 +851,11 @@ To modify it:
 GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 
 - **`test`**: OS × Java matrix (ubuntu/macos/windows × 11/17/21, with
-  exclusions) — builds all 5 modules and runs `./dev/test`
-- **`docker-regression`**: runs `./dev/regression`, proving
+  exclusions) — builds all 5 modules and runs `./dev/regression` (not
+  `./dev/test`, which stays a local/interactive script no CI job invokes —
+  see `dev/lib.sh`'s own doc)
+- **`docker-regression`**: runs `./dev/regression` a second time, inside
+  the Docker image `docker/Dockerfile` builds, proving
   `ContractEnforcementRule` actually blocks a bad write, not just that a
   harness run completes
 - **`mutation-testing`**: whole-module Stryker4s for `ir`/`spark-adapter`

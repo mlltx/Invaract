@@ -15,6 +15,17 @@
 # command and a real pass/fail exit code instead of a transcript someone
 # has to read.
 #
+# Cases 3/4 give static data-quality verification (docs/STATIC_DATA_QUALITY_
+# VERIFICATION.md) the same real, CI-gated proof Cases 1/2 already give
+# schema-level enforcement — a gap the static-data-quality design doc's own
+# §11 open question 2 flagged and left unresolved: neither this script nor
+# ./dev/test (which this job doesn't even run — see below) exercised
+# spark.invaract.staticDataQuality through a real spark-submit job at all
+# until now. ./dev/test itself stays a purely local/interactive script
+# (dev/lib.sh's own doc; this repository's CI job runs ./dev/build then
+# this script, never ./dev/test), so this is genuinely the only place that
+# gap could be closed for something CI actually runs.
+#
 # Usage:
 #   ./dev/regression            # builds jars first, then runs both cases
 #   SKIP_BUILD=1 ./dev/regression   # reuse jars already on disk (faster
@@ -69,7 +80,7 @@ mkdir -p demo/output
 
 # --- Case 1: contract satisfied -> execute -------------------------------
 echo ""
-echo -e "${YELLOW}Case 1/2: contract satisfied -> transformation executes${NC}"
+echo -e "${YELLOW}Case 1/4: contract satisfied -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output.yaml"
 
 # Output location must match what the contract declares — StructuralVerifier
@@ -118,7 +129,7 @@ check "a JobSummaryEvent (checksPassed=1, checksFailed=0) was published to $PASS
 
 # --- Case 2: contract violated -> abort before write ----------------------
 echo ""
-echo -e "${YELLOW}Case 2/2: contract violated -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 2/4: contract violated -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_broken_example.yaml"
 
 FAIL_OUTPUT="demo/output/result_broken_example.parquet"
@@ -173,14 +184,111 @@ else
 fi
 check "a JobSummaryEvent (checksPassed=0, checksFailed=1) was published to $FAIL_EVENTS even though the job aborted" "$fail_summary_event_ok"
 
+# --- Case 3: data-quality satisfied -> execute, Guaranteed reported -------
+echo ""
+echo -e "${YELLOW}Case 3/4: data-quality constraint satisfied -> transformation executes${NC}"
+echo "  contract: demo/contracts/invaract_output_data_quality_pass.yaml"
+
+DQ_PASS_OUTPUT="demo/output/result_dq_pass.parquet"
+DQ_PASS_REPORT="demo/output/regression_dq_pass_report.json"
+DQ_PASS_EVENTS="demo/output/regression_dq_pass_events.jsonl"
+rm -rf "$DQ_PASS_OUTPUT" "$DQ_PASS_REPORT" "$DQ_PASS_EVENTS"
+
+# value_tier's own CASE WHEN value > 50 THEN 'high' ELSE 'low' END proves
+# oneOf [high, low] Guaranteed with no input axiom at all (Example 3) -
+# real spark.invaract.staticDataQuality attachment purely via --conf,
+# same as any real job would use (External Attachability Requirement).
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.staticDataQuality=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$DQ_PASS_OUTPUT" "$DQ_PASS_REPORT" \
+  "demo/contracts/invaract_output_data_quality_pass.yaml" "demo/regression-notify-dq-pass.properties"
+DQ_PASS_EXIT=$?
+
+DQ_PASS_STATUS="$(report_field "$DQ_PASS_REPORT" status)"
+
+[ "$DQ_PASS_EXIT" = "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits 0" "$ec_ok"
+
+[ "$DQ_PASS_STATUS" = "PASS" ] && st_ok=true || st_ok=false
+check "report status is PASS (got '$DQ_PASS_STATUS')" "$st_ok"
+
+[ -e "$DQ_PASS_OUTPUT" ] && out_ok=true || out_ok=false
+check "output was written to $DQ_PASS_OUTPUT" "$out_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$DQ_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"field": "value_tier"' "$DQ_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"verdict": "Guaranteed"' "$DQ_PASS_EVENTS" 2>/dev/null; then
+  dq_pass_event_ok=true
+else
+  dq_pass_event_ok=false
+fi
+check "a ContractValidationEvent with value_tier's dataQuality verdict Guaranteed was published to $DQ_PASS_EVENTS" "$dq_pass_event_ok"
+
+# --- Case 4: data-quality violated -> abort before write ------------------
+echo ""
+echo -e "${YELLOW}Case 4/4: data-quality constraint violated -> write aborted, no output${NC}"
+echo "  contract: demo/contracts/invaract_output_data_quality_fail.yaml"
+
+DQ_FAIL_OUTPUT="demo/output/result_dq_fail.parquet"
+DQ_FAIL_REPORT="demo/output/regression_dq_fail_report.json"
+DQ_FAIL_EVENTS="demo/output/regression_dq_fail_events.jsonl"
+rm -rf "$DQ_FAIL_OUTPUT" "$DQ_FAIL_REPORT" "$DQ_FAIL_EVENTS"
+
+# This contract's oneOf on value_tier deliberately excludes 'low', which
+# the ELSE branch above provably produces - a real DataQualityViolation
+# (ViolationType.DataQualityViolation), aborting the write before any data
+# is written, the same proof Case 2 gives for a structural violation.
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.staticDataQuality=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$DQ_FAIL_OUTPUT" "$DQ_FAIL_REPORT" \
+  "demo/contracts/invaract_output_data_quality_fail.yaml" "demo/regression-notify-dq-fail.properties"
+DQ_FAIL_EXIT=$?
+
+DQ_FAIL_STATUS="$(report_field "$DQ_FAIL_REPORT" status)"
+
+[ "$DQ_FAIL_EXIT" != "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits non-zero (got $DQ_FAIL_EXIT)" "$ec_ok"
+
+[ "$DQ_FAIL_STATUS" = "FAIL" ] && st_ok=true || st_ok=false
+check "report status is FAIL (got '$DQ_FAIL_STATUS')" "$st_ok"
+
+if grep -q "DATA_QUALITY_VIOLATION" "$DQ_FAIL_REPORT" 2>/dev/null; then
+  dq_violation_ok=true
+else
+  dq_violation_ok=false
+fi
+check "report identifies the DATA_QUALITY_VIOLATION violation" "$dq_violation_ok"
+
+if [ ! -e "$DQ_FAIL_OUTPUT" ]; then
+  dq_no_output_ok=true
+else
+  dq_no_output_ok=false
+fi
+check "no output was written at $DQ_FAIL_OUTPUT (write was actually aborted)" "$dq_no_output_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$DQ_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"status": "FAILED"' "$DQ_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"field": "value_tier"' "$DQ_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"verdict": "Violated"' "$DQ_FAIL_EVENTS" 2>/dev/null; then
+  dq_fail_event_ok=true
+else
+  dq_fail_event_ok=false
+fi
+check "a FAILED ContractValidationEvent with value_tier's dataQuality verdict Violated was published to $DQ_FAIL_EVENTS before the write was aborted" "$dq_fail_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$DQ_FAIL_EVENTS" 2>/dev/null; then
+  dq_fail_write_event_ok=false
+else
+  dq_fail_write_event_ok=true
+fi
+check "no WriteEvent was published to $DQ_FAIL_EVENTS (the write never executed)" "$dq_fail_write_event_ok"
+
 # --- Summary ---------------------------------------------------------------
 echo ""
 echo "======================================"
 if [ "$FAILURES" -eq 0 ]; then
-  echo -e "${GREEN}✓ Contract regression pack passed (2/2 cases behaved as contracted)${NC}"
+  echo -e "${GREEN}✓ Contract regression pack passed (4/4 cases behaved as contracted)${NC}"
   exit 0
 else
   echo -e "${RED}✗ Contract regression pack failed ($FAILURES assertion(s) did not hold)${NC}"
-  echo "See $PASS_REPORT and $FAIL_REPORT for full detail."
+  echo "See $PASS_REPORT, $FAIL_REPORT, $DQ_PASS_REPORT, and $DQ_FAIL_REPORT for full detail."
   exit 1
 fi
