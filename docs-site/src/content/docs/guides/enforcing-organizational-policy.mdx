@@ -125,7 +125,7 @@ own source, only its `spark-submit` invocation:
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.6.0.jar \
+  --jars invaract-spark-adapter-0.7.0.jar \
   --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
   my-real-job.jar
 ```
@@ -225,7 +225,7 @@ ordinary `OrgPolicy` YAML document, attached alongside the base via a second con
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.6.0.jar \
+  --jars invaract-spark-adapter-0.7.0.jar \
   --conf spark.invaract.orgPolicy=/policies/org-wide.yaml \
   --conf spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml \
   my-real-job.jar
@@ -549,7 +549,7 @@ own — no Invaract source change, and no change to any governed job's own sourc
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.6.0.jar,my-governance-policies.jar \
+  --jars invaract-spark-adapter-0.7.0.jar,my-governance-policies.jar \
   --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
   my-real-job.jar
 ```

@@ -3095,6 +3095,71 @@ honestly distinct from both `Guaranteed` and `Violated`.
       declares no `constraints`/`staticDataQuality`, so it's unaffected by
       construction, confirmed rather than assumed.
 
+#### Sub-phase: Static data-quality — notification channel visibility (done)
+
+A gap left open by the sub-phase above: `VerificationResult.dataQuality` existed but
+was never actually reachable by any caller on a *passing* check —
+`ContractEnforcementRule.verifyOrThrow` returns `Unit` on success, so only a `FAILED`
+check's thrown `ContractViolationException` ever exposed it (`fingerprints` has the
+identical gap, unnoticed until this one was investigated). Closed on the one channel
+that does reach every check regardless of outcome.
+
+- [x] **`notification.ContractValidationEvent` gained `dataQuality`**
+      (`NotificationEvent.scala`), threaded through from
+      `ContractEnforcementRule.publishValidation` — a subscriber now sees every
+      `DataQualityCheckResult` (`Guaranteed`/`NotGuaranteed`/`NotStaticallyVerifiable`/
+      `Violated` alike) on both a PASSED and a FAILED check.
+      `DataQualityCheckResult` gained a `toMap` method (mirroring `Violation.toMap`)
+      for `NotificationJson` rendering.
+- [x] **API compatibility**: `spark-adapter` `0.6.0` → `0.7.0` (a case class gained a
+      trailing constructor field, the same shape of break this file's own
+      version-history comments already document repeatedly), caught for real by CI's
+      `api-compatibility` job and fixed the established way — every place pinning the
+      bumped module's version or referencing its jar filename updated
+      (`runner`/`notification-kafka` `build.sbt`, `CLAUDE.md`, `ARCHITECTURE.md`, and
+      every affected docs-site guide's `spark-submit --jars`/Maven example).
+- [x] **`demo/output/report.json`/web UI**: the FAIL path now surfaces
+      `dataQuality` directly from `VerificationResult` (same shape `violations`
+      already had). The PASS path is honestly marked `"captured": false` with an
+      explanation rather than silently omitted or faked as `[]` — the same
+      architectural gap (`verifyOrThrow` returns `Unit` on success) prevents it, and
+      fixing that properly would mean giving up `DemoJobHarness`'s deliberate
+      zero-code, purely conf-driven install branch for the common case, a real
+      tradeoff left for a future pass rather than rushed here. Web UI gained a "Data
+      Quality" section (verdict-badge list, or the same hint) under Contract
+      Verification.
+- [x] **Tests**: `NotificationJsonSpec` gained coverage for both the `Nil` (`[]`) and
+      populated `dataQuality` rendering shapes.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical Requirement:
+      scoped Stryker on the four touched files (`ContractEnforcementRule.scala`,
+      `StructuralVerifier.scala`, `NotificationEvent.scala`, `NotificationJson.scala`)
+      reached **96.33%** (105/109 non-excluded mutants); the 4 survivors are all in
+      pre-existing code this change didn't touch (two unrelated `nonEmpty` checks at
+      `ContractEnforcementRule.scala:346` and `:855`), zero survivors in the actual
+      diff. `spark-adapter`'s full suite passed (675/675). `./dev/build`/`./dev/test`
+      both pass against real `spark-submit`; `demo/output/report.json` and
+      `demo/output/events.jsonl` confirmed by direct inspection to render exactly as
+      designed — the real demo pipeline's `events.jsonl` `CONTRACT_VALIDATION` entry
+      shows `"dataQuality": []` (the demo contract still declares no
+      `constraints`/`staticDataQuality` — the harness-fixture gap this surfaces is
+      flagged as its own follow-up below, not fixed here), and `report.json`'s
+      `contractVerification.dataQuality` shows the honest `"captured": false` shape.
+      Web UI screenshotted against a real `./dev/report` run, confirming the new
+      section renders.
+- [ ] **Known remaining gaps** (flagged, not fixed in this sub-phase): struct/nested
+      `Field.properties` constraints are declarable on the contract model but
+      `StaticDataQualityVerifier.verify` only walks `output.schema.fields` at the top
+      level — a nested field's `constraints` are silently never checked, no
+      `DataQualityCheckResult` produced at all, not even an honest
+      `NotStaticallyVerifiable`. No `demo/contracts/*.yaml` fixture declares
+      `constraints`/`nullable: false` on any field, so `./dev/test`'s real
+      `spark-submit` run has never once exercised static data-quality verification
+      end-to-end — only in-JVM `ContractEnforcementRuleSpec` tests have (this is
+      §11's own still-open question 2 in
+      docs/STATIC_DATA_QUALITY_VERIFICATION.md, confirmed still unresolved).
+      `./dev/regression`'s pass/fail pair proves schema-level enforcement only, not a
+      DQ-specific `Violated` abort via a real Docker regression run.
+
 ---
 
 ## Phase 2 — Multi-Engine Support

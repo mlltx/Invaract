@@ -64,7 +64,7 @@ every existing caller by default — off unless you turn it on, via `spark-submi
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.6.0.jar \
+  --jars invaract-spark-adapter-0.7.0.jar \
   --conf spark.invaract.staticDataQuality=true \
   my-real-job.jar
 ```
@@ -137,6 +137,27 @@ This matters more here than for most flags: a narrow, deliberately conservative 
 implementation will legitimately return `NotGuaranteed`/`NotStaticallyVerifiable` for a
 large fraction of real transformations — most don't hit the whitelist of provable
 constructs yet — and that's expected, not a regression.
+
+**On a published `ContractValidationEvent`**, if you've also set up
+[a notification sink](/guides/notification-sinks/) — every entry from every field-level
+check, all four verdicts, on both a PASSED and a FAILED check:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "status": "PASSED", "...": "...", "dataQuality": [{"field": "customer_id", "constraint": "notNull", "verdict": "Guaranteed"}, {"field": "amount", "constraint": "range(gte=0)", "verdict": "NotGuaranteed"}]}
+```
+
+Empty (`"dataQuality": []`) whenever `spark.invaract.staticDataQuality` isn't enabled, or
+the contract declares no field `constraints` at all — the same opt-in-and-empty-by-default
+shape `fingerprints` uses.
+
+**Programmatically**, on the `VerificationResult` itself:
+
+```scala
+val result: VerificationResult = ??? // from your own check
+result.dataQuality.foreach { check =>
+  println(s"${check.field} (${check.constraint}): ${check.verdict}")
+}
+```
 
 ## Runtime data quality is still necessary
 

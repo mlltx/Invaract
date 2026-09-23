@@ -232,7 +232,16 @@ object DataQualityVerdict {
   * machine-parseable encoding; a caller that needs the underlying shape
   * already has it via `Contract.output(...).schema.field(field)`.
   */
-case class DataQualityCheckResult(field: String, constraint: String, verdict: DataQualityVerdict)
+case class DataQualityCheckResult(field: String, constraint: String, verdict: DataQualityVerdict) {
+
+  /** `verdict` rendered as its bare case-object name (`"Guaranteed"`,
+    * `"NotGuaranteed"`, `"Violated"`, `"NotStaticallyVerifiable"`) — the
+    * same plain-string-across-a-JSON-boundary convention `Violation.toMap`
+    * already uses for `violationType`, so a sink or `report.json` consumer
+    * never needs to reflect on the Scala type itself.
+    */
+  def toMap: Map[String, Any] = Map("field" -> field, "constraint" -> constraint, "verdict" -> verdict.toString)
+}
 
 /** The two "unexpected X can be rejected" toggles from the check list —
   * off by default, matching how most contract/schema tooling treats an

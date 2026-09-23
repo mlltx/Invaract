@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter.notification
 
 import com.invaract.fingerprint.TransformationFingerprint
-import com.invaract.sparkadapter.Violation
+import com.invaract.sparkadapter.{DataQualityCheckResult, Violation}
 
 /** One thing worth telling an external system about, published through a
   * `NotificationSink` when one is configured and enabled (see
@@ -62,6 +62,17 @@ sealed trait NotificationEvent {
   * a real plan to fingerprint (see that field's own doc). Reaches every
   * configured sink, PASS or FAILED alike, the same as every other field
   * here — see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.5.
+  *
+  * `dataQuality` is `result.dataQuality` carried through the same way —
+  * `Nil` unless the check ran with `VerificationOptions.staticDataQuality =
+  * true` (see that field's own doc and
+  * docs/STATIC_DATA_QUALITY_VERIFICATION.md). Every entry rides along
+  * regardless of verdict, the same as `VerificationResult.dataQuality`
+  * itself — a subscriber sees `Guaranteed`/`NotGuaranteed`/
+  * `NotStaticallyVerifiable` results here too, not only the `Violated`
+  * ones already implied by `violations` above. This is the one channel
+  * that reaches a subscriber on a *passing* check, where there is no
+  * `ContractViolationException` to carry `result.dataQuality` instead.
   */
 case class ContractValidationEvent(
   contract: String,
@@ -70,7 +81,8 @@ case class ContractValidationEvent(
   timestamp: Long,
   metadata: Map[String, Any],
   applicationId: Option[String] = None,
-  fingerprints: Option[TransformationFingerprint] = None
+  fingerprints: Option[TransformationFingerprint] = None,
+  dataQuality: List[DataQualityCheckResult] = Nil
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }

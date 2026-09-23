@@ -57,6 +57,13 @@ interface Report {
       expected?: string
       actual?: string
     }>
+    // Populated (a real array) only on a FAILED check - ContractEnforcementRule
+    // doesn't expose a VerificationResult on a passing one, so a PASSED check's
+    // dataQuality is this "not captured" object instead. See the field's own
+    // comment in DemoJobHarness.scala.
+    dataQuality?:
+      | Array<{ field: string; constraint: string; verdict: string }>
+      | { captured: boolean; note?: string }
   }
   error?: string
 }
@@ -373,6 +380,38 @@ const ReportViewer = () => {
                   </div>
                 ) : (
                   <p className={styles.hint}>No violations.</p>
+                )}
+
+                {cvStatus !== 'DRY_RUN' && cv.dataQuality && (
+                  Array.isArray(cv.dataQuality) ? (
+                    cv.dataQuality.length > 0 && (
+                      <>
+                        <h3 className={styles.dataQualityHeading}>Data Quality</h3>
+                        <div className={styles.dataQualityList}>
+                          {cv.dataQuality.map((dq, i) => {
+                            const verdictClass =
+                              dq.verdict === 'Guaranteed' ? styles.verdictGuaranteed :
+                              dq.verdict === 'Violated' ? styles.verdictViolated :
+                              styles.verdictNeutral
+                            return (
+                              <div key={i} className={styles.dataQualityCheck}>
+                                <span className={styles.dataQualityField}>{dq.field}</span>
+                                <span className={styles.dataQualityConstraint}>{dq.constraint}</span>
+                                <span className={`${styles.verdictBadge} ${verdictClass}`}>{dq.verdict}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <h3 className={styles.dataQualityHeading}>Data Quality</h3>
+                      <p className={styles.hint}>
+                        {cv.dataQuality.note || 'Data quality verdicts were not captured for this run.'}
+                      </p>
+                    </>
+                  )
                 )}
               </div>
             )

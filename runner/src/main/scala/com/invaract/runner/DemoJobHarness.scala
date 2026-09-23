@@ -221,7 +221,23 @@ object DemoJobHarness {
             "status" -> "PASSED",
             "contract" -> s"${c.id}@${c.version}",
             "contractPath" -> contractPath,
-            "violations" -> List()
+            "violations" -> List(),
+            // Unlike violations (always [] on a PASSED check by definition),
+            // VerificationResult.dataQuality genuinely isn't available here:
+            // ContractEnforcementRule.verifyOrThrow returns Unit on success,
+            // never the VerificationResult that carries it - only a FAILED
+            // check's thrown ContractViolationException exposes one (see the
+            // Failure(e: ContractViolationException) branch below). The
+            // fingerprints capability has the same pre-existing gap. The one
+            // channel that does carry dataQuality/fingerprints for every
+            // check, PASS or FAIL, is a configured NotificationSink's
+            // published ContractValidationEvent (see the "Configure a
+            // Notification Sink" docs-site guide) - a real disclosed gap in
+            // this harness's own reporting, not in the engine.
+            "dataQuality" -> Map(
+              "captured" -> false,
+              "note" -> "Not available on a passing check through this API - see this field's own comment in DemoJobHarness.scala. Configure a notification sink to observe dataQuality for every check, including PASSED ones."
+            )
           )
         case None =>
           Map(
@@ -298,6 +314,7 @@ object DemoJobHarness {
             "contract" -> e.result.contract,
             "contractPath" -> contractPath,
             "violations" -> e.result.violations.map(_.toMap),
+            "dataQuality" -> e.result.dataQuality.map(_.toMap),
             "explanation" -> e.getMessage
           ),
           error = Some("Write aborted: this transformation violates its contract. See contractVerification for the full explanation.")
