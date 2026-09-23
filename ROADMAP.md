@@ -3309,6 +3309,107 @@ mutation testing alone would never catch that.
       PR's earlier fix — updated to note nothing remains outstanding from
       that list.
 
+#### Sub-phase: Struct member access (`GetStructField`/`CreateNamedStruct`) (done)
+
+The third and last item of the original 3-item static-data-quality follow-up plan,
+deferred at the time the nested-struct-field-recursion sub-phase above shipped: struct
+member access — `.getField(...)`/dotted access, and `struct(...)` construction — had no
+`ir.Expr` representation at all, so both Catalyst nodes silently fell through to the
+generic `Function`/`UnknownExpression` translation, losing which field was actually
+accessed or constructed (`GetStructField.prettyName`/`CreateNamedStruct.prettyName` are
+both generic — `"getstructfield"`/`"named_struct"` — carrying no trace of the real field
+name). Closing this is a genuine, independent translation-correctness fix, not only a
+data-quality-verification improvement.
+
+- [x] **Two new `ir.Expr` nodes**: `StructField(struct: Expr, fieldName: String)` and
+      `StructConstruct(fields: List[(String, Expr)])`, added to `Expr.scala`. Every
+      exhaustive match over `Expr` across `ir`/`fingerprint` gained real cases:
+      `Lineage.resolveExprT` (a field projection is never `Direct`, the same treatment
+      `Cast` already gets; a `StructConstruct` field with a UDF anywhere makes the whole
+      construct `Opaque`), `PlanPrinter.renderExpr` (`struct.field` / `STRUCT(name: val,
+      ...)`), `fingerprint`'s `Canonicalizer` (two matches: `canonicalizeExprT` and
+      `resolveExprDeepT`, field order deliberately preserved, never sorted), and
+      `fingerprint`'s `NonDeterminism.classify`. `ir.PredicateFacts` and
+      `spark-adapter`'s `EqualityConditions` needed no change (both already have safe
+      default fallbacks).
+- [x] **Real Catalyst translation** (`SparkPlanAdapter.scala`): `GetStructField` →
+      `ir.StructField` (`fieldName` from `.name` when resolvable, else the same
+      `childSchema(ordinal).name` fallback Catalyst's own getter uses internally,
+      confirmed via a throwaway probe script against a real analyzed plan, not
+      assumed), `CreateNamedStruct` → `ir.StructConstruct` (`.names`/`.valExprs` are
+      `CreateNamedStructLike`'s own pairing accessors over its flat, alternating
+      `children` list — `.names` returns `Seq[Any]`, not `Seq[String]`, a real compile
+      error caught and fixed with `.map(String.valueOf)`). Both matched ahead of the
+      generic `Function`/`UnknownExpression` fallback.
+- [x] **`PropertyAnalysis` transfer function**, deliberately bounded: the "construct a
+      struct, then immediately extract one of its own fields, in the same plan" pattern
+      — `StructField(StructConstruct(fields), fieldName)` — resolves straight through to
+      that field's own value expression, the same mechanism Example 3's `CASE WHEN`
+      resolution already uses, now for a struct field instead of a flat column. A
+      freshly-built `StructConstruct` is also unconditionally `notNull = Proven`
+      (constructing a struct is never itself SQL `NULL`, independent of any field's own
+      nullability) — a genuine bonus fact, not something the task explicitly asked for.
+      Both are exercised automatically by `StaticDataQualityVerifier.verify`'s existing
+      top-level `PropertyAnalysis.analyze` call, with **no `StaticDataQualityVerifier`
+      code change needed** for a top-level output field whose own expression takes this
+      shape. Any *other* struct-valued expression (a bare reference to an existing
+      struct-typed column, a UDF result, a `StructField` reached through one of those)
+      stays `Unknown`-with-`unsupported` — this analysis has no axiom representation for
+      a struct's own internal fields. `checksForField`'s nested (`Field.properties`)
+      recursion remains deliberately unconnected to this new resolution — propagating an
+      axiom through an *input* struct column's own nested-field declaration is a
+      genuinely different, still-deferred piece (see docs/STATIC_DATA_QUALITY_VERIFICATION.md's
+      updated §3.8/§8).
+- [x] **Tests**: `ExpressionTranslationSpec` gained 4 real-Spark-session cases (struct
+      construction preserves every field name/value; `struct(...).getField(...)` in one
+      expression resolves to `StructField` over a real `StructConstruct`, not a generic
+      `Function`; a dotted access on a struct materialized by a prior `Project`; a
+      nested struct-of-struct access preserving both field names).
+      `PropertyAnalysisSpec` gained 8 cases (construct-then-extract resolving a real
+      `equalsConstant`/`range` fact; picking the correctly-named field among several, not
+      just the first; a missing field name; any non-`StructConstruct` struct expression
+      staying `unsupported` even over a Proven-axiom column; a UDF-wrapped struct; a
+      freshly-built struct's `NotNull = Proven`, including with an opaque field value and
+      with zero fields). `LineageSpec`/`PlanPrinterSpec` gained cases for the two new
+      `Expr` nodes' own classification/rendering. `fingerprint`'s `CanonicalizerSpec`
+      gained cases for encoding (field order/name/value all participate;
+      `StructField`/`Function` don't collide) and `resolveExprDeep` reaching through both
+      new nodes; `NonDeterminismSpec` gained cases for the two new `classify` arms;
+      `PropertyBasedSpec`'s own generative `genExpr` extended to generate the two new
+      node kinds too (previously silently excluded, a real gap in its own "covers every
+      `Expr` node kind" claim, fixed in the same pass). `StaticDataQualityVerifierSpec`
+      gained 2 cases proving the new resolution flows through this module automatically
+      with zero code changes there, while nested `Field.properties` stays unaffected.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and API Compatibility
+      Requirement: scoped Stryker on `ir`'s touched files (`Expr.scala`/`Lineage.scala`/
+      `PlanPrinter.scala`/`PropertyAnalysis.scala`) reached **85.57%** overall/**90.22%**
+      of covered code (194 mutants, zero survivors on the new struct-related lines — every
+      survivor traced back to pre-existing code, confirmed by line number). `fingerprint`'s
+      touched files (`Canonicalizer.scala`/`NonDeterminism.scala`) reached **96%** with 3
+      survivors, all `StringLiteral` mutants on the `CTag` tag-name constants
+      (`"StructField"`/`"StructConstruct"`/`"Field"`) — unlike the message-text survivors
+      already accepted elsewhere in this module, these tag strings are load-bearing for
+      collision-avoidance between node kinds, so a direct exact-shape assertion test was
+      added to kill them (the same pattern `CanonicalizerSpec`'s own pre-existing
+      `ColumnRef` test already uses), not merely accepted. `spark-adapter`'s scoped
+      Stryker on `SparkPlanAdapter.scala` reached **90.7%** overall/**92.86%** of covered
+      code (110 mutants, 4 survivors, all in pre-existing JDBC/Hive relation-location
+      detection code far from the new struct-translation lines, confirmed by line number).
+      `spark-adapter`'s full suite passed **687/687**. `ir`/`fingerprint`/`spark-adapter`
+      MiMa all pass clean (the new sealed-trait case classes are additive and
+      binary-safe).
+- [x] **Documentation**: `docs/STATIC_DATA_QUALITY_VERIFICATION.md`'s §3.8 rewritten to
+      describe what's now actually resolvable (top-level construct-then-extract) versus
+      what remains deferred (nested nested-field tracing, any non-`StructConstruct`
+      struct expression), §8's MVP scope list updated to match.
+      `docs/SPARK_ADAPTER.md`'s translation-coverage table gained rows for
+      `GetStructField`/`CreateNamedStruct`. `docs/TRANSFORMATION_IR.md`'s expression-node
+      table gained rows for `StructField`/`StructConstruct`. docs-site's [Verify Static
+      Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx) guide's
+      "What this doesn't check yet" bullet rewritten to describe the new capability
+      precisely instead of the old blanket "can't trace into a struct" claim.
+
 ---
 
 ## Phase 2 — Multi-Engine Support
