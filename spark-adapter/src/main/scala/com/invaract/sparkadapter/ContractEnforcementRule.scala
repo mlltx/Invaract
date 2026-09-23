@@ -799,7 +799,8 @@ object ContractEnforcementRule {
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
           applicationId = applicationId,
-          fingerprints = result.fingerprints
+          fingerprints = result.fingerprints,
+          dataQuality = result.dataQuality
         )
       )
     }

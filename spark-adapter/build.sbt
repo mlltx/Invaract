@@ -26,11 +26,20 @@ name := "invaract-spark-adapter"
 // again, confirmed by a real `sbt mimaReportBinaryIssues` run against the
 // 0.5.0 baseline (CI's api-compatibility job on this PR) before this bump,
 // not assumed.
+// 0.6.0 -> 0.7.0: notification.ContractValidationEvent gained a trailing
+// `dataQuality: List[DataQualityCheckResult]` constructor parameter too -
+// the PASS-path counterpart to VerificationResult.dataQuality above:
+// ContractEnforcementRule.verifyOrThrow never returns a VerificationResult
+// to its caller on a passing check (only a FAILED one, carried by
+// ContractViolationException), so this event is the only channel a
+// subscriber has for a passing check's dataQuality entries at all. Same
+// shape of break again, confirmed by a real `sbt mimaReportBinaryIssues`
+// run against the 0.6.0 baseline before this bump, not assumed.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.6.0"
+ThisBuild / version := "0.7.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -878,7 +887,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.2.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.6.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.7.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1069,10 +1078,11 @@ strykerThresholdsBreak := 70
 // api-compatibility job (.github/workflows/test.yml) now reads base-ref's
 // own `ThisBuild / version` directly and passes it via
 // INVARACT_MIMA_BASELINE_VERSION, so the two can no longer drift apart.
-// The hardcoded "0.5.0" below is now only a local-dev fallback - update it
-// whenever convenient, but a stale value here can't break CI for anyone.
+// The hardcoded fallback below is now only a local-dev convenience -
+// update it whenever convenient, but a stale value here can't break CI
+// for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.5.0")
+  "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.6.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -1098,4 +1108,16 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.this"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.of"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.VerificationResult$")
+)
+
+// The real, deliberate break motivating the 0.6.0 -> 0.7.0 bump above:
+// notification.ContractValidationEvent gained an eighth constructor
+// parameter (dataQuality) - same reasoning as the block above, this
+// time against the 0.6.0 baseline (CI's api-compatibility job on this
+// PR), not assumed.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent$")
 )

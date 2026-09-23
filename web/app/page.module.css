@@ -417,6 +417,61 @@
   color: var(--text-secondary);
 }
 
+.dataQualityHeading {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.dataQualityList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dataQualityCheck {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  background-color: var(--bg-secondary);
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.dataQualityField {
+  font-family: 'Monaco', 'Courier New', monospace;
+  color: var(--text-primary);
+}
+
+.dataQualityConstraint {
+  color: var(--text-secondary);
+}
+
+.verdictBadge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  color: white;
+  margin-left: auto;
+}
+
+.verdictGuaranteed {
+  background-color: var(--pass-color);
+}
+
+.verdictViolated {
+  background-color: var(--fail-color);
+}
+
+.verdictNeutral {
+  background-color: var(--text-secondary);
+}
+
 .eventsList {
   display: flex;
   flex-direction: column;

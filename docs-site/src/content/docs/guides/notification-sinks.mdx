@@ -49,7 +49,7 @@ If your job is installed with [`InvaractSparkSessionExtension`](/guides/installi
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.6.0.jar \
+  --jars invaract-spark-adapter-0.7.0.jar \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   --conf spark.invaract.notifyConfig=/path/to/notify.properties \
@@ -76,7 +76,7 @@ Code](/guides/calling-invaract-explicitly/#wire-a-notification-sink).
 Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": []}
 ```
 
 ...and a `WriteEvent`, once the write completes:
@@ -100,6 +100,12 @@ opt-in feature that computes a deterministic hash of the transformation's actual
 logic, published here alongside the PASS/FAIL verdict so a subscriber can track a
 transformation's fingerprint over time, not just whether it currently satisfies its
 contract's schema.
+
+`dataQuality` is `[]` unless you've opted into [static data-quality
+verification](/guides/verifying-static-data-quality/) with a contract that declares field
+`constraints` — populated the same way on both a PASSED and a FAILED check, since most
+verdicts (`Guaranteed`/`NotGuaranteed`/`NotStaticallyVerifiable`) never block the write on
+their own; only a `Violated` entry does, and only that one also shows up in `violations`.
 
 `WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
 callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal

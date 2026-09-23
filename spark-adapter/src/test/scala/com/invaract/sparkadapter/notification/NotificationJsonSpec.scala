@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter.notification
 
-import com.invaract.sparkadapter.Violation
+import com.invaract.sparkadapter.{DataQualityCheckResult, DataQualityVerdict, Violation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -91,6 +91,29 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains(s""""version": ${fingerprints.version}"""))
     assert(json.contains(s""""value": "${fingerprints.overall.value}""""))
     assert(json.contains("\"outputs\": {"))
+  }
+
+  test("toJson for ContractValidationEvent renders dataQuality, Nil as [] and populated entries via DataQualityCheckResult.toMap") {
+    val withoutDataQuality = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(withoutDataQuality).contains("\"dataQuality\": []"))
+
+    val withDataQuality = ContractValidationEvent(
+      "demo@1.0.0",
+      "PASSED",
+      Nil,
+      0L,
+      Map.empty,
+      dataQuality = List(
+        DataQualityCheckResult("customer_id", "NOT NULL", DataQualityVerdict.Guaranteed),
+        DataQualityCheckResult("currency", "= GBP", DataQualityVerdict.NotGuaranteed)
+      )
+    )
+    val json = NotificationJson.toJson(withDataQuality)
+    assert(json.contains("\"field\": \"customer_id\""))
+    assert(json.contains("\"constraint\": \"NOT NULL\""))
+    assert(json.contains("\"verdict\": \"Guaranteed\""))
+    assert(json.contains("\"field\": \"currency\""))
+    assert(json.contains("\"verdict\": \"NotGuaranteed\""))
   }
 
   test("toJson for WriteEvent includes location/format/saveMode/schema/contract, with None fields as null") {
