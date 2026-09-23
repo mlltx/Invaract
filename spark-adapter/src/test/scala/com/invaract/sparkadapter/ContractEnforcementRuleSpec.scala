@@ -2156,6 +2156,216 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(beforeRows == afterRows, "the UPDATE must be aborted before touching the table, not merely reported as failed")
   }
 
+  // --- Plan-shape rules (PlanRuleVerifier): required_group_by,
+  // forbid_cross_join, required_join_columns, required_filter_columns -
+  // checked against the whole translated ir.Plan, independent of whether
+  // the write is DML at all. Full PlanRuleVerifierSpec coverage of each
+  // rule's own logic is pure-Scala; these prove the wiring through
+  // ContractEnforcementRule actually blocks a real Spark write, the same
+  // end-to-end proof every other rule family gets here.
+
+  test("PASS: a groupBy().agg() write satisfying its contract's required_group_by rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_group_by_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: customer_id
+         |          type: long
+         |          required: true
+         |          nullable: true
+         |        - name: total
+         |          type: long
+         |          required: true
+         |          nullable: true
+         |rules:
+         |  - type: required_group_by
+         |    columns: [customer_id]
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(10).withColumn("customer_id", col("id") % 3)
+      val grouped = df.groupBy("customer_id").agg(sum("id").as("total"))
+      grouped.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a plain (non-grouped) write violates its contract's required_group_by rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_group_by_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_group_by
+         |    columns: [id]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredGroupByViolation))
+  }
+
+  test("PASS: a conditioned join satisfying its contract's forbid_cross_join rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_no_cross_join_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: forbid_cross_join
+         |""".stripMargin
+
+    withContract(yaml) {
+      val left = spark.range(5).toDF("id")
+      val right = spark.range(5).toDF("id2")
+      val joined = left.join(right, left("id") === right("id2")).select(left("id"))
+      joined.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: an unconditioned (cartesian-product) join violates its contract's forbid_cross_join rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_cross_join_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: forbid_cross_join
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val left = spark.range(3).toDF("id")
+      val right = spark.range(3).toDF("id2")
+      intercept[ContractViolationException] {
+        left.crossJoin(right).select(left("id")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleCrossJoinViolation))
+  }
+
+  test("FAIL: a join violating its contract's required_join_columns rule is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_join_columns_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_join_columns
+         |    columns: [region]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val left = spark.range(5).toDF("id").withColumn("region", col("id") % 2)
+      val right = spark.range(5).toDF("id2").withColumn("region2", col("id2") % 2)
+      intercept[ContractViolationException] {
+        left.join(right, left("id") === right("id2")).select(left("id")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredJoinColumnsViolation))
+  }
+
+  test("PASS: a filter satisfying its contract's required_filter_columns rule executes normally") {
+    val outputPath = scratchDir.resolve("rule_filter_columns_pass.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_filter_columns
+         |    columns: [is_deleted]
+         |""".stripMargin
+
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("is_deleted", lit(false)).filter(!col("is_deleted")).select(col("id"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("FAIL: a write with no filter on the declared column violates its contract's required_filter_columns rule and is aborted before any data is written") {
+    val outputPath = scratchDir.resolve("rule_filter_columns_fail.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |rules:
+         |  - type: required_filter_columns
+         |    columns: [is_deleted]
+         |""".stripMargin
+
+    val ex = withContract(yaml) {
+      val df = spark.range(5)
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted, not merely reported as failed")
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RuleRequiredFilterColumnsViolation))
+  }
+
   // Closes the "operation surface" gaps docs/ADDING_A_SPARK_CONNECTOR.md's
   // coverage ledger flagged: .format("delta").saveAsTable() on a NEW
   // table, .saveAsTable()/.insertInto() appending to an EXISTING table,
@@ -2769,5 +2979,131 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     // Only the optional field's description should carry "(optional)".
     assert(oneText.contains("id: integer") && !oneText.contains("id: integer (optional)"), oneText)
     assert(oneText.contains("note: string (optional)"), oneText)
+  }
+
+  // docs/STATIC_DATA_QUALITY_VERIFICATION.md - the Spark contract extension
+  // actually proving (or declining to prove) a contract-declared static
+  // data-quality property against a real write, opt-in via
+  // VerificationOptions.staticDataQuality. StaticDataQualityVerifierSpec
+  // already covers the underlying per-verdict logic directly against
+  // hand-built plans; these prove the real end-to-end wiring: default-off,
+  // a genuine Violated abort, the NotGuaranteed non-blocking case, and
+  // spark.invaract.staticDataQuality attached purely via conf.
+  private val dataQualityContractYaml =
+    """id: dq_demo
+      |version: "1.0.0"
+      |outputs:
+      |  - name: out
+      |    location: OUTPUT_PATH
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: long
+      |          required: true
+      |        - name: currency
+      |          type: string
+      |          required: true
+      |          constraints:
+      |            - type: equals
+      |              value: GBP
+      |""".stripMargin
+
+  test("staticDataQuality defaults to false: a write the transformation's own semantics violate still PASSES") {
+    val outputPath = scratchDir.resolve("dq_default_off.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    // The transformation always produces "USD", never "GBP" - a real,
+    // provable Violated under the constraint above - yet with the flag
+    // left at its default, this must behave exactly as before this
+    // capability existed: no data-quality analysis runs at all.
+    withContract(yaml) {
+      val df = spark.range(5).withColumn("currency", lit("USD"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("staticDataQuality = true: a Guaranteed constant satisfying the contract's equals constraint PASSES") {
+    val outputPath = scratchDir.resolve("dq_guaranteed_pass.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml, options = VerificationOptions(staticDataQuality = true)) {
+      val df = spark.range(5).withColumn("currency", lit("GBP"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw: the transformation provably always writes "GBP"
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("staticDataQuality = true: a proven Violated constant aborts the write with a DATA_QUALITY_VIOLATION") {
+    val outputPath = scratchDir.resolve("dq_violated.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+
+    val ex = withContract(yaml, options = VerificationOptions(staticDataQuality = true), sink = Some(sink)) {
+      val df = spark.range(5).withColumn("currency", lit("USD"))
+      intercept[ContractViolationException] {
+        df.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.exists(v => v.violationType == ViolationType.DataQualityViolation && v.column.contains("currency")))
+    assert(ex.getMessage.contains("DATA_QUALITY_VIOLATION"))
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "FAILED")
+    assert(event.violations.exists(_.violationType == ViolationType.DataQualityViolation))
+  }
+
+  test("staticDataQuality = true: a NotGuaranteed column (no axiom, no proof either way) never blocks the write") {
+    val outputPath = scratchDir.resolve("dq_not_guaranteed.parquet").toString
+    // No `inputs:` declared at all, so the plain passthrough column below
+    // has no seeded axiom - PropertyAnalysis correctly proves nothing, in
+    // either direction, and NotGuaranteed must never behave like Violated.
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+
+    withContract(yaml, options = VerificationOptions(staticDataQuality = true)) {
+      // A plain Cast of an unaxiomed column: Cast preserves NotNull only, never
+      // EqualsConstant/OneOf/Range (see PropertyAnalysis's Cast handling), so
+      // neither the NOT NULL nor the `= GBP` check is proven in either
+      // direction - genuinely NotGuaranteed, not a disguised Violated.
+      val df = spark.range(5).withColumn("currency", col("id").cast("string"))
+      df.write.mode("overwrite").parquet(outputPath) // must not throw: neither Guaranteed nor Violated, so it doesn't block
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("resolveVerificationOptions: spark.invaract.staticDataQuality=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.StaticDataQualityConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.staticDataQuality)
+    // Only this one flag moves - the others stay at their defaults.
+    assert(!resolved.computeFingerprint)
+  }
+
+  test("forContract end-to-end: staticDataQuality attached purely via conf aborts a write that would otherwise pass") {
+    val outputPath = scratchDir.resolve("dq_conf_attached.parquet").toString
+    val yaml = dataQualityContractYaml.replace("OUTPUT_PATH", outputPath)
+    val contract = parseContract(yaml)
+
+    // A plain, unchecked write (activeContract is None outside withContract)
+    // producing "USD" - a real, provable Violated - captured purely to
+    // reuse its real analyzed plan, the same off-the-shelf-plan technique
+    // the rejectUndeclaredFields conf test above uses.
+    val df = spark.range(5).withColumn("currency", lit("USD"))
+    df.write.mode("overwrite").parquet(outputPath)
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    val rule = ContractEnforcementRule.forContract(contract) // options left at every default: staticDataQuality = false
+    rule(spark)(writePlan) // must not throw: the flag is off, so no data-quality analysis runs at all
+
+    withConf(ContractEnforcementRule.StaticDataQualityConfKey, "true") {
+      intercept[ContractViolationException] {
+        rule(spark)(writePlan)
+      }
+    }
   }
 }

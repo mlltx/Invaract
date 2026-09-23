@@ -18,11 +18,19 @@ name := "invaract-spark-adapter"
 // own doc in WriteCommandSupport.scala) - the same "case class gained a
 // field" break as every prior bump in this file's history, taking the
 // same MINOR-not-MAJOR treatment.
+// 0.5.0 -> 0.6.0: VerificationOptions gained a trailing `staticDataQuality:
+// Boolean` constructor parameter and VerificationResult gained a trailing
+// `dataQuality: List[DataQualityCheckResult]` one (see
+// docs/STATIC_DATA_QUALITY_VERIFICATION.md / docs/SPARK_ADAPTER.md's
+// "Static data-quality verification" section) - the same shape of break
+// again, confirmed by a real `sbt mimaReportBinaryIssues` run against the
+// 0.5.0 baseline (CI's api-compatibility job on this PR) before this bump,
+// not assumed.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.5.0"
+ThisBuild / version := "0.6.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -859,7 +867,7 @@ excludeDependencies ++= Seq(
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.4.0",
-  "com.invaract" %% "invaract-contract" % "0.7.0",
+  "com.invaract" %% "invaract-contract" % "0.8.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning
@@ -870,7 +878,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.2.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.5.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.6.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1065,4 +1073,29 @@ strykerThresholdsBreak := 70
 // whenever convenient, but a stale value here can't break CI for anyone.
 mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.5.0")
+)
+
+import com.typesafe.tools.mima.core._
+
+// The real, deliberate break motivating the 0.5.0 -> 0.6.0 bump above:
+// VerificationOptions gained a fourth constructor parameter
+// (staticDataQuality) and VerificationResult gained a fifth (dataQuality) -
+// see docs/STATIC_DATA_QUALITY_VERIFICATION.md /
+// docs/SPARK_ADAPTER.md's "Static data-quality verification" section.
+// Unlike this module's prior breaks, base-ref doesn't carry this one yet
+// (this is the PR introducing it), so these filters are load-bearing for
+// this PR's own api-compatibility check - they become inert on their own
+// (matching nothing) once base-ref's own version reaches 0.6.0 or later,
+// the same "safe to leave, no future PR needs to remove them" property
+// contract/build.sbt's own filters document.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationOptions.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.VerificationOptions$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationResult.of"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.VerificationResult$")
 )

@@ -103,6 +103,7 @@ to require it be registered in a real data catalog, not just written to a bare p
 | `nullable` | `!required` | The field's values may be null. |
 | `properties` | — | Nested fields, for a `struct` type. |
 | `sensitivityTags` | none | Governance labels (e.g. `[pii, financial]`) — see [Reference → Contract Format](/reference/contract-format/)'s "Sensitivity tags". Declared on an *input* field, propagated to every output column derived from it — reporting only, not enforced. |
+| `constraints` | none | Static data-quality requirements (`equals`/`oneOf`/`range`) — see [Verify Static Data Quality](/guides/verifying-static-data-quality/). Unlike `sensitivityTags`, this *is* enforced (opt-in, via `staticDataQuality`) — but only when the transformation's own logic provably guarantees a violation, never merely predicts one. |
 
 <Aside type="caution">
 Marking a field both `required: true` and `nullable: true` is legal — Invaract warns
@@ -112,8 +113,9 @@ about it (it's an unusual combination) but doesn't reject the contract.
 ## Add rules (optional)
 
 `rules` is a list of `{type, ...properties}` entries. Most rule types are recorded for
-future use but not yet enforced; three are interpreted and enforced today, for row-level
-`MERGE`/`UPDATE`/`DELETE` statements:
+future use but not yet enforced; seven are interpreted and enforced today, across two
+families — three for row-level `MERGE`/`UPDATE`/`DELETE` statements, four for a
+transformation's overall shape:
 
 ```yaml
 rules:
@@ -122,9 +124,13 @@ rules:
   - type: forbid_unconditional_delete
   - type: allowed_update_columns
     columns: [status, updated_at]
+  - type: required_group_by
+    columns: [customer_id]
+  - type: forbid_cross_join
 ```
 
-See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) for what each
+See [Enforce Row-Level DML Rules](/guides/enforcing-dml-rules/) and
+[Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/) for what each
 one checks.
 
 ## Add extensions (optional)

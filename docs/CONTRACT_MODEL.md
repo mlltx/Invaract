@@ -152,10 +152,68 @@ Each field has:
 | `required` | no | Defaults to `false`. Whether the field must be present. |
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
 | `properties` | no | Nested `Field` list, for struct/record types. |
+| `sensitivityTags` | no | Open-vocabulary governance labels (e.g. `pii`, `financial`) — see `spark-adapter`'s "Sensitivity lineage" section in docs/SPARK_ADAPTER.md. Reporting only; never checked here. |
+| `constraints` | no | List of `{type, ...properties}` — statically-verifiable value-domain requirements (`equals`/`oneOf`/`range`) `spark-adapter`'s `StaticDataQualityVerifier` attempts to *prove* the transformation satisfies, rather than merely predict — see "Static data-quality constraints" below. |
 
 Known types (validator warns, does not error, on anything else):
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`,
 `boolean`, `date`, `timestamp`, `binary`, `struct`, `array`, `map`.
+
+### Static data-quality constraints (`FieldConstraint`)
+
+A `Field`'s `constraints` list holds requirements on that field's *value*,
+distinct from `nullable`/`required` (presence/nullability) and
+`sensitivityTags` (governance metadata, never enforced). `NOT NULL` needs
+no entry here at all — `nullable: false` already states it, and
+`spark-adapter`'s static data-quality verifier attempts to prove that
+existing declaration directly, the same as any other constraint. Each
+constraint is `{type, ...type-specific properties}`, decoded by
+`FieldConstraint.interpret` into one of three closed shapes
+(`FieldConstraintType`/`InterpretedFieldConstraint`):
+
+| `type` | Properties | Meaning |
+|---|---|---|
+| `equals` | `value` | The field must always equal this exact value. |
+| `oneOf` | `values` (non-empty list) | The field's value must always be one of these. |
+| `range` | any of `gte`/`gt`/`lte`/`lt` (numeric; at least one required; `gte`+`gt` or `lte`+`lt` together is malformed) | The field's numeric value must always fall within these bounds. |
+
+```yaml
+outputs:
+  - name: payments
+    location: gold.payments
+    schema:
+      fields:
+        - name: currency
+          type: string
+          constraints:
+            - type: equals
+              value: GBP
+        - name: status
+          type: string
+          constraints:
+            - type: oneOf
+              values: [ACTIVE, INACTIVE]
+        - name: amount
+          type: double
+          constraints:
+            - type: range
+              gte: 0
+```
+
+A constraint whose `type` is recognized but whose properties don't match
+the shape above (`interpret` returns `None`) is a `ContractValidator`
+Error, the same "known type, malformed shape" treatment `RuleType`
+already gives a malformed `rule`. An unrecognized `type` is recorded but
+never interpreted — same "not necessarily a typo" treatment as an
+unrecognized `rule` `type`.
+
+This is purely a contract-model concern: `contract` knows nothing about
+*how* a constraint gets proven or violated — that's `ir.PropertyAnalysis`
+and `spark-adapter`'s `StaticDataQualityVerifier`, opt-in via
+`VerificationOptions.staticDataQuality` (see docs/SPARK_ADAPTER.md's
+"Static data-quality verification" section). The full design — the
+four-state verdict, why static analysis is deliberately conservative, and
+worked examples — is docs/STATIC_DATA_QUALITY_VERIFICATION.md.
 
 ## Object Model
 
@@ -191,7 +249,14 @@ Field
 ├── fieldType: String
 ├── required: Boolean
 ├── nullable: Boolean
-└── properties: List[Field]   // non-empty => struct
+├── properties: List[Field]   // non-empty => struct
+├── sensitivityTags: Set[String]
+└── constraints: List[FieldConstraint(constraintType, properties)]
+
+FieldConstraint.interpret: Option[InterpretedFieldConstraint]
+├── Equals(value, literalType)
+├── OneOf(values: Set[Any], literalType)
+└── Range(gte, gt, lte, lt: Option[BigDecimal])
 ```
 
 `Contract.input(name)` / `Contract.output(name)` and `Schema.field(name)`
@@ -244,6 +309,8 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | Field `type` not in the known-types set (and not a struct) | Warning |
 | Field marked both `required` and `nullable` | Warning |
 | `catalog.required: false` with an identity sub-field still declared | Warning |
+| Field constraint (`equals`/`oneOf`/`range`) with malformed/missing properties for its shape | Error |
+| Field constraint's value type disagrees with the field's own declared `type` (e.g. an `equals` string value on a numeric field) | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on
@@ -431,11 +498,67 @@ verification: it recognizes only a flat top-level `AND` of equalities,
 without reasoning about `NOT`, `CASE WHEN`, or De Morgan equivalences,
 and doesn't distinguish target- from source-side qualifiers.
 
+### Plan-shape rules
+
+A second, independent family: four more `RuleType`s (`RuleType.PlanShapeTypes`)
+decode into `InterpretedRule`, checked by `spark-adapter`'s
+`PlanRuleVerifier` against a transformation's whole `ir.Plan` rather than
+one extracted `ir.RowMutation` — the answer to ROADMAP.md's
+"Transformation checks beyond structural" item (join/aggregation/filter
+semantics against contract expectations), and the concrete first step
+toward baking a quality expectation into the contract itself so it's
+structurally impossible for the transformation to violate it, rather than
+something a separate, post-execution data-quality check has to keep
+rediscovering per run:
+
+```yaml
+rules:
+  - type: required_group_by
+    columns: [customer_id]
+  - type: forbid_cross_join
+  - type: required_join_columns
+    columns: [order_id]
+  - type: required_filter_columns
+    columns: [is_deleted]
+```
+
+- **`required_group_by`** (`columns: List[String]`) — at least one
+  `ir.Aggregate` node anywhere in the plan must group by (a superset of)
+  the listed columns.
+- **`forbid_cross_join`** (no properties) — no `ir.Join` node may be a
+  cartesian product: an explicit `JoinType.Cross`, or any join with no
+  condition at all (Spark reports a condition-less `.join(other)` this
+  way too, not only `.crossJoin(other)`).
+- **`required_join_columns`** (`columns: List[String]`) — at least one
+  join's condition must establish a genuine equality match on the listed
+  columns, reusing the exact same `EqualityConditions` (De Morgan-/`NOT`-
+  aware, side-distinguishing) logic `merge_condition` uses for a MERGE's
+  `ON` clause — factored out of `RuleVerifier` into its own object
+  specifically so the two rule families share one implementation rather
+  than risking two that drift apart.
+- **`required_filter_columns`** (`columns: List[String]`) — at least one
+  `ir.Filter` node anywhere in the plan must reference each listed
+  column, under any predicate shape (`IS NOT NULL`, `!=`, a range check,
+  ...) — deliberately weaker than the join/merge rules' equality
+  requirement, since "the plan filters on this column somewhere" doesn't
+  presume what the filter should assert.
+
+Each rule is checked against *every* matching node anywhere in the plan
+(not just at the root) and is satisfied if *any* one of them satisfies
+it — see `PlanRuleVerifier`'s own class doc in `spark-adapter` for the
+full reasoning. No `customRuleTypes` escape hatch yet for this family:
+`CustomRuleVerifier` is shaped around `RowMutation`, not `Plan`, so a
+plan-shape custom rule type would need its own extension trait, left as
+future work rather than widened speculatively.
+
 ### Custom rule types (`CustomRuleVerifier`)
 
-The three interpreted rule types above are deliberately closed, the same
-way `PolicyType`'s built-in set is (see "Custom policy types" below) —
-but a contract's own DML governance vocabulary isn't limited to them.
+The three interpreted DML rule types above are deliberately closed, the
+same way `PolicyType`'s built-in set is (see "Custom policy types"
+below) — but a contract's own DML governance vocabulary isn't limited to
+them. (The four plan-shape rule types just above are a separate, also
+closed, family — this escape hatch doesn't reach them; see their own
+section.)
 `Contract` carries an eighth field, `customRuleTypes: Map[String, String]`,
 mapping a `ContractRule.ruleType` this document uses to the fully-qualified
 class name of a `spark-adapter`-defined `CustomRuleVerifier`

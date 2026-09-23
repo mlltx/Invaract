@@ -346,6 +346,66 @@ reaches every downstream column that actually carries data derived from it,
 without a contract author needing to re-declare it on each one by hand.
 `id` carries no tag, since it never reads a tagged field.
 
+## Static data-quality verification
+
+`StaticDataQualityVerifier` (`StaticDataQualityVerifier.scala`) attempts
+to *prove* — never merely predict — that a `Write` satisfies each output
+field's declared static data-quality properties (`nullable: false`, and
+each `Field.constraints` entry — see docs/CONTRACT_MODEL.md's "Static
+data-quality constraints" section), by running `ir.PropertyAnalysis` over
+the translated plan, seeded with the contract's own matched *input*
+fields' declared properties as trusted axioms. The full design — the
+domain model, the four-state verdict, why static analysis is deliberately
+conservative, join/CASE/predicate semantics, and worked examples — is
+docs/STATIC_DATA_QUALITY_VERIFICATION.md; this section covers only how it
+plugs into `spark-adapter`.
+
+```scala
+def verify(contract: Contract, plan: Plan): List[DataQualityCheckResult]
+def violations(results: List[DataQualityCheckResult]): List[Violation]
+```
+
+Same division of labor `SensitivityLineage` above already establishes:
+`ir.PropertyAnalysis` knows nothing about `Contract`, so the piece that
+needs both — matching a plan's real `Read` scopes against
+`contract.inputs` to seed axioms, and matching the `Write` against
+`contract.outputs` (the same location-based `matchOutput` rule
+`StructuralVerifier.verify` itself uses) — lives here.
+
+Each output field with a declared `nullable: false` and/or `constraints`
+produces one `DataQualityCheckResult(field, constraint, verdict)`, `verdict`
+being one of `DataQualityVerdict.{Guaranteed, NotGuaranteed, Violated,
+NotStaticallyVerifiable}`. Only `Violated` becomes a real `Violation`
+(`ViolationType.DataQualityViolation`) — `Guaranteed`/`NotGuaranteed`/
+`NotStaticallyVerifiable` are reporting-only, exactly like
+`SensitivityLineage`'s tags, and never affect `VerificationResult.passed`
+on their own; the load-bearing principle is that an *absence* of proof
+must never look like a failure to a caller only checking `passed`.
+
+**Opt-in, off by default**: `VerificationOptions.staticDataQuality`
+(fourth flag alongside `rejectUndeclaredInputs`/`rejectUndeclaredFields`/
+`computeFingerprint`), attachable purely via `spark-submit --conf
+spark.invaract.staticDataQuality=true` against a job whose source you
+don't own — `ContractEnforcementRule.resolveVerificationOptions`'s same
+established `||`-overlay mechanism every other flag uses (see CLAUDE.md's
+"External Attachability Requirement"). When `true`,
+`ContractEnforcementRule.verifyOrThrow` runs `StaticDataQualityVerifier.verify`
+against the plan already translated for structural checking, folds any
+`Violated` results into the check's `violations` (aborting the write, the
+same as any other structural violation), and always populates
+`VerificationResult.dataQuality` with every result regardless of verdict.
+When `false` (the default), none of this runs at all — no `dataQuality`
+entries, no possibility of a `DataQualityViolation`, matching every
+existing caller's current behavior exactly.
+
+`StructuralVerifier`'s existing `nullable`/`required` schema check is
+**unchanged** and runs regardless of this flag — the two are
+complementary, not alternatives: the schema check confirms the *declared*
+shape (a `StructType`'s own nullability flag, as Spark reports it for the
+write actually performed); `StaticDataQualityVerifier` instead asks
+whether the *transformation's own logic* provably guarantees that shape
+holds for every possible row, which the schema check alone cannot answer.
+
 ## Diagnostics: plan extraction examples
 
 From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
@@ -2376,7 +2436,9 @@ overhead. The two levers above reduced wasted time around that core cost
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a 4-way matrix job
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
-scoped to a fixed subset of the module's 27 source files
+scoped to a fixed subset of the module's source files (29 as of
+`PlanRuleVerifier`/`EqualityConditions`, added to shard-3/shard-2
+respectively)
 (`strategy.matrix.include`, one entry per shard). This doesn't reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
 once per mutant, exactly as before — it parallelizes it across four

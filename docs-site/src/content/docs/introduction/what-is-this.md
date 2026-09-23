@@ -47,9 +47,17 @@ Invaract's checks are **structural**, not semantic:
 - Does its schema match — field presence, type, nullability?
 - Does the write use the declared format and save mode?
 - For declared DML rules: does a `MERGE`/`UPDATE`/`DELETE` respect them?
+- For declared transformation shape rules: does the plan group, join, or filter on the
+  right columns? See
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/).
+- For a declared static data-quality constraint (`nullable: false`, `equals`, `oneOf`,
+  `range`): does the transformation's own logic *prove* an output field always satisfies
+  it — never merely predict it will? See
+  [Verify Static Data Quality](/guides/verifying-static-data-quality/).
 
-It does **not** yet verify the transformation's business logic (that a `SUM` is the
-*correct* sum, for instance), governance rules (masking, residency), or compatibility
+It does **not** yet verify the transformation's broader business logic (that a `SUM` is
+the *correct* sum, for instance — as opposed to the narrow, provable value-domain
+properties above), governance rules (masking, residency), or compatibility
 between a transformation and a specific contract version. See
 [Data Contracts](/concepts/data-contracts/) for the full picture and
 [Reference → Violation Types](/reference/violation-types/) for exactly what's

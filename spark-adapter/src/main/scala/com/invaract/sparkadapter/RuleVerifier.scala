@@ -4,20 +4,22 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{ContractRule, InterpretedRule, RuleType}
-import com.invaract.ir.{BooleanExpr, ColumnReference, ColumnRef, Comparison, DeleteScope, Expr, RowMutation}
+import com.invaract.ir.{DeleteScope, RowMutation}
 
-/** Checks a contract's declared DML rules (`com.invaract.contract.RuleType`)
-  * against the structural facts `RowMutationSupport` extracted from one
-  * real Spark row-level DML operation. The counterpart to
-  * `StructuralVerifier` for exactly the three rule types
-  * `ContractRule.interpret` currently understands — not a general
-  * rule-expression evaluator. `merge_condition` checks genuine,
-  * De Morgan-/`NOT`-aware, target-vs-source-aware column-to-column
-  * equality pairing (see `equalityPairedColumns`/`requiredEqualities`/
-  * `isCrossSideMatch`), not just "the column is referenced somewhere" —
-  * but deeper semantic DML verification (a `CASE WHEN`-conditional match,
-  * which specific rows an `UPDATE` touches) remains future work (see
-  * ROADMAP.md's "Full semantic DML verification" item).
+/** Checks a contract's declared row-level-DML rules
+  * (`com.invaract.contract.RuleType.DmlTypes`) against the structural facts
+  * `RowMutationSupport` extracted from one real Spark row-level DML
+  * operation — the counterpart to `PlanRuleVerifier`, which checks the
+  * other, plan-shape family (`RuleType.PlanShapeTypes`) against a whole
+  * `ir.Plan` instead. Neither is a general rule-expression evaluator.
+  * `merge_condition` checks genuine, De Morgan-/`NOT`-aware,
+  * target-vs-source-aware column-to-column equality pairing (see
+  * `EqualityConditions`, shared with `PlanRuleVerifier`'s
+  * `required_join_columns`), not just "the column is referenced
+  * somewhere" — but deeper semantic DML verification (a `CASE
+  * WHEN`-conditional match, which specific rows an `UPDATE` touches)
+  * remains future work (see ROADMAP.md's "Full semantic DML verification"
+  * item).
   *
   * Each rule only constrains the DML *shape* it's about — a single
   * `RowMutation` represents one concrete operation instance, and a
@@ -113,11 +115,20 @@ private[sparkadapter] object RuleVerifier {
     * never applying. `anyRuleAppliesTo`, below, is what
     * `ContractEnforcementRule` actually calls, since it also has to reach
     * a *custom* rule type, whose `ContractRule.interpret` is always `None`.
+    * The four plan-shape `InterpretedRule`s (`PlanRuleVerifier`'s own
+    * concern, checked against a whole `Plan`, not a `RowMutation`) always
+    * answer `false` here — this question is specifically "does an
+    * *unverifiable DML* classification need to fail closed over this
+    * rule," which a plan-shape rule is never the reason for.
     */
   def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = rule match {
     case _: InterpretedRule.MergeCondition         => kind == RowMutationSupport.Kind.Merge
     case InterpretedRule.ForbidUnconditionalDelete => kind == RowMutationSupport.Kind.Delete
     case _: InterpretedRule.AllowedUpdateColumns   => kind == RowMutationSupport.Kind.Update
+    case _: InterpretedRule.RequiredGroupBy        => false
+    case InterpretedRule.ForbidCrossJoin           => false
+    case _: InterpretedRule.RequiredJoinColumns    => false
+    case _: InterpretedRule.RequiredFilterColumns  => false
   }
 
   /** Whether any of `rules` — built-in or, via `customRuleTypes`, custom —
@@ -194,7 +205,7 @@ private[sparkadapter] object RuleVerifier {
     mutation.matchCondition match {
       case None => Nil
       case Some(condition) =>
-        val paired = equalityPairedColumns(condition)
+        val paired = EqualityConditions.equalityPairedColumns(condition)
         val missing = declaredColumns.filterNot(paired.contains)
         if (missing.isEmpty) Nil
         else
@@ -211,94 +222,6 @@ private[sparkadapter] object RuleVerifier {
               actual = Some(paired.mkString(", "))
             )
           )
-    }
-
-  /** Column names genuinely established as a *required* equality match by
-    * `expr` — the top-level entry point for `requiredEqualities`, called
-    * with `expr` asserted true (the condition as a whole must hold).
-    */
-  private def equalityPairedColumns(expr: Expr): Set[String] = requiredEqualities(expr, negated = false)
-
-  /** The De Morgan-/`NOT`-aware core of `equalityPairedColumns`: column
-    * names a required-equality reading of `expr` genuinely establishes,
-    * given that `expr` is asserted to be `true` (`negated = false`) or
-    * `false` (`negated = true`) — the polarity a surrounding `NOT`
-    * (however deeply nested) has put it under.
-    *
-    * Each case is the De Morgan dual of its opposite-polarity twin:
-    *
-    *   - `AND(a, b)` asserted true requires *both* `a` and `b` to hold —
-    *     union their pairings. Asserted false (`NOT(a AND b)` = `a` is
-    *     false `OR` `b` is false, De Morgan) only guarantees *one* side
-    *     failed, not which — same "can't guarantee anything" shape as an
-    *     asserted-true `OR`, so both contribute `Set.empty`.
-    *   - `OR(a, b)` asserted true only guarantees *one* side holds, not
-    *     both — `Set.empty`, unchanged from before this method existed.
-    *     Asserted false (`NOT(a OR b)` = `a` is false `AND` `b` is false,
-    *     De Morgan) requires *both* to fail — union their (negated)
-    *     pairings, the dual of the true-`AND` case.
-    *   - `NOT(x)` simply flips polarity and recurses — this one rule is
-    *     what makes a doubly-`NOT`ed condition (`NOT(NOT(x))`, e.g. from
-    *     source SQL written as `NOT (a != b)`, since `!=` itself already
-    *     arrives here as `NOT(a = b)`) resolve back to `x`'s own reading
-    *     without a separate double-negation special case.
-    *   - `Comparison("="/"<=>", col, col)` asserted true is exactly the
-    *     match this rule looks for **if `isCrossSideMatch` agrees the two
-    *     operands are genuinely on opposite sides**; asserted false
-    *     (`NOT(a = b)`, i.e. `a != b` in the source SQL) guarantees the
-    *     columns *differ*, the opposite of what's needed — `Set.empty`.
-    *   - `Comparison("!=", col, col)` (kept for IR built directly, e.g. by
-    *     a future non-Spark front-end or a hand-built test — Spark's own
-    *     translator never actually emits this operator string, always
-    *     preferring `NOT(EqualTo(...))`, confirmed in
-    *     `SparkPlanAdapter.translateExpr`'s `Not`/`BinaryComparison`
-    *     cases) is the exact mirror of the `"="`/`"<=>"` case: asserted
-    *     false is the genuine match (again gated on `isCrossSideMatch`),
-    *     asserted true is not.
-    *   - Everything else (`CASE WHEN`, a literal comparison, a range
-    *     check, an unrecognized node, ...) contributes nothing under
-    *     either polarity: none of them make an unconditional,
-    *     column-to-column equality guarantee.
-    */
-  private def requiredEqualities(expr: Expr, negated: Boolean): Set[String] = expr match {
-    case BooleanExpr("AND", List(left, right)) =>
-      if (!negated) requiredEqualities(left, negated) ++ requiredEqualities(right, negated)
-      else Set.empty
-    case BooleanExpr("OR", List(left, right)) =>
-      if (negated) requiredEqualities(left, negated) ++ requiredEqualities(right, negated)
-      else Set.empty
-    case BooleanExpr("NOT", List(child)) =>
-      requiredEqualities(child, !negated)
-    case Comparison(op, ColumnReference(a), ColumnReference(b)) if op == "=" || op == "<=>" =>
-      if (!negated && isCrossSideMatch(a, b)) Set(a.name, b.name) else Set.empty
-    case Comparison("!=", ColumnReference(a), ColumnReference(b)) =>
-      if (negated && isCrossSideMatch(a, b)) Set(a.name, b.name) else Set.empty
-    case _ => Set.empty
-  }
-
-  /** Whether `a`/`b` are genuinely on opposite sides of the MERGE, not
-    * merely two differently-positioned references to columns that happen
-    * to share (or differ in) name. A MERGE's `ON` clause only ever
-    * involves exactly two relations — target and source — so two
-    * *different* qualifiers necessarily means one from each side, without
-    * needing to separately determine which qualifier is which: no
-    * third relation can appear for a third distinct qualifier to belong
-    * to. When either side's qualifier is unknown (a real but rare case —
-    * MERGE syntax practically always requires target/source columns to be
-    * qualified once resolved, since referencing a same-named column from
-    * either side unqualified would itself be an ambiguous reference Spark
-    * rejects at analysis time), this stays permissive (`true`) rather
-    * than introduce a new false negative for a condition this module
-    * simply can't be sure about — the same "unknown, don't guess wrong"
-    * posture `SparkPlanAdapter`'s translation-layer fallbacks use
-    * elsewhere. Only a *confirmed* same-qualifier match — e.g. a
-    * copy-paste bug like `ON t.customer_id = t.customer_id`, comparing a
-    * target column to itself rather than to source — is excluded.
-    */
-  private def isCrossSideMatch(a: ColumnRef, b: ColumnRef): Boolean =
-    (a.qualifier, b.qualifier) match {
-      case (Some(qa), Some(qb)) => qa != qb
-      case _                    => true
     }
 
   private def checkForbidUnconditionalDelete(mutation: RowMutation): List[Violation] =

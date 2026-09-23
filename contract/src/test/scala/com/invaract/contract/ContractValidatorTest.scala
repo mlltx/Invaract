@@ -82,6 +82,40 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("Duplicate output dataset name 'out'")))
   }
 
+  test("validate should warn (not error) when two distinctly-named outputs declare the same location") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "dup_output_locations",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out_a", "gold.shared_location", None, schema), Dataset("out_b", "gold.shared_location", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, s"expected no errors, got: ${result.errors}")
+    assert(result.warnings.exists(_.message.contains("Multiple outputs declare the same location 'gold.shared_location'")))
+  }
+
+  test("validate should not warn when a multi-output contract's outputs all declare distinct locations") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "distinct_outputs",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out_a", "gold.a", None, schema), Dataset("out_b", "gold.b", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
   test("validate should error when a merge_condition rule has no 'columns' list") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(
@@ -130,6 +164,143 @@ class ContractValidatorTest extends AnyFunSuite {
 
     val result = ContractValidator.validate(contract)
     assert(result.isValid)
+  }
+
+  test("validate should error when a required_group_by rule has no 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredGroupBy, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_group_by")))
+  }
+
+  test("validate should error when a required_join_columns rule has an empty 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredJoinColumns, Map("columns" -> new java.util.ArrayList[String]()))),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_join_columns")))
+  }
+
+  test("validate should error when a required_filter_columns rule has no 'columns' list") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "bad_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.RequiredFilterColumns, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("required_filter_columns")))
+  }
+
+  test("validate should accept a well-formed forbid_cross_join rule with no properties") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "good_rule",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = List(ContractRule(RuleType.ForbidCrossJoin, Map.empty)),
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+  }
+
+  // -- Field.constraints (static data-quality) -----------------------------
+
+  test("validate should error when an equals field constraint has no 'value' property") {
+    val schema = Schema(List(Field("currency", "string", constraints = List(FieldConstraint(FieldConstraintType.Equals, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("equals")))
+  }
+
+  test("validate should error when a range field constraint declares no bound at all") {
+    val schema = Schema(List(Field("amount", "double", constraints = List(FieldConstraint(FieldConstraintType.Range, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("range")))
+  }
+
+  test("validate should accept a well-formed oneOf field constraint matching the field's declared type") {
+    val schema = Schema(List(Field("status", "string", constraints = List(FieldConstraint(FieldConstraintType.OneOf, Map("values" -> java.util.Arrays.asList("ACTIVE", "INACTIVE")))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should warn when a constraint's value type doesn't match the field's own declared type") {
+    val schema = Schema(List(Field("amount", "double", constraints = List(FieldConstraint(FieldConstraintType.Equals, Map("value" -> "not-a-number"))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a type mismatch is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("declared type")))
   }
 
   test("validate should not flag an unrecognized rule type as malformed") {

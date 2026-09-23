@@ -16,6 +16,12 @@ name := "invaract-contract"
 // (see docs/SPARK_ADAPTER.md's "Custom rule types" section), the same
 // shape of break again - confirmed by a real `sbt mimaReportBinaryIssues`
 // run against the 0.6.0 baseline below before this bump, not assumed.
+// 0.7.0 -> 0.8.0: Field gained a constraints constructor parameter (see
+// docs/STATIC_DATA_QUALITY_VERIFICATION.md /
+// docs/CONTRACT_MODEL.md's "Static data-quality constraints" section),
+// the same shape of break again - confirmed by a real `sbt
+// mimaReportBinaryIssues` run against the 0.7.0 baseline below (CI's
+// api-compatibility job on this PR), not assumed.
 // ThisBuild-scoped, not a bare `version :=` - sbt-sonatype's
 // sonatypePublishToBundle (and other cross-cutting plugin settings) reads
 // ThisBuild/version specifically, which otherwise silently stays at sbt's
@@ -24,7 +30,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.7.0"
+ThisBuild / version := "0.8.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -100,7 +106,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.7.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.8.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -157,7 +163,7 @@ assembly / assemblyMergeStrategy := {
 // `sbt mimaReportBinaryIssues` run with no env var set; bump it whenever
 // convenient, but a stale value here can no longer break CI for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.6.0")
+  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.7.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -176,10 +182,26 @@ import com.typesafe.tools.mima.core._
 // these filters become inert on their own (matching nothing) once
 // base-ref's own version reaches 0.7.0 or later - no future PR needs to
 // remember to remove them to keep CI green, though it's fine to clean
-// them up whenever this file is next touched.
+// them up whenever this file is next touched. base-ref is now at 0.7.0
+// (this bump's own baseline), so they're already inert as of this PR -
+// left in place rather than removed, per that same "fine to clean up
+// later" note.
+//
+// The real, deliberate break motivating the 0.7.0 -> 0.8.0 bump above:
+// Field gained a seventh constructor parameter, constraints (see
+// docs/STATIC_DATA_QUALITY_VERIFICATION.md /
+// docs/CONTRACT_MODEL.md's "Static data-quality constraints" section) -
+// confirmed by a real `sbt mimaReportBinaryIssues` run against the 0.7.0
+// baseline (CI's api-compatibility job on this PR) before this bump, not
+// assumed. Same "becomes inert once base-ref reaches 0.8.0 or later"
+// property as every filter above.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Contract$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Contract$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Field.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Field$")
 )

@@ -1,0 +1,89 @@
+---
+title: Enforce Transformation Shape Rules
+description: Require a transformation to group, join, or filter on specific columns, structurally, before it ever runs.
+sidebar:
+  order: 4.5
+---
+
+Beyond schema, location, format, and [row-level DML rules](/guides/enforcing-dml-rules/), a
+contract can constrain the *shape* of the transformation itself — does it aggregate by the
+right keys, does it join on the right columns, does it filter out what it's supposed to.
+These are checked against the transformation's translated plan, the same way everything
+else is — the write is aborted before anything is committed if a rule is violated.
+
+## Why structural, not a post-execution data-quality check
+
+A plan that never groups by the declared keys, or never filters out soft-deleted rows, is a
+fact about the transformation's *code* — true for every possible run, not something that
+has to be rediscovered per run by profiling the materialized output after the write already
+happened. Checking it here means the failure mode a rule like this guards against —
+"someone silently removed the `GROUP BY` and now the table has one row per event instead of
+one per customer" — is caught structurally, before any data moves, rather than downstream
+by a separate data-quality job that only notices after the bad table has already been
+written and possibly already read by something else.
+
+## The four rule types
+
+```yaml
+rules:
+  - type: required_group_by
+    columns: [customer_id]
+  - type: forbid_cross_join
+  - type: required_join_columns
+    columns: [order_id]
+  - type: required_filter_columns
+    columns: [is_deleted]
+```
+
+Each rule is checked against *every* matching node anywhere in the plan (a single write can
+itself contain several aggregations, joins, or filters — an aggregate feeding into a join,
+say) and is satisfied if *any* node of the relevant kind satisfies it.
+
+### `required_group_by`
+
+At least one aggregation in the plan must group by every listed column — grouping by more
+than required (an extra partition key, say) still satisfies it. A plan that performs no
+aggregation at all is rejected the same as one that aggregates by the wrong keys.
+
+### `forbid_cross_join`
+
+No join in the plan may be a cartesian product — an explicit `CROSS JOIN`, or any join with
+no condition at all, regardless of its declared type (Spark reports a plain, condition-less
+`.join(other)` this way too, not only `.crossJoin(other)`). No properties needed. This
+catches one of the most common and costly transformation bugs directly: a join that's
+missing its `ON` clause silently fans every row out against every other row instead of
+failing loudly.
+
+### `required_join_columns`
+
+At least one join's condition must establish a genuine equality match (`left.col =
+right.col`, or the null-safe `left.col <=> right.col`) on every listed column — the same
+predicate-aware, De Morgan-/`NOT`-aware matching
+[`merge_condition`](/guides/enforcing-dml-rules/#merge_condition) uses for a `MERGE`'s `ON`
+clause, applied here to an ordinary join's condition instead. A column merely *referenced*
+somewhere in the condition (a range check, a literal comparison, an `OR` branch) doesn't
+satisfy it — only a required, column-to-column equality does.
+
+### `required_filter_columns`
+
+At least one filter anywhere in the plan must reference each listed column — deliberately
+not gated on any particular predicate shape: `col IS NOT NULL`, `col != 'deleted'`, `col >
+0`, or anything else that reads the column inside a filter all satisfy it. This is weaker
+than `required_join_columns`'s equality-pairing requirement on purpose — "the plan must
+filter on this column somewhere" doesn't presume what the filter should actually assert.
+
+## What these rules don't check yet
+
+- **Which specific rows a filter's predicate actually excludes**, or whether it's trivially
+  satisfiable (e.g. `WHERE 1=1`) — only that a filter referencing the declared column exists
+  somewhere in the plan.
+- **A join condition expressed inside a `CASE WHEN`** — the same limitation
+  `merge_condition` has, for the same reason: that equality only holds conditionally, on
+  some rows, not as a required part of the join.
+- **Which specific aggregation in a multi-stage pipeline a `required_group_by` rule refers
+  to**, when several aggregations exist — the rule is satisfied if *any* of them groups by
+  the declared columns, not necessarily the "final" or "outermost" one.
+- **A custom rule type escape hatch.** Unlike DML rules'
+  [`customRuleTypes`](/guides/enforcing-dml-rules/#write-your-own-rule-type), these four
+  plan-shape types are the complete, closed set for now — there's no plug-in mechanism yet
+  for an organization's own plan-shape governance vocabulary.

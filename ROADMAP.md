@@ -2740,11 +2740,360 @@ is detected even when the output schema stays identical.
       directly against a real instance, per this branch's own "retract
       rather than force it" discipline for an unconfirmed hypothesis.
 
-##### Dependencies
+#### Sub-phase: Multi-output contract matching (done)
 
-- Phase 1b completion (transformation IR) — the fingerprint's only input
-- Phase 1c's `Lineage.trace` (reused, not reimplemented, for the
-  per-output lineage-summary fingerprint layer)
+Closes the gap the "Structural verification" sub-phase above left open on
+purpose: a `Contract` declaring more than one output (`outputs: List`) used
+to have every write checked against `contract.outputs.head` unconditionally,
+regardless of which declared output it actually corresponded to — a
+single-output assumption baked into `StructuralVerifier`, not a contract-
+format limitation (`ContractParser`/the JSON Schema already accepted an
+`outputs:` list of any length).
+
+- [x] **`StructuralVerifier.verify`/`verifyStateChange` now match a plan's
+      actual write location against every declared output, not just the
+      first.** A new private `matchOutput` helper (shared by both methods,
+      so they can't drift into two different notions of "which output does
+      this location belong to") finds the declared output whose `location`
+      matches, via the same `locationsMatch` normalized-suffix rule used
+      everywhere else in this module.
+    - Exactly one declared output matches → format/saveMode/catalog/schema
+      are all checked against *that* output specifically (proven by a
+      dedicated test: a two-output contract where the matched output's
+      required field is missing fails, and the *other* declared output's
+      own schema is never consulted).
+    - No declared output matches → `OUTPUT_LOCATION_MISMATCH`, naming every
+      declared output location as a candidate (`expected` is their
+      comma-joined list) rather than a single wrong "expected" location — a
+      single-output contract reduces to exactly the original message shape,
+      confirmed by the pre-existing `OUTPUT_LOCATION_MISMATCH` test passing
+      unchanged. No schema check runs, since there's no non-ambiguous output
+      left to check it against.
+    - The plan produces no write at all → `MISSING_OUTPUT` once per
+      declared output, generalizing the single-output contract's original
+      one-violation behavior.
+    - `verifyStateChange` (state-changing CALLs — see the "Verify
+      `rollback_to_snapshot`" sub-phase above) picks up the same matching
+      for free: a location matching no declared output is still a clean
+      pass (not this contract's concern), exactly as it already was for a
+      single-output contract; a location matching one of several declared
+      outputs is now scoped and schema-checked against that one instead of
+      always `outputs.head`.
+- [x] **`ContractValidator` warns (not errors) when two declared outputs
+      share the same `location`** — a contract-authoring ambiguity the new
+      location-based matching makes real for the first time (`verify`
+      picks whichever comes first); previously harmless since only
+      `outputs.head` was ever consulted.
+- [x] 9 new tests: `StructuralVerifierSpec` (a two-output contract matching
+      its second declared output correctly, matching its first, a schema
+      violation attributed to the matched output only, a format mismatch
+      checked against the matched output's own declared format,
+      `OUTPUT_LOCATION_MISMATCH` naming every candidate when none match,
+      `MISSING_OUTPUT` once per declared output when the plan writes
+      nothing, and `verifyStateChange` scoped correctly across matching-
+      first/matching-second/matching-neither) and `ContractValidatorTest`
+      (the new duplicate-output-location Warning, and a distinct-locations
+      multi-output contract producing none). All pre-existing single-output
+      tests pass unchanged — this is a strict generalization, not a
+      behavior change for the single-output case.
+- [x] **Documentation**: `StructuralVerifier`'s own "Multi-output
+      contracts" doc rewritten to describe the matching behavior instead of
+      disclaiming it as future work; docs-site's
+      [Contract Format](/reference/contract-format/) reference gained a
+      "Multiple outputs" subsection under "Location matching" plus the new
+      validator-check table row; [Violation Types](/reference/violation-types/)'s
+      `MISSING_OUTPUT`/`OUTPUT_LOCATION_MISMATCH` rows reworded to describe
+      the per-output/any-candidate behavior instead of implying a single
+      declared output.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: full `contract` suite (281 tests, including two new
+      `ContractValidatorTest` cases) and full `spark-adapter` suite (609
+      tests, including the 7 new `StructuralVerifierSpec` multi-output
+      cases) both pass. Scoped Stryker mutation testing on
+      `StructuralVerifier.scala` alone: **92.75%** (64/69 non-excluded
+      mutants killed) — well above the 70% bar. The 5 survivors are all one
+      thing: the `contract.outputs.size == 1` branch that picks between the
+      single-output-worded and multi-output-worded `message`/`remediation`
+      text for `OUTPUT_LOCATION_MISMATCH` (lines 383/389) — `violationType`/
+      `expected`/`actual` are identical either way, so this is the same
+      "mutant only changes human-readable message text" category
+      `strykerExcludedMutations := Seq("StringLiteral")` already
+      disclose-excludes elsewhere in this module, left as-is rather than
+      chased with brittle exact-message-text tests. `./dev/build` and
+      `./dev/test` both pass against real `spark-submit`,
+      `demo/output/report.json` reporting `Status: PASS` and
+      `contractVerification.status: PASSED` — this change is a strict
+      generalization of existing single-output behavior, so the real demo
+      pipeline (still single-output) is unaffected by construction,
+      confirmed rather than assumed.
+
+#### Sub-phase: Transformation shape rules — required_group_by,
+#### forbid_cross_join, required_join_columns, required_filter_columns
+#### (done)
+
+The first slice of the "Transformation checks beyond structural" future
+item this file's own Phase 1c `Scope (Future)` section named
+(join/aggregation/filter semantics against contract expectations) — a
+second, independent rule family alongside the three row-level-DML types
+(`merge_condition`/`forbid_unconditional_delete`/`allowed_update_columns`),
+checked against a transformation's whole `ir.Plan` rather than one
+extracted `ir.RowMutation`. The premise: baking a quality expectation
+into the contract as a structural, pre-execution check — "this output
+must be grouped by X," "no join may be a cartesian product" — makes the
+class of bug it guards against (a silently dropped `GROUP BY`, a missing
+join condition fanning every row out against every other row) impossible
+to ship, rather than something a separate post-execution data-quality
+job has to keep rediscovering against real data, run after run.
+
+- [x] **`RuleType`/`InterpretedRule` gained four new members**
+      (`RuleType.PlanShapeTypes`, `contract/ContractModel.scala`):
+      `required_group_by`/`forbid_cross_join`/`required_join_columns`/
+      `required_filter_columns`, decoded by `ContractRule.interpret` the
+      same way the three DML types already were. `RuleType.All` is now
+      `DmlTypes ++ PlanShapeTypes`; `ContractValidator`'s existing
+      malformed-properties check (already generic over `RuleType.All`)
+      covers the four new types for free, needing only new `ruleHint`
+      entries.
+- [x] **`PlanRuleVerifier`** (new,
+      `spark-adapter/src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala`) —
+      the counterpart to `RuleVerifier` for this family. Walks the whole
+      plan (not just its root) collecting every `Aggregate`/`Join`/`Filter`
+      node; each rule is satisfied if *any* matching node satisfies it:
+      `required_group_by` needs an `Aggregate` whose `groupBy` (resolved to
+      column names via `Expr.references`) is a superset of the declared
+      columns; `forbid_cross_join` rejects any `Join` with `JoinType.Cross`
+      or no condition at all (confirmed empirically that Spark reports a
+      condition-less `.join(other)` this way too, not only
+      `.crossJoin(other)`); `required_join_columns` reuses the exact same
+      equality-pairing logic `merge_condition` uses; `required_filter_columns`
+      only requires each declared column be *referenced* by some `Filter`'s
+      condition, deliberately weaker than the equality-pairing the other
+      two require, since "the plan filters on this column somewhere"
+      doesn't presume what the filter should assert.
+- [x] **`EqualityConditions`** (new,
+      `spark-adapter/src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala`) —
+      `equalityPairedColumns`/`requiredEqualities`/`isCrossSideMatch`
+      extracted out of `RuleVerifier` (unchanged logic, generalized
+      wording only) so `merge_condition` and the new `required_join_columns`
+      share one implementation instead of two that could drift apart the
+      way this module's own history already shows duplicated logic can.
+      `RuleVerifier.checkMergeCondition` now calls it instead of a private
+      copy; `RuleVerifier`'s own `appliesTo` (a compile-time exhaustiveness
+      guard over every `InterpretedRule`) gained explicit `false` cases for
+      the four new plan-shape types — they're never the reason an
+      `Unverifiable` DML classification should fail closed.
+- [x] **Wired into `ContractEnforcementRule.verifyOrThrow`**: a new
+      `planRuleViolations = PlanRuleVerifier.verify(contract.rules,
+      translated.plan)` runs unconditionally alongside the existing
+      structural/DML-rule checks (not gated on `rowMutationClassification`,
+      since these rules apply to any write, DML or not) and folds into the
+      same `VerificationResult`/abort path every other violation already
+      uses.
+- [x] **New violation types**: `RULE_REQUIRED_GROUP_BY_VIOLATION`,
+      `RULE_CROSS_JOIN_VIOLATION`, `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION`,
+      `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION` (`StructuralVerifier.ViolationType`,
+      reused rather than duplicated since violations from every verifier
+      share one vocabulary/JSON shape).
+- [x] **Tests**: `contract`'s `ContractParserTest`/`ContractValidatorTest`
+      gained interpret/malformed-properties coverage for all four new
+      types (287 → contract module total, all passing); `spark-adapter`
+      gained a new pure-Scala `PlanRuleVerifierSpec` (25 tests, no Spark
+      session needed — hand-built `ir.Plan`/`ir.Expr`, mirroring
+      `RuleVerifierSpec`'s own style) covering every rule's PASS/FAIL shape,
+      nested-node discovery, and any-match-among-several semantics; and 8
+      new end-to-end `ContractEnforcementRuleSpec` PASS/FAIL cases proving
+      the wiring actually aborts a real Spark write (a `groupBy().agg()`,
+      a `.crossJoin()`, an unconditioned `.join()`, a join missing a
+      declared match column, a write with no filter on a declared column)
+      before any data is written, not merely reported as failed.
+- [x] **CI**: both new files added to `.github/workflows/test.yml`'s
+      `mutation-testing-spark-adapter` shard lists per CLAUDE.md's
+      requirement (`EqualityConditions.scala` → shard-2,
+      `PlanRuleVerifier.scala` → shard-3, the two shards tied for
+      smallest file count before this change).
+- [x] **Documentation**: new docs-site guide
+      [Enforce Transformation Shape Rules](docs-site/src/content/docs/guides/enforcing-transformation-rules.mdx)
+      (mirroring "Enforce Row-Level DML Rules"' structure); that DML-rules
+      guide's own stale "no rule vocabulary exists yet" line for
+      join/aggregation/filter shape corrected to point at the new one;
+      `reference/contract-format.mdx`'s "Interpreted rules" section and
+      `reference/violation-types.md` extended with the new family/types;
+      `guides/writing-a-contract.mdx` and `introduction/what-is-this.md`
+      updated to mention the second rule family exists; docs/CONTRACT_MODEL.md
+      gained a "Plan-shape rules" section mirroring its existing DML-rules
+      treatment.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: full `contract` suite (287 tests) and full
+      `spark-adapter` suite (641 tests) both pass; scoped Stryker mutation
+      testing on `PlanRuleVerifier.scala`/`EqualityConditions.scala`
+      together: **90.7%** (39/43 non-excluded mutants) after one fix. The
+      first pass (88.37%, 38/43) surfaced a real gap: an `Option[Expr]
+      .exists`/`.forall` confusion in `checkRequiredJoinColumns` that would
+      have let a join with no condition at all vacuously satisfy
+      `required_join_columns` (`None.forall(p) == true`, wrongly read as
+      "satisfied" instead of `None.exists(p) == false`) — closed with one
+      added test (a join with `condition = None` must be rejected, not
+      silently passed), confirmed to kill it on rerun. The 4 remaining
+      survivors, on both passes, are all confined to
+      `checkRequiredGroupBy`'s `message`/`actual` text-selection branches
+      (`aggregates.isEmpty`/`groupings.isEmpty`), never `violationType` —
+      the same accepted "message-text-only" category `spark-adapter`'s
+      `strykerExcludedMutations` already disclose-excludes elsewhere, left
+      as-is rather than chased with brittle exact-message-text tests.
+      `./dev/build`
+      and `./dev/test` both pass against real `spark-submit`,
+      `demo/output/report.json` reporting `Status: PASS` and
+      `contractVerification.status: PASSED` — the real demo pipeline
+      declares no plan-shape rules, so it's unaffected by construction,
+      confirmed rather than assumed.
+
+#### Scope (Future), continued
+
+- [ ] A custom-rule-type escape hatch for this family (`PlanRuleVerifier`
+      has none yet — `CustomRuleVerifier` is shaped around `RowMutation`,
+      not `Plan`, so a plan-shape custom rule type needs its own extension
+      trait; not started).
+- [ ] Which specific aggregation a `required_group_by` rule refers to when
+      a plan has several — satisfied today if *any* of them matches, not
+      necessarily the "final"/"outermost" one.
+- [ ] A `required_join_columns`/`merge_condition` match expressed inside a
+      `CASE WHEN` — same limitation as `merge_condition`'s own, for the
+      same reason (the equality only holds conditionally).
+- [ ] Dependency version constraints on a contract's declared inputs
+      (pinning a minimum/required version of whatever upstream contract or
+      table produced an input) — deliberately not attempted: every
+      self-contained design considered needs either a registry to consult
+      or producer-side metadata-stamping infrastructure that doesn't exist
+      yet, a larger, separate design decision than this sub-phase's scope.
+
+#### Sub-phase: Static data-quality contract verification (done)
+
+[docs/STATIC_DATA_QUALITY_VERIFICATION.md](docs/STATIC_DATA_QUALITY_VERIFICATION.md)
+extends this same "prove it before execution, not after" principle to a new class of
+property: not just plan *shape* (this file's own `required_group_by`/
+`forbid_cross_join`/... sub-phase above) but per-column *value-domain* facts — `NOT
+NULL`, `= <constant>`, `IN (...)`, a numeric range — statically provable (or
+refutable) from input-contract axioms propagated through the transformation's
+semantics. The objective throughout: prove a guarantee, never merely predict one — a
+false claim of a guarantee is worse than declining to prove one at all, so every
+verdict that isn't a real proof (`NotGuaranteed`/`NotStaticallyVerifiable`) stays
+honestly distinct from both `Guaranteed` and `Violated`.
+
+- [x] **`ir.Property`/`ir.PropertyAnalysis`** (new,
+      `ir/src/main/scala/com/invaract/ir/Property.scala`,
+      `PredicateFacts.scala`, `PropertyAnalysis.scala`) — a pure,
+      engine-independent trace over `ir.Plan`/`ir.Expr`, structurally
+      mirroring `Lineage.trace` (same trampolined `TailCalls` traversal, no
+      symbol table, the same `Read`/`Project`/`Aggregate`/`Join`/`Union`
+      fall-through). `ColumnPropertyState` carries four provable facts
+      (not-null, equals-constant, one-of, numeric range); `PredicateFacts`
+      extracts what a `Filter`'s condition proves (AND/OR/NOT
+      polarity-aware, mirroring `EqualityConditions`'s own De Morgan
+      handling); `PropertyAnalysis.analyze` threads axioms seeded at `Read`
+      nodes through the whole plan, narrowing on `Filter`/`Conditional`
+      branches and demoting per `JoinType` (`LeftOuter`/`RightOuter`/
+      `FullOuter` lose the outer side; `LeftSemi`/`LeftAnti` preserve both).
+      Knows nothing about `Contract` - `axioms` is supplied by the caller.
+- [x] **`spark-adapter.StaticDataQualityVerifier`** (new,
+      `spark-adapter/src/main/scala/com/invaract/sparkadapter/StaticDataQualityVerifier.scala`)
+      — the contract-aware glue layer, the same division of labor
+      `SensitivityLineage` already establishes for `Lineage`. `buildAxioms`
+      resolves a real plan `Read`'s reported scope against
+      `contract.inputs` via `StructuralVerifier.collectReads`/
+      `locationsMatch` (widened to `private[sparkadapter]` for this reuse)
+      *before* seeding an axiom map, never the reverse - the contract's
+      declared, portable location never matches Spark's actual reported
+      scope directly. `checksFor` turns each output field's `nullable:
+      false`/`constraints` into a `DataQualityCheckResult`; range
+      Guaranteed/Violated reuses `Property.Range.tighten` (already tested)
+      rather than fresh interval-comparison code, plus a strict,
+      tie-conservative `escapesBelow`/`escapesAbove` pair for Violated (an
+      exact boundary match is `NotGuaranteed`, never a false `Violated`).
+- [x] **`contract.FieldConstraint`/`FieldConstraintType`/`InterpretedFieldConstraint`**
+      (new, `contract/src/main/scala/com/invaract/contract/ContractModel.scala`)
+      — `Field` gained a `constraints: List[FieldConstraint]` (seventh
+      constructor parameter). Three interpreted kinds (`equals`/`oneOf`/
+      `range`), decoded the same total/safe way `ContractRule.interpret`
+      already is. `NOT NULL` needs no entry here - `Field.nullable = false`
+      already states it. `ContractParser`/`ContractValidator` gained
+      matching parse/malformed-properties/type-mismatch support;
+      `contract/schema/invaract-contract.schema.json` gained a
+      `fieldConstraint` def (and, found and fixed in the same pass: its
+      `rule.type` description had never been updated for the four
+      plan-shape rule types this file's own prior sub-phase added).
+- [x] **New violation type and four-state verdict**:
+      `ViolationType.DataQualityViolation` (`StructuralVerifier.scala`,
+      alongside every other violation type), `DataQualityVerdict`
+      (`Guaranteed`/`NotGuaranteed`/`Violated`/`NotStaticallyVerifiable`),
+      `DataQualityCheckResult`. Only `Violated` ever becomes a real
+      `Violation` and blocks the write - the other three verdicts populate
+      `VerificationResult.dataQuality` (new field) but never affect
+      `passed`, the load-bearing "an absence of proof must never look like
+      a failure" principle the whole design turns on.
+- [x] **New opt-in flag, wired the established way**:
+      `VerificationOptions.staticDataQuality` (fourth flag, MiMa-safe
+      trailing default) and `spark.invaract.staticDataQuality` conf key
+      (`ContractEnforcementRule.StaticDataQualityConfKey`), the identical
+      `resolveVerificationOptions` `||`-overlay mechanism
+      `spark.invaract.computeFingerprint` already uses, including the
+      org-policy `minVerificationOptions` floor
+      (`KnownMinVerificationOptionKeys`/`applyMinVerificationOptions`).
+      Off by default: no `dataQuality` entries, no possibility of a
+      `DataQualityViolation`, until a caller opts in.
+- [x] **Tests**: `contract` gained parser/validator/round-trip coverage for
+      all three constraint kinds (296 tests total, all passing); `ir`
+      gained `PropertyAnalysisSpec`/`PropertySpec`/`PredicateFactsSpec`
+      (171 tests total, all passing) covering every worked example in the
+      design doc by name (NOT NULL via filter, constant value, `CASE WHEN`
+      one-of, numeric clamp, propagation through passthrough, all seven
+      `JoinType`s, the negation-produces-`Violated` setup); `spark-adapter`
+      gained a new pure-Scala `StaticDataQualityVerifierSpec` (27 tests -
+      axiom seeding via real `Read` scopes, output matching, all four
+      verdicts for every constraint kind) and 6 new end-to-end
+      `ContractEnforcementRuleSpec` cases against a real Spark session
+      (default-off no-op, a `Guaranteed` pass, a proven `Violated` abort,
+      a `NotGuaranteed` non-blocking case, and the conf-only attachment
+      path) - 667 pre-existing spark-adapter tests plus these 33 new ones,
+      all passing.
+- [x] **CI**: `StaticDataQualityVerifier.scala` added to
+      `.github/workflows/test.yml`'s `mutation-testing-spark-adapter`
+      shard-2 (the smallest shard at the time).
+- [x] **API compatibility**: two real, deliberate MiMa breaks this
+      sub-phase's new fields caused - `Field.constraints` (`contract`
+      0.7.0 → 0.8.0) and `VerificationOptions.staticDataQuality`/
+      `VerificationResult.dataQuality` (`spark-adapter` 0.5.0 → 0.6.0) -
+      each the same "case class gained a field, even a defaulted trailing
+      one" break this file's own version-history comments already
+      document repeatedly, each caught for real by CI's
+      `api-compatibility` job (not merely anticipated) and fixed the
+      established way: bump, add the exact `ProblemFilters.exclude[...]`
+      MiMa's own output suggested, and update every place that pins the
+      bumped module's version as a real dependency coordinate or
+      references its jar filename (`runner`/`notification-kafka`
+      `build.sbt`, `CLAUDE.md`, `ARCHITECTURE.md`, and every affected
+      docs-site guide's `spark-submit --jars` example).
+- [x] **Documentation**: new docs-site guide [Verify Static Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx);
+      `reference/contract-format.mdx`/`reference/violation-types.md`/
+      `introduction/what-is-this.md`/`guides/writing-a-contract.mdx`
+      updated to cover `constraints`/`DATA_QUALITY_VIOLATION`;
+      `docs/CONTRACT_MODEL.md` gained a "Static data-quality constraints"
+      section and two new validator-check table rows;
+      `docs/SPARK_ADAPTER.md` gained a "Static data-quality verification"
+      section mirroring "Sensitivity propagation"'s structure.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement and Critical
+      Requirement: scoped Stryker on `StaticDataQualityVerifier.scala`
+      reached **100%** (24/24 non-excluded mutants) after one real fix
+      pass - the first clean run's own concurrent-build contamination (a
+      parallel `sbt compile`/`mimaReportBinaryIssues`/`assembly` invocation
+      racing the same `target/` directory mid-run) produced a spuriously
+      low 70.83% with survivors that didn't hold up on a clean rerun,
+      confirming the fix pass's tests were sound rather than papering over
+      a real gap. `./dev/build` and `./dev/test` both pass against real
+      `spark-submit`, `demo/output/report.json` reporting `Status: PASS`
+      and `contractVerification.status: PASSED` - the real demo pipeline
+      declares no `constraints`/`staticDataQuality`, so it's unaffected by
+      construction, confirmed rather than assumed.
 
 ---
 

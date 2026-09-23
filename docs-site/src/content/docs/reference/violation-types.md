@@ -37,8 +37,8 @@ flag in the same case class, the identical way).
 
 | Type | Meaning |
 |---|---|
-| `MISSING_OUTPUT` | The contract's declared output was never written by the plan. |
-| `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match the contract's declared location. |
+| `MISSING_OUTPUT` | A declared output was never written by the plan. One violation per declared output the plan didn't produce a matching write for. |
+| `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match any of the contract's declared output locations. |
 | `OUTPUT_FORMAT_MISMATCH` | The write's actual format doesn't match the contract's declared format. Only checked when both are known. |
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |
 | `MISSING_OUTPUT_FIELD` | A required output field is absent from the actual output schema. |
@@ -58,6 +58,33 @@ and the actual `MERGE`/`UPDATE`/`DELETE` doesn't satisfy it:
 | `RULE_MERGE_CONDITION_VIOLATION` | A `MERGE`'s `ON` condition doesn't include a genuine equality match on every column a `merge_condition` rule declares. |
 | `RULE_UNCONDITIONAL_DELETE` | A `DELETE` (or DSv2 `DeleteFromTable`) removes every row it reaches, with no filtering predicate, under a `forbid_unconditional_delete` rule. |
 | `RULE_DISALLOWED_UPDATE_COLUMN` | A standalone `UPDATE` assigns a column outside an `allowed_update_columns` rule's declared list. |
+
+## Transformation shape rule violations
+
+Produced when a contract declares one of the [transformation shape
+rules](/guides/enforcing-transformation-rules/) and the plan's structure doesn't satisfy
+it — a separate rule family from DML rules above, checked against the plan's whole shape
+rather than one extracted DML operation:
+
+| Type | Meaning |
+|---|---|
+| `RULE_REQUIRED_GROUP_BY_VIOLATION` | No aggregation anywhere in the plan groups by every column a `required_group_by` rule declares. |
+| `RULE_CROSS_JOIN_VIOLATION` | The plan contains a cartesian-product join (a `CROSS JOIN`, or any join with no condition at all) under a `forbid_cross_join` rule. |
+| `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION` | No join's condition anywhere in the plan establishes an equality match on every column a `required_join_columns` rule declares. |
+| `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION` | No filter anywhere in the plan references a column a `required_filter_columns` rule declares. |
+
+## Static data-quality violations
+
+Produced when a contract declares an output field's `nullable: false` or a
+[static data-quality constraint](/guides/verifying-static-data-quality/) and the
+transformation's own semantics *prove* it cannot hold — never merely that it
+might fail, which is reported (not enforced) instead. Only checked when
+`staticDataQuality` is enabled (off by default; see the guide linked above for
+both ways to enable it, the identical mechanism `computeFingerprint` uses).
+
+| Type | Meaning |
+|---|---|
+| `DATA_QUALITY_VIOLATION` | The transformation's own logic provably guarantees an output field can produce a value that violates its declared `nullable: false`/`equals`/`oneOf`/`range` constraint — e.g. a filter's negation, or an arithmetic operation, that demonstrably crosses a declared bound. |
 
 ## Organizational policy violations
 

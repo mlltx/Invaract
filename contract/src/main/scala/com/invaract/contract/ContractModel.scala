@@ -61,7 +61,8 @@ case class Field(
   required: Boolean = false,
   nullable: Boolean = true,
   properties: List[Field] = Nil,
-  sensitivityTags: Set[String] = Set.empty
+  sensitivityTags: Set[String] = Set.empty,
+  constraints: List[FieldConstraint] = Nil
 ) {
   def isStruct: Boolean = properties.nonEmpty
 }
@@ -69,6 +70,113 @@ case class Field(
 /** An ordered collection of fields describing the shape of a dataset. */
 case class Schema(fields: List[Field]) {
   def field(name: String): Option[Field] = fields.find(_.name == name)
+}
+
+/** A single declarative, statically-verifiable value-domain requirement on
+  * a `Field` — see docs/STATIC_DATA_QUALITY_VERIFICATION.md for the full
+  * design. `NOT NULL` needs no entry here at all: `Field.nullable = false`
+  * already states it, and `spark-adapter`'s static data-quality verifier
+  * attempts to prove that existing declaration directly. This is for the
+  * three kinds with no other contract representation.
+  *
+  * On an *input* field, a `constraints` entry is an axiom — trusted as
+  * given, seeding the analysis, never independently re-verified against
+  * real input data by this module. On an *output* field, it's an
+  * obligation the analysis attempts to prove. Same shape, same `Field`,
+  * different role purely by which side of the contract it sits on — the
+  * same convention `required`/`nullable` already follow.
+  */
+case class FieldConstraint(constraintType: String, properties: Map[String, Any]) {
+
+  /** Decodes `properties` into one of `InterpretedFieldConstraint`'s
+    * shapes when `constraintType` is one this module currently interprets
+    * and its properties are well-formed — `None` for both "not a type
+    * this module interprets" and "malformed/unrecognized properties for a
+    * type it does," the same total/safe convention `ContractRule.interpret`
+    * already establishes; `ContractValidator` is where a malformed known
+    * constraint type becomes a reported issue.
+    */
+  def interpret: Option[InterpretedFieldConstraint] = constraintType match {
+    case FieldConstraintType.Equals =>
+      if (properties.keySet != Set("value")) None
+      else properties.get("value").filter(_ != null).map(v => InterpretedFieldConstraint.Equals(v, FieldConstraint.literalTypeOf(v)))
+
+    case FieldConstraintType.OneOf =>
+      if (properties.keySet != Set("values")) None
+      else FieldConstraint.valueSet(properties.get("values")).map(vs => InterpretedFieldConstraint.OneOf(vs, FieldConstraint.literalTypeOf(vs.head)))
+
+    case FieldConstraintType.Range =>
+      val knownKeys = Set("gte", "gt", "lte", "lt")
+      if (properties.keySet.diff(knownKeys).nonEmpty) None
+      else {
+        val parsed: Map[String, Option[BigDecimal]] = knownKeys.flatMap(k => properties.get(k).map(k -> FieldConstraint.numeric(_))).toMap
+        if (parsed.values.exists(_.isEmpty)) None // a declared bound that failed to parse as numeric
+        else {
+          val gte = parsed.get("gte").flatten
+          val gt = parsed.get("gt").flatten
+          val lte = parsed.get("lte").flatten
+          val lt = parsed.get("lt").flatten
+          if (gte.isDefined && gt.isDefined) None // redundant/contradictory - pick one
+          else if (lte.isDefined && lt.isDefined) None
+          else if (List(gte, gt, lte, lt).forall(_.isEmpty)) None // at least one bound required
+          else Some(InterpretedFieldConstraint.Range(gte, gt, lte, lt))
+        }
+      }
+
+    case _ => None
+  }
+}
+
+object FieldConstraint {
+  private def literalTypeOf(v: Any): String = v match {
+    case _: java.lang.Boolean                        => "boolean"
+    case _: java.lang.Integer                         => "integer"
+    case _: java.lang.Long                             => "long"
+    case _: java.lang.Short                            => "short"
+    case _: java.lang.Double                           => "double"
+    case _: java.lang.Float                             => "float"
+    case _: java.math.BigDecimal | _: scala.math.BigDecimal => "decimal"
+    case _                                              => "string"
+  }
+
+  private def valueSet(raw: Option[Any]): Option[Set[Any]] = raw match {
+    case Some(l: java.util.List[_]) =>
+      val items = l.asScala.toList
+      if (items.nonEmpty && items.forall(_ != null)) Some(items.toSet) else None
+    case _ => None
+  }
+
+  private def numeric(raw: Any): Option[BigDecimal] = raw match {
+    case null           => None
+    case n: java.lang.Number => scala.util.Try(BigDecimal(n.toString)).toOption
+    case s: String       => scala.util.Try(BigDecimal(s)).toOption
+    case _                => None
+  }
+}
+
+/** The closed set of `FieldConstraint.constraintType`s this module
+  * currently interprets — deliberately narrow, mirroring `RuleType`'s own
+  * discipline, not a general constraint language. See
+  * docs/STATIC_DATA_QUALITY_VERIFICATION.md §2.3/§8.
+  */
+object FieldConstraintType {
+  val Equals = "equals"
+  val OneOf = "oneOf"
+  val Range = "range"
+
+  val All: Set[String] = Set(Equals, OneOf, Range)
+}
+
+/** A `FieldConstraint`, decoded into one of the shapes
+  * `spark-adapter`'s static data-quality verifier currently knows how to
+  * check. Deliberately narrow, mirroring `InterpretedRule`'s own
+  * discipline — not a general constraint language.
+  */
+sealed trait InterpretedFieldConstraint
+object InterpretedFieldConstraint {
+  case class Equals(value: Any, literalType: String) extends InterpretedFieldConstraint
+  case class OneOf(values: Set[Any], literalType: String) extends InterpretedFieldConstraint
+  case class Range(gte: Option[BigDecimal], gt: Option[BigDecimal], lte: Option[BigDecimal], lt: Option[BigDecimal]) extends InterpretedFieldConstraint
 }
 
 /** A dataset's expected data-catalog registration — e.g. "this must be
@@ -148,16 +256,18 @@ case class Dataset(
 /** Rule types Invaract itself knows how to interpret during verification
   * (see `InterpretedRule`, and `RuleVerifier` in `spark-adapter`) —
   * deliberately a narrow, closed set (the concrete first step
-  * ROADMAP.md's "Full semantic DML verification" item names), not a
-  * general rule-expression language. A `ContractRule.ruleType` outside
-  * this set is not necessarily inert, though: if `Contract.customRuleTypes`
-  * names a `CustomRuleVerifier` implementation for it (`spark-adapter`),
-  * `RuleVerifier` dispatches to that instead — the same
-  * plug-in-without-a-source-change escape hatch
+  * ROADMAP.md's "Full semantic DML verification" item names, plus a
+  * second family — see below), not a general rule-expression language. A
+  * `ContractRule.ruleType` outside this set is not necessarily inert,
+  * though: if `Contract.customRuleTypes` names a `CustomRuleVerifier`
+  * implementation for it (`spark-adapter`), `RuleVerifier` dispatches to
+  * that instead — the same plug-in-without-a-source-change escape hatch
   * `OrgPolicy.customPolicyTypes`/`CustomPolicyEvaluator` already give
   * organizational policy types (see docs/CONTRACT_MODEL.md's
   * "Organizational Policy" section and docs/SPARK_ADAPTER.md's "Custom
-  * rule types" section). A `ruleType` matching neither this set nor
+  * rule types" section) — that escape hatch currently covers only the
+  * three row-level-DML types below, not the four plan-shape ones (see
+  * their own doc). A `ruleType` matching neither this set nor
   * `customRuleTypes` is still recorded on `Contract.rules` but never
   * acted on.
   */
@@ -176,11 +286,47 @@ object RuleType {
     */
   val AllowedUpdateColumns = "allowed_update_columns"
 
-  val All: Set[String] = Set(MergeCondition, ForbidUnconditionalDelete, AllowedUpdateColumns)
+  /** The transformation must aggregate (`GROUP BY`) by at least these
+    * columns somewhere in its plan — see `spark-adapter`'s
+    * `PlanRuleVerifier`.
+    */
+  val RequiredGroupBy = "required_group_by"
+
+  /** No join in the transformation's plan may be a cartesian product — a
+    * `CROSS JOIN`, or any join with no condition at all, regardless of its
+    * declared type. Takes no properties, the same shape as
+    * `ForbidUnconditionalDelete`.
+    */
+  val ForbidCrossJoin = "forbid_cross_join"
+
+  /** At least one join in the transformation's plan must be conditioned on
+    * an equality match covering these columns.
+    */
+  val RequiredJoinColumns = "required_join_columns"
+
+  /** At least one filter in the transformation's plan must reference each
+    * of these columns — e.g. "the plan must filter out nulls/soft-deletes
+    * on this column somewhere," without requiring a specific predicate
+    * shape.
+    */
+  val RequiredFilterColumns = "required_filter_columns"
+
+  /** The three row-level-DML rule types (`RuleVerifier`, checked against
+    * one extracted `ir.RowMutation`).
+    */
+  val DmlTypes: Set[String] = Set(MergeCondition, ForbidUnconditionalDelete, AllowedUpdateColumns)
+
+  /** The four plan-shape rule types (`PlanRuleVerifier`, checked against a
+    * transformation's whole `ir.Plan`, independent of whether it's DML at
+    * all).
+    */
+  val PlanShapeTypes: Set[String] = Set(RequiredGroupBy, ForbidCrossJoin, RequiredJoinColumns, RequiredFilterColumns)
+
+  val All: Set[String] = DmlTypes ++ PlanShapeTypes
 }
 
 /** A `ContractRule`, decoded into one of the shapes Invaract currently
-  * knows how to verify. Deliberately narrow, mirroring `RuleType`'s three
+  * knows how to verify. Deliberately narrow, mirroring `RuleType`'s seven
   * members — not a general rule-expression language.
   */
 sealed trait InterpretedRule
@@ -188,6 +334,10 @@ object InterpretedRule {
   case class MergeCondition(columns: List[String]) extends InterpretedRule
   case object ForbidUnconditionalDelete extends InterpretedRule
   case class AllowedUpdateColumns(columns: List[String]) extends InterpretedRule
+  case class RequiredGroupBy(columns: List[String]) extends InterpretedRule
+  case object ForbidCrossJoin extends InterpretedRule
+  case class RequiredJoinColumns(columns: List[String]) extends InterpretedRule
+  case class RequiredFilterColumns(columns: List[String]) extends InterpretedRule
 }
 
 /** A declarative rule attached to the contract (e.g. compatibility mode,
@@ -219,6 +369,14 @@ case class ContractRule(ruleType: String, properties: Map[String, Any]) {
       Some(InterpretedRule.ForbidUnconditionalDelete)
     case RuleType.AllowedUpdateColumns =>
       ContractRule.stringList(properties.get("columns")).map(InterpretedRule.AllowedUpdateColumns)
+    case RuleType.RequiredGroupBy =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredGroupBy)
+    case RuleType.ForbidCrossJoin =>
+      Some(InterpretedRule.ForbidCrossJoin)
+    case RuleType.RequiredJoinColumns =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredJoinColumns)
+    case RuleType.RequiredFilterColumns =>
+      ContractRule.stringList(properties.get("columns")).map(InterpretedRule.RequiredFilterColumns)
     case _ => None
   }
 }
