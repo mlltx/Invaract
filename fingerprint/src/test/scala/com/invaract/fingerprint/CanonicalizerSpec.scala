@@ -369,6 +369,93 @@ class CanonicalizerSpec extends AnyFunSuite {
     assert(!before.isInstanceOf[ColumnReference], "resolution must not stop at the outer passthrough reference")
   }
 
+  test("resolveExprDeep reaches through Alias/Cast/BooleanExpr/Conditional to inline a buried passthrough reference") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val passthrough = ColumnReference(ColumnRef("real"))
+
+    Canonicalizer.resolveExprDeep(Alias("renamed", passthrough), inner) match {
+      case Alias("renamed", Arithmetic("+", _)) => // expected: the passthrough inside the Alias was resolved too
+      case other                                  => fail(s"expected Alias to wrap the resolved computation, got $other")
+    }
+    Canonicalizer.resolveExprDeep(Cast(passthrough, "double"), inner) match {
+      case Cast(Arithmetic("+", _), "double") => // expected
+      case other                               => fail(s"expected Cast to wrap the resolved computation, got $other")
+    }
+    Canonicalizer.resolveExprDeep(BooleanExpr("NOT", List(Comparison("=", passthrough, Literal(0, "integer")))), inner) match {
+      case BooleanExpr("NOT", List(Comparison("=", Arithmetic("+", _), Literal(0, "integer")))) => // expected
+      case other                                                                                    => fail(s"expected the Comparison's own passthrough operand resolved, got $other")
+    }
+    Canonicalizer.resolveExprDeep(Conditional(List((passthrough, Literal("a", "string"))), Some(passthrough)), inner) match {
+      case Conditional(List((Arithmetic("+", _), _)), Some(Arithmetic("+", _))) => // expected: both the branch condition and the ELSE value resolved
+      case other                                                                  => fail(s"expected both the branch condition and ELSE value resolved, got $other")
+    }
+  }
+
+  test("resolveExprDeep over a bare Conditional with no ELSE value leaves it None, not a crash") {
+    val plan = Read(DatasetRef("raw.orders"))
+    Canonicalizer.resolveExprDeep(Conditional(List((Literal(true, "boolean"), Literal(1, "integer"))), None), plan) match {
+      case Conditional(_, None) => // expected
+      case other                  => fail(s"expected elseValue to stay None, got $other")
+    }
+  }
+
+  test("a reference the Aggregate it passes through doesn't declare resolves to the original reference, not a crash") {
+    val agg = Aggregate(Read(DatasetRef("raw.orders")), Nil, List(NamedExpr("total", AggregateCall("SUM", ColumnReference(ColumnRef("amount"))))))
+    val outerOverAgg = Project(agg, List(NamedExpr("out", ColumnReference(ColumnRef("missing")))))
+    assert(Canonicalizer.resolvedOutputs(outerOverAgg)("out") == ColumnReference(ColumnRef("missing")))
+  }
+
+  test("a reference a Window doesn't declare falls through to its own input plan, not straight to None") {
+    val windowed = Window(Read(DatasetRef("raw.orders")), List(NamedExpr("rn", Function("ROW_NUMBER", Nil))))
+    val outerOverWindow = Project(windowed, List(NamedExpr("out", ColumnReference(ColumnRef("amount")))))
+    // "amount" isn't one of the Window's own declared names, but IS a real
+    // column of the Read it falls through to (an unqualified reference
+    // vacuously matches any Read's own scope) - proving the Window's None
+    // branch genuinely re-dispatches to `input`, not short-circuiting to
+    // the original unresolved reference the way Aggregate's own None
+    // branch does.
+    assert(Canonicalizer.resolvedOutputs(outerOverWindow)("out") == ColumnReference(ColumnRef("amount", Some("raw.orders"))))
+  }
+
+  test("resolveExprDeep passes an unresolved reference straight through Filter/Sort/Limit to their own input") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val ref = ColumnReference(ColumnRef("real"))
+
+    def resolvedThrough(wrap: Plan => Plan): Expr = Canonicalizer.resolveExprDeep(ref, wrap(inner))
+    assert(!resolvedThrough(Filter(_, Comparison(">", ColumnReference(ColumnRef("id")), Literal(0, "integer")))).isInstanceOf[ColumnReference])
+    assert(!resolvedThrough(Sort(_, List(SortOrder(ColumnReference(ColumnRef("id")))))).isInstanceOf[ColumnReference])
+    assert(!resolvedThrough(Limit(_, 10, 0)).isInstanceOf[ColumnReference])
+  }
+
+  test("resolveExprDeep resolves through a Write to its own input, the same as any other pass-through plan node") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val resolved = Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("real")), Write(DatasetRef("gold.out"), inner))
+    assert(!resolved.isInstanceOf[ColumnReference])
+  }
+
+  test("resolveExprDeep over an UnknownPlan resolves to the original reference, not a crash") {
+    val resolved = Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("x")), UnknownPlan("opaque", "SomeKind"))
+    assert(resolved == ColumnReference(ColumnRef("x")))
+  }
+
+  test("an ambiguous unqualified reference matching neither Join side resolves to the original reference") {
+    val left = Read(DatasetRef("raw.orders"))
+    val right = Read(DatasetRef("raw.customers"))
+    val outer = Project(Join(left, right, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("missing", Some("nowhere"))))))
+    assert(Canonicalizer.resolvedOutputs(outer)("out") == ColumnReference(ColumnRef("missing", Some("nowhere"))))
+  }
+
+  test("resolvedOutputs over an empty Union resolves to no outputs at all, not a crash") {
+    assert(Canonicalizer.resolvedOutputs(Union(Nil)).isEmpty)
+  }
+
+  test("resolvedOutputs combines a Window's own base plan outputs with its windowed ones") {
+    val agg = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("base_col", ColumnReference(ColumnRef("amount", Some("raw.orders"))))))
+    val windowed = Window(agg, List(NamedExpr("rn", Function("ROW_NUMBER", Nil))))
+    val outputs = Canonicalizer.resolvedOutputs(windowed)
+    assert(outputs.keySet == Set("base_col", "rn"))
+  }
+
   test("resolveExprDeep matches the correct name among several candidates declared by an Aggregate it passes through") {
     // A Project sitting directly on an Aggregate, referencing one of its
     // declared names by a bare (unqualified) reference - this is exactly

@@ -16,6 +16,22 @@ class NonDeterminismSpec extends AnyFunSuite {
     assert(NonDeterminism.classify(Literal(5, "integer")) == Some(false))
   }
 
+  test("Alias/Cast classify transparently, by their own inner expression") {
+    assert(NonDeterminism.classify(Alias("renamed", Function("rand", Nil))) == Some(true))
+    assert(NonDeterminism.classify(Alias("renamed", ColumnReference(ColumnRef("amount")))) == Some(false))
+    assert(NonDeterminism.classify(Cast(Function("rand", Nil), "double")) == Some(true))
+    assert(NonDeterminism.classify(Cast(ColumnReference(ColumnRef("amount")), "double")) == Some(false))
+  }
+
+  test("Comparison/BooleanExpr consider both/all operands, not just the first") {
+    val comparison = Comparison("=", ColumnReference(ColumnRef("amount")), Function("rand", Nil))
+    assert(NonDeterminism.classify(comparison) == Some(true))
+    val boolExpr = BooleanExpr("AND", List(ColumnReference(ColumnRef("active")), Function("rand", Nil)))
+    assert(NonDeterminism.classify(boolExpr) == Some(true))
+    val allDeterministic = BooleanExpr("AND", List(ColumnReference(ColumnRef("active")), Literal(true, "boolean")))
+    assert(NonDeterminism.classify(allDeterministic) == Some(false))
+  }
+
   test("a known non-deterministic function classifies as Some(true)") {
     assert(NonDeterminism.classify(Function("rand", Nil)) == Some(true))
     assert(NonDeterminism.classify(Function("current_timestamp", Nil)) == Some(true))
