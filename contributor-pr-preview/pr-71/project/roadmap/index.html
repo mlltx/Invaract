@@ -3652,6 +3652,82 @@ Quality</a>
 guide’s nested-field bullet rewritten to describe the new capability, plus a new
 worked example.</li>
 </ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-cross-fieldrow-level-constraints-fieldrange-done">Sub-phase: Cross-field/row-level constraints (<code dir="auto">fieldRange</code>) (done)</h4><a class="sl-anchor-link" href="#sub-phase-cross-fieldrow-level-constraints-fieldrange-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Cross-field/row-level constraints (fieldRange) (done)”</span></a></div>
+<p>A user-suggested, common real-world data-quality rule this design’s own §8/§9 had
+already flagged as a natural “second slice” of cross-field relationships when it was
+first written: one field’s value compared against <em>another field on the same row</em>
+(<code dir="auto">end_date >= start_date</code>, <code dir="auto">discount_price &#x3C;= list_price</code>), not against a literal.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">contract</code> side</strong>: <code dir="auto">FieldConstraintType.FieldRange = "fieldRange"</code>,
+<code dir="auto">InterpretedFieldConstraint.FieldRange(gte, gt, lte, lt: Option[String])</code> —
+exactly <code dir="auto">Range</code>’s own shape, except each bound’s value is another field’s name
+rather than a numeric literal (a single constraint can combine two bounds against
+two different fields, e.g. <code dir="auto">gte: min_price, lte: max_price</code>).
+<code dir="auto">ContractValidator</code> gained <code dir="auto">validateFieldRange</code>: a <code dir="auto">Warning</code> when the constrained
+field or a referenced field isn’t numeric-typed, when a referenced field doesn’t
+exist in the same schema, when a constraint references its own field, or when a
+<code dir="auto">fieldRange</code> is declared on a nested field at all (never resolvable — see below) —
+every case degrades safely to <code dir="auto">NotStaticallyVerifiable</code>, never a crash, so none of
+these are <code dir="auto">Error</code>s.
+<code dir="auto">contract</code> bumped 0.8.0 → 0.9.0 — not a MiMa break (purely additive: a new sealed-
+trait case, a new <code dir="auto">val</code>), but needed anyway for the same Ivy-cache coordinate-
+collision reason <code dir="auto">fingerprint</code>’s own 0.2.0 → 0.3.0 bump documents: <code dir="auto">spark-adapter</code>/
+<code dir="auto">runner</code> both declare a real compile-time <code dir="auto">invaract-contract</code> version dependency.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">spark-adapter</code> side — no <code dir="auto">ir</code> changes needed at all</strong>, a genuinely smaller
+addition than <code dir="auto">Length</code> was: <code dir="auto">PropertyAnalysis.analyze</code> already computes every
+top-level output field’s own <code dir="auto">Property.Range</code> in one pass, and
+<code dir="auto">StaticDataQualityVerifier.verify</code> already holds that whole <code dir="auto">analyzed</code> map in
+scope — a <code dir="auto">fieldRange</code> bound’s proof is a direct comparison between two
+already-analyzed <code dir="auto">Range</code>s, no new fact-propagation machinery required.
+<code dir="auto">checksForField</code>/<code dir="auto">checksFor</code> thread that map down as <code dir="auto">siblings</code>, but <em>only</em> for
+the outermost (top-level-field) call — every recursive call into
+<code dir="auto">field.properties</code> passes <code dir="auto">Map.empty</code> instead, so a <code dir="auto">fieldRange</code> constraint on a
+<em>nested</em> field always resolves <code dir="auto">NotStaticallyVerifiable</code> rather than risking an
+accidental match against an unrelated top-level field sharing the same bare name.
+New <code dir="auto">gteClause</code>/<code dir="auto">gtClause</code> helpers decide each bound clause’s own
+<code dir="auto">Holds</code>/<code dir="auto">Violated</code>/<code dir="auto">Unknown</code> verdict, reusing <code dir="auto">rangeVerdict</code>’s own established
+strict/tie-conservative convention exactly; <code dir="auto">lte</code>/<code dir="auto">lt</code> reuse both functions with
+the two sides swapped (<code dir="auto">field &#x3C;= other</code> is exactly <code dir="auto">other >= field</code>) rather than
+two more near-duplicate implementations. <code dir="auto">fieldRangeVerdict</code> combines a
+constraint’s (up to four) independent bound clauses: <code dir="auto">Violated</code> if any clause is
+provably violated, <code dir="auto">Guaranteed</code> only if every declared clause provably holds,
+<code dir="auto">NotStaticallyVerifiable</code>/<code dir="auto">NotGuaranteed</code> otherwise.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Tests</strong>: <code dir="auto">contract</code>’s <code dir="auto">ContractParserTest</code> gained 8 cases (well-formed
+single/multiple bounds, whitespace trimming, no-bound/both-gte-gt/both-lte-lt/
+non-string-bound/blank-bound/unrecognized-key malformed cases).
+<code dir="auto">ContractValidatorTest</code> gained 8 cases (well-formed no-warning case, no-bound
+<code dir="auto">Error</code>, non-numeric-constrained-field warning, self-reference warning,
+missing-reference warning, non-numeric-referenced-field warning, nested-field
+warning, and a single constraint carrying two independent warnings at once).
+<code dir="auto">spark-adapter</code>’s <code dir="auto">StaticDataQualityVerifierSpec</code> gained 16 cases: <code dir="auto">gte</code>/<code dir="auto">gt</code>/
+<code dir="auto">lte</code>/<code dir="auto">lt</code> each Guaranteed and Violated (including the exact-tie boundary cases
+proving <code dir="auto">gte</code>/<code dir="auto">lte</code> are inclusive while <code dir="auto">gt</code>/<code dir="auto">lt</code> are strict — a tie Violates a
+strict bound); <code dir="auto">lte</code>/<code dir="auto">lt</code> specifically proven to reuse <code dir="auto">gteClause</code>/<code dir="auto">gtClause</code>
+with sides swapped, not a coincidentally-similar independent implementation;
+<code dir="auto">NotGuaranteed</code> when only one side’s bound is known; <code dir="auto">NotStaticallyVerifiable</code>
+for a UDF-derived constrained field and for a reference to a field absent from
+the output entirely; two-bound combination both-hold-Guaranteed and
+one-side-Violated-wins-over-the-other-holding; and a nested-field fieldRange
+constraint confirmed to stay <code dir="auto">NotStaticallyVerifiable</code> even when the referenced
+name genuinely exists at the top level (proving no accidental leakage into the
+wrong field, not just asserting the documented scope by inspection).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified per CLAUDE.md’s Mutation Testing Requirement, API Compatibility
+Requirement, and Coverage Gating Requirement (<code dir="auto">contract</code> MiMa clean, confirmed;
+<code dir="auto">spark-adapter</code> MiMa clean — <code dir="auto">StaticDataQualityVerifier</code> is <code dir="auto">private[sparkadapter]</code>),
+and <code dir="auto">./dev/test</code>/<code dir="auto">./dev/regression</code> re-run against the final wiring.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: <code dir="auto">docs/STATIC_DATA_QUALITY_VERIFICATION.md</code> gained §3.10 (full
+section — the proof mechanism, the multi-bound-clause combination rule, and both
+scoping decisions: top-level-fields-only, numeric-types-only), §8’s MVP scope
+list updated to match (moving this out of the “explicitly outside the MVP” list
+it was pre-emptively flagged in when that section was first written, and
+narrowing that list’s remaining “expression-derived relationship” bullet to the
+genuinely-still-unaddressed <em>formula</em> case, <code dir="auto">total = quantity * price</code>, distinct
+from the ordering case now covered). docs-site’s <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/guides/verifying-static-data-quality.mdx">Verify Static Data
+Quality</a>
+guide gained a worked example and a “What this doesn’t check yet” update;
+<a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/reference/contract-format.mdx">Contract Format</a>
+reference gained a <code dir="auto">fieldRange</code> row/example.</li>
+</ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
 <div class="sl-heading-wrapper level-h3"><h3 id="objective-4">Objective</h3><a class="sl-anchor-link" href="#objective-4"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Objective”</span></a></div>
