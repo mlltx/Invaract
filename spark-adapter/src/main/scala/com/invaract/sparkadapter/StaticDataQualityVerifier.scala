@@ -49,23 +49,40 @@ private[sparkadapter] object StaticDataQualityVerifier {
         case Some(output) =>
           val axioms = buildAxioms(contract, plan)
           val analyzed = PropertyAnalysis.analyze(plan, axioms).map(r => r.output.name -> r.state).toMap
-          output.schema.fields.flatMap(field => checksForField(field, field.name, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown)))
+          output.schema.fields.flatMap { field =>
+            val definingExpr = PropertyAnalysis.definingExpr(plan, field.name)
+            checksForField(field, field.name, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown), definingExpr, axioms)
+          }
       }
     case _ => Nil
   }
 
   /** Checks `field` itself against `state` (the real, analyzed state for a
-    * top-level field; an honestly-`unsupported` one for anything nested —
-    * see below), then recurses into `field.properties` for a struct/record
+    * top-level field, or a nested one traced through `definingExpr` — see
+    * below), then recurses into `field.properties` for a struct/record
     * field.
     *
-    * `ir.PropertyAnalysis` has no `ir.Expr` node representing "access field
-    * X of a struct-valued column" — `Contract`'s schema model already
-    * supports declaring `nullable`/`constraints` on a nested field
-    * (`Field.properties`, see docs/CONTRACT_MODEL.md), but nothing in this
-    * analysis can trace *into* a struct's own member access to prove or
-    * refute anything about it. Every nested field (at any depth) therefore
-    * gets `ColumnPropertyState(unsupported = true)` — the same "genuinely
+    * `definingExpr` is `field`'s own raw `ir.Expr` (paired with the `Plan`
+    * any `ColumnReference` inside it resolves against) when one was found —
+    * `PropertyAnalysis.definingExpr` for a top-level field, or, for a
+    * nested one, this call's own construction below. Each `child` in
+    * `field.properties` gets its own defining `Expr` built by wrapping
+    * `definingExpr`'s `Expr` in one more `StructField(_, child.name)`
+    * access and resolving *that* — exactly the same
+    * `StructField(StructConstruct(...), ...)` resolution
+    * `ir.PropertyAnalysis.resolveExprT` already performs for a *flat*
+    * output column extracting one of its own just-built struct's fields,
+    * now reached for a field `Contract`'s schema model declares nested
+    * obligations on (`Field.properties`, see docs/CONTRACT_MODEL.md).
+    *
+    * `definingExpr` is `None` whenever no single well-defined source `Expr`
+    * exists for `field` at all — an `Aggregate`/`Window`/`Union`/`Join`
+    * output, a struct read straight from an input `Read` with no
+    * intervening `Project`, or (once nested) a struct-valued expression
+    * this analysis doesn't trace through (anything but a `StructConstruct`
+    * — see `PropertyAnalysis.definingExpr`'s own doc for why these stay out
+    * of scope). In every such case the field gets
+    * `ColumnPropertyState(unsupported = true)` — the same "genuinely
     * analyzed but this construct is opaque" signal a UDF or an
     * unrecognized function already produces, which resolves to
     * `NotStaticallyVerifiable` below (see `notNullVerdict`/`setVerdict`/
@@ -77,9 +94,22 @@ private[sparkadapter] object StaticDataQualityVerifier {
     * result's own `field` name, so a violation or report entry for a
     * nested field is still unambiguous.
     */
-  private def checksForField(field: Field, path: String, state: ColumnPropertyState): List[DataQualityCheckResult] =
+  private def checksForField(
+    field: Field,
+    path: String,
+    state: ColumnPropertyState,
+    definingExpr: Option[(Expr, Plan)],
+    axioms: Map[ColumnRef, ColumnPropertyState]
+  ): List[DataQualityCheckResult] =
     checksFor(field, path, state) ++
-      field.properties.flatMap(child => checksForField(child, s"$path.${child.name}", ColumnPropertyState(unsupported = true)))
+      field.properties.flatMap { child =>
+        val childDefiningExpr = definingExpr.map { case (parentExpr, input) => (StructField(parentExpr, child.name): Expr, input) }
+        val childState = childDefiningExpr match {
+          case Some((expr, input)) => PropertyAnalysis.analyzeExpr(expr, input, axioms)
+          case None                 => ColumnPropertyState(unsupported = true)
+        }
+        checksForField(child, s"$path.${child.name}", childState, childDefiningExpr, axioms)
+      }
 
   /** `Violation`s for every `Violated` entry in `results` — the only
     * verdict that ever blocks a write; see `ViolationType.DataQualityViolation`'s

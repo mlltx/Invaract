@@ -557,7 +557,7 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     ))
   }
 
-  test("a top-level field built by struct(...) is itself provably NOT NULL via the new StructConstruct resolution, even though its own nested fields stay NotStaticallyVerifiable") {
+  test("a top-level field built by struct(...) is itself provably NOT NULL via the StructConstruct resolution, and its nested field is now traced for real too") {
     val nested = Field("zip", "string", nullable = false)
     val struct = Field("address", "struct", nullable = false, properties = List(nested))
     val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
@@ -565,16 +565,107 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
 
     val results = StaticDataQualityVerifier.verify(contract, plan)
-    // The top-level NOT NULL is now a real Guaranteed (a freshly-constructed
-    // struct is provably non-null - ir.PropertyAnalysis's new StructConstruct
-    // case), while the nested "address.zip" check stays
-    // NotStaticallyVerifiable: checksForField's own recursion into
-    // Field.properties is deliberately unconnected to this - see its own doc
-    // for why (no axiom representation for a struct's internal fields).
+    // The top-level NOT NULL is a real Guaranteed (a freshly-constructed
+    // struct is provably non-null - ir.PropertyAnalysis's StructConstruct
+    // case). The nested "address.zip" check is now ALSO a real Guaranteed:
+    // checksForField wraps address's own defining Expr (the StructConstruct
+    // ir.PropertyAnalysis.definingExpr recovers) in one more
+    // StructField(_, "zip") access and resolves that - the same
+    // StructField(StructConstruct(...), ...) resolution a flat output
+    // column extracting its own just-built field already used, now reached
+    // through a Field.properties-declared nested obligation instead.
     assert(results == List(
       DataQualityCheckResult("address", "NOT NULL", DataQualityVerdict.Guaranteed),
-      DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)
+      DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.Guaranteed)
     ))
+  }
+
+  // --- Nested fields: real tracing through definingExpr ---------------------
+
+  test("a nested field's own constraint is Guaranteed when the struct is built in the same plan (StructConstruct)") {
+    val nested = Field("country", "string", constraints = List(equalsConstraint("US")))
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("country" -> Literal("US", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.country", "= US", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a nested field's own constraint is Violated when the struct's real value provably breaks it") {
+    val nested = Field("country", "string", constraints = List(equalsConstraint("US")))
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("country" -> Literal("CA", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.country", "= US", DataQualityVerdict.Violated)))
+    val violations = StaticDataQualityVerifier.violations(results)
+    assert(violations.map(_.column) == List(Some("address.country")))
+  }
+
+  test("a nested field's own length constraint traces through the same way a range/oneOf constraint does") {
+    val nested = Field("zip", "string", constraints = List(lengthConstraint(exact = Some(5))))
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.zip", "LENGTH = 5", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a nested field declared on the contract but absent from the actual struct construction is NotStaticallyVerifiable, not a crash") {
+    val nested = Field("missing", "string", nullable = false)
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.missing", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
+  test("nested tracing goes arbitrarily deep, wrapping StructField at each level") {
+    val leaf = Field("code", "string", nullable = false)
+    val mid = Field("geo", "struct", properties = List(leaf))
+    val top = Field("address", "struct", properties = List(mid))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", top)))
+    val built = StructConstruct(List("geo" -> StructConstruct(List("code" -> Literal("XYZ", "string")))))
+    val plan = Write(DatasetRef("gold.out"), project(Read(DatasetRef("raw.orders")), "address", built))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.geo.code", "NOT NULL", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("nested tracing correctly resolves through a ColumnReference passthrough rename above the real StructConstruct") {
+    val nested = Field("country", "string", constraints = List(equalsConstraint("US")))
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    val built = StructConstruct(List("country" -> Literal("US", "string")))
+    // built in an earlier Project, then passed straight through by a later
+    // Project's own bare ColumnReference (a `.withColumn(...).select(...)`
+    // shape) - definingExpr's own ColumnReference-chasing must still find
+    // the real StructConstruct, not give up at the rename.
+    val inner = project(Read(DatasetRef("raw.orders")), "address", built)
+    val outer = project(inner, "address", col("address"))
+    val plan = Write(DatasetRef("gold.out"), outer)
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.country", "= US", DataQualityVerdict.Guaranteed)))
+  }
+
+  test("a struct read straight from an input Read, with no intervening Project, stays NotStaticallyVerifiable (the documented out-of-scope case)") {
+    val nested = Field("zip", "string", nullable = false)
+    val struct = Field("address", "struct", properties = List(nested))
+    val contract = contractWith(Nil, List(dataset("out", "gold.out", struct)))
+    // Write directly wraps a bare Read - no Project at all defines "address".
+    val plan = Write(DatasetRef("gold.out"), Read(DatasetRef("raw.orders")))
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("address.zip", "NOT NULL", DataQualityVerdict.NotStaticallyVerifiable)))
   }
 
   test("a top-level field that extracts one of its own just-constructed fields is checked with a real, proven verdict") {

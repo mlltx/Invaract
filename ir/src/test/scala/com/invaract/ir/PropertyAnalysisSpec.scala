@@ -450,6 +450,30 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     assert(state.unsupported)
   }
 
+  test("StructField(StructField(StructConstruct(...), name1), name2): resolves through a doubly-nested struct construction") {
+    // struct(geo = struct(code = "XYZ")).geo.code
+    val built = StructConstruct(List("geo" -> StructConstruct(List("code" -> Literal("XYZ", "string")))))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "geo"), "code")))
+    assert(state.notNull == NullabilityFact.Proven)
+    assert(state.equalsConstant.contains(Property.EqualsConstant("XYZ", "string")))
+  }
+
+  test("StructField(StructField(StructConstruct(...), name1), name2): None when the OUTER field name isn't present at the inner level") {
+    // struct(geo = struct(code = "XYZ")).missing.code - "missing" isn't a field geo's struct declares
+    val built = StructConstruct(List("geo" -> StructConstruct(List("code" -> Literal("XYZ", "string")))))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "missing"), "code")))
+    assert(state.unsupported)
+  }
+
+  test("StructField(StructField(StructConstruct(...), name1), name2): unsupported when the intermediate field's value isn't itself a struct") {
+    // struct(geo = "not a struct").geo.code - "geo" resolves to a plain Literal, not a StructConstruct,
+    // so nothing beneath it (.code) can be traced through - the type-guard in
+    // reduceToStructConstruct, not just the field-name match, is what decides this.
+    val built = StructConstruct(List("geo" -> Literal("flat", "string")))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "geo"), "code")))
+    assert(state.unsupported)
+  }
+
   test("StructConstruct: a freshly-built struct is provably NotNull, regardless of any individual field's own nullability") {
     val built = StructConstruct(List("zip" -> Literal(null, "string"), "city" -> Literal("SF", "string")))
     val state = analyzeOne(project(read(), "addr", built))
@@ -585,5 +609,88 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     // derivation in the commit that added it for the full arithmetic.
     assert(state.range.exists(_.gte.contains(BigDecimal(-1))), s"expected a provable lower bound of -1, got ${state.range}")
     assert(state.range.exists(_.lte.contains(BigDecimal(999))), s"expected a provable upper bound of 999, got ${state.range}")
+  }
+
+  // --- definingExpr / analyzeExpr (nested-field tracing support) -------------
+
+  test("definingExpr: returns the defining Expr and its resolving input Plan directly beneath a Write's Project") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(read(), "address", built))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: returns None when the requested name isn't defined by the top Project at all") {
+    val plan = Write(DatasetRef("gold.out"), project(read(), "other", col("other")))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: chases a single level of ColumnReference indirection back to the real defining Expr") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val inner = project(read(), "address", built)
+    val outer = project(inner, "address", col("address"))
+    val plan = Write(DatasetRef("gold.out"), outer)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: chases multiple levels of ColumnReference indirection through an intervening Filter") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val innermost = project(read(), "address", built)
+    val filtered = Filter(innermost, Function("ISNOTNULL", List(col("address"))))
+    val mid = project(filtered, "address", col("address"))
+    val outer = project(mid, "address", col("address"))
+    val plan = Write(DatasetRef("gold.out"), outer)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: passes through Sort and Limit exactly as it does Filter") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val sorted = Sort(project(read(), "address", built), List(SortOrder(col("address"), ascending = true)))
+    val limited = Limit(sorted, 10)
+    val plan = Write(DatasetRef("gold.out"), limited)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: returns None for a struct read straight from an input Read, with no intervening Project at all") {
+    val plan = Write(DatasetRef("gold.out"), read())
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None when a ColumnReference chain bottoms out at a bare Read (struct passed straight through)") {
+    val plan = Write(DatasetRef("gold.out"), project(read(), "address", col("address")))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for an Aggregate output - no single defining Expr in the same sense") {
+    val agg = Aggregate(read(), groupBy = Nil, aggregates = List(NamedExpr("address", AggregateCall("SUM", col("amount")))))
+    val plan = Write(DatasetRef("gold.out"), agg)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Window output") {
+    val windowed = Window(read(), windowExprs = List(NamedExpr("address", Function("ROW_NUMBER", Nil))))
+    val plan = Write(DatasetRef("gold.out"), windowed)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Union output") {
+    val left = project(read(Some("l")), "address", StructConstruct(List("zip" -> Literal("1", "string"))))
+    val right = project(read(Some("r")), "address", StructConstruct(List("zip" -> Literal("2", "string"))))
+    val plan = Write(DatasetRef("gold.out"), Union(List(left, right)))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Join output") {
+    val left = project(read(Some("l")), "address", StructConstruct(List("zip" -> Literal("1", "string"))))
+    val right = read(Some("r"))
+    val joined = Join(left, right, JoinType.Inner, None)
+    val plan = Write(DatasetRef("gold.out"), joined)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("analyzeExpr: resolves an already-extracted Expr the same way analyze resolves it inline") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val state = PropertyAnalysis.analyzeExpr(StructField(built, "zip"), read(), Map.empty)
+    assert(state.notNull == NullabilityFact.Proven)
+    assert(state.equalsConstant.contains(Property.EqualsConstant("94107", "string")))
   }
 }

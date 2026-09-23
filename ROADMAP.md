@@ -3410,6 +3410,161 @@ data-quality-verification improvement.
       "What this doesn't check yet" bullet rewritten to describe the new capability
       precisely instead of the old blanket "can't trace into a struct" claim.
 
+#### Sub-phase: String length constraints (done)
+
+A separately-approved follow-up, the same shape as the existing `range` constraint but
+for string length: `exact`/`min`/`max` on a string-typed field.
+
+- [x] **Contract side**: `FieldConstraintType.Length = "length"`,
+      `InterpretedFieldConstraint.Length(exact, min, max)`, parsed in
+      `FieldConstraint.interpret` via a new `FieldConstraint.nonNegativeInt` helper.
+      `ContractValidator` gained a type-compatibility warning for `length` on a
+      non-string field, and a `fieldConstraintHint` case.
+- [x] **`ir` side**: `Property.Length` (`tighten`/`widen`, mirroring `Property.Range`'s
+      `exact`/`min`/`max` shape but without a `gt`/`lt` exclusive variant — length has no
+      such thing), added to `ColumnPropertyState` as its last constructor parameter
+      (binary-compatible for existing positional call sites). `PropertyAnalysis` gained
+      real transfer functions: string literals populate `length` directly; `LENGTH`/
+      `CHAR_LENGTH`/`CHARACTER_LENGTH` bridge to a numeric `Range` equal to the
+      argument's own `Length` envelope; `UPPER`/`LOWER` preserve `length` verbatim
+      (case conversion never changes character count); `TRIM`/`LTRIM`/`RTRIM` narrow to
+      an upper bound only (how much whitespace is actually removed is never knowable
+      statically). The primary value path needed **no** new transfer function at all —
+      `ColumnPropertyState.length` flows generically through every existing combinator
+      (`tightenWith`/`unionWith`), so an input contract's own declared length constraint,
+      passed through unchanged, is provable for free, the same mechanism `nullable:
+      false`/`range` already use for Example 5's shape.
+      `ir` bumped 0.4.0 → 0.5.0 — a real, deliberate MiMa break (`ColumnPropertyState`
+      gained a field), documented with `mimaBinaryIssueFilters` per this repo's
+      established pattern.
+- [x] **`spark-adapter` wiring**: `StaticDataQualityVerifier.fieldAxiomState` seeds a
+      `length` axiom from an input field's own declared constraint; a new `lengthVerdict`
+      check mirrors `rangeVerdict`'s own structure and tie-breaking conventions exactly
+      (`Guaranteed` when `state.length`'s envelope is already at least as tight as
+      `required`'s; `Violated` only on a provable strict escape on either side;
+      `NotGuaranteed`/`NotStaticallyVerifiable` otherwise).
+- [x] **Tests**: `ir`'s `PropertySpec`/`PropertyAnalysisSpec`/`LineageSpec`/
+      `PlanPrinterSpec` gained struct- and `Length`-related cases (221 `ir` tests total).
+      `contract`'s `ContractParserTest`/`ContractValidatorTest` gained 10 cases (305
+      `contract` tests total). `spark-adapter`'s `StaticDataQualityVerifierSpec` gained 12
+      cases, including a denormalized-representation test (`Property.Length(min=Some(10),
+      max=Some(10))`, structurally distinct from but numerically identical to
+      `Property.Length(exact=Some(10))`) constructed specifically to isolate
+      `lengthEscapesBelow`/`lengthEscapesAbove`'s strict comparison operators from
+      `||`-masking.
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement, API Compatibility
+      Requirement, and Coverage Gating Requirement: scoped Stryker on
+      `StaticDataQualityVerifier.scala` reached **95.56%** (of total)/**97.73%** (of
+      covered code) — the 2 remaining mutants (`case (_, None) => false` in
+      `lengthEscapesBelow`/`lengthEscapesAbove`, when `required` declares no bound on
+      that axis) are genuinely equivalent, documented with a code comment explaining why
+      (`Length.tighten`'s own bound computation already resolves to `p`'s own value on an
+      unconstrained axis, so `p.tighten(required) == p` already succeeds there by
+      construction — confirmed by construction, not just asserted). `spark-adapter`
+      coverage re-measured after the wiring: **94.63%** stmt/**91.05%** branch, still
+      above its 92/88 gate. `ir`/`fingerprint` MiMa clean; `ir`'s one deliberate break
+      documented as above. `./dev/test` (`Status: PASS`) and `./dev/regression` (4/4
+      cases) both re-confirmed against the final wiring.
+- [x] **Documentation**: `docs/STATIC_DATA_QUALITY_VERIFICATION.md` gained §3.9 (full
+      section) — the property algebra (§2.2), not `docs/TRANSFORMATION_IR.md`'s
+      expression-node table, is where `Property.Length` belongs, the same place
+      `Range`/`OneOf`/`EqualsConstant` already live; no new `ir.Expr` node was added for
+      this feature, so `docs/SPARK_ADAPTER.md`'s translation tables needed no change
+      either. docs-site's [Verify Static Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx) guide
+      gained a worked example and a "What this doesn't check yet" bullet; [Contract
+      Format](docs-site/src/content/docs/reference/contract-format.mdx) reference gained
+      a `length` constraint row/example.
+- [x] **Two real CI-only regressions found and fixed** during this sub-phase (see the
+      PR's own description for full detail): `fingerprint`'s branch coverage was, for
+      real, below its own gate (relying on `PropertyBasedSpec`'s randomized ScalaCheck
+      generation for coverage a struct-generator extension diluted below the gate) —
+      fixed with ~20 deterministic tests; and a genuine Ivy-cache coordinate collision in
+      the `api-compatibility` CI job (`fingerprint`'s own declared version unchanged
+      despite its declared *dependency* on `ir` changing) — fixed by bumping
+      `fingerprint` 0.2.0 → 0.3.0, not a MiMa break.
+
+#### Sub-phase: Nested `Field.properties` obligations — real tracing (done)
+
+A further separately-approved follow-up, connecting the nested-struct-field-recursion
+sub-phase above (which recognized a nested field's own declared obligation but always
+reported it `NotStaticallyVerifiable`, unconditionally) to the real resolution the
+struct-member-access sub-phase's `StructField(StructConstruct(...), ...)` transfer
+function made possible for a *flat* output column.
+
+- [x] **A real, independent bug fix surfaced along the way**: `resolveExprT`'s
+      `StructField` resolution only ever unwrapped *one* level of `StructConstruct` —
+      `StructField(StructField(StructConstruct(...), "geo"), "code")` (a struct-of-struct
+      access, e.g. `struct(geo = struct(code = "XYZ")).geo.code`) fell through to the
+      unsupported catch-all even though every level involved is a real, traceable
+      `StructConstruct`. This predates this sub-phase (it was already reachable by a
+      *flat* output column whose own expression happened to be doubly nested) — this
+      sub-phase's first 2-level-deep test is simply what first exercised it. Fixed with a
+      new `reduceToStructConstruct` helper that recursively reduces a `StructField` chain
+      to its own `StructConstruct` shape, to any depth, replacing the previous
+      single-level pattern match; `resolveExprT`'s `StructField` case now calls it once
+      instead of pattern-matching `StructConstruct` directly.
+- [x] **Two new small public entry points on `ir.PropertyAnalysis`**:
+      `definingExpr(plan, name): Option[(Expr, Plan)]`, the raw `Expr` that defines a
+      named column immediately produced by `plan` (walking the same rename-preserving
+      pass-through nodes `resolveInScopeT` already does — `Filter`/`Sort`/`Limit`/
+      `Write` — and chasing a bare `ColumnReference` rename back to *its own* defining
+      `Expr`, the same way `resolveExprT`'s own `ColumnReference` case would), paired
+      with the `Plan` any `ColumnReference` inside it should resolve against; and
+      `analyzeExpr(expr, input, axioms): ColumnPropertyState`, the same per-`Expr`
+      resolution every `analyze` result is already computed from, exposed for a caller
+      that already has an `Expr` rather than a whole `Plan`. Deliberately narrow, the
+      same scope `resolveExprT`'s own `StructField(StructConstruct(...), ...)` case
+      commits to: `None` for an `Aggregate`/`Window`/`Union`/`Join` output (none has one
+      single defining `Expr` in the same sense) or a bare `Read` (declares no output list
+      of its own).
+- [x] **`StaticDataQualityVerifier.checksForField` connected to it**: recovers a
+      top-level field's own defining `Expr` via `PropertyAnalysis.definingExpr`; for each
+      `field.properties` child, wraps that `Expr` in one more `StructField(_,
+      child.name)` access and resolves it via `PropertyAnalysis.analyzeExpr`, carrying
+      the wrapped `Expr`/`Plan` pair down through further nesting so recursion reaches
+      arbitrary depth (`"address.geo.code"`) the same way the dotted-path recursion
+      already did. A nested field declared on the contract but absent from the actual
+      struct construction resolves safely to `Unknown`-with-`unsupported`, not a crash.
+      Every case `definingExpr` doesn't reach still gets the same honest
+      `NotStaticallyVerifiable` the pre-existing unconditional behavior already gave —
+      no regression for the cases genuinely out of scope, only new coverage for the case
+      now in scope (a struct the transformation's own logic constructs, through any
+      number of pass-through renames).
+- [x] **Deliberately still deferred, disclosed, not silently dropped**: propagating an
+      *input* contract's own nested-field obligation through to an output struct column
+      passed through unchanged, with no `StructConstruct` anywhere in the plan — needs
+      `buildAxioms` to seed nested `ColumnRef` axioms (not just flat, `Read`-scoped ones)
+      and `resolveExprT`'s `StructField(struct, _)` catch-all case to consult them. A
+      real, scoped follow-up, not a signal this sub-phase is incomplete for the case it
+      targets.
+- [x] **Tests**: `ir`'s `PropertyAnalysisSpec` gained 12 cases directly exercising
+      `definingExpr`/`analyzeExpr` (direct `Project` definition; single- and
+      multi-level `ColumnReference` chasing through an intervening `Filter`; `Sort`/
+      `Limit` pass-through; `None` for a name the top `Project` doesn't define, a bare
+      `Read` with no intervening `Project`, a `ColumnReference` chain bottoming out at a
+      bare `Read`, and each of `Aggregate`/`Window`/`Union`/`Join`).
+      `spark-adapter`'s `StaticDataQualityVerifierSpec` gained 7 cases (a nested field's
+      own constraint reaching real `Guaranteed`/`Violated`, including via `length`; a
+      nested field absent from the actual construction staying `NotStaticallyVerifiable`
+      rather than crashing; two-level-deep nested tracing; resolution correctly chasing
+      through a `ColumnReference` passthrough rename above the real `StructConstruct`;
+      the documented out-of-scope bare-`Read` case confirmed still `NotStaticallyVerifiable`)
+      plus one existing test's expectation corrected (a nested field's own `NOT NULL`
+      check, previously asserted `NotStaticallyVerifiable`, is now correctly `Guaranteed`
+      when built via `StructConstruct` — the intended improvement, not a regression).
+- [x] Verified per CLAUDE.md's Mutation Testing Requirement, API Compatibility
+      Requirement, and Coverage Gating Requirement, and `./dev/test`/`./dev/regression`
+      re-run against the final wiring.
+- [x] **Documentation**: `docs/STATIC_DATA_QUALITY_VERIFICATION.md`'s §3.8 rewritten
+      again to describe what's now actually resolvable for a nested field (real tracing
+      through a same-plan `StructConstruct`) versus what remains deferred (an axiom for a
+      nested field on a struct read directly from an input `Read`), §8's MVP scope list
+      updated to match. docs-site's [Verify Static Data
+      Quality](docs-site/src/content/docs/guides/verifying-static-data-quality.mdx)
+      guide's nested-field bullet rewritten to describe the new capability, plus a new
+      worked example.
+
 ---
 
 ## Phase 2 — Multi-Engine Support
