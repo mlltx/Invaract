@@ -329,6 +329,20 @@ class CanonicalizerSpec extends AnyFunSuite {
     assert(encodeExpr(StructField(built, "zip")) == encodeExpr(StructField(built, "zip")))
   }
 
+  test("StructField/StructConstruct/Field canonicalize to their exact tagged shape, not merely a distinguishable one") {
+    val ref = ColumnReference(ColumnRef("address"))
+    val fieldNode = Canonicalizer.canonicalizeExpr(StructField(ref, "zip"), Map.empty)
+    assert(fieldNode == CTag("StructField", List(Canonicalizer.canonicalizeExpr(ref, Map.empty), CanonicalNode.stringLeaf("zip"))))
+
+    val constructNode = Canonicalizer.canonicalizeExpr(StructConstruct(List("zip" -> Literal("94107", "string"))), Map.empty)
+    assert(
+      constructNode == CTag(
+        "StructConstruct",
+        List(CTag("Field", List(CanonicalNode.stringLeaf("zip"), Canonicalizer.canonicalizeExpr(Literal("94107", "string"), Map.empty))))
+      )
+    )
+  }
+
   // -----------------------------------------------------------------
   // Deep expression resolution through nested/passthrough Projects
   // -----------------------------------------------------------------
