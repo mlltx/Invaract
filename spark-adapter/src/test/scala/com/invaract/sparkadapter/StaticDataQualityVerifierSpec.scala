@@ -655,6 +655,123 @@ class StaticDataQualityVerifierSpec extends AnyFunSuite {
     assert(results == List(DataQualityCheckResult("end_date", ">= nonexistent", DataQualityVerdict.NotStaticallyVerifiable)))
   }
 
+  test("a fieldRange gte constraint's violated check is a strict comparison, not a tie, over non-degenerate proven ranges") {
+    // Both point-literal tests above always have a proven lower == upper on each
+    // side, so they can't distinguish `<` from `<=` in the violated check - this
+    // uses genuinely distinct lower/upper bounds on each side instead.
+    val contract = contractWith(
+      List(dataset(
+        "orders",
+        "raw.orders",
+        Field("a", "long", constraints = List(rangeConstraint(gte = Some(5), lte = Some(10)))),
+        Field("b", "long", constraints = List(rangeConstraint(gte = Some(10), lte = Some(20))))
+      )),
+      List(dataset("out", "gold.out", Field("b", "long"), Field("a", "long", constraints = List(fieldRangeConstraint(gte = Some("b"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "a" -> col("a", Some("raw.orders")), "b" -> col("b", Some("raw.orders")))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // a's own proven upper bound (10) exactly ties b's own proven lower bound (10) -
+    // not a proven escape (a could be 10 and b could be 10, satisfying a >= b) -
+    // must be NotGuaranteed, not a false Violated.
+    assert(results == List(DataQualityCheckResult("a", ">= b", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a fieldRange gt constraint's violated check is non-strict, distinguishing it from an equality or a reversed comparison") {
+    val contract = contractWith(
+      List(dataset(
+        "orders",
+        "raw.orders",
+        Field("a", "long", constraints = List(rangeConstraint(gte = Some(1), lte = Some(5)))),
+        Field("b", "long", constraints = List(rangeConstraint(gte = Some(10), lte = Some(20))))
+      )),
+      List(dataset("out", "gold.out", Field("b", "long"), Field("a", "long", constraints = List(fieldRangeConstraint(gt = Some("b"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "a" -> col("a", Some("raw.orders")), "b" -> col("b", Some("raw.orders")))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // a's own proven upper bound (5) is strictly below b's own proven lower bound
+    // (10), not merely equal to or above it - real "<=" semantics, not "==" or ">=".
+    assert(results == List(DataQualityCheckResult("a", "> b", DataQualityVerdict.Violated)))
+  }
+
+  test("a fieldRange gt constraint is NotGuaranteed, not a false Violated, when neither side's needed bound is known") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("a", "long", constraints = List(rangeConstraint(gte = Some(0)))))),
+      List(dataset("out", "gold.out", Field("a", "long"), Field("b", "long", constraints = List(fieldRangeConstraint(gt = Some("a"))))))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(Read(DatasetRef("raw.orders")), "a" -> col("a", Some("raw.orders")), "b" -> col("b", Some("raw.orders")))
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // b has no proven bound at all (no axiom), and a only has a lower bound - gtClause
+    // needs b's own lower+a's own upper (for holds) or b's own upper+a's own lower
+    // (for violated); neither pair is available, so this must fall through to the
+    // honest NotGuaranteed, never a false Violated from an unconditional fallback.
+    assert(results == List(DataQualityCheckResult("b", "> a", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a fieldRange constraint combining two bounds is NotGuaranteed, not a false Guaranteed, when only one of the two clauses is proven") {
+    val contract = contractWith(
+      List(dataset("orders", "raw.orders", Field("min_price", "double", constraints = List(rangeConstraint(gte = Some(0), lte = Some(10)))))),
+      List(dataset(
+        "out",
+        "gold.out",
+        Field("min_price", "double"),
+        Field("max_price", "double"),
+        Field("price", "double", constraints = List(fieldRangeConstraint(gte = Some("min_price"), lte = Some("max_price"))))
+      ))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(
+        Read(DatasetRef("raw.orders")),
+        "min_price" -> col("min_price", Some("raw.orders")),
+        "max_price" -> col("max_price"), // no axiom at all: fully unconstrained
+        "price" -> Literal(50.0, "double")
+      )
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    // The gte(min_price) clause holds outright (price=50 >= min_price's own proven
+    // upper bound 10); the lte(max_price) clause is Unknown (max_price has no proven
+    // bound at all). One clause holding must NOT make the whole constraint Guaranteed.
+    assert(results == List(DataQualityCheckResult("price", ">= min_price and <= max_price", DataQualityVerdict.NotGuaranteed)))
+  }
+
+  test("a fieldRange constraint combining two bounds is NotStaticallyVerifiable when only one referenced field is unsupported, not requiring both") {
+    val contract = contractWith(
+      Nil,
+      List(dataset(
+        "out",
+        "gold.out",
+        Field("min_price", "double"),
+        Field("max_price", "double"),
+        Field("price", "double", constraints = List(fieldRangeConstraint(gte = Some("min_price"), lte = Some("max_price"))))
+      ))
+    )
+    val plan = Write(
+      DatasetRef("gold.out"),
+      projectFields(
+        Read(DatasetRef("raw.orders")),
+        "min_price" -> col("min_price"), // plain passthrough, no axiom: merely Unknown, not unsupported
+        "max_price" -> UDF(Some("myFn"), Nil), // genuinely unsupported
+        "price" -> Literal(50.0, "double")
+      )
+    )
+
+    val results = StaticDataQualityVerifier.verify(contract, plan)
+    assert(results == List(DataQualityCheckResult("price", ">= min_price and <= max_price", DataQualityVerdict.NotStaticallyVerifiable)))
+  }
+
   test("a fieldRange constraint combining two bounds is Guaranteed only when both hold, describing both in order") {
     val contract = contractWith(
       Nil,
