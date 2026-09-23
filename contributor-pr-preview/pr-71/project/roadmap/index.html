@@ -3300,11 +3300,52 @@ Requirement: scoped Stryker on <code dir="auto">StaticDataQualityVerifier.scala<
 suite passed (681/681). <code dir="auto">./dev/build</code>/<code dir="auto">./dev/test</code> both pass against real
 <code dir="auto">spark-submit</code>, <code dir="auto">Status: PASS</code> — the real demo pipeline still declares no
 struct fields, so unaffected by construction, confirmed rather than assumed.</li>
-<li class="task-list-item"><input type="checkbox" disabled> <strong>Still open</strong> (the second of the two gaps the prior sub-phase surfaced, not
-this one’s to fix): no <code dir="auto">demo/contracts/*.yaml</code> fixture exercises static data
-quality — struct or flat — through a real <code dir="auto">spark-submit</code> run at all; and
-<code dir="auto">./dev/regression</code> has no DQ-specific <code dir="auto">Violated</code>-abort case. Both remain their
-own follow-up.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Resolved by the sub-phase below</strong>: no <code dir="auto">demo/contracts/*.yaml</code> fixture
+exercised static data quality through a real <code dir="auto">spark-submit</code> run at all, and
+<code dir="auto">./dev/regression</code> had no DQ-specific <code dir="auto">Violated</code>-abort case.</li>
+</ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-static-data-quality--real-spark-submit-proof-via-devregression-done">Sub-phase: Static data-quality — real spark-submit proof via ./dev/regression (done)</h4><a class="sl-anchor-link" href="#sub-phase-static-data-quality--real-spark-submit-proof-via-devregression-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Static data-quality — real spark-submit proof via ./dev/regression (done)”</span></a></div>
+<p>The second of the two gaps the sub-phase above surfaced, closed as one fix rather than
+two: investigating where to add the harness-fixture proof revealed that CI never
+actually runs <code dir="auto">./dev/test</code> at all — only <code dir="auto">./dev/build</code> then <code dir="auto">./dev/regression</code> (grepped
+<code dir="auto">.github/workflows/test.yml</code> directly to confirm; <code dir="auto">CLAUDE.md</code>’s own CI/CD Pipeline
+section claimed otherwise and was corrected in the same pass). <code dir="auto">./dev/test</code> is a
+local/interactive script no CI job invokes. So the real, CI-gated version of “no fixture
+exercises this end-to-end” was entirely inside <code dir="auto">./dev/regression</code> having no
+data-quality case at all — the harness-fixture gap and the regression-pack gap were the
+same gap once traced to what CI actually runs.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Two new cases</strong> (<code dir="auto">dev/regression</code>, now 4 total, not 2): Case 3 (a real <code dir="auto">oneOf</code>
+constraint on <code dir="auto">value_tier</code> the existing <code dir="auto">InvaractPlugin</code> transformation provably
+satisfies via its own <code dir="auto">CASE WHEN value > 50 THEN 'high' ELSE 'low' END</code> —
+<code dir="auto">Guaranteed</code>, write executes) and Case 4 (the same field, a narrower required set
+the same transformation provably violates — <code dir="auto">DataQualityViolation</code>, write
+aborted before any data is written) — the identical PASS/FAIL proof Cases 1/2
+already gave schema-level enforcement, now given to static data-quality
+enforcement too, with zero changes to <code dir="auto">InvaractPlugin</code> itself. Both attach
+<code dir="auto">spark.invaract.staticDataQuality=true</code> purely via <code dir="auto">SPARK_SUBMIT_EXTRA_CONF</code>/
+<code dir="auto">--conf</code> (External Attachability Requirement), and assert the published
+<code dir="auto">ContractValidationEvent</code>’s <code dir="auto">dataQuality</code> verdict directly (<code dir="auto">Guaranteed</code>/
+<code dir="auto">Violated</code> for <code dir="auto">value_tier</code>), not just <code dir="auto">report.json</code>’s status.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Two new fixture contracts</strong> (<code dir="auto">demo/contracts/invaract_output_data_quality_{pass,fail}.yaml</code>)
+and <strong>two new notify configs</strong> (<code dir="auto">demo/regression-notify-dq-{pass,fail}.properties</code>),
+mirroring the existing Case 1/2 fixtures’ own conventions exactly.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>No Scala code touched</strong> — this sub-phase is entirely <code dir="auto">dev/regression</code>, YAML/
+properties fixtures, and docs, so CLAUDE.md’s Mutation Testing Requirement
+(scoped to <code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code> source) doesn’t apply.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Documentation</strong>: docs-site’s <a href="https://github.com/mlltx/Invaract/blob/main/docs-site/src/content/docs/guides/running-the-regression-pack.mdx">Prove Enforcement with the Regression
+Pack</a> guide
+updated from “two cases” to all four, plus a corrected note that the pack runs
+twice in CI (the <code dir="auto">test</code> job’s OS/Java matrix, and <code dir="auto">docker-regression</code>’s Docker
+image), not only via Docker. <code dir="auto">ARCHITECTURE.md</code>’s and <code dir="auto">CLAUDE.md</code>’s own stale
+claims (a multi-Spark-version compatibility matrix and API-compatibility
+checking “still outstanding” — both already exist in CI; CI running <code dir="auto">./dev/test</code>
+— it doesn’t) corrected in the same pass.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified for real: a full local <code dir="auto">./dev/regression</code> run passed all 4/4 cases,
+including Case 3’s <code dir="auto">Guaranteed</code> verdict and Case 4’s <code dir="auto">DATA_QUALITY_VIOLATION</code>
+abort, both confirmed directly in the script’s own output and the published
+notification events — not merely asserted by the script silently passing.
+<code dir="auto">docs-site</code>’s <code dir="auto">npm run build</code> succeeds.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
