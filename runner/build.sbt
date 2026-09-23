@@ -155,7 +155,7 @@ dependencyOverrides ++= Seq(
 // current `version :=` exactly.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.8.0",
-  "com.invaract" %% "invaract-ir" % "0.4.0",
+  "com.invaract" %% "invaract-ir" % "0.5.0",
   "com.invaract" %% "invaract-spark-adapter" % "0.7.0"
 )
 

@@ -357,7 +357,11 @@ object PropertyAnalysis {
     else {
       val range =
         if (NumericLiterals.isNumeric(t)) NumericLiterals.toBigDecimal(v).map(bd => Property.Range(gte = Some(bd), lte = Some(bd))) else None
-      ColumnPropertyState(notNull = NullabilityFact.Proven, equalsConstant = Some(Property.EqualsConstant(v, t)), range = range)
+      val length = v match {
+        case s: String if t.toLowerCase == "string" => Some(Property.Length(exact = Some(s.length)))
+        case _                                        => None
+      }
+      ColumnPropertyState(notNull = NullabilityFact.Proven, equalsConstant = Some(Property.EqualsConstant(v, t)), range = range, length = length)
     }
 
   private def functionState(name: String, argPairs: List[(Expr, ColumnPropertyState)]): ColumnPropertyState = {
@@ -375,6 +379,27 @@ object PropertyAnalysis {
           case _                   => false
         }
         ColumnPropertyState(notNull = if (hasNonNullLiteralFallback) NullabilityFact.Proven else baseNotNull, unsupported = unsupported)
+      case "LENGTH" | "CHAR_LENGTH" | "CHARACTER_LENGTH" =>
+        // LENGTH(...) returns an integer, not a string - its own Range
+        // (not Length) is exactly its argument's already-known Length
+        // envelope, carried over verbatim (exact -> exact, min/max ->
+        // gte/lte). No rule at all when the argument's own length isn't
+        // known - this is a bridge between the two property kinds, not a
+        // fresh fact invented from nothing.
+        val range = argStates.headOption.flatMap(_.length).map(lengthAsRange)
+        ColumnPropertyState(notNull = baseNotNull, range = range, unsupported = unsupported)
+      case "UPPER" | "LOWER" =>
+        // Case conversion changes no character count - the result's own
+        // Length envelope is identical to the argument's.
+        ColumnPropertyState(notNull = baseNotNull, length = argStates.headOption.flatMap(_.length), unsupported = unsupported)
+      case "TRIM" | "LTRIM" | "RTRIM" =>
+        // Trimming can only shrink the string (or leave it unchanged) -
+        // only an upper bound on length survives; the lower bound (how
+        // much whitespace was actually removed) is never knowable
+        // statically, so it's deliberately dropped rather than carried
+        // over as a false floor.
+        val trimmedLength = argStates.headOption.flatMap(_.length).flatMap(lengthUpperBound).map(ub => Property.Length(max = Some(ub)))
+        ColumnPropertyState(notNull = baseNotNull, length = trimmedLength, unsupported = unsupported)
       case _ =>
         // Not flagged `unsupported` on its own - a Function is still a
         // claim this IR understands the *shape* of the computation (see
@@ -416,4 +441,16 @@ object PropertyAnalysis {
     case Literal(v, t) if NumericLiterals.isNumeric(t) => NumericLiterals.toBigDecimal(v)
     case _                                              => None
   }
+
+  /** `LENGTH(...)`'s own numeric-valued Range, carried over from its
+    * argument's already-known `Length` envelope: an `exact` length
+    * becomes a single-point range, a `min`/`max` envelope becomes
+    * `gte`/`lte`.
+    */
+  private def lengthAsRange(l: Property.Length): Property.Range = {
+    val (lo, hi) = if (l.exact.isDefined) (l.exact, l.exact) else (l.min, l.max)
+    Property.Range(gte = lo.map(BigDecimal(_)), lte = hi.map(BigDecimal(_)))
+  }
+
+  private def lengthUpperBound(l: Property.Length): Option[Int] = if (l.exact.isDefined) l.exact else l.max
 }

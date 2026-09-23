@@ -303,6 +303,57 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.warnings.exists(_.message.contains("declared type")))
   }
 
+  test("validate should error when a length field constraint declares no bound at all") {
+    val schema = Schema(List(Field("identifier", "string", constraints = List(FieldConstraint(FieldConstraintType.Length, Map.empty)))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(!result.isValid)
+    assert(result.errors.exists(_.message.contains("length")))
+  }
+
+  test("validate should accept a well-formed length field constraint on a string field, with no warning") {
+    val schema = Schema(List(Field("identifier", "string", constraints = List(FieldConstraint(FieldConstraintType.Length, Map("exact" -> 10))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("validate should warn when a length constraint is declared on a non-string field") {
+    val schema = Schema(List(Field("amount", "double", constraints = List(FieldConstraint(FieldConstraintType.Length, Map("exact" -> 10))))))
+    val contract = Contract(
+      id = "dq_contract",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid, "a type mismatch is a Warning, not an Error")
+    assert(result.warnings.exists(_.message.contains("not 'string'")))
+  }
+
   test("validate should not flag an unrecognized rule type as malformed") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

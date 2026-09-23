@@ -896,6 +896,136 @@ class ContractParserTest extends AnyFunSuite {
     assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
   }
 
+  test("parse should decode a well-formed length field constraint (exact, and min/max) via interpret") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: identifier
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              exact: 10
+        |        - name: name
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              min: 1
+        |              max: 50
+        |""".stripMargin
+
+    val fields = ContractParser.parse(yaml).outputs.head.schema.fields
+    assert(fields(0).constraints.head.interpret.contains(InterpretedFieldConstraint.Length(Some(10), None, None)))
+    assert(fields(1).constraints.head.interpret.contains(InterpretedFieldConstraint.Length(None, Some(1), Some(50))))
+  }
+
+  test("interpret should be None for a length constraint with no bound at all") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: identifier
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a length constraint declaring both exact and min/max") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: identifier
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              exact: 10
+        |              min: 1
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should be None for a length constraint whose min exceeds its max") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: identifier
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              min: 50
+        |              max: 1
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.isEmpty)
+  }
+
+  test("interpret should accept a length constraint whose min exactly equals its max (a single-length range, not rejected as empty)") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: identifier
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              min: 10
+        |              max: 10
+        |""".stripMargin
+
+    assert(ContractParser.parse(yaml).outputs.head.schema.fields.head.constraints.head.interpret.contains(InterpretedFieldConstraint.Length(None, Some(10), Some(10))))
+  }
+
+  test("interpret should be None for a length constraint with a negative or non-integer bound") {
+    val yaml =
+      """id: dq_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: negative
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              exact: -1
+        |        - name: fractional
+        |          type: string
+        |          constraints:
+        |            - type: length
+        |              exact: 1.5
+        |""".stripMargin
+
+    val fields = ContractParser.parse(yaml).outputs.head.schema.fields
+    fields.foreach(f => assert(f.constraints.head.interpret.isEmpty, s"expected malformed for ${f.name}"))
+  }
+
   test("write should round-trip a field's constraints") {
     val yaml =
       """id: dq_contract

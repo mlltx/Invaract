@@ -123,6 +123,23 @@ case class FieldConstraint(constraintType: String, properties: Map[String, Any])
         }
       }
 
+    case FieldConstraintType.Length =>
+      val knownKeys = Set("exact", "min", "max")
+      if (properties.keySet.diff(knownKeys).nonEmpty) None
+      else {
+        val parsed: Map[String, Option[Int]] = knownKeys.flatMap(k => properties.get(k).map(k -> FieldConstraint.nonNegativeInt(_))).toMap
+        if (parsed.values.exists(_.isEmpty)) None // a declared bound that failed to parse as a non-negative integer
+        else {
+          val exact = parsed.get("exact").flatten
+          val min = parsed.get("min").flatten
+          val max = parsed.get("max").flatten
+          if (exact.isDefined && (min.isDefined || max.isDefined)) None // redundant/contradictory - pick one
+          else if (List(exact, min, max).forall(_.isEmpty)) None // at least one bound required
+          else if (min.isDefined && max.isDefined && min.get > max.get) None // an empty, unsatisfiable range
+          else Some(InterpretedFieldConstraint.Length(exact, min, max))
+        }
+      }
+
     case _ => None
   }
 }
@@ -152,6 +169,10 @@ object FieldConstraint {
     case s: String       => scala.util.Try(BigDecimal(s)).toOption
     case _                => None
   }
+
+  private def nonNegativeInt(raw: Any): Option[Int] = numeric(raw).flatMap { bd =>
+    if (bd.isValidInt && bd >= 0) Some(bd.toInt) else None
+  }
 }
 
 /** The closed set of `FieldConstraint.constraintType`s this module
@@ -163,8 +184,9 @@ object FieldConstraintType {
   val Equals = "equals"
   val OneOf = "oneOf"
   val Range = "range"
+  val Length = "length"
 
-  val All: Set[String] = Set(Equals, OneOf, Range)
+  val All: Set[String] = Set(Equals, OneOf, Range, Length)
 }
 
 /** A `FieldConstraint`, decoded into one of the shapes
@@ -177,6 +199,14 @@ object InterpretedFieldConstraint {
   case class Equals(value: Any, literalType: String) extends InterpretedFieldConstraint
   case class OneOf(values: Set[Any], literalType: String) extends InterpretedFieldConstraint
   case class Range(gte: Option[BigDecimal], gt: Option[BigDecimal], lte: Option[BigDecimal], lt: Option[BigDecimal]) extends InterpretedFieldConstraint
+
+  /** A string-valued field's length: either an `exact` length, or a
+    * `min`/`max` (inclusive) range — never both `exact` and a `min`/`max`
+    * on the same constraint (`FieldConstraint.interpret` rejects that
+    * combination as malformed). See docs/STATIC_DATA_QUALITY_VERIFICATION.md
+    * §3.9.
+    */
+  case class Length(exact: Option[Int], min: Option[Int], max: Option[Int]) extends InterpretedFieldConstraint
 }
 
 /** A dataset's expected data-catalog registration — e.g. "this must be

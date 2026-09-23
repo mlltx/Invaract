@@ -13,7 +13,7 @@ name := "invaract-ir"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.4.0"
+ThisBuild / version := "0.5.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -82,7 +82,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.4.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.5.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -144,4 +144,23 @@ coverageHighlighting := true
 // run and can no longer break CI by going stale.
 mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-ir" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.4.0")
+)
+
+import com.typesafe.tools.mima.core._
+
+// The real, deliberate break motivating the 0.4.0 -> 0.5.0 bump above:
+// ColumnPropertyState gained a sixth constructor parameter (length, for
+// string-constraint support - see docs/STATIC_DATA_QUALITY_VERIFICATION.md
+// §3.9) - a case class's compiled apply/copy/constructor arity changes even
+// when the new parameter carries a default and lands at the very end, the
+// same real-but-unavoidable break contract/build.sbt's and
+// spark-adapter/build.sbt's own filters document for their own case
+// classes. These filters are load-bearing for this PR's own
+// api-compatibility check (base-ref doesn't carry the bump yet) and become
+// inert, matching nothing, once base-ref's own version reaches 0.5.0 or
+// later - no future PR needs to remove them.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.this")
 )

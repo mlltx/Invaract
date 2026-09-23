@@ -254,6 +254,12 @@ object ContractValidator {
           path,
           s"constraint declares values of type '$literalType' but the field's own declared type is '${field.fieldType}'"
         )
+      case (FieldConstraintType.Length, Some(InterpretedFieldConstraint.Length(_, _, _))) if field.fieldType.toLowerCase != "string" =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"a length constraint is declared but the field's own declared type is '${field.fieldType}', not 'string'"
+        )
       case _ => ()
     }
 
@@ -277,6 +283,7 @@ object ContractValidator {
     case FieldConstraintType.Equals => " (expected a 'value' property)"
     case FieldConstraintType.OneOf  => " (expected a non-empty 'values' list)"
     case FieldConstraintType.Range  => " (expected at least one of gte/gt/lte/lt, and not both gte+gt or both lte+lt)"
+    case FieldConstraintType.Length => " (expected 'exact', or at least one of 'min'/'max' with min <= max, and not 'exact' combined with 'min'/'max')"
     case _                           => ""
   }
 
