@@ -3203,11 +3203,53 @@ could declare.
       suite passed (681/681). `./dev/build`/`./dev/test` both pass against real
       `spark-submit`, `Status: PASS` — the real demo pipeline still declares no
       struct fields, so unaffected by construction, confirmed rather than assumed.
-- [ ] **Still open** (the second of the two gaps the prior sub-phase surfaced, not
-      this one's to fix): no `demo/contracts/*.yaml` fixture exercises static data
-      quality — struct or flat — through a real `spark-submit` run at all; and
-      `./dev/regression` has no DQ-specific `Violated`-abort case. Both remain their
-      own follow-up.
+- [x] **Resolved by the sub-phase below**: no `demo/contracts/*.yaml` fixture
+      exercised static data quality through a real `spark-submit` run at all, and
+      `./dev/regression` had no DQ-specific `Violated`-abort case.
+
+#### Sub-phase: Static data-quality — real spark-submit proof via ./dev/regression (done)
+
+The second of the two gaps the sub-phase above surfaced, closed as one fix rather than
+two: investigating where to add the harness-fixture proof revealed that CI never
+actually runs `./dev/test` at all — only `./dev/build` then `./dev/regression` (grepped
+`.github/workflows/test.yml` directly to confirm; `CLAUDE.md`'s own CI/CD Pipeline
+section claimed otherwise and was corrected in the same pass). `./dev/test` is a
+local/interactive script no CI job invokes. So the real, CI-gated version of "no fixture
+exercises this end-to-end" was entirely inside `./dev/regression` having no
+data-quality case at all — the harness-fixture gap and the regression-pack gap were the
+same gap once traced to what CI actually runs.
+
+- [x] **Two new cases** (`dev/regression`, now 4 total, not 2): Case 3 (a real `oneOf`
+      constraint on `value_tier` the existing `InvaractPlugin` transformation provably
+      satisfies via its own `CASE WHEN value > 50 THEN 'high' ELSE 'low' END` —
+      `Guaranteed`, write executes) and Case 4 (the same field, a narrower required set
+      the same transformation provably violates — `DataQualityViolation`, write
+      aborted before any data is written) — the identical PASS/FAIL proof Cases 1/2
+      already gave schema-level enforcement, now given to static data-quality
+      enforcement too, with zero changes to `InvaractPlugin` itself. Both attach
+      `spark.invaract.staticDataQuality=true` purely via `SPARK_SUBMIT_EXTRA_CONF`/
+      `--conf` (External Attachability Requirement), and assert the published
+      `ContractValidationEvent`'s `dataQuality` verdict directly (`Guaranteed`/
+      `Violated` for `value_tier`), not just `report.json`'s status.
+- [x] **Two new fixture contracts** (`demo/contracts/invaract_output_data_quality_{pass,fail}.yaml`)
+      and **two new notify configs** (`demo/regression-notify-dq-{pass,fail}.properties`),
+      mirroring the existing Case 1/2 fixtures' own conventions exactly.
+- [x] **No Scala code touched** — this sub-phase is entirely `dev/regression`, YAML/
+      properties fixtures, and docs, so CLAUDE.md's Mutation Testing Requirement
+      (scoped to `ir`/`spark-adapter`/`fingerprint` source) doesn't apply.
+- [x] **Documentation**: docs-site's [Prove Enforcement with the Regression
+      Pack](docs-site/src/content/docs/guides/running-the-regression-pack.mdx) guide
+      updated from "two cases" to all four, plus a corrected note that the pack runs
+      twice in CI (the `test` job's OS/Java matrix, and `docker-regression`'s Docker
+      image), not only via Docker. `ARCHITECTURE.md`'s and `CLAUDE.md`'s own stale
+      claims (a multi-Spark-version compatibility matrix and API-compatibility
+      checking "still outstanding" — both already exist in CI; CI running `./dev/test`
+      — it doesn't) corrected in the same pass.
+- [x] Verified for real: a full local `./dev/regression` run passed all 4/4 cases,
+      including Case 3's `Guaranteed` verdict and Case 4's `DATA_QUALITY_VIOLATION`
+      abort, both confirmed directly in the script's own output and the published
+      notification events — not merely asserted by the script silently passing.
+      `docs-site`'s `npm run build` succeeds.
 
 ---
 
