@@ -3194,6 +3194,70 @@ and <code dir="auto">contractVerification.status: PASSED</code> - the real demo 
 declares no <code dir="auto">constraints</code>/<code dir="auto">staticDataQuality</code>, so it’s unaffected by
 construction, confirmed rather than assumed.</li>
 </ul>
+<div class="sl-heading-wrapper level-h4"><h4 id="sub-phase-static-data-quality--notification-channel-visibility-done">Sub-phase: Static data-quality — notification channel visibility (done)</h4><a class="sl-anchor-link" href="#sub-phase-static-data-quality--notification-channel-visibility-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sub-phase: Static data-quality — notification channel visibility (done)”</span></a></div>
+<p>A gap left open by the sub-phase above: <code dir="auto">VerificationResult.dataQuality</code> existed but
+was never actually reachable by any caller on a <em>passing</em> check —
+<code dir="auto">ContractEnforcementRule.verifyOrThrow</code> returns <code dir="auto">Unit</code> on success, so only a <code dir="auto">FAILED</code>
+check’s thrown <code dir="auto">ContractViolationException</code> ever exposed it (<code dir="auto">fingerprints</code> has the
+identical gap, unnoticed until this one was investigated). Closed on the one channel
+that does reach every check regardless of outcome.</p>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">notification.ContractValidationEvent</code> gained <code dir="auto">dataQuality</code></strong>
+(<code dir="auto">NotificationEvent.scala</code>), threaded through from
+<code dir="auto">ContractEnforcementRule.publishValidation</code> — a subscriber now sees every
+<code dir="auto">DataQualityCheckResult</code> (<code dir="auto">Guaranteed</code>/<code dir="auto">NotGuaranteed</code>/<code dir="auto">NotStaticallyVerifiable</code>/
+<code dir="auto">Violated</code> alike) on both a PASSED and a FAILED check.
+<code dir="auto">DataQualityCheckResult</code> gained a <code dir="auto">toMap</code> method (mirroring <code dir="auto">Violation.toMap</code>)
+for <code dir="auto">NotificationJson</code> rendering.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>API compatibility</strong>: <code dir="auto">spark-adapter</code> <code dir="auto">0.6.0</code> → <code dir="auto">0.7.0</code> (a case class gained a
+trailing constructor field, the same shape of break this file’s own
+version-history comments already document repeatedly), caught for real by CI’s
+<code dir="auto">api-compatibility</code> job and fixed the established way — every place pinning the
+bumped module’s version or referencing its jar filename updated
+(<code dir="auto">runner</code>/<code dir="auto">notification-kafka</code> <code dir="auto">build.sbt</code>, <code dir="auto">CLAUDE.md</code>, <code dir="auto">ARCHITECTURE.md</code>, and
+every affected docs-site guide’s <code dir="auto">spark-submit --jars</code>/Maven example).</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong><code dir="auto">demo/output/report.json</code>/web UI</strong>: the FAIL path now surfaces
+<code dir="auto">dataQuality</code> directly from <code dir="auto">VerificationResult</code> (same shape <code dir="auto">violations</code>
+already had). The PASS path is honestly marked <code dir="auto">"captured": false</code> with an
+explanation rather than silently omitted or faked as <code dir="auto">[]</code> — the same
+architectural gap (<code dir="auto">verifyOrThrow</code> returns <code dir="auto">Unit</code> on success) prevents it, and
+fixing that properly would mean giving up <code dir="auto">DemoJobHarness</code>’s deliberate
+zero-code, purely conf-driven install branch for the common case, a real
+tradeoff left for a future pass rather than rushed here. Web UI gained a “Data
+Quality” section (verdict-badge list, or the same hint) under Contract
+Verification.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Tests</strong>: <code dir="auto">NotificationJsonSpec</code> gained coverage for both the <code dir="auto">Nil</code> (<code dir="auto">[]</code>) and
+populated <code dir="auto">dataQuality</code> rendering shapes.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Verified per CLAUDE.md’s Mutation Testing Requirement and Critical Requirement:
+scoped Stryker on the four touched files (<code dir="auto">ContractEnforcementRule.scala</code>,
+<code dir="auto">StructuralVerifier.scala</code>, <code dir="auto">NotificationEvent.scala</code>, <code dir="auto">NotificationJson.scala</code>)
+reached <strong>96.33%</strong> (105/109 non-excluded mutants); the 4 survivors are all in
+pre-existing code this change didn’t touch (two unrelated <code dir="auto">nonEmpty</code> checks at
+<code dir="auto">ContractEnforcementRule.scala:346</code> and <code dir="auto">:855</code>), zero survivors in the actual
+diff. <code dir="auto">spark-adapter</code>’s full suite passed (675/675). <code dir="auto">./dev/build</code>/<code dir="auto">./dev/test</code>
+both pass against real <code dir="auto">spark-submit</code>; <code dir="auto">demo/output/report.json</code> and
+<code dir="auto">demo/output/events.jsonl</code> confirmed by direct inspection to render exactly as
+designed — the real demo pipeline’s <code dir="auto">events.jsonl</code> <code dir="auto">CONTRACT_VALIDATION</code> entry
+shows <code dir="auto">"dataQuality": []</code> (the demo contract still declares no
+<code dir="auto">constraints</code>/<code dir="auto">staticDataQuality</code> — the harness-fixture gap this surfaces is
+flagged as its own follow-up below, not fixed here), and <code dir="auto">report.json</code>’s
+<code dir="auto">contractVerification.dataQuality</code> shows the honest <code dir="auto">"captured": false</code> shape.
+Web UI screenshotted against a real <code dir="auto">./dev/report</code> run, confirming the new
+section renders.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <strong>Known remaining gaps</strong> (flagged, not fixed in this sub-phase): struct/nested
+<code dir="auto">Field.properties</code> constraints are declarable on the contract model but
+<code dir="auto">StaticDataQualityVerifier.verify</code> only walks <code dir="auto">output.schema.fields</code> at the top
+level — a nested field’s <code dir="auto">constraints</code> are silently never checked, no
+<code dir="auto">DataQualityCheckResult</code> produced at all, not even an honest
+<code dir="auto">NotStaticallyVerifiable</code>. No <code dir="auto">demo/contracts/*.yaml</code> fixture declares
+<code dir="auto">constraints</code>/<code dir="auto">nullable: false</code> on any field, so <code dir="auto">./dev/test</code>’s real
+<code dir="auto">spark-submit</code> run has never once exercised static data-quality verification
+end-to-end — only in-JVM <code dir="auto">ContractEnforcementRuleSpec</code> tests have (this is
+§11’s own still-open question 2 in
+docs/STATIC_DATA_QUALITY_VERIFICATION.md, confirmed still unresolved).
+<code dir="auto">./dev/regression</code>’s pass/fail pair proves schema-level enforcement only, not a
+DQ-specific <code dir="auto">Violated</code> abort via a real Docker regression run.</li>
+</ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
 <div class="sl-heading-wrapper level-h3"><h3 id="objective-4">Objective</h3><a class="sl-anchor-link" href="#objective-4"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Objective”</span></a></div>
