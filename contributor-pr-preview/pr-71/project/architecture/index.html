@@ -447,15 +447,27 @@ including a real H2 JDBC read — no Spark behavior is mocked), a
 property-based fuzz suite (<code dir="auto">SparkPlanAdapterFuzzSpec</code>, random chains of
 operations asserting the adapter never throws), and whole-module
 mutation testing.</li>
-<li><strong>The harness (<code dir="auto">plugin</code>/<code dir="auto">runner</code>) via <code dir="auto">./dev/test</code></strong>: real end-to-end
-<code dir="auto">spark-submit</code>, exercising the whole engine as installed, per ADR-005.</li>
-<li><strong><code dir="auto">./dev/regression</code> (Docker, CI’s <code dir="auto">docker-regression</code> job)</strong>: the
-pass/fail pair proving <code dir="auto">ContractEnforcementRule</code> actually enforces
-something, not just that a harness run completes.</li>
+<li><strong>The harness (<code dir="auto">plugin</code>/<code dir="auto">runner</code>) via real end-to-end <code dir="auto">spark-submit</code></strong>,
+exercising the whole engine as installed, per ADR-005 —
+<code dir="auto">./dev/regression</code>’s own four cases (below) are what CI actually runs for
+this; <code dir="auto">./dev/test</code> is the equivalent single-pass proof a contributor runs
+locally/interactively (dev/lib.sh’s own doc), not something any CI job
+invokes.</li>
+<li><strong><code dir="auto">./dev/regression</code></strong>: the pass/fail pair proving <code dir="auto">ContractEnforcementRule</code>
+actually enforces something, not just that a harness run completes — now
+four cases, not two: schema-level enforcement (Cases 1/2) and static
+data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md).
+Runs twice in CI: directly, once per OS/Java combination in the <code dir="auto">test</code>
+job’s matrix, and again via Docker in the separate <code dir="auto">docker-regression</code> job
+(<code dir="auto">docker/Dockerfile</code>).</li>
+<li><strong>A multi-Spark/Delta/Iceberg-version compatibility matrix</strong> (CI’s
+<code dir="auto">spark-version-matrix</code>/<code dir="auto">delta-version-matrix</code>/<code dir="auto">iceberg-version-matrix</code>
+jobs) and <strong>API-compatibility checking</strong> (CI’s <code dir="auto">api-compatibility</code> job,
+MiMa — see CLAUDE.md’s “API Compatibility Requirement”).</li>
 </ul>
 <p>Guardrails still outstanding (ROADMAP.md, scoped to <code dir="auto">contract</code>/<code dir="auto">ir</code>/
-<code dir="auto">spark-adapter</code>): a multi-Spark-version compatibility matrix, coverage
-gating, and API-compatibility checking.</p>
+<code dir="auto">spark-adapter</code>): coverage gating (line/branch coverage thresholds,
+distinct from mutation testing, which this repo already enforces).</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="performance-characteristics">Performance Characteristics</h2><a class="sl-anchor-link" href="#performance-characteristics"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Performance Characteristics”</span></a></div>
 
 
