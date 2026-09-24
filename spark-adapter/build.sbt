@@ -887,7 +887,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.7.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.8.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,

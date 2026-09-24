@@ -118,7 +118,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.9.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.11.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
