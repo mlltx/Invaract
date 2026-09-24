@@ -3642,6 +3642,195 @@ first written: one field's value compared against *another field on the same row
       [Contract Format](docs-site/src/content/docs/reference/contract-format.mdx)
       reference gained a `fieldRange` row/example.
 
+### Input and Output Types (DATA_ASSET / SOURCE / CONTROL)
+
+- [x] **Contract model**: `DatasetType` (`ContractModel.scala`) — a closed
+      three-value sealed trait (`DataAsset`/`Source`/`Control`), and
+      `Dataset.datasetType: Option[DatasetType]`, appended last (MiMa
+      worked example) to stay binary-compatible by construction, defaulting
+      to unset. `ContractParser` parses an optional per-dataset `type:` key
+      case-insensitively, hard-failing on an unrecognized value (the same
+      closed-enum precedent `PolicyScope`/`PolicyMode` already establish,
+      not `format`'s open vocabulary). `ContractValidator` warns when an
+      *output* declares `type: SOURCE` (contradicts the role's own
+      definition by the spec's own wording). `contract/schema/invaract-contract.schema.json`
+      updated to match.
+- [x] **Mandatory or optional, per organization**: `PolicyType.RequireDatasetType`
+      (`require_dataset_type` — optional `types` allow-list, reusing
+      `RequireFormat`'s own scalar-or-list coercion) plus its
+      `OrgPolicyEvaluator`/`OrgPolicyValidator` wiring — the literal
+      mechanism that makes declaring a type mandatory (`Enforce` mode) or
+      advisory (`Warn`/absent), per the user's own framing of this request.
+      `contract/schema/invaract-org-policy.schema.json` updated to match.
+- [x] **Type-aware dry-run generation**: `ContractEnforcementRule.inferOrIgnore`
+      now also translates the plan (the same `SparkPlanAdapter.translate`
+      real enforcement already runs) and passes it to `ContractInference.infer`,
+      which observes — via `ir.Lineage.trace` and the newly-shared
+      `PlanRuleVerifier.collectConditionReferences` — whether each inferred
+      input contributed to a produced output column or was only referenced
+      in a `Filter`/`Join` condition, recording that as a `description`
+      note. `datasetType` stays unset on every inferred dataset regardless:
+      an *observation* is never promoted to a *declaration* (spec §7/§8).
+- [x] **Basic conformance checks**: already covered, type-agnostically, by
+      existing `MissingInput`/`MissingOutput` — confirmed, not re-implemented.
+- [x] **Role-consistency checks**: new `RoleConsistencyVerifier.scala` +
+      `RoleConformanceVerdict`/`RoleConformanceCheckResult`
+      (`StructuralVerifier.scala`) — a three-state verdict
+      (`Conforms`/`Contradicts`/`CannotDetermine`, the spec's own
+      vocabulary) checking exactly one high-confidence shape per the
+      spec's own "focus on high-confidence contradictions" instruction: a
+      `CONTROL`-declared input whose data reaches a produced output column
+      (`Contradicts`, blocking, `ViolationType.RoleConsistencyViolation`).
+      The genuinely-ambiguous mirror case (a `DATA_ASSET`/`SOURCE` input
+      observed only gating rows) is `CannotDetermine`, never a violation.
+      Opt-in via `VerificationOptions.roleConsistency`, attachable purely
+      via `spark.invaract.roleConsistency` (External Attachability
+      Requirement) and floor-able by org policy
+      (`inject.minVerificationOptions.roleConsistency`) alongside
+      `require_dataset_type` above. Threaded through to
+      `notification.ContractValidationEvent.roleConformance`/`NotificationJson`
+      the same way `dataQuality` already is.
+- [x] **Cross-contract validation**: new, pure `CrossContractValidator`
+      (`contract` module, no Spark) checking the spec's own worked
+      example — a `DATA_ASSET` output in one contract vs. the same
+      location declared a `SOURCE` input in another — across every pair of
+      distinct contracts (by `id`), plus `CrossContractLintCli` for linting
+      a directory of contract files. Narrows, but does not close, the
+      "Governance policies" gap Phase 3 (Contract Registry) below already
+      flagged (a registry-side consumer wiring this validator against a
+      live registry listing remains separate, out-of-repo follow-up work —
+      see `mlltx/invaract-registry`).
+- [x] **Demo harness / regression proof**: two new demo contract fixtures
+      (`invaract_output_role_consistency_pass.yaml`/`_fail.yaml`) reusing
+      the existing `InvaractPlugin` transformation unchanged — only the
+      contract's own declared `type` differs between them. `dev/regression`
+      gained Cases 5/6 (renumbered from a 4-case to a 6-case pack) proving,
+      with a real `spark-submit` job and `spark.invaract.roleConsistency=true`
+      attached purely via `--conf`, both a real `Conforms` pass and a real
+      `Contradicts` abort — the same CI-gated proof Cases 3/4 already give
+      `staticDataQuality`. `DemoJobHarness.reportToJson`/`web/app/page.tsx`
+      gained a `roleConformance`/"Role Conformance" section mirroring
+      `dataQuality`'s own.
+- [x] **Documentation**: `docs/CONTRACT_MODEL.md` gained a full "Input and
+      Output Types" section (model, mandatory-or-optional, dry-run,
+      conformance, role-consistency, cross-contract, unknown/unprovable
+      cases, explicit "not yet" list) plus `require_dataset_type` in
+      "Organizational Policy"; `docs/SPARK_ADAPTER.md` gained a
+      "Role-consistency checking" section mirroring "Static data-quality
+      verification"'s own structure, and a mutation-testing shard note
+      (`RoleConsistencyVerifier.scala` added to shard-4, the shard
+      smallest by line count at the time). docs-site gained a new guide,
+      [Declare Input and Output Types](docs-site/src/content/docs/guides/declaring-input-and-output-types.mdx),
+      plus updates to the [Contract Format](docs-site/src/content/docs/reference/contract-format.mdx),
+      [Violation Types](docs-site/src/content/docs/reference/violation-types.md),
+      [Org Policy Format](docs-site/src/content/docs/reference/org-policy-format.mdx),
+      [Enforce an Organizational Policy](docs-site/src/content/docs/guides/enforcing-organizational-policy.mdx),
+      [Write a Contract](docs-site/src/content/docs/guides/writing-a-contract.mdx),
+      and [Prove Enforcement with the Regression Pack](docs-site/src/content/docs/guides/running-the-regression-pack.mdx)
+      pages.
+- [x] **API compatibility**: `contract` (0.9.0 → 0.10.0: `Dataset` gained
+      an eighth constructor parameter; 0.10.0 → 0.11.0: `OrgPolicy` gained
+      a sixth constructor parameter, `typeGuarantees`, for Phase 6 below)
+      and `spark-adapter` (0.7.0 → 0.8.0:
+      `VerificationOptions`/`VerificationResult`/`notification.ContractValidationEvent`
+      each gained a new trailing parameter) bumped with matching
+      `mimaBinaryIssueFilters` entries, following this repository's own
+      established "deliberate, disclosed break" pattern exactly — every
+      dependent `build.sbt`/doc jar-filename reference updated to match in
+      the same change.
+- [x] **Verified in this environment**: `docs-site && npm run build` (Astro
+      Starlight, including the new `declaring-input-and-output-types`
+      page) and `web && npx tsc --noEmit`/`npm run build` (Next.js,
+      including the new `roleConformance` UI section) both genuinely ran
+      and succeeded — real, not assumed.
+- [ ] **Not run in this environment**: `sbt compile`/`test`, scoped Stryker
+      mutation testing, `mimaReportBinaryIssues`, coverage gating, and
+      `./dev/test`/`./dev/regression` could not be executed here — the
+      sandbox's network policy blocks the Scala/sbt toolchain outright
+      (sbt's own launcher can't reach `repo.scala-sbt.org`/`repo.typesafe.com`,
+      and `repo1.maven.org` is rate-limited; confirmed against both the
+      sbt-1.9.8 modules and the sbt-1.11.7 ones, and against a completely
+      empty local Ivy cache, so this isn't a one-module fluke). Every test
+      file above was written carefully by hand, mirroring this
+      repository's own existing, passing test patterns line-for-line, but
+      none of it has been compiled or run for real — CLAUDE.md's Critical
+      Requirement/Mutation Testing Requirement/API Compatibility Requirement/Coverage Gating
+      Requirement all remain genuinely unverified until someone (or CI)
+      runs them with real network/toolchain access.
+- [x] **Phase 6 — stronger semantic and guarantee validation, configurable
+      by organizational policy, built as an open registry**: new
+      `contract/src/main/scala/com/invaract/contract/TypeGuaranteeValidator.scala`
+      (`TypeGuaranteeCheck` trait — `check(contracts: List[Contract]):
+      List[TypeGuaranteeResult]` — the extension point; `TypeGuaranteeVerdict`
+      reusing role-consistency's own `Conforms`/`Contradicts`/`CannotDetermine`
+      vocabulary; two built-in checks) plus
+      `TypeGuaranteeCheckFactory.scala` (mirrors
+      `CustomPolicyEvaluatorFactory` exactly: a name in config resolves a
+      real class reflectively, with the identical eager-resolution-at-
+      validation-time treatment). Configured entirely through a new
+      `OrgPolicy.typeGuarantees: TypeGuaranteeConfig` field (`enabled:
+      List[String]`, `mode: PolicyMode`, `customTypeGuaranteeTypes:
+      Map[String, String]`) — the same "mandatory or optional, per
+      organization" theme `require_dataset_type` already establishes,
+      extended to whether a stronger guarantee check runs at all and
+      whether a real contradiction blocks or only warns. Built-in checks:
+      `data_asset_schema_consistency` (every `DATA_ASSET` declared at the
+      same normalized location across every contract in the run must
+      agree on schema — a real field-type/`required` mismatch is
+      `Contradicts`) and `data_asset_downstream_consumption` (a
+      `DATA_ASSET` output not declared as an input anywhere else is
+      `CannotDetermine`, **never** `Contradicts` — Invaract cannot prove a
+      consumer contract will never exist, the spec's own "`DATA_ASSET`
+      treated as pipeline-only state" case read honestly). Wired into
+      `contract/src/main/scala/com/invaract/contract/cli/CrossContractLintCli.scala`
+      via a new `--org-policy <path>` flag, which excludes the named
+      policy file itself from the contracts it scans (the same fix
+      `OrgPolicyLintCli` already needed for the identical reason — a
+      policy document commonly lives alongside the contracts it governs)
+      and tags each printed result `[FAIL]`/`[ OK ]`/`[WARN]` by whether it
+      actually blocks, not by raw verdict alone. `OrgPolicyValidator`
+      eagerly validates `typeGuarantees.enabled`/`customTypeGuaranteeTypes`
+      the same way it already does for `customPolicyTypes` (empty
+      key/class name is an Error; an unresolvable class is an Error; a
+      name matching neither a built-in `TypeGuaranteeType` nor a
+      registered custom check is a Warning, "will never be evaluated";
+      a `customTypeGuaranteeTypes` entry colliding with a built-in type is
+      a Warning, "dead"). `contract/schema/invaract-org-policy.schema.json`
+      updated with the new `typeGuarantees` block (also fixed a stale
+      "seven types" reference to "eight" left over from Phase 1).
+      `docs/CONTRACT_MODEL.md` gained a "Type guarantee checks" section and
+      its "Unknown/unprovable cases"/"What this does not do yet" sections
+      were revised to reflect that these two checks now exist while
+      disclosing what's still genuinely out of scope; the docs-site guide
+      gained a matching "Type guarantee checks, configured by
+      organizational policy" section (including "Adding your own check").
+      Test coverage: `TypeGuaranteeValidatorTest.scala`,
+      `TypeGuaranteeCheckFixtures.scala` (mirrors
+      `CustomPolicyEvaluatorFixtures.scala`), new `OrgPolicyValidatorTest`
+      cases mirroring the `customPolicyTypes` block exactly, new
+      `OrgPolicyParserTest` cases, and 7 new `CrossContractLintCliTest`
+      cases for `--org-policy`. All entirely within the `contract` module
+      — no `spark-adapter`/`ir`/`fingerprint` file touched, so no
+      mutation-testing-shard update was needed (CLAUDE.md's per-file 70%
+      Stryker bar is scoped to those three modules only; `contract` still
+      gets ordinary coverage gating and the same MiMa treatment as every
+      other module).
+- [ ] **Phase 6 not run in this environment**: same toolchain blocker as
+      above — `sbt test`/`mimaReportBinaryIssues`/coverage gating for
+      `contract` have not been executed here, so none of Phase 6's new
+      code has been compiled or run for real yet.
+- [ ] **Still deliberately out of scope, even with Phase 6's two checks in
+      place**: whether a `DATA_ASSET` output is genuinely a business data
+      product vs. pipeline-only state (`data_asset_downstream_consumption`
+      only ever answers "consumed within this run," never "should exist at
+      all"); whether a `DATA_ASSET` is produced from inputs whose real
+      transformation logic — not just declared schema — is consistent with
+      its own declared contract (`ir.Lineage`-aware, not attempted);
+      business-guarantee reasoning generally beyond these two mechanical,
+      structural checks. A new `TypeGuaranteeCheck` — built in, or via
+      `customTypeGuaranteeTypes` with zero change to `contract` itself —
+      is the intended path to closing any of these as confidence grows.
+
 ---
 
 ## Phase 2 — Multi-Engine Support
@@ -3693,7 +3882,14 @@ Establish contract as a versioned, governed artifact.
       docs/CONTRACT_MODEL.md names ("every input must be some other
       contract's declared output," "no two contracts may target the same
       physical location") have no consumer of the registry evaluating
-      them yet
+      them yet. The validation logic itself now exists, engine-independent
+      — `com.invaract.contract.CrossContractValidator`/`CrossContractLintCli`
+      (see Phase 1c's "Input and Output Types" work item), checking the
+      `DATA_ASSET`-output-vs-`SOURCE`-input shape of this same gap against
+      any `List[Contract]` a caller supplies. What's still missing is
+      specifically a *registry-side* consumer feeding it a real registry
+      listing — that integration lives in `mlltx/invaract-registry`, a
+      separate repo, and remains unbuilt
 
 ### Dependencies
 

@@ -119,7 +119,7 @@ even though the harness itself is not the thing being changed.
    └─> fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar
 
 3. Build spark-adapter (needs contract, ir, fingerprint published locally)
-   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.7.0.jar
+   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.8.0.jar
        (already bundles fingerprint's compiled classes via sbt-assembly —
        a consumer installing only this jar gets fingerprinting for free)
 

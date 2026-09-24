@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A variant of demo/contracts/invaract_output.yaml declaring dataset
+    types (DATA_ASSET/SOURCE/CONTROL - see docs/CONTRACT_MODEL.md's "Input
+    and Output Types" section) whose declared role is consistent with the
+    real InvaractPlugin transformation's observed usage, for
+    ./dev/regression's role-consistency Case 5/6. `orders` is declared
+    DATA_ASSET, and its `value` column genuinely does derive `value`,
+    `value_squared`, and `value_tier` in the produced output - RoleConsistencyVerifier
+    reports this Conforms, with no change to InvaractPlugin itself. Not
+    wired into ./dev/test - see that script's own contract for the default
+    install path; this exists purely to prove
+    spark.invaract.roleConsistency=true through a real spark-submit run,
+    the same way invaract_output_data_quality_pass.yaml proves
+    spark.invaract.staticDataQuality.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    type: DATA_ASSET
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_role_pass.parquet
+    format: parquet
+    saveMode: overwrite
+    type: DATA_ASSET
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

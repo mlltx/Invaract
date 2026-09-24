@@ -296,6 +296,54 @@ case class CatalogRequirement(
   table: Option[String] = None
 )
 
+/** The semantic role a `Dataset` plays in a contract — what it *represents*,
+  * not how it's physically stored (see docs/CONTRACT_MODEL.md's "Input and
+  * Output Types" section). Deliberately a closed, three-value set for the
+  * initial implementation, the same "no general enum, a narrow closed set"
+  * discipline `RuleType`/`PolicyType` already follow.
+  */
+sealed trait DatasetType { def name: String }
+object DatasetType {
+
+  /** A governed, shareable dataset produced for consumption by other users,
+    * applications, or pipelines — a meaningful data product, not
+    * implementation state (e.g. "customer position," "daily transaction
+    * dataset"). May itself be consumed as an input to another contract.
+    */
+  case object DataAsset extends DatasetType { val name = "DATA_ASSET" }
+
+  /** Data entering the governed pipeline/domain where *this* contract does
+    * not claim responsibility for producing it (an external vendor feed, an
+    * upstream system extract). Physically indistinguishable from a
+    * `DataAsset` — the distinction is ownership and semantic responsibility,
+    * never storage technology. A contract may consume a `Source` but never
+    * declares one as its own output (see `ContractValidator`'s corresponding
+    * check).
+    */
+  case object Source extends DatasetType { val name = "SOURCE" }
+
+  /** Data used to operate, control, or determine processing — a processing
+    * calendar, a watermark, a readiness/reconciliation signal — rather than
+    * the business data being produced. May influence execution without
+    * itself becoming part of the resulting business data asset; should not
+    * automatically be considered shareable the way a `DataAsset` is.
+    */
+  case object Control extends DatasetType { val name = "CONTROL" }
+
+  val All: List[DatasetType] = List(DataAsset, Source, Control)
+
+  /** Case-insensitive match against each type's canonical `name` (so both
+    * `DATA_ASSET` and `data_asset` parse) — `None` for anything else,
+    * leaving the caller (`ContractParser`) to decide whether an
+    * unrecognized value is fatal, the same total/safe convention
+    * `FieldConstraint.interpret`/`PolicyRule.interpret` already use, except
+    * here the *caller* raises the parse-time error, mirroring
+    * `OrgPolicyParser.parseScope`/`parseMode`'s closed-enum precedent
+    * rather than a silently-dropped unknown value.
+    */
+  def parse(raw: String): Option[DatasetType] = All.find(_.name == raw.trim.toUpperCase)
+}
+
 /** A dataset the contract reads from (input) or writes to (output).
   *
   * @param location physical location of the dataset (table name, path, topic, etc.)
@@ -314,6 +362,15 @@ case class CatalogRequirement(
   *   — see `docs/CONTRACT_MODEL.md`'s "Organizational Policy" section),
   *   the same catalog-discoverability motivation `require_catalog`
   *   already has, but for a human reader rather than a catalog consumer.
+  * @param datasetType optional declared semantic role (see `DatasetType`'s
+  *   own doc) — absent by default, so declaring it is purely additive to
+  *   every existing contract. Whether it must be declared at all is an
+  *   organizational choice, not a hardcoded one: see `PolicyType.RequireDatasetType`
+  *   in `docs/CONTRACT_MODEL.md`'s "Organizational Policy" section.
+  *   Appended last (not alongside `format`/`saveMode` above) specifically
+  *   to keep this addition binary-compatible with existing compiled callers
+  *   — see the API Compatibility Requirement's own worked example for why
+  *   a new case-class field belongs at the end, not the middle.
   */
 case class Dataset(
   name: String,
@@ -322,7 +379,8 @@ case class Dataset(
   schema: Schema,
   saveMode: Option[String] = None,
   catalog: Option[CatalogRequirement] = None,
-  description: Option[String] = None
+  description: Option[String] = None,
+  datasetType: Option[DatasetType] = None
 )
 
 /** Rule types Invaract itself knows how to interpret during verification

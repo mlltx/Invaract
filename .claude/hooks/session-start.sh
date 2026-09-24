@@ -16,6 +16,21 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# CLAUDE_PROJECT_DIR/CLAUDE_ENV_FILE are provided by some hook-invocation
+# paths but not others (confirmed directly: unset when this script is
+# re-run by hand as an ordinary background command, which is exactly how a
+# session recovers if the automatic SessionStart invocation never fired) -
+# under `set -u` an unset reference to either used to abort this entire
+# script immediately, silently skipping every warm_module call below with
+# no warning at all. CLAUDE_PROJECT_DIR falls back to this script's own
+# repo root (two directories up from .claude/hooks/), not `pwd`, since a
+# hook can legitimately run from a different cwd. CLAUDE_ENV_FILE falls
+# back to /dev/null - losing the SPARK_HOME/PATH export in that case is a
+# real, but much smaller, degradation than the whole script dying before
+# warming a single module.
+: "${CLAUDE_PROJECT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+: "${CLAUDE_ENV_FILE:=/dev/null}"
+
 CACERT_ARGS=()
 if [ -f /root/.ccr/ca-bundle.crt ]; then
   CACERT_ARGS=(--cacert /root/.ccr/ca-bundle.crt)

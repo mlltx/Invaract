@@ -42,7 +42,7 @@ how every job runs today. Everything below only applies once a platform attaches
    extension — the same convention Invaract's own demo contracts use for
    `invaract-contract.schema.json`.
 
-2. Seven policy types are interpreted today — not everything an organization needs, though:
+2. Eight policy types are interpreted today — not everything an organization needs, though:
    see [Write your own policy type](#write-your-own-policy-type) below for a type outside
    this set, with no Invaract source change or release needed.
 
@@ -54,6 +54,7 @@ how every job runs today. Everything below only applies once a platform attaches
    | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map, optionally pinned to an exact `value`. |
    | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` (a string or a list), matched case-insensitively. |
    | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+   | `require_dataset_type` | `types` (optional) | The dataset declares a `type` at all, optionally pinned to one of `types` (a string or a list). See [Declare Input and Output Types](/guides/declaring-input-and-output-types/#make-it-mandatory-with-an-organizational-policy). |
    | `require_extension_if` | `ifKey`/`thenKey` (required), `ifValue`/`thenValue` (optional) | A conditional `require_extension` — only once the contract satisfies `ifKey` must it also satisfy `thenKey`. See [Conditional requirements](#conditional-requirements-require_extension_if) below. |
 
    ```yaml
@@ -125,7 +126,7 @@ own source, only its `spark-submit` invocation:
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.7.0.jar \
+  --jars invaract-spark-adapter-0.8.0.jar \
   --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
   my-real-job.jar
 ```
@@ -225,7 +226,7 @@ ordinary `OrgPolicy` YAML document, attached alongside the base via a second con
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.7.0.jar \
+  --jars invaract-spark-adapter-0.8.0.jar \
   --conf spark.invaract.orgPolicy=/policies/org-wide.yaml \
   --conf spark.invaract.orgPolicyOverlays=/policies/bu-finance.yaml \
   my-real-job.jar
@@ -368,7 +369,7 @@ one-line YAML edit instead of a failed production job.
 
 ## Common organizational policy patterns
 
-The seven policy types above compose into most standardization an organization actually
+The eight policy types above compose into most standardization an organization actually
 wants to enforce. A few real-world patterns, each a complete, working rule:
 
 **Cost attribution.** Every contract must be attributable to a cost center, so nothing
@@ -501,7 +502,7 @@ data-dictionary discoverability — no properties to configure, just presence:
 
 ## Write your own policy type
 
-The seven built-in types cover a lot of ground, but they're a closed set — an
+The eight built-in types cover a lot of ground, but they're a closed set — an
 organization's own vocabulary ("every dataset must carry an `approvedBy` extension
 matching one of these three names," "every output's location must fall under one of
 these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a
@@ -549,7 +550,7 @@ own — no Invaract source change, and no change to any governed job's own sourc
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.7.0.jar,my-governance-policies.jar \
+  --jars invaract-spark-adapter-0.8.0.jar,my-governance-policies.jar \
   --conf spark.invaract.orgPolicy=/path/to/org-policy.yaml \
   my-real-job.jar
 ```

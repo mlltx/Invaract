@@ -39,7 +39,7 @@ name := "invaract-spark-adapter"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.7.0"
+ThisBuild / version := "0.8.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -876,7 +876,7 @@ excludeDependencies ++= Seq(
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.5.0",
-  "com.invaract" %% "invaract-contract" % "0.9.0",
+  "com.invaract" %% "invaract-contract" % "0.11.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning
@@ -887,7 +887,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.7.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.8.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1093,7 +1093,7 @@ coverageHighlighting := true
 // update it whenever convenient, but a stale value here can't break CI
 // for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.6.0")
+  "com.invaract" %% "invaract-spark-adapter" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.7.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -1132,3 +1132,16 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent.this"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent$")
 )
+
+// The real, deliberate break motivating the 0.7.0 -> 0.8.0 bump above:
+// VerificationOptions gained a fifth constructor parameter
+// (roleConsistency), VerificationResult gained a sixth (roleConformance),
+// and notification.ContractValidationEvent gained a ninth (roleConformance)
+// - see docs/CONTRACT_MODEL.md's "Input and Output Types" section
+// (role-consistency checking). The three filter blocks above already
+// exclude apply/copy/this/the companion object for all three classes by
+// method name, not by a specific arity/signature, so they cover this
+// additional parameter too without needing new entries - left as-is
+// (matching MiMa's own by-name filtering, confirmed against this file's
+// own established pattern) rather than duplicated.
+

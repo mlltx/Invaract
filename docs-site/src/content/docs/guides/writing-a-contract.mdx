@@ -93,7 +93,10 @@ outputs:
 `saveMode` (`append`/`overwrite`/`ignore`/`error`) is checked against the write's actual
 save mode when both are known. A dataset can also declare `catalog: { required: true, ... }`
 to require it be registered in a real data catalog, not just written to a bare path — see
-[Require Catalog Registration](/guides/requiring-catalog-registration/).
+[Require Catalog Registration](/guides/requiring-catalog-registration/). It can also
+declare `type: DATA_ASSET`/`SOURCE`/`CONTROL` to say what it *represents* — a shareable
+data product, an external source, or pipeline control data — see [Declare Input and
+Output Types](/guides/declaring-input-and-output-types/).
 
 ## Field semantics
 

@@ -176,6 +176,13 @@ object ContractEnforcementRule {
     */
   val StaticDataQualityConfKey = "spark.invaract.staticDataQuality"
 
+  /** Attaches `VerificationOptions.roleConsistency` — see that field's own
+    * doc and docs/CONTRACT_MODEL.md's "Input and Output Types" section —
+    * the same `spark-submit --conf spark.invaract.roleConsistency=true`
+    * attachability every other flag in this block documents.
+    */
+  val RoleConsistencyConfKey = "spark.invaract.roleConsistency"
+
   /** Overlays the three conf keys above onto `options` — `||`, not a
     * replacement: a flag ends up `true` if *either* the caller's own
     * `VerificationOptions` already set it, or the matching conf key is
@@ -190,7 +197,8 @@ object ContractEnforcementRule {
       rejectUndeclaredInputs = options.rejectUndeclaredInputs || confFlag(RejectUndeclaredInputsConfKey),
       rejectUndeclaredFields = options.rejectUndeclaredFields || confFlag(RejectUndeclaredFieldsConfKey),
       computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey),
-      staticDataQuality = options.staticDataQuality || confFlag(StaticDataQualityConfKey)
+      staticDataQuality = options.staticDataQuality || confFlag(StaticDataQualityConfKey),
+      roleConsistency = options.roleConsistency || confFlag(RoleConsistencyConfKey)
     )
   }
 
@@ -368,7 +376,8 @@ object ContractEnforcementRule {
     * can validate against exactly the same list `applyMinVerificationOptions`
     * consults, with no risk of the two drifting apart.
     */
-  private val KnownMinVerificationOptionKeys = Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality")
+  private val KnownMinVerificationOptionKeys =
+    Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality", "roleConsistency")
 
   /** Fails loudly on a `policy.inject.minVerificationOptions` key outside
     * `KnownMinVerificationOptionKeys` — a typo (e.g.
@@ -411,7 +420,8 @@ object ContractEnforcementRule {
       rejectUndeclaredInputs = floor("rejectUndeclaredInputs", options.rejectUndeclaredInputs),
       rejectUndeclaredFields = floor("rejectUndeclaredFields", options.rejectUndeclaredFields),
       computeFingerprint = floor("computeFingerprint", options.computeFingerprint),
-      staticDataQuality = floor("staticDataQuality", options.staticDataQuality)
+      staticDataQuality = floor("staticDataQuality", options.staticDataQuality),
+      roleConsistency = floor("roleConsistency", options.roleConsistency)
     )
   }
 
@@ -654,11 +664,21 @@ object ContractEnforcementRule {
         // NotGuaranteed" principle DataQualityVerdict's own doc explains.
         val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, translated.plan) else Nil
         val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults)
+        // See VerificationOptions.roleConsistency's own doc and
+        // docs/CONTRACT_MODEL.md's "Input and Output Types" section:
+        // roleConformanceResults is report-only (every verdict, kept for
+        // VerificationResult.roleConformance), while only its Contradicts
+        // entries become real Violations - the same "distinct from
+        // CannotDetermine" principle RoleConformanceVerdict's own doc
+        // explains.
+        val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, translated.plan) else Nil
+        val roleConsistencyViolations = RoleConsistencyVerifier.violations(roleConformanceResults)
         val result = VerificationResult.of(
           structuralResult.contract,
-          structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations,
+          structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
           fingerprints,
-          dataQualityResults
+          dataQualityResults,
+          roleConformanceResults
         )
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
@@ -719,11 +739,22 @@ object ContractEnforcementRule {
     * `.count()`, an intermediate transformation, a recognized-but-not-a-write
     * plan) is a silent no-op, the same "only a write matters" policy
     * `verifyOrThrow` follows for the analogous case.
+    *
+    * Also runs `SparkPlanAdapter.translate` — the same translation
+    * `verifyOrThrow` already performs for real enforcement — so
+    * `ContractInference.infer` can observe each input's actual usage
+    * (contributes to an output column vs. filter/join-only) via the real
+    * `ir.Plan`/`ir.Lineage`, rather than dry-run and real enforcement each
+    * maintaining their own notion of the transformation. See
+    * `ContractInference`'s own doc for why this observation is surfaced as
+    * a description, never a declared `datasetType`.
     */
   private[sparkadapter] def inferOrIgnore(plan: LogicalPlan, onInferred: Contract => Unit): Unit =
     WriteCommandSupport.combined.lift(plan) match {
-      case Some(writeInfo) => onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query))))
-      case None             => () // not a recognized write - nothing to infer a contract from
+      case Some(writeInfo) =>
+        val translated = SparkPlanAdapter.translate(plan)
+        onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query)), translated.plan))
+      case None => () // not a recognized write - nothing to infer a contract from
     }
 
   /** Throws if `contract` itself is structurally unsound per
@@ -800,7 +831,8 @@ object ContractEnforcementRule {
           metadata = contract.extensions,
           applicationId = applicationId,
           fingerprints = result.fingerprints,
-          dataQuality = result.dataQuality
+          dataQuality = result.dataQuality,
+          roleConformance = result.roleConformance
         )
       )
     }

@@ -3106,4 +3106,166 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
   }
+
+  // docs/CONTRACT_MODEL.md's "Input and Output Types" section - role-
+  // consistency checking, opt-in via VerificationOptions.roleConsistency.
+  // RoleConsistencyVerifierSpec already covers the underlying per-verdict
+  // logic directly against hand-built plans; these prove the real
+  // end-to-end wiring: default-off, a genuine Contradicts abort, the
+  // Conforms non-blocking case, and spark.invaract.roleConsistency
+  // attached purely via conf.
+  // required: false throughout - Parquet reports every column nullable on
+  // read-back regardless of what was written (the same real,
+  // separate-from-role-consistency behavior the Delta input/output fixtures
+  // above document); nullability itself already has its own dedicated
+  // coverage in StructuralVerifierSpec. These tests are specifically about
+  // role-consistency, checked against a real read's real schema.
+  private val roleConsistencyContractYaml =
+    """id: role_demo
+      |version: "1.0.0"
+      |inputs:
+      |  - name: calendar
+      |    location: CALENDAR_PATH
+      |    type: CONTROL
+      |    schema:
+      |      fields:
+      |        - name: gate
+      |          type: long
+      |          required: false
+      |  - name: data
+      |    location: DATA_PATH
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: long
+      |          required: false
+      |outputs:
+      |  - name: out
+      |    location: OUTPUT_PATH
+      |    type: DATA_ASSET
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: long
+      |          required: false
+      |""".stripMargin
+
+  test("roleConsistency defaults to false: a CONTROL input whose data reaches a produced output column still PASSES") {
+    val calendarPath = scratchDir.resolve("role_default_off_calendar.parquet").toString
+    val dataPath = scratchDir.resolve("role_default_off_data.parquet").toString
+    val outputPath = scratchDir.resolve("role_default_off_out.parquet").toString
+    val yaml = roleConsistencyContractYaml
+      .replace("CALENDAR_PATH", calendarPath)
+      .replace("DATA_PATH", dataPath)
+      .replace("OUTPUT_PATH", outputPath)
+    spark.range(1).withColumnRenamed("id", "gate").write.mode("overwrite").parquet(calendarPath)
+    spark.range(5).write.mode("overwrite").parquet(dataPath)
+
+    // "gate" (declared CONTROL) is selected straight into the output - a
+    // real, high-confidence role contradiction - yet with the flag left at
+    // its default, this must PASS: no role-consistency analysis runs at all.
+    withContract(yaml) {
+      val calendar = spark.read.parquet(calendarPath)
+      val data = spark.read.parquet(dataPath)
+      val joined = data.crossJoin(calendar).select(calendar("gate").as("id"))
+      joined.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("roleConsistency = true: a CONTROL input whose data reaches a produced output column aborts the write with ROLE_CONSISTENCY_VIOLATION") {
+    val calendarPath = scratchDir.resolve("role_contradicts_calendar.parquet").toString
+    val dataPath = scratchDir.resolve("role_contradicts_data.parquet").toString
+    val outputPath = scratchDir.resolve("role_contradicts_out.parquet").toString
+    val yaml = roleConsistencyContractYaml
+      .replace("CALENDAR_PATH", calendarPath)
+      .replace("DATA_PATH", dataPath)
+      .replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+    spark.range(1).withColumnRenamed("id", "gate").write.mode("overwrite").parquet(calendarPath)
+    spark.range(5).write.mode("overwrite").parquet(dataPath)
+
+    val ex = withContract(yaml, options = VerificationOptions(roleConsistency = true), sink = Some(sink)) {
+      val calendar = spark.read.parquet(calendarPath)
+      val data = spark.read.parquet(dataPath)
+      val joined = data.crossJoin(calendar).select(calendar("gate").as("id"))
+      intercept[ContractViolationException] {
+        joined.write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.exists(_.violationType == ViolationType.RoleConsistencyViolation))
+    assert(ex.getMessage.contains("ROLE_CONSISTENCY_VIOLATION"))
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "FAILED")
+    assert(event.roleConformance.exists(_.verdict == RoleConformanceVerdict.Contradicts))
+  }
+
+  test("roleConsistency = true: a CONTROL input referenced only in a filter, output data derived from the other input, PASSES") {
+    val calendarPath = scratchDir.resolve("role_conforms_calendar.parquet").toString
+    val dataPath = scratchDir.resolve("role_conforms_data.parquet").toString
+    val outputPath = scratchDir.resolve("role_conforms_out.parquet").toString
+    val yaml = roleConsistencyContractYaml
+      .replace("CALENDAR_PATH", calendarPath)
+      .replace("DATA_PATH", dataPath)
+      .replace("OUTPUT_PATH", outputPath)
+    spark.range(1, 2).withColumnRenamed("id", "gate").write.mode("overwrite").parquet(calendarPath)
+    spark.range(5).write.mode("overwrite").parquet(dataPath)
+
+    withContract(yaml, options = VerificationOptions(roleConsistency = true)) {
+      val calendar = spark.read.parquet(calendarPath)
+      val data = spark.read.parquet(dataPath)
+      // "gate" only ever appears in the Filter condition - the final
+      // select keeps only data's own column, so calendar's column never
+      // reaches a produced output column, consistent with its declared
+      // CONTROL role.
+      val joined = data.crossJoin(calendar).filter(calendar("gate") >= 1).select(data("id"))
+      joined.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("resolveVerificationOptions: spark.invaract.roleConsistency=true turns the flag on even when the caller left it false") {
+    val resolved = withConf(ContractEnforcementRule.RoleConsistencyConfKey, "true") {
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), spark)
+    }
+    assert(resolved.roleConsistency)
+    // Only this one flag moves - the others stay at their defaults.
+    assert(!resolved.staticDataQuality)
+  }
+
+  test("forContract end-to-end: roleConsistency attached purely via conf aborts a write that would otherwise pass") {
+    val calendarPath = scratchDir.resolve("role_conf_attached_calendar.parquet").toString
+    val dataPath = scratchDir.resolve("role_conf_attached_data.parquet").toString
+    val outputPath = scratchDir.resolve("role_conf_attached_out.parquet").toString
+    val yaml = roleConsistencyContractYaml
+      .replace("CALENDAR_PATH", calendarPath)
+      .replace("DATA_PATH", dataPath)
+      .replace("OUTPUT_PATH", outputPath)
+    val contract = parseContract(yaml)
+    spark.range(1).withColumnRenamed("id", "gate").write.mode("overwrite").parquet(calendarPath)
+    spark.range(5).write.mode("overwrite").parquet(dataPath)
+
+    // A plain, unchecked write (activeContract is None outside withContract)
+    // whose output is literally the CONTROL input's own column - captured
+    // purely to reuse its real analyzed plan, the same off-the-shelf-plan
+    // technique the staticDataQuality conf test above uses.
+    val calendar = spark.read.parquet(calendarPath)
+    val data = spark.read.parquet(dataPath)
+    data.crossJoin(calendar).select(calendar("gate").as("id")).write.mode("overwrite").parquet(outputPath)
+    val writePlan = capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(
+      fail("no analyzed write plan was captured to reuse")
+    )
+
+    val rule = ContractEnforcementRule.forContract(contract) // options left at every default: roleConsistency = false
+    rule(spark)(writePlan) // must not throw: the flag is off, so no role-consistency analysis runs at all
+
+    withConf(ContractEnforcementRule.RoleConsistencyConfKey, "true") {
+      intercept[ContractViolationException] {
+        rule(spark)(writePlan)
+      }
+    }
+  }
 }

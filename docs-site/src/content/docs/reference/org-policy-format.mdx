@@ -59,6 +59,10 @@ exemptions:
 
 customPolicyTypes:
   require_approved_location_prefix: com.acme.governance.RequireApprovedLocationPrefix
+
+typeGuarantees:
+  enabled: [data_asset_schema_consistency, data_asset_downstream_consumption]
+  mode: enforce
 ```
 
 ## Top-level fields
@@ -70,6 +74,7 @@ customPolicyTypes:
 | `inject` | no | Rules/options this policy contributes to every governed contract — see [Rule/option injection](#injectrulesinjectminverificationoptions). |
 | `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
 | `customPolicyTypes` | no | Maps a `type:` name outside the built-in set to a `CustomPolicyEvaluator` class — see [Custom policy types](#custom-policy-types). |
+| `typeGuarantees` | no | Configures cross-contract type guarantee checks (`data_asset_schema_consistency`/`data_asset_downstream_consumption`, and any registered custom check) — see [Type guarantees](#type-guarantees). Unlike every other field here, only `CrossContractLintCli --org-policy` consults this one; `OrgPolicyEvaluator`/`ContractEnforcementRule` never do, since it governs a check across many contracts, not one contract at a time. |
 
 ## Policy rule fields (`policies[]`)
 
@@ -95,6 +100,7 @@ contract's own `rules:` entries work.
 | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
 | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+| `require_dataset_type` | `types` (optional) | The dataset declares a `type` ([`DATA_ASSET`/`SOURCE`/`CONTROL`](/guides/declaring-input-and-output-types/)) at all; if `types` is also set (a single string or a list), the declared type must additionally be one of them. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
 A policy `type` matching neither this set nor a [`customPolicyTypes`](#custom-policy-types)
@@ -112,8 +118,9 @@ type pin therefore uses the distinct key `fieldType`.
 </Aside>
 
 <Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
-`require_catalog`, `require_field`, `field_naming_convention`, `require_format`, and
-`require_dataset_description` each check one dataset at a time, honoring `scope`/`when`.
+`require_catalog`, `require_field`, `field_naming_convention`, `require_format`,
+`require_dataset_description`, and `require_dataset_type` each check one dataset at a
+time, honoring `scope`/`when`.
 `require_extension` and `require_extension_if` are different: they check the contract
 document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
 either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
@@ -151,7 +158,7 @@ trait CustomPolicyEvaluator {
 }
 ```
 
-`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the seven
+`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the eight
 built-in ones — a `customPolicyTypes` key matching a built-in `type` is dead (the built-in
 always wins; `OrgPolicyValidator` warns on this). `PolicyExemption` coverage and `mode:
 enforce`/`warn` splitting still apply automatically to a custom type's violations, exactly
@@ -169,6 +176,41 @@ job source change.
 | Error | `customPolicyTypes.<type>` has an empty class name, or names a class that doesn't resolve (missing, no public no-arg constructor, doesn't implement `CustomPolicyEvaluator`). |
 | Warning | `customPolicyTypes.<type>` collides with a built-in `type` (dead — the built-in always wins). |
 | Warning | A policy rule's `type` matches neither a built-in type nor a `customPolicyTypes` entry (it will never be evaluated). |
+
+## Type guarantees
+
+`typeGuarantees` configures `com.invaract.contract.TypeGuaranteeValidator`'s
+cross-contract "stronger semantic and guarantee validation" checks — see [Declare Input
+and Output Types](/guides/declaring-input-and-output-types/#type-guarantee-checks-configured-by-organizational-policy)
+for a guided introduction. Only `CrossContractLintCli --org-policy` reads this block;
+`OrgPolicyEvaluator` does not.
+
+```yaml
+typeGuarantees:
+  enabled: [data_asset_schema_consistency, my_custom_check]
+  mode: warn
+  customTypeGuaranteeTypes:
+    my_custom_check: com.acme.governance.MyTypeGuaranteeCheck
+```
+
+| Key | Meaning |
+|---|---|
+| `typeGuarantees.enabled` | Which checks to run, by name. Two are built in: `data_asset_schema_consistency`, `data_asset_downstream_consumption` (see the guide linked above for what each one checks). Empty or omitted means no type guarantee check runs at all. |
+| `typeGuarantees.mode` | `enforce` (default) — a real `Contradicts` result from any enabled check fails the lint run. `warn` — every enabled check still runs and is reported, but nothing blocks. |
+| `typeGuarantees.customTypeGuaranteeTypes.<name>` | Fully-qualified class name of a `com.invaract.contract.TypeGuaranteeCheck` implementation (public no-arg constructor required) — the escape hatch for a check outside the two built in, resolved reflectively by `TypeGuaranteeCheckFactory`, exactly the same shape `customPolicyTypes` already uses for `CustomPolicyEvaluator`. |
+
+```scala
+trait TypeGuaranteeCheck {
+  def check(contracts: List[Contract]): List[TypeGuaranteeResult]
+}
+```
+
+| `OrgPolicyValidator` outcome | When |
+|---|---|
+| Error | `typeGuarantees.enabled` has an empty entry. |
+| Error | `typeGuarantees.customTypeGuaranteeTypes.<name>` has an empty class name, or names a class that doesn't resolve (missing, no public no-arg constructor, doesn't implement `TypeGuaranteeCheck`). |
+| Warning | `typeGuarantees.customTypeGuaranteeTypes.<name>` collides with a built-in check name (dead — the built-in always wins). |
+| Warning | A `typeGuarantees.enabled` entry matches neither a built-in check nor a `customTypeGuaranteeTypes` entry (it will never be evaluated). |
 
 ## `inject.rules`/`inject.minVerificationOptions`
 

@@ -86,6 +86,19 @@ both ways to enable it, the identical mechanism `computeFingerprint` uses).
 |---|---|
 | `DATA_QUALITY_VIOLATION` | The transformation's own logic provably guarantees an output field can produce a value that violates its declared `nullable: false`/`equals`/`oneOf`/`range` constraint — e.g. a filter's negation, or an arithmetic operation, that demonstrably crosses a declared bound. |
 
+## Role-consistency violations
+
+Produced when a contract declares an input's [`type`](/guides/declaring-input-and-output-types/)
+and the transformation's own translated plan *contradicts* it — currently, the one
+high-confidence shape checked: a `CONTROL`-declared input whose data reaches a produced
+output column. Only checked when `roleConsistency` is enabled (off by default; see the
+guide linked above for both ways to enable it, the identical mechanism `staticDataQuality`
+uses).
+
+| Type | Meaning |
+|---|---|
+| `ROLE_CONSISTENCY_VIOLATION` | A `CONTROL`-declared input's data reaches a produced output column — pipeline-only/control data must not become part of the resulting business data asset it's declared to only operate/control. |
+
 ## Organizational policy violations
 
 Produced when a [`spark.invaract.orgPolicy`-configured organizational
@@ -119,3 +132,5 @@ verified write is structurally wrong. See
   guide behind the four `*_CATALOG_*` types above
 - [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/) — the full
   guide behind `ORG_POLICY_VIOLATION`
+- [Declare Input and Output Types](/guides/declaring-input-and-output-types/) — the full
+  guide behind `ROLE_CONSISTENCY_VIOLATION`

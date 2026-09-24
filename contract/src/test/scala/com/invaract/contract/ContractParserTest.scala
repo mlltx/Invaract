@@ -814,6 +814,126 @@ class ContractParserTest extends AnyFunSuite {
     assert(!written.contains("description"))
   }
 
+  // --- Dataset.datasetType (DATA_ASSET/SOURCE/CONTROL) ------------------------
+
+  test("parse should capture a dataset's declared type") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |inputs:
+        |  - name: processing_calendar
+        |    location: /data/calendar
+        |    type: CONTROL
+        |    schema:
+        |      fields:
+        |        - name: as_of_date
+        |          type: date
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    type: DATA_ASSET
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    assert(contract.input("processing_calendar").get.datasetType.contains(DatasetType.Control))
+    assert(contract.output("out").get.datasetType.contains(DatasetType.DataAsset))
+  }
+
+  test("parse should accept a dataset type case-insensitively") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    type: data_asset
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    assert(ContractParser.parse(yaml).output("out").get.datasetType.contains(DatasetType.DataAsset))
+  }
+
+  test("parse should reject an unrecognized dataset type") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    type: NOT_A_REAL_TYPE
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    val ex = intercept[ContractParseException](ContractParser.parse(yaml))
+    assert(ex.getMessage.contains("NOT_A_REAL_TYPE"))
+  }
+
+  test("parse should treat dataset type as optional, defaulting to None when absent") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    assert(ContractParser.parse(yaml).output("out").get.datasetType.isEmpty)
+  }
+
+  test("write should round-trip a dataset's declared type") {
+    val yaml =
+      """id: sales_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: /data/sales
+        |    type: CONTROL
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val original = ContractParser.parse(yaml)
+    val roundTripped = ContractParser.parse(ContractParser.write(original))
+    assert(roundTripped == original)
+    assert(roundTripped.output("out").get.datasetType.contains(DatasetType.Control))
+  }
+
+  test("write should omit the type key entirely for a dataset that declares none") {
+    val yaml =
+      """id: minimal_contract
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+
+    val written = ContractParser.write(ContractParser.parse(yaml))
+    // Exactly one "type:" line should appear at all - the field's own
+    // "type: string" - since the dataset itself declares no type. Matching
+    // on the line's own key (not a raw substring of the whole document)
+    // distinguishes the dataset-level "type:" this test is about from the
+    // field-level one, regardless of the YAML writer's chosen indentation.
+    val typeLines = written.linesIterator.count(_.trim.startsWith("type:"))
+    assert(typeLines == 1, s"expected exactly one 'type:' line (the field's), got:\n$written")
+    assert(written.contains("type: string"))
+  }
+
   // --- Field.constraints (static data-quality) --------------------------------
 
   test("parse should decode a well-formed equals/oneOf/range field constraint via interpret") {

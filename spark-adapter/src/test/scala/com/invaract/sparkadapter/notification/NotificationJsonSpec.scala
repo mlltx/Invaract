@@ -3,7 +3,8 @@
 
 package com.invaract.sparkadapter.notification
 
-import com.invaract.sparkadapter.{DataQualityCheckResult, DataQualityVerdict, Violation}
+import com.invaract.contract.DatasetType
+import com.invaract.sparkadapter.{DataQualityCheckResult, DataQualityVerdict, RoleConformanceCheckResult, RoleConformanceVerdict, Violation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -114,6 +115,26 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"verdict\": \"Guaranteed\""))
     assert(json.contains("\"field\": \"currency\""))
     assert(json.contains("\"verdict\": \"NotGuaranteed\""))
+  }
+
+  test("toJson for ContractValidationEvent renders roleConformance, Nil as [] and populated entries via RoleConformanceCheckResult.toMap") {
+    val withoutRoleConformance = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(withoutRoleConformance).contains("\"roleConformance\": []"))
+
+    val withRoleConformance = ContractValidationEvent(
+      "demo@1.0.0",
+      "PASSED",
+      Nil,
+      0L,
+      Map.empty,
+      roleConformance = List(
+        RoleConformanceCheckResult("processing_calendar", DatasetType.Control, RoleConformanceVerdict.Conforms, "observed only in a Filter/Join condition")
+      )
+    )
+    val json = NotificationJson.toJson(withRoleConformance)
+    assert(json.contains("\"dataset\": \"processing_calendar\""))
+    assert(json.contains("\"datasetType\": \"CONTROL\""))
+    assert(json.contains("\"verdict\": \"Conforms\""))
   }
 
   test("toJson for WriteEvent includes location/format/saveMode/schema/contract, with None fields as null") {

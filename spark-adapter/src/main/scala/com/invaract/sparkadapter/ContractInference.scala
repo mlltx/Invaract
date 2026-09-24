@@ -4,6 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractVersion, Dataset, Field, Schema}
+import com.invaract.ir.{Lineage, Plan}
 
 import org.apache.spark.sql.types.StructType
 
@@ -41,15 +42,28 @@ private[sparkadapter] object ContractInference {
     *   `ContractEnforcementRule.verifyOrThrow` gathers via `collectInputSchemas`,
     *   reused here rather than re-derived so dry-run mode and real
     *   enforcement can never disagree about what counts as an input.
+    * @param plan the write's translated `ir.Plan` (`ContractEnforcementRule.inferOrIgnore`
+    *   runs the exact same `SparkPlanAdapter.translate` real enforcement
+    *   does), used only to observe each input's usage (see
+    *   `observedUsageDescription`'s own doc) — never to assert a declared
+    *   `Dataset.datasetType`, which stays `None` for every inferred
+    *   dataset regardless of what's observed (see this object's own doc
+    *   section 8 of the Input/Output Types spec: an inferred contract
+    *   represents observed implementation behavior, not proof of a
+    *   semantic role).
     */
-  def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, StructType)]): Contract = {
+  def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, StructType)], plan: Plan): Contract = {
     val totalInputs = inputSchemas.size
+    val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet
+    val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier)
     val inputs = inputSchemas.zipWithIndex.map { case ((location, schema), index) =>
+      val normalizedLocation = normalizeLocation(location)
       Dataset(
         name = inputName(index, totalInputs),
-        location = normalizeLocation(location),
+        location = normalizedLocation,
         format = None, // recognizedRead only ever yields a (location, schema) pair - no format is collected alongside it
-        schema = schemaOf(schema)
+        schema = schemaOf(schema),
+        description = observedUsageDescription(normalizedLocation, outputContributingQualifiers, conditionReferencedQualifiers)
       )
     }
     val output = Dataset(
@@ -72,6 +86,46 @@ private[sparkadapter] object ContractInference {
 
   private def inputName(index: Int, total: Int): String =
     if (total <= 1) "input" else s"input_${index + 1}"
+
+  /** A human-readable note on what this input was actually seen doing in
+    * the transformation — the type-aware half of dry-run generation (see
+    * docs/CONTRACT_MODEL.md's "Input and Output Types" section, "Dry-run
+    * contract generation"). Deliberately reuses `Dataset.description`
+    * (already documentary-only, never checked by any verifier) instead of
+    * inventing new structure for it, and deliberately stops short of
+    * setting `Dataset.datasetType`: dry-run analysis can establish that an
+    * object was *read and used to filter*, but "cannot necessarily
+    * establish that the object is organisationally defined as a CONTROL"
+    * (the spec's own example) — the distinction between what the
+    * implementation demonstrates and what a contract declares must be
+    * retained, so this only ever writes an observation for a human to
+    * review, never a proven classification.
+    *
+    * Matching against `outputContributingQualifiers`/`conditionReferencedQualifiers`
+    * reuses `StructuralVerifier.matchesAny` — the same
+    * `RoleConsistencyVerifier` also calls for the identical "does this
+    * location match any observed qualifier" question — rather than a
+    * second, independent copy of it: a `ColumnRef.qualifier` is either a
+    * `Read`'s alias or its dataset's raw (un-normalized) location (see
+    * `ir.Lineage.resolveInScopeT`'s `Read` case), so matching against this
+    * already-normalized `location` needs the same normalization-aware
+    * comparison, not a bare string `==`.
+    */
+  private def observedUsageDescription(
+      location: String,
+      outputContributingQualifiers: Set[String],
+      conditionReferencedQualifiers: Set[String]
+  ): Option[String] = {
+    if (StructuralVerifier.matchesAny(location, outputContributingQualifiers))
+      Some("Observed: contributes to at least one produced output column.")
+    else if (StructuralVerifier.matchesAny(location, conditionReferencedQualifiers))
+      Some(
+        "Observed: referenced only in a Filter/Join condition; never observed contributing to a produced output " +
+          "column. Review whether this input's role is CONTROL rather than DATA_ASSET/SOURCE."
+      )
+    else
+      None
+  }
 
   /** Delegates to `StructuralVerifier.normalizeSparkLocation` rather than
     * stripping `"file:"` independently here — see that method's own doc

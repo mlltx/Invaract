@@ -291,6 +291,15 @@ object DemoJobHarness {
             "dataQuality" -> Map(
               "captured" -> false,
               "note" -> "Not available on a passing check through this API - see this field's own comment in DemoJobHarness.scala. Configure a notification sink to observe dataQuality for every check, including PASSED ones."
+            ),
+            // Same pre-existing gap as dataQuality immediately above,
+            // for the identical reason: VerificationResult.roleConformance
+            // is only ever exposed via a FAILED check's thrown
+            // ContractViolationException, or a configured NotificationSink's
+            // published ContractValidationEvent - never on this PASSED path.
+            "roleConformance" -> Map(
+              "captured" -> false,
+              "note" -> "Not available on a passing check through this API - see this field's own comment in DemoJobHarness.scala. Configure a notification sink to observe roleConformance for every check, including PASSED ones."
             )
           )
         case None =>
@@ -369,6 +378,7 @@ object DemoJobHarness {
             "contractPath" -> contractPath,
             "violations" -> e.result.violations.map(_.toMap),
             "dataQuality" -> e.result.dataQuality.map(_.toMap),
+            "roleConformance" -> e.result.roleConformance.map(_.toMap),
             "explanation" -> e.getMessage
           ),
           error = Some("Write aborted: this transformation violates its contract. See contractVerification for the full explanation.")

@@ -164,6 +164,46 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     )
   }
 
+  test("dry-run notes when an input contributes to output data vs. is only referenced in a filter/join condition") {
+    val dataPath = scratchDir.resolve("infer_role_data.parquet").toString
+    val controlPath = scratchDir.resolve("infer_role_control.parquet").toString
+    val outputPath = scratchDir.resolve("infer_role_output.parquet").toString
+    spark.range(5).withColumnRenamed("id", "data_id").write.mode("overwrite").parquet(dataPath)
+    spark.range(1, 2).withColumnRenamed("id", "gate").write.mode("overwrite").parquet(controlPath)
+
+    val contract = lastInferredAfter {
+      val data = spark.read.parquet(dataPath)
+      val control = spark.read.parquet(controlPath)
+      // "gate" (control) only ever appears in the Filter condition below -
+      // the final select keeps only data's own column, so control's column
+      // never reaches a produced output column. Invaract translates the
+      // *analyzed* plan (see ir.Lineage's own doc, ADR-002), so this Filter
+      // stays exactly where the DataFrame API placed it - on top of the
+      // crossJoin - rather than being pushed down by an optimizer rule that
+      // never runs against this plan shape.
+      val joined = data.crossJoin(control).filter(control("gate") >= 1).select(data("data_id"))
+      joined.write.mode("overwrite").parquet(outputPath)
+    }
+
+    assert(contract.inputs.size == 2)
+    val dataInput = contract.inputs.find(i => sameLocation(i.location, dataPath)).get
+    val controlInput = contract.inputs.find(i => sameLocation(i.location, controlPath)).get
+
+    assert(
+      dataInput.description.exists(_.contains("contributes to")),
+      s"expected a contributes-to-output observation, got ${dataInput.description}"
+    )
+    assert(
+      controlInput.description.exists(d => d.contains("Filter/Join") && d.contains("CONTROL")),
+      s"expected a filter/join-only observation suggesting CONTROL, got ${controlInput.description}"
+    )
+    // Dry-run may *observe* control-like usage, but must never *declare* it -
+    // see docs/CONTRACT_MODEL.md's "Dry-run contract generation" section:
+    // what the implementation demonstrates is not what the contract declares.
+    assert(controlInput.datasetType.isEmpty, "dry-run must never assert a declared type, only observe usage")
+    assert(dataInput.datasetType.isEmpty)
+  }
+
   test("dry-run infers a contract with no rules and no extensions - never fabricates business intent") {
     val outputPath = scratchDir.resolve("infer_no_rules.parquet").toString
 

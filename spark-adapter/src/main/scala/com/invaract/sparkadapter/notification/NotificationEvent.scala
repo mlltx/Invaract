@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter.notification
 
 import com.invaract.fingerprint.TransformationFingerprint
-import com.invaract.sparkadapter.{DataQualityCheckResult, Violation}
+import com.invaract.sparkadapter.{DataQualityCheckResult, RoleConformanceCheckResult, Violation}
 
 /** One thing worth telling an external system about, published through a
   * `NotificationSink` when one is configured and enabled (see
@@ -73,6 +73,14 @@ sealed trait NotificationEvent {
   * ones already implied by `violations` above. This is the one channel
   * that reaches a subscriber on a *passing* check, where there is no
   * `ContractViolationException` to carry `result.dataQuality` instead.
+  *
+  * `roleConformance` is `result.roleConformance` carried through the same
+  * way — `Nil` unless the check ran with `VerificationOptions.roleConsistency
+  * = true` (see that field's own doc and docs/CONTRACT_MODEL.md's "Input
+  * and Output Types" section). Every entry rides along regardless of
+  * verdict, the same as `dataQuality` above — a subscriber sees
+  * `Conforms`/`CannotDetermine` results here too, not only the
+  * `Contradicts` ones already implied by `violations`.
   */
 case class ContractValidationEvent(
   contract: String,
@@ -82,7 +90,8 @@ case class ContractValidationEvent(
   metadata: Map[String, Any],
   applicationId: Option[String] = None,
   fingerprints: Option[TransformationFingerprint] = None,
-  dataQuality: List[DataQualityCheckResult] = Nil
+  dataQuality: List[DataQualityCheckResult] = Nil,
+  roleConformance: List[RoleConformanceCheckResult] = Nil
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }
