@@ -18,31 +18,68 @@ import java.io.File
   * {{{
   * sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
   * sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/team-a/ contracts/team-b/"
+  * sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
   * }}}
   *
-  * Exit codes: `0` — every discovered contract parsed and no cross-contract
-  * issue was found between any pair; `1` — a contract failed to parse, no
-  * contract files were found, or at least one cross-contract issue was
-  * found; `2` — usage error (no targets given).
+  * `--org-policy` additionally runs `TypeGuaranteeValidator` (docs/CONTRACT_MODEL.md's
+  * "Type guarantee checks" section, the spec's own deferred "stronger
+  * semantic and guarantee validation" phase) against the same discovered
+  * contracts, using that document's own `typeGuarantees` block to decide
+  * *which* checks run and whether a `Contradicts` verdict blocks this run at
+  * all — omitted entirely, this behaves exactly as it always has: no type
+  * guarantee checking happens. Only `typeGuarantees` is consulted from the
+  * named policy here — its `policies`/`exemptions`/etc. remain
+  * `OrgPolicyLintCli`'s own concern (single-contract linting), not
+  * re-evaluated by this cross-contract-scoped CLI.
+  *
+  * Exit codes: `0` — every discovered contract parsed, no cross-contract
+  * issue was found between any pair, and (if `--org-policy` was given) no
+  * enabled type guarantee check produced a blocking result; `1` — a
+  * contract or the named policy failed to parse/validate, no contract files
+  * were found, a cross-contract issue was found, or a blocking type
+  * guarantee result was found; `2` — usage error (no targets given, or
+  * `--org-policy` with no value).
   */
 object CrossContractLintCli {
   def main(args: Array[String]): Unit = sys.exit(run(args, System.out, System.err))
 
-  private val Usage = "Usage: CrossContractLintCli <contract-file-or-directory>..."
+  private val Usage = "Usage: CrossContractLintCli [--org-policy org-policy.yaml] <contract-file-or-directory>..."
 
   /** Deliberately `sys.exit`-free so it's directly unit-testable (a real
     * `System.exit` would kill the test JVM); `out`/`err` are injected for
     * the same reason, mirroring `OrgPolicyLintCli.run`'s exact shape.
     */
   private[cli] def run(args: Array[String], out: java.io.PrintStream, err: java.io.PrintStream): Int = {
-    if (args.isEmpty) {
+    val (orgPolicyPathResult, remaining) = extractStringFlag(args, "--org-policy")
+    val orgPolicyPath: Option[String] = orgPolicyPathResult match {
+      case Left(()) =>
+        err.println("--org-policy requires a path")
+        return 2
+      case Right(value) => value
+    }
+
+    if (remaining.isEmpty) {
       err.println(Usage)
       return 2
     }
 
-    val contractFiles = args.toList.flatMap(findContractFiles).distinct.sorted
+    // Excludes the named org-policy file itself, the same way
+    // OrgPolicyLintCli excludes its own policy document(s) from the
+    // contracts it scans: a directory target commonly holds the policy
+    // file alongside the contracts it governs, and without this a
+    // *.yaml scan would sweep it in as if it were a contract to lint - it
+    // isn't one, and ContractParser.parseFile would always reject it
+    // (no 'id'/'outputs'), turning a correct policy + a fully compliant
+    // set of contracts into a spurious failure. Compared by canonical
+    // path so this holds regardless of how the path was spelled.
+    val orgPolicyCanonicalPath = orgPolicyPath.map(p => new File(p).getCanonicalFile)
+    val contractFiles = remaining.toList
+      .flatMap(findContractFiles)
+      .distinct
+      .filterNot(p => orgPolicyCanonicalPath.contains(new File(p).getCanonicalFile))
+      .sorted
     if (contractFiles.isEmpty) {
-      err.println(s"No contract files (*.yaml/*.yml) found under: ${args.mkString(", ")}")
+      err.println(s"No contract files (*.yaml/*.yml) found under: ${remaining.mkString(", ")}")
       return 1
     }
 
@@ -68,13 +105,68 @@ object CrossContractLintCli {
     if (hadParseFailure) return 1
 
     val issues = CrossContractValidator.validate(contracts)
-    if (issues.isEmpty) {
+    issues.foreach(issue => out.println(s"[FAIL] ${issue.location}: ${issue.message}"))
+
+    val typeGuaranteeBlocking: List[TypeGuaranteeResult] = orgPolicyPath match {
+      case None => Nil
+      case Some(policyPath) =>
+        val policy =
+          try {
+            OrgPolicyParser.parseFile(policyPath)
+          } catch {
+            case e: OrgPolicyParseException =>
+              err.println(s"Failed to parse organizational policy '$policyPath': ${e.getMessage}")
+              return 1
+          }
+        val policyValidation = OrgPolicyValidator.validate(policy)
+        if (!policyValidation.isValid) {
+          err.println(s"Organizational policy '$policyPath' is invalid:")
+          policyValidation.errors.foreach(issue => err.println(s"  $issue"))
+          return 1
+        }
+        policyValidation.warnings.foreach(issue => out.println(s"[WARN] policy: $issue"))
+
+        val evaluation = TypeGuaranteeValidator.evaluate(contracts, policy)
+        val blockingResults = evaluation.blocking.toSet
+        evaluation.results.foreach { r =>
+          // "[FAIL]" is reserved for a result that actually blocks this run
+          // (a real Contradicts *and* typeGuarantees.mode is Enforce) - a
+          // Contradicts under a Warn-mode policy prints "[WARN]" instead,
+          // the same "the tag reflects what actually happens, not just the
+          // raw verdict" principle every other severity tag in this CLI
+          // already follows, so a "[FAIL]" line is never paired with a
+          // clean (0) exit code.
+          val tag =
+            if (blockingResults.contains(r)) "[FAIL]"
+            else if (r.verdict == TypeGuaranteeVerdict.Conforms) "[ OK ]"
+            else "[WARN]"
+          out.println(s"$tag [${r.checkType}] ${r.location}: ${r.message}")
+        }
+        evaluation.blocking
+    }
+
+    if (issues.isEmpty && typeGuaranteeBlocking.isEmpty) {
       out.println(s"[ OK ] ${contracts.size} contract(s) checked, no cross-contract issues found")
       0
     } else {
-      issues.foreach(issue => out.println(s"[FAIL] ${issue.location}: ${issue.message}"))
       1
     }
+  }
+
+  /** Extracts `flagName VALUE` from anywhere in `args`: `Right(Some(v))`
+    * when present with a following token to take as its value, `Right(None)`
+    * when the flag isn't present at all, `Left(())` when it's present but is
+    * the very last argument, with no value to take. The second element is
+    * `args` with the flag and its value (if consumed) removed, in original
+    * order — the identical `OrgPolicyLintCli.extractStringFlag` logic,
+    * duplicated here rather than shared: both are small, self-contained, and
+    * `OrgPolicyLintCli`'s version is `private` to that object.
+    */
+  private def extractStringFlag(args: Array[String], flagName: String): (Either[Unit, Option[String]], Array[String]) = {
+    val idx = args.indexOf(flagName)
+    if (idx < 0) (Right(None), args)
+    else if (idx == args.length - 1) (Left(()), args.take(idx))
+    else (Right(Some(args(idx + 1))), args.take(idx) ++ args.drop(idx + 2))
   }
 
   /** `target` itself if it's a single file; every `.yaml`/`.yml` file found

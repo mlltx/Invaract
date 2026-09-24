@@ -136,4 +136,97 @@ class CrossContractLintCliTest extends AnyFunSuite {
     assert(code == 0)
     assert(out.contains("[ OK ]"))
   }
+
+  // -- --org-policy / TypeGuaranteeValidator -----------------------------------
+
+  private val mismatchedSchemaConsumerContract =
+    """id: downstream_pipeline
+      |version: "1.0.0"
+      |inputs:
+      |  - name: customer_master
+      |    location: gold.customer_master
+      |    type: DATA_ASSET
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: long
+      |outputs:
+      |  - name: out
+      |    location: gold.downstream
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: string
+      |""".stripMargin
+
+  private def policyEnabling(checkType: String, mode: String = "enforce"): String =
+    s"""version: "1.0"
+       |typeGuarantees:
+       |  enabled: [$checkType]
+       |  mode: $mode
+       |""".stripMargin
+
+  test("--org-policy with no value: exit code 2") {
+    val (code, _, err) = runCapturing(Array("--org-policy"))
+    assert(code == 2)
+    assert(err.contains("--org-policy"))
+  }
+
+  test("--org-policy pointing to an unparseable policy: exit code 1, error on stderr") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract)
+    val policyPath = writeFile(dir, "policy.yaml", "typeGuarantees: {}\n") // missing required 'version'
+    val (code, _, err) = runCapturing(Array("--org-policy", policyPath.toString, dir.toString))
+    assert(code == 1)
+    assert(err.contains("Failed to parse organizational policy"))
+  }
+
+  test("--org-policy omitted entirely: no type guarantee checking happens at all") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract)
+    writeFile(dir, "consumer.yaml", mismatchedSchemaConsumerContract)
+    val (code, out, _) = runCapturing(Array(dir.toString))
+    assert(code == 0, out)
+    assert(!out.contains("data_asset_schema_consistency"))
+  }
+
+  test("--org-policy enabling data_asset_schema_consistency: a real mismatch blocks (exit 1, [FAIL])") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract) // id: string
+    writeFile(dir, "consumer.yaml", mismatchedSchemaConsumerContract) // id: long
+    val policyPath = writeFile(dir, "policy.yaml", policyEnabling("data_asset_schema_consistency"))
+    val (code, out, _) = runCapturing(Array("--org-policy", policyPath.toString, dir.toString))
+    assert(code == 1)
+    assert(out.contains("[FAIL] [data_asset_schema_consistency]"))
+    assert(out.contains("gold.customer_master"))
+  }
+
+  test("--org-policy enabling data_asset_schema_consistency in warn mode: reported but never blocks (exit 0, [WARN])") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract)
+    writeFile(dir, "consumer.yaml", mismatchedSchemaConsumerContract)
+    val policyPath = writeFile(dir, "policy.yaml", policyEnabling("data_asset_schema_consistency", mode = "warn"))
+    val (code, out, _) = runCapturing(Array("--org-policy", policyPath.toString, dir.toString))
+    assert(code == 0, out)
+    assert(out.contains("[WARN] [data_asset_schema_consistency]"))
+  }
+
+  test("--org-policy enabling data_asset_downstream_consumption: a consumed DATA_ASSET Conforms (exit 0, [ OK ])") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract)
+    writeFile(dir, "consumer.yaml", consistentConsumerContract)
+    val policyPath = writeFile(dir, "policy.yaml", policyEnabling("data_asset_downstream_consumption"))
+    val (code, out, _) = runCapturing(Array("--org-policy", policyPath.toString, dir.toString))
+    assert(code == 0, out)
+    assert(out.contains("[ OK ] [data_asset_downstream_consumption]"))
+  }
+
+  test("--org-policy enabling data_asset_downstream_consumption: an unconsumed DATA_ASSET is CannotDetermine, never blocks") {
+    val dir = tempDir()
+    writeFile(dir, "producer.yaml", producerContract)
+    val policyPath = writeFile(dir, "policy.yaml", policyEnabling("data_asset_downstream_consumption"))
+    val (code, out, _) = runCapturing(Array("--org-policy", policyPath.toString, dir.toString))
+    assert(code == 0, out)
+    assert(out.contains("[WARN] [data_asset_downstream_consumption]"))
+  }
 }

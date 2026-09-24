@@ -100,9 +100,15 @@ object CrossContractValidator {
     * Windows-authored path's backslashes — unlike
     * `StructuralVerifier.locationsMatch`, there is no `"file:"` scheme or
     * suffix-boundary case to handle, since neither side ever comes from an
-    * actual Spark plan.
+    * actual Spark plan. `private[contract]`, not `private`: `TypeGuaranteeValidator`'s
+    * own cross-contract checks need the identical comparison and reuse this
+    * rather than a second copy.
     */
-  private def sameLocation(a: String, b: String): Boolean = normalize(a) == normalize(b)
+  private[contract] def sameLocation(a: String, b: String): Boolean = normalize(a) == normalize(b)
 
-  private def normalize(location: String): String = location.trim.replace('\\', '/')
+  /** `private[contract]`, not `private`: `TypeGuaranteeValidator` reuses
+    * this directly as a group-by key (rather than an O(n^2) pairwise
+    * `sameLocation` scan) when bucketing declarations by physical location.
+    */
+  private[contract] def normalize(location: String): String = location.trim.replace('\\', '/')
 }

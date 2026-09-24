@@ -745,25 +745,111 @@ covers the common "lint a directory of contract files" case:
 sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
 ```
 
+### Type guarantee checks
+
+The spec's own Phase 6 — "stronger semantic and guarantee validation,"
+deliberately built only after Phases 1-5 above were trusted — is
+`com.invaract.contract.TypeGuaranteeValidator`. It runs across the same
+`List[Contract]` `CrossContractValidator` does (no Spark, no single
+contract in isolation), is configured entirely through `OrgPolicy`'s own
+`typeGuarantees` block (**mandatory or optional per organization, the same
+theme `require_dataset_type` establishes for declaring a type at all — see
+"Mandatory or optional, per organization" above**), and is built as an open
+registry so a new check can be added without touching this module's own
+code:
+
+```yaml
+# org-policy.yaml
+version: "1.0"
+typeGuarantees:
+  enabled: [data_asset_schema_consistency, data_asset_downstream_consumption]
+  mode: enforce # or 'warn' - reported either way, only 'enforce' blocks
+  customTypeGuaranteeTypes:
+    my_check: com.acme.governance.MyTypeGuaranteeCheck
+```
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
+```
+
+`TypeGuaranteeCheck` is the extension point — `def check(contracts:
+List[Contract]): List[TypeGuaranteeResult]` — resolved the same
+reflective, no-source-change way `CustomPolicyEvaluator`/`CustomRuleVerifier`
+already are: a built-in name (`TypeGuaranteeType.All`) or a
+`customTypeGuaranteeTypes` entry naming a class, via
+`TypeGuaranteeCheckFactory` (mirrors `CustomPolicyEvaluatorFactory` exactly,
+down to `OrgPolicyValidator` eagerly resolving every named class at policy-
+validation time — "fail loudly before any contract is checked," the same
+treatment every other reflective extension point in this file gets).
+`typeGuarantees.enabled` naming neither a built-in nor a registered custom
+check is a Warning ("will never be evaluated"), never a silent no-op.
+
+Two checks are built in today — deliberately narrow, mechanical ones, not
+an attempt at general business-guarantee reasoning (see "What this does
+not do yet" below):
+
+- **`data_asset_schema_consistency`** — every `DATA_ASSET`-typed dataset
+  declaration (input or output, any contract) at the same physical
+  location must agree on schema. Declarations are grouped by normalized
+  location first (`CrossContractValidator.normalize` — reused, not
+  duplicated), then deduplicated to one declaration per distinct
+  `Contract.id` within each location, then compared pairwise: a field name
+  common to two declarations with a different `fieldType`, or a `required`
+  field on one side absent from the other, is `Contradicts`. This is the
+  spec's own "`DATA_ASSET` produced from inconsistent inputs" case, read as
+  a cross-contract schema-agreement question rather than a full
+  data-lineage-vs-declaration proof (out of scope for a purely
+  contract-level check — see below).
+- **`data_asset_downstream_consumption`** — for every `DATA_ASSET` output,
+  whether *any other* contract (`consumer.id != producer.id`) declares an
+  input at the same location. `Conforms` if yes; `CannotDetermine`,
+  **never** `Contradicts`, if no. This is deliberately one-sided: Invaract
+  cannot prove a `DATA_ASSET` nobody currently consumes is "pipeline-only
+  state" (the spec's own "`DATA_ASSET` treated as pipeline-only state"
+  case) — a consumer contract simply not yet written, or living outside
+  this lint run's discovered set, looks identical to one that will never
+  exist. Reported for a human to review, never asserted as a violation.
+
+Every result is one of the same three verdicts role-consistency checking
+already uses (`TypeGuaranteeVerdict.Conforms`/`Contradicts`/`CannotDetermine`)
+— only a `Contradicts` result, and only under `typeGuarantees.mode: enforce`,
+becomes blocking (`TypeGuaranteeEvaluation.blocking`); under `mode: warn`
+every enabled check still runs and is reported, but nothing blocks.
+`CrossContractLintCli --org-policy` prints every result tagged `[FAIL]`
+(blocking), `[ OK ]` (`Conforms`), or `[WARN]` (`CannotDetermine`, or a
+`Contradicts` result under `warn` mode) and exits non-zero only when a
+result actually blocks — the same "the tag reflects what actually happens,
+not just the raw verdict" principle the rest of this CLI already follows.
+
 ### Unknown/unprovable cases
 
 Per the spec's own requirement, Invaract never represents an unproven
-semantic property as proven. This shows up in two places already covered
-above: `ContractInference` records an *observation* (a description), never
-a *declaration* (`datasetType` stays unset); and `RoleConsistencyVerifier`'s
-`CannotDetermine` verdict is kept structurally distinct from `Contradicts`,
-never silently upgraded to a violation just because a role looks
-suspicious.
+semantic property as proven. This shows up in every layer above:
+`ContractInference` records an *observation* (a description), never a
+*declaration* (`datasetType` stays unset); `RoleConsistencyVerifier`'s and
+`TypeGuaranteeValidator`'s `CannotDetermine` verdict is kept structurally
+distinct from `Contradicts` in both, never silently upgraded to a violation
+just because a role or a guarantee looks suspicious;
+`data_asset_downstream_consumption` above is the clearest example — an
+unconsumed `DATA_ASSET` is reported, never blocked, precisely because
+absence of a consumer today can never prove absence of one tomorrow.
 
 ### What this does not do yet
 
-Deliberately deferred — the spec's own "Recommended Implementation Order"
-places these only after the basic type model and conformance model are
-trusted, not before: whether a `DATA_ASSET` output is genuinely a business
-data product versus pipeline-only state; whether a `DATA_ASSET` is
-produced from inputs consistent with its own declared contract; stronger
-semantic/guarantee validation generally (business guarantees beyond
-role-consistency, transformation-semantics-aware checks). See ROADMAP.md.
+Deliberately still out of scope, even with Phase 6's two built-in checks
+in place: whether a `DATA_ASSET` output is genuinely a business data
+product versus pipeline-only state (`data_asset_downstream_consumption`
+only ever answers "is it consumed by a contract discovered in this run,"
+never "should it exist at all" — an organisational judgment structural
+analysis alone cannot make); whether a `DATA_ASSET` is produced from
+inputs *transformation-semantics-consistent* with its own declared
+contract (`data_asset_schema_consistency` only compares declared schemas
+across contracts, not the real transformation logic producing them against
+`ir.Lineage`); and true business-guarantee reasoning beyond these
+mechanical, structural checks generally. A new `TypeGuaranteeCheck` can be
+added — built in, or via `customTypeGuaranteeTypes` with no change to this
+module at all — as confidence grows that a specific check is high-enough
+confidence not to overclaim; see ROADMAP.md.
 
 ## Organizational Policy
 
@@ -787,7 +873,13 @@ Same three-layer split as the contract model itself, all in `contract/`
 - **`OrgPolicy`** (`OrgPolicyModel.scala`) — `version`, `policies: List[PolicyRule]`,
   `inject: InjectedDefaults`, `exemptions: List[PolicyExemption]`,
   `customPolicyTypes: Map[String, String]` (ruleType → `CustomPolicyEvaluator`
-  class name — see "Custom policy types" below). A `PolicyRule` carries `id`
+  class name — see "Custom policy types" below), `typeGuarantees:
+  TypeGuaranteeConfig` (`enabled: List[String]`, `mode: PolicyMode`,
+  `customTypeGuaranteeTypes: Map[String, String]` — see "Type guarantee
+  checks" under "Input and Output Types" above; unlike every other field
+  here, `OrgPolicyEvaluator` never consults it — only
+  `TypeGuaranteeValidator`/`CrossContractLintCli` do, since it governs a
+  cross-contract check, not a per-contract one). A `PolicyRule` carries `id`
   (referenced by exemptions, shown in violation messages), `ruleType`, open
   `properties: Map[String, Any]` (the same shape `ContractRule.properties`
   uses), `scope` (`Inputs`/`Outputs`/`All`), an optional `when:
@@ -817,14 +909,19 @@ Same three-layer split as the contract model itself, all in `contract/`
   an exemption with an empty `contractId`/`reason`, no `policyIds`, or a
   `policyIds` entry naming a policy `id` this document doesn't declare; a
   `customPolicyTypes` entry with an empty ruleType/class name, or one
-  naming a class `CustomPolicyEvaluatorFactory` can't resolve. Warnings:
+  naming a class `CustomPolicyEvaluatorFactory` can't resolve; the
+  identical pair of checks again for `typeGuarantees.customTypeGuaranteeTypes`,
+  resolved via `TypeGuaranteeCheckFactory` instead. Warnings:
   an exemption whose `reviewBy` has already passed (informational — the
   exemption simply stops applying, per "Exemptions" below); a
   `PolicyRule.ruleType` matching neither a built-in type nor a
   `customPolicyTypes` entry (it will never be evaluated); a
   `customPolicyTypes` entry whose ruleType collides with a built-in
-  `PolicyType` (dead — the built-in always wins). See "Custom policy
-  types" below for the latter two.
+  `PolicyType` (dead — the built-in always wins); the same two warnings
+  again, mirrored exactly, for `typeGuarantees.enabled`/
+  `customTypeGuaranteeTypes` against `TypeGuaranteeType`. See "Custom policy
+  types" below for the `customPolicyTypes` pair, and "Type guarantee checks"
+  under "Input and Output Types" above for the `typeGuarantees` pair.
 - **`OrgPolicyEvaluator`** — the pure engine. `evaluate(contract, policy,
   now)` evaluates every policy rule (skipping one an unexpired exemption
   covers for `contract.id`) and splits the resulting `PolicyViolation`s by

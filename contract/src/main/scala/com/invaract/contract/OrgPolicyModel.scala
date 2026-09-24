@@ -411,6 +411,48 @@ case class PolicyExemption(
   */
 case class InjectedDefaults(rules: List[ContractRule] = Nil, minVerificationOptions: Map[String, Boolean] = Map.empty)
 
+/** What "stronger semantic and guarantee validation" (docs/CONTRACT_MODEL.md's
+  * "Input and Output Types" section, "Type guarantee checks") this policy
+  * turns on for `TypeGuaranteeValidator.evaluate` — the mechanism that makes
+  * *which* guarantee checks run, and whether a `Contradicts` verdict blocks a
+  * lint/pipeline run at all, an organizational choice rather than a hardcoded
+  * one, the same "mandatory or optional, per organization" shape
+  * `require_dataset_type`/`roleConsistency` already establish elsewhere in
+  * this feature.
+  *
+  * @param enabled `TypeGuaranteeType` names (built-in or from
+  *   `customTypeGuaranteeTypes`) to actually run — empty (the default) means
+  *   none run at all, the same opt-in-by-default `VerificationOptions`
+  *   itself uses for every one of its own flags. An entry naming neither a
+  *   built-in type nor a `customTypeGuaranteeTypes` key is recorded but
+  *   never evaluated (`OrgPolicyValidator` warns on this, the same
+  *   "will never be evaluated" treatment an unrecognized `policies[].type`
+  *   gets).
+  * @param mode `Enforce` (default) makes a `Contradicts` verdict from any
+  *   enabled check block a caller (`CrossContractLintCli`, a future
+  *   registry-side consumer); `Warn` reports every verdict without ever
+  *   blocking — the same rollout mechanism `PolicyMode` already gives every
+  *   other policy type. One mode for the whole block, not per-check: an org
+  *   wanting a stricter mode for one specific check simply enables only
+  *   that one in its own layer/policy, the same composition
+  *   `OrgPolicyEvaluator.evaluateLayers` already gives every other policy
+  *   type.
+  * @param customTypeGuaranteeTypes maps a `TypeGuaranteeType` name this
+  *   document's `enabled` list uses to the fully-qualified class name of a
+  *   `TypeGuaranteeCheck` implementation that performs it — the
+  *   plug-in-without-editing-Invaract's-own-source extension point for a
+  *   guarantee check the built-in set doesn't cover, the identical
+  *   reflective mechanism `customPolicyTypes`/`Contract.customRuleTypes`
+  *   already establish. A name also present in `TypeGuaranteeType.All` is
+  *   inert here — the built-in check always wins (`OrgPolicyValidator`
+  *   warns on this). Resolved by `TypeGuaranteeCheckFactory`.
+  */
+case class TypeGuaranteeConfig(
+  enabled: List[String] = Nil,
+  mode: PolicyMode = PolicyMode.Enforce,
+  customTypeGuaranteeTypes: Map[String, String] = Map.empty
+)
+
 /** The root organizational policy document: a platform-owned artifact,
   * independent of any one contract, expressing rules that apply across
   * every contract in an organization. Attached to a Spark job via the
@@ -427,11 +469,20 @@ case class InjectedDefaults(rules: List[ContractRule] = Nil, minVerificationOpti
   *   interpretation always wins (`OrgPolicyValidator` warns on this).
   *   Resolved by `CustomPolicyEvaluatorFactory`; see
   *   docs/CONTRACT_MODEL.md's "Custom policy types" section.
+  * @param typeGuarantees which "stronger semantic and guarantee validation"
+  *   checks (`TypeGuaranteeValidator`) this document turns on across the
+  *   contracts it governs, and how a `Contradicts` verdict is handled — see
+  *   `TypeGuaranteeConfig`'s own doc. Appended last (not alongside
+  *   `customPolicyTypes` above) specifically to keep this addition
+  *   binary-compatible with existing compiled callers — see the API
+  *   Compatibility Requirement's own worked example for why a new case-class
+  *   field belongs at the end, not the middle.
   */
 case class OrgPolicy(
   version: String,
   policies: List[PolicyRule] = Nil,
   inject: InjectedDefaults = InjectedDefaults(),
   exemptions: List[PolicyExemption] = Nil,
-  customPolicyTypes: Map[String, String] = Map.empty
+  customPolicyTypes: Map[String, String] = Map.empty,
+  typeGuarantees: TypeGuaranteeConfig = TypeGuaranteeConfig()
 )

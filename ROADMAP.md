@@ -3729,7 +3729,9 @@ first written: one field's value compared against *another field on the same row
       and [Prove Enforcement with the Regression Pack](docs-site/src/content/docs/guides/running-the-regression-pack.mdx)
       pages.
 - [x] **API compatibility**: `contract` (0.9.0 → 0.10.0: `Dataset` gained
-      an eighth constructor parameter) and `spark-adapter` (0.7.0 → 0.8.0:
+      an eighth constructor parameter; 0.10.0 → 0.11.0: `OrgPolicy` gained
+      a sixth constructor parameter, `typeGuarantees`, for Phase 6 below)
+      and `spark-adapter` (0.7.0 → 0.8.0:
       `VerificationOptions`/`VerificationResult`/`notification.ContractValidationEvent`
       each gained a new trailing parameter) bumped with matching
       `mimaBinaryIssueFilters` entries, following this repository's own
@@ -3755,14 +3757,79 @@ first written: one field's value compared against *another field on the same row
       Requirement/Mutation Testing Requirement/API Compatibility Requirement/Coverage Gating
       Requirement all remain genuinely unverified until someone (or CI)
       runs them with real network/toolchain access.
-- [ ] **Deferred, per the spec's own recommended order**: "stronger
-      semantic and guarantee validation" (whether a `DATA_ASSET` output is
-      genuinely a business data product vs. pipeline-only state; whether a
-      `DATA_ASSET` is produced from inputs consistent with its own
-      declared contract; business guarantees/transformation-semantics-aware
-      checks beyond role-consistency) — the spec's own Phase 6, explicitly
-      "only after the basic type model and conformance model are trusted."
-      Not attempted speculatively here.
+- [x] **Phase 6 — stronger semantic and guarantee validation, configurable
+      by organizational policy, built as an open registry**: new
+      `contract/src/main/scala/com/invaract/contract/TypeGuaranteeValidator.scala`
+      (`TypeGuaranteeCheck` trait — `check(contracts: List[Contract]):
+      List[TypeGuaranteeResult]` — the extension point; `TypeGuaranteeVerdict`
+      reusing role-consistency's own `Conforms`/`Contradicts`/`CannotDetermine`
+      vocabulary; two built-in checks) plus
+      `TypeGuaranteeCheckFactory.scala` (mirrors
+      `CustomPolicyEvaluatorFactory` exactly: a name in config resolves a
+      real class reflectively, with the identical eager-resolution-at-
+      validation-time treatment). Configured entirely through a new
+      `OrgPolicy.typeGuarantees: TypeGuaranteeConfig` field (`enabled:
+      List[String]`, `mode: PolicyMode`, `customTypeGuaranteeTypes:
+      Map[String, String]`) — the same "mandatory or optional, per
+      organization" theme `require_dataset_type` already establishes,
+      extended to whether a stronger guarantee check runs at all and
+      whether a real contradiction blocks or only warns. Built-in checks:
+      `data_asset_schema_consistency` (every `DATA_ASSET` declared at the
+      same normalized location across every contract in the run must
+      agree on schema — a real field-type/`required` mismatch is
+      `Contradicts`) and `data_asset_downstream_consumption` (a
+      `DATA_ASSET` output not declared as an input anywhere else is
+      `CannotDetermine`, **never** `Contradicts` — Invaract cannot prove a
+      consumer contract will never exist, the spec's own "`DATA_ASSET`
+      treated as pipeline-only state" case read honestly). Wired into
+      `contract/src/main/scala/com/invaract/contract/cli/CrossContractLintCli.scala`
+      via a new `--org-policy <path>` flag, which excludes the named
+      policy file itself from the contracts it scans (the same fix
+      `OrgPolicyLintCli` already needed for the identical reason — a
+      policy document commonly lives alongside the contracts it governs)
+      and tags each printed result `[FAIL]`/`[ OK ]`/`[WARN]` by whether it
+      actually blocks, not by raw verdict alone. `OrgPolicyValidator`
+      eagerly validates `typeGuarantees.enabled`/`customTypeGuaranteeTypes`
+      the same way it already does for `customPolicyTypes` (empty
+      key/class name is an Error; an unresolvable class is an Error; a
+      name matching neither a built-in `TypeGuaranteeType` nor a
+      registered custom check is a Warning, "will never be evaluated";
+      a `customTypeGuaranteeTypes` entry colliding with a built-in type is
+      a Warning, "dead"). `contract/schema/invaract-org-policy.schema.json`
+      updated with the new `typeGuarantees` block (also fixed a stale
+      "seven types" reference to "eight" left over from Phase 1).
+      `docs/CONTRACT_MODEL.md` gained a "Type guarantee checks" section and
+      its "Unknown/unprovable cases"/"What this does not do yet" sections
+      were revised to reflect that these two checks now exist while
+      disclosing what's still genuinely out of scope; the docs-site guide
+      gained a matching "Type guarantee checks, configured by
+      organizational policy" section (including "Adding your own check").
+      Test coverage: `TypeGuaranteeValidatorTest.scala`,
+      `TypeGuaranteeCheckFixtures.scala` (mirrors
+      `CustomPolicyEvaluatorFixtures.scala`), new `OrgPolicyValidatorTest`
+      cases mirroring the `customPolicyTypes` block exactly, new
+      `OrgPolicyParserTest` cases, and 7 new `CrossContractLintCliTest`
+      cases for `--org-policy`. All entirely within the `contract` module
+      — no `spark-adapter`/`ir`/`fingerprint` file touched, so no
+      mutation-testing-shard update was needed (CLAUDE.md's per-file 70%
+      Stryker bar is scoped to those three modules only; `contract` still
+      gets ordinary coverage gating and the same MiMa treatment as every
+      other module).
+- [ ] **Phase 6 not run in this environment**: same toolchain blocker as
+      above — `sbt test`/`mimaReportBinaryIssues`/coverage gating for
+      `contract` have not been executed here, so none of Phase 6's new
+      code has been compiled or run for real yet.
+- [ ] **Still deliberately out of scope, even with Phase 6's two checks in
+      place**: whether a `DATA_ASSET` output is genuinely a business data
+      product vs. pipeline-only state (`data_asset_downstream_consumption`
+      only ever answers "consumed within this run," never "should exist at
+      all"); whether a `DATA_ASSET` is produced from inputs whose real
+      transformation logic — not just declared schema — is consistent with
+      its own declared contract (`ir.Lineage`-aware, not attempted);
+      business-guarantee reasoning generally beyond these two mechanical,
+      structural checks. A new `TypeGuaranteeCheck` — built in, or via
+      `customTypeGuaranteeTypes` with zero change to `contract` itself —
+      is the intended path to closing any of these as confidence grows.
 
 ---
 

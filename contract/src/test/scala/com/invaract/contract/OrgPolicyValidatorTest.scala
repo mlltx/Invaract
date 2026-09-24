@@ -317,6 +317,108 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(!result.warnings.exists(_.message.contains("will never be evaluated")))
   }
 
+  // -- typeGuarantees ----------------------------------------------------------
+
+  private val alwaysConformsCheckClass = classOf[AlwaysConformsTypeGuaranteeCheck].getName
+
+  test("a typeGuarantees.enabled entry naming a built-in TypeGuaranteeType is valid, no issues") {
+    val policy = OrgPolicy("1.0", typeGuarantees = TypeGuaranteeConfig(enabled = List(TypeGuaranteeType.DataAssetSchemaConsistency)))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("a typeGuarantees.enabled entry naming a resolvable customTypeGuaranteeTypes class is valid, no issues") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(
+        enabled = List("my_custom_check"),
+        customTypeGuaranteeTypes = Map("my_custom_check" -> alwaysConformsCheckClass)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.isEmpty)
+  }
+
+  test("a typeGuarantees.enabled entry with an empty string is an Error") {
+    val policy = OrgPolicy("1.0", typeGuarantees = TypeGuaranteeConfig(enabled = List("")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("typeGuarantees.enabled entry must not be empty")))
+  }
+
+  test("a typeGuarantees.enabled entry naming neither a built-in nor a customTypeGuaranteeTypes check is a Warning, not an Error") {
+    val policy = OrgPolicy("1.0", typeGuarantees = TypeGuaranteeConfig(enabled = List("some_future_check")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.exists(w => w.path == "typeGuarantees.enabled[0]" && w.message.contains("will never be evaluated")))
+  }
+
+  test("a customTypeGuaranteeTypes entry with an empty class name is an Error") {
+    val policy = OrgPolicy("1.0", typeGuarantees = TypeGuaranteeConfig(customTypeGuaranteeTypes = Map("my_custom_check" -> "")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("typeGuarantees.customTypeGuaranteeTypes class name must not be empty")))
+  }
+
+  test("a customTypeGuaranteeTypes entry naming a class with no public no-arg constructor is an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(
+        customTypeGuaranteeTypes = Map("my_custom_check" -> classOf[NoNoArgConstructorTypeGuaranteeCheck].getName)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(e => e.path == "typeGuarantees.customTypeGuaranteeTypes.my_custom_check" && e.message.contains("could not be resolved")))
+  }
+
+  test("a customTypeGuaranteeTypes entry naming a class that doesn't implement TypeGuaranteeCheck is an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(
+        customTypeGuaranteeTypes = Map("my_custom_check" -> classOf[NotATypeGuaranteeCheck].getName)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.isValid)
+  }
+
+  test("a customTypeGuaranteeTypes entry naming a class that doesn't exist is an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(customTypeGuaranteeTypes = Map("my_custom_check" -> "com.invaract.contract.NoSuchClassAtAll"))
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.isValid)
+  }
+
+  test("a customTypeGuaranteeTypes entry colliding with a built-in TypeGuaranteeType is a Warning, not an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(
+        customTypeGuaranteeTypes = Map(TypeGuaranteeType.DataAssetSchemaConsistency -> alwaysConformsCheckClass)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(
+      result.warnings.exists(w =>
+        w.path == s"typeGuarantees.customTypeGuaranteeTypes.${TypeGuaranteeType.DataAssetSchemaConsistency}" && w.message.contains("dead")
+      )
+    )
+  }
+
+  test("an enabled check with a valid customTypeGuaranteeTypes entry produces no 'will never be evaluated' warning") {
+    val policy = OrgPolicy(
+      "1.0",
+      typeGuarantees = TypeGuaranteeConfig(
+        enabled = List("my_custom_check"),
+        customTypeGuaranteeTypes = Map("my_custom_check" -> alwaysConformsCheckClass)
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.warnings.exists(_.message.contains("will never be evaluated")))
+  }
+
   // -- validateLayers (policy layering/inheritance) --------------------------
 
   test("validateLayers with no layers at all is valid, with no issues") {

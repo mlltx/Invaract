@@ -108,6 +108,48 @@ object OrgPolicyValidator {
       }
     }
 
+    policy.typeGuarantees.enabled.zipWithIndex.foreach { case (checkType, idx) =>
+      val path = s"typeGuarantees.enabled[$idx]"
+      if (checkType.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "A typeGuarantees.enabled entry must not be empty")
+      } else if (!TypeGuaranteeType.All.contains(checkType) && !policy.typeGuarantees.customTypeGuaranteeTypes.contains(checkType)) {
+        // Mirrors the identical "not built-in, no customPolicyTypes entry
+        // for it either" Warning above - could be a forward-compatible
+        // document authored against a newer Invaract, but far more often a
+        // typo'd or forgotten customTypeGuaranteeTypes registration.
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"typeGuarantees.enabled names '$checkType', which is not a built-in TypeGuaranteeType and has no " +
+            "customTypeGuaranteeTypes entry naming a TypeGuaranteeCheck for it - it will never be evaluated"
+        )
+      }
+    }
+
+    policy.typeGuarantees.customTypeGuaranteeTypes.toList.sortBy(_._1).foreach { case (checkType, className) =>
+      val path = s"typeGuarantees.customTypeGuaranteeTypes.$checkType"
+      if (checkType.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, "typeGuarantees.customTypeGuaranteeTypes", "A typeGuarantees.customTypeGuaranteeTypes key must not be empty")
+      } else if (TypeGuaranteeType.All.contains(checkType)) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"customTypeGuaranteeTypes entry for '$checkType' is dead - it's already a built-in TypeGuaranteeType, which always takes precedence"
+        )
+      }
+      if (className.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "A typeGuarantees.customTypeGuaranteeTypes class name must not be empty")
+      } else {
+        TypeGuaranteeCheckFactory.tryResolve(className).failed.foreach { e =>
+          issues += ValidationIssue(
+            ValidationSeverity.Error,
+            path,
+            s"typeGuarantees.customTypeGuaranteeTypes class '$className' could not be resolved: ${e.getMessage}"
+          )
+        }
+      }
+    }
+
     val knownPolicyIds = policy.policies.map(_.id).toSet
     policy.exemptions.zipWithIndex.foreach { case (exemption, idx) =>
       val path = s"exemptions[$idx]"

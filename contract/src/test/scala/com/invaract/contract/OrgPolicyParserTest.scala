@@ -143,6 +143,38 @@ class OrgPolicyParserTest extends AnyFunSuite {
     )
   }
 
+  test("parse should default typeGuarantees to empty/Enforce when the block is absent entirely") {
+    val policy = OrgPolicyParser.parse("""version: "1.0"""" + "\n")
+    assert(policy.typeGuarantees == TypeGuaranteeConfig())
+    assert(policy.typeGuarantees.enabled.isEmpty)
+    assert(policy.typeGuarantees.mode == PolicyMode.Enforce)
+  }
+
+  test("parse should decode a typeGuarantees block: enabled, mode, and customTypeGuaranteeTypes") {
+    val yaml =
+      """version: "1.0"
+        |typeGuarantees:
+        |  enabled: [data_asset_schema_consistency, data_asset_downstream_consumption, my_custom_check]
+        |  mode: warn
+        |  customTypeGuaranteeTypes:
+        |    my_custom_check: com.acme.MyCustomCheck
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.typeGuarantees.enabled == List(TypeGuaranteeType.DataAssetSchemaConsistency, TypeGuaranteeType.DataAssetDownstreamConsumption, "my_custom_check"))
+    assert(policy.typeGuarantees.mode == PolicyMode.Warn)
+    assert(policy.typeGuarantees.customTypeGuaranteeTypes == Map("my_custom_check" -> "com.acme.MyCustomCheck"))
+  }
+
+  test("parse should treat an empty typeGuarantees.enabled list as 'nothing enabled', not an error") {
+    val yaml =
+      """version: "1.0"
+        |typeGuarantees:
+        |  enabled: []
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.typeGuarantees.enabled.isEmpty)
+  }
+
   test("parseFile should parse a 'when' condition, 'warn' mode, and 'inject' block") {
     val policy = OrgPolicyParser.parseFile(fixture("valid_with_condition_and_injection.yaml"))
 

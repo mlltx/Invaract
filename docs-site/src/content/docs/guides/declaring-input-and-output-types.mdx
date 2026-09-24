@@ -235,14 +235,93 @@ Exit code `0` means every contract parsed and no contradiction was found; `1` me
 parse failure, no contract files found, or at least one contradiction — printed with the
 shared location and both contracts involved.
 
+## Type guarantee checks, configured by organizational policy
+
+Cross-contract validation above catches one specific, hardcoded contradiction. **Type
+guarantee checks** are the general, extensible version of the same idea: stronger
+semantic/guarantee checks across every contract discovered together, entirely configured
+through your [organizational policy](/guides/enforcing-organizational-policy/) document —
+which checks run, and whether a real contradiction blocks the lint run or only gets
+reported.
+
+```yaml
+# org-policy.yaml
+version: "1.0"
+typeGuarantees:
+  enabled: [data_asset_schema_consistency, data_asset_downstream_consumption]
+  mode: enforce # or 'warn' - every enabled check still runs and is reported either way
+```
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli --org-policy org-policy.yaml contracts/"
+```
+
+Two checks are built in:
+
+- **`data_asset_schema_consistency`** — every `DATA_ASSET`-typed dataset declared at the
+  same physical location, across every contract in this run, must agree on schema. A
+  common field with a different type, or a `required` field one side is missing, is a real
+  contradiction.
+- **`data_asset_downstream_consumption`** — for each `DATA_ASSET` output, is it declared
+  as an input anywhere else? If yes, conforms. If no, that's reported as `CannotDetermine`
+  — **never** as a contradiction, since a consumer contract simply not written yet (or not
+  included in this lint run) looks identical to one that will never exist. Invaract cannot
+  prove a `DATA_ASSET` nobody currently consumes is dead pipeline-only state, so it never
+  claims to.
+
+Omit `typeGuarantees` entirely (or the `--org-policy` flag) and no type guarantee checking
+happens at all — the same "absent means off" default every other opt-in capability in
+this guide follows.
+
+### Mandatory or optional, per organization — the same theme as declaring a type at all
+
+`typeGuarantees.mode` draws the same enforce/warn line `require_dataset_type` draws for
+declaring a `type` in the first place:
+
+- **`mode: warn`** (or omit the whole block) — every enabled check still runs, every
+  result still prints, but nothing blocks. Good for rolling out a new check safely before
+  it starts failing builds.
+- **`mode: enforce`** — a real `Contradicts` result from any enabled check fails the lint
+  run (non-zero exit), the same way any other blocking violation does.
+
+`CrossContractLintCli` prints every result tagged `[FAIL]` (actually blocking), `[ OK ]`
+(`Conforms`), or `[WARN]` (`CannotDetermine`, or a `Contradicts` result under `warn`
+mode) — a `[FAIL]` line only ever appears alongside a non-zero exit code.
+
+### Adding your own check
+
+`typeGuarantees` is built as an open registry, the same reflective, no-source-change
+extension point [writing your own policy
+type](/guides/enforcing-organizational-policy/#write-your-own-policy-type) already uses
+for `OrgPolicy` itself: implement `com.invaract.contract.TypeGuaranteeCheck` (one method,
+`check(contracts: List[Contract]): List[TypeGuaranteeResult]`), put the compiled class on
+`contract`'s classpath, and name it in `customTypeGuaranteeTypes`:
+
+```yaml
+typeGuarantees:
+  enabled: [data_asset_schema_consistency, my_check]
+  customTypeGuaranteeTypes:
+    my_check: com.acme.governance.MyTypeGuaranteeCheck
+```
+
+A name in `enabled` that's neither a built-in check nor a `customTypeGuaranteeTypes`
+entry is reported (not silently dropped) as a policy warning: "will never be evaluated" —
+the same warning an org policy's `customPolicyTypes` already gives for the identical
+mistake.
+
 ## What this doesn't check yet
 
 - **Whether a `DATA_ASSET` output is genuinely a business data product**, as opposed to
-  pipeline-only state dressed up as one — not observable from a single transformation's
-  structure alone.
-- **Whether a `DATA_ASSET` is produced from inputs consistent with its own declared
-  contract** — a stronger semantic check, deliberately deferred until the basic type
-  model and conformance checks above are trusted.
+  pipeline-only state dressed up as one — `data_asset_downstream_consumption` only ever
+  answers "is it consumed by a contract in this run," never "should it exist at all," an
+  organisational judgment structure alone can't make.
+- **Whether a `DATA_ASSET` is produced from inputs whose real transformation logic is
+  consistent with its own declared contract** — `data_asset_schema_consistency` only
+  compares declared schemas across contracts, not the transformation itself against
+  `ir.Lineage`.
 - **A `DATA_ASSET`/`SOURCE` input observed only gating rows** (present in a join/filter,
   never contributing a column) is reported `CannotDetermine`, never asserted as a
   contradiction — genuinely ambiguous from structure alone.
+- **True business-guarantee reasoning beyond these mechanical, structural checks** — a new
+  `TypeGuaranteeCheck` can be added as confidence grows that a specific check is
+  high-enough confidence not to overclaim, without changing this module at all.

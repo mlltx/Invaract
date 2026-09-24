@@ -80,14 +80,55 @@ object OrgPolicyParser {
       case None => Map.empty[String, String]
     }
 
+    val typeGuarantees = parseTypeGuarantees(raw)
+
     // Duplicate policy ids, a customPolicyTypes entry colliding with a
     // built-in PolicyType, or one naming a class that doesn't resolve are
     // all structurally sound documents (same as a Contract with duplicate
     // dataset names) — OrgPolicyValidator flags these as Errors/Warnings,
     // not this parser, the same split ContractValidator uses for duplicate
     // dataset/field names.
-    OrgPolicy(version, policies, inject, exemptions, customPolicyTypes)
+    OrgPolicy(version, policies, inject, exemptions, customPolicyTypes, typeGuarantees)
   }
+
+  /** Parses an optional `typeGuarantees:` block — absent entirely means
+    * `TypeGuaranteeConfig()`'s own defaults (nothing enabled, the same
+    * opt-in-by-default shape every other capability in this feature uses).
+    * `enabled: []`/an absent `enabled` key are treated identically (both
+    * "nothing enabled"), the same "empty means malformed" the rest of this
+    * parser does NOT apply here — unlike a required list
+    * (`requireStringList`), an org genuinely choosing to enable nothing at
+    * all is a normal, common starting point, not a mistake.
+    */
+  private def parseTypeGuarantees(raw: Map[String, Any]): TypeGuaranteeConfig =
+    raw.get("typeGuarantees") match {
+      case None => TypeGuaranteeConfig()
+      case Some(value) =>
+        val m = loadMap(value, "orgPolicy.typeGuarantees")
+        val enabled = optStringList(m, "enabled", "orgPolicy.typeGuarantees").distinct
+        val mode = optString(m, "mode").map(parseMode(_, "orgPolicy.typeGuarantees")).getOrElse(PolicyMode.Enforce)
+        val customTypeGuaranteeTypes = m.get("customTypeGuaranteeTypes") match {
+          case Some(v) =>
+            loadMap(v, "orgPolicy.typeGuarantees.customTypeGuaranteeTypes").map { case (checkType, className) =>
+              checkType -> String.valueOf(className)
+            }
+          case None => Map.empty[String, String]
+        }
+        TypeGuaranteeConfig(enabled, mode, customTypeGuaranteeTypes)
+    }
+
+  /** Like `requireStringList`, but for an optional list: `Nil` when `key`
+    * is absent entirely, rather than throwing.
+    */
+  private def optStringList(raw: Map[String, Any], key: String, context: String): List[String] =
+    optValue(raw, key) match {
+      case None => Nil
+      case Some(value) =>
+        loadList(value, s"$context.$key").map {
+          case s: String => s
+          case other     => throw new OrgPolicyParseException(s"Expected a list of strings for '$context.$key', got: $other")
+        }
+    }
 
   private def parsePolicyRule(raw: Map[String, Any], context: String): PolicyRule = {
     val id = requireString(raw, "id", context)

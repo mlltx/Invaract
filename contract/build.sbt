@@ -42,7 +42,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.10.0"
+ThisBuild / version := "0.11.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -187,7 +187,7 @@ coverageHighlighting := true
 // `sbt mimaReportBinaryIssues` run with no env var set; bump it whenever
 // convenient, but a stale value here can no longer break CI for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.9.0")
+  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.10.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -230,6 +230,15 @@ import com.typesafe.tools.mima.core._
 // already-compiled caller of the seven-argument Dataset.apply/.copy no
 // longer resolves against the eight-argument one. Same "becomes inert
 // once base-ref reaches 0.10.0 or later" property as every filter above.
+//
+// The real, deliberate break motivating the 0.10.0 -> 0.11.0 bump above:
+// OrgPolicy gained a sixth constructor parameter, typeGuarantees (see
+// docs/CONTRACT_MODEL.md's "Type guarantee checks" section - the spec's
+// own deferred "stronger semantic and guarantee validation" phase) - an
+// optional, additive field (defaults to TypeGuaranteeConfig(), every
+// existing org-policy document is unaffected), same reasoning as every
+// filter above. Same "becomes inert once base-ref reaches 0.11.0 or
+// later" property.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.copy"),
@@ -242,5 +251,9 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Dataset.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Dataset$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.Dataset$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.OrgPolicy.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.contract.OrgPolicy$")
 )
