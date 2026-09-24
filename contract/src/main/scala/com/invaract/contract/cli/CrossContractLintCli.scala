@@ -50,7 +50,7 @@ object CrossContractLintCli {
     * the same reason, mirroring `OrgPolicyLintCli.run`'s exact shape.
     */
   private[cli] def run(args: Array[String], out: java.io.PrintStream, err: java.io.PrintStream): Int = {
-    val (orgPolicyPathResult, remaining) = extractStringFlag(args, "--org-policy")
+    val (orgPolicyPathResult, remaining) = CliSupport.extractStringFlag(args, "--org-policy")
     val orgPolicyPath: Option[String] = orgPolicyPathResult match {
       case Left(()) =>
         err.println("--org-policy requires a path")
@@ -74,7 +74,7 @@ object CrossContractLintCli {
     // path so this holds regardless of how the path was spelled.
     val orgPolicyCanonicalPath = orgPolicyPath.map(p => new File(p).getCanonicalFile)
     val contractFiles = remaining.toList
-      .flatMap(findContractFiles)
+      .flatMap(CliSupport.findContractFiles)
       .distinct
       .filterNot(p => orgPolicyCanonicalPath.contains(new File(p).getCanonicalFile))
       .sorted
@@ -153,42 +153,4 @@ object CrossContractLintCli {
     }
   }
 
-  /** Extracts `flagName VALUE` from anywhere in `args`: `Right(Some(v))`
-    * when present with a following token to take as its value, `Right(None)`
-    * when the flag isn't present at all, `Left(())` when it's present but is
-    * the very last argument, with no value to take. The second element is
-    * `args` with the flag and its value (if consumed) removed, in original
-    * order — the identical `OrgPolicyLintCli.extractStringFlag` logic,
-    * duplicated here rather than shared: both are small, self-contained, and
-    * `OrgPolicyLintCli`'s version is `private` to that object.
-    */
-  private def extractStringFlag(args: Array[String], flagName: String): (Either[Unit, Option[String]], Array[String]) = {
-    val idx = args.indexOf(flagName)
-    if (idx < 0) (Right(None), args)
-    else if (idx == args.length - 1) (Left(()), args.take(idx))
-    else (Right(Some(args(idx + 1))), args.take(idx) ++ args.drop(idx + 2))
-  }
-
-  /** `target` itself if it's a single file; every `.yaml`/`.yml` file found
-    * recursively if it's a directory; empty if it's neither — the identical
-    * walk `OrgPolicyLintCli.findContractFiles` already implements,
-    * duplicated here rather than shared: both are small, self-contained,
-    * and `OrgPolicyLintCli`'s version is `private` to that object.
-    */
-  private def findContractFiles(target: String): List[String] = {
-    val file = new File(target)
-    if (file.isDirectory) {
-      def walk(dir: File): List[File] =
-        Option(dir.listFiles()).toList.flatten.flatMap { f =>
-          if (f.isDirectory) walk(f)
-          else if (f.getName.endsWith(".yaml") || f.getName.endsWith(".yml")) List(f)
-          else Nil
-        }
-      walk(file).map(_.getPath)
-    } else if (file.isFile) {
-      List(file.getPath)
-    } else {
-      Nil
-    }
-  }
 }

@@ -4,6 +4,7 @@
 package com.invaract.contract
 
 import java.time.LocalDate
+import scala.util.Try
 
 /** Validates a parsed [[OrgPolicy]] beyond what `OrgPolicyParser` already
   * guarantees structurally — the org-policy counterpart to
@@ -77,36 +78,23 @@ object OrgPolicyValidator {
       issues += ValidationIssue(ValidationSeverity.Error, "policies", s"Duplicate policy id '$id'")
     }
 
-    policy.customPolicyTypes.toList.sortBy(_._1).foreach { case (ruleType, className) =>
-      val path = s"customPolicyTypes.$ruleType"
-      if (ruleType.trim.isEmpty) {
-        issues += ValidationIssue(ValidationSeverity.Error, "customPolicyTypes", "A customPolicyTypes key must not be empty")
-      } else if (PolicyType.All.contains(ruleType)) {
-        // Dead entry, not a crash: OrgPolicyEvaluator.evaluateRule only
-        // ever consults customPolicyTypes when rule.interpret is None,
-        // which a built-in ruleType with well-formed properties never is -
-        // the built-in interpretation always wins. Flagged the same way
-        // ContractLevelTypes' inert scope/when is: a Warning, since it
-        // still evaluates correctly, just not via the class this entry
-        // names.
-        issues += ValidationIssue(
-          ValidationSeverity.Warning,
-          path,
-          s"customPolicyTypes entry for '$ruleType' is dead - it's already a built-in PolicyType, which always takes precedence"
-        )
-      }
-      if (className.trim.isEmpty) {
-        issues += ValidationIssue(ValidationSeverity.Error, path, "A customPolicyTypes class name must not be empty")
-      } else {
-        CustomPolicyEvaluatorFactory.tryResolve(className).failed.foreach { e =>
-          issues += ValidationIssue(
-            ValidationSeverity.Error,
-            path,
-            s"customPolicyTypes class '$className' could not be resolved: ${e.getMessage}"
-          )
-        }
-      }
-    }
+    // Dead entry, not a crash: OrgPolicyEvaluator.evaluateRule only ever
+    // consults customPolicyTypes when rule.interpret is None, which a
+    // built-in ruleType with well-formed properties never is - the
+    // built-in interpretation always wins. Flagged the same way
+    // ContractLevelTypes' inert scope/when is: a Warning, since it still
+    // evaluates correctly, just not via the class this entry names. The
+    // identical shape (empty key/class name is an Error, a collision with
+    // a built-in name is a dead-entry Warning, an unresolvable class is an
+    // Error) governs `typeGuarantees.customTypeGuaranteeTypes` below too -
+    // see `validateCustomRegistry`.
+    issues ++= validateCustomRegistry(
+      policy.customPolicyTypes,
+      PolicyType.All,
+      "PolicyType",
+      CustomPolicyEvaluatorFactory.tryResolve,
+      "customPolicyTypes"
+    )
 
     policy.typeGuarantees.enabled.zipWithIndex.foreach { case (checkType, idx) =>
       val path = s"typeGuarantees.enabled[$idx]"
@@ -126,29 +114,13 @@ object OrgPolicyValidator {
       }
     }
 
-    policy.typeGuarantees.customTypeGuaranteeTypes.toList.sortBy(_._1).foreach { case (checkType, className) =>
-      val path = s"typeGuarantees.customTypeGuaranteeTypes.$checkType"
-      if (checkType.trim.isEmpty) {
-        issues += ValidationIssue(ValidationSeverity.Error, "typeGuarantees.customTypeGuaranteeTypes", "A typeGuarantees.customTypeGuaranteeTypes key must not be empty")
-      } else if (TypeGuaranteeType.All.contains(checkType)) {
-        issues += ValidationIssue(
-          ValidationSeverity.Warning,
-          path,
-          s"customTypeGuaranteeTypes entry for '$checkType' is dead - it's already a built-in TypeGuaranteeType, which always takes precedence"
-        )
-      }
-      if (className.trim.isEmpty) {
-        issues += ValidationIssue(ValidationSeverity.Error, path, "A typeGuarantees.customTypeGuaranteeTypes class name must not be empty")
-      } else {
-        TypeGuaranteeCheckFactory.tryResolve(className).failed.foreach { e =>
-          issues += ValidationIssue(
-            ValidationSeverity.Error,
-            path,
-            s"typeGuarantees.customTypeGuaranteeTypes class '$className' could not be resolved: ${e.getMessage}"
-          )
-        }
-      }
-    }
+    issues ++= validateCustomRegistry(
+      policy.typeGuarantees.customTypeGuaranteeTypes,
+      TypeGuaranteeType.All,
+      "TypeGuaranteeType",
+      TypeGuaranteeCheckFactory.tryResolve,
+      "typeGuarantees.customTypeGuaranteeTypes"
+    )
 
     val knownPolicyIds = policy.policies.map(_.id).toSet
     policy.exemptions.zipWithIndex.foreach { case (exemption, idx) =>
@@ -239,4 +211,44 @@ object OrgPolicyValidator {
 
   private def duplicateNames(names: List[String]): Set[String] =
     names.groupBy(identity).collect { case (name, occurrences) if occurrences.size > 1 => name }.toSet
+
+  /** Validates a reflective plugin-class registry map — `customPolicyTypes`
+    * and `typeGuarantees.customTypeGuaranteeTypes` are the identical shape
+    * (a name mapped to a class name Invaract resolves reflectively),
+    * parameterized only by which built-in name set a key can collide with,
+    * that built-in set's own display name, and which `*Factory.tryResolve`
+    * decides whether a class name actually resolves. `fieldPath` is both
+    * the document key this map lives under (`"customPolicyTypes"`,
+    * `"typeGuarantees.customTypeGuaranteeTypes"`) and the prefix every
+    * issue's own `path`/message uses, so a caller never has to keep the two
+    * in sync by hand.
+    */
+  private def validateCustomRegistry(
+      entries: Map[String, String],
+      builtinNames: Set[String],
+      builtinKindLabel: String,
+      resolve: String => Try[Any],
+      fieldPath: String
+  ): List[ValidationIssue] =
+    entries.toList.sortBy(_._1).flatMap { case (name, className) =>
+      val path = s"$fieldPath.$name"
+      val entryIssues = List.newBuilder[ValidationIssue]
+      if (name.trim.isEmpty) {
+        entryIssues += ValidationIssue(ValidationSeverity.Error, fieldPath, s"A $fieldPath key must not be empty")
+      } else if (builtinNames.contains(name)) {
+        entryIssues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"$fieldPath entry for '$name' is dead - it's already a built-in $builtinKindLabel, which always takes precedence"
+        )
+      }
+      if (className.trim.isEmpty) {
+        entryIssues += ValidationIssue(ValidationSeverity.Error, path, s"A $fieldPath class name must not be empty")
+      } else {
+        resolve(className).failed.foreach { e =>
+          entryIssues += ValidationIssue(ValidationSeverity.Error, path, s"$fieldPath class '$className' could not be resolved: ${e.getMessage}")
+        }
+      }
+      entryIssues.result()
+    }
 }

@@ -151,7 +151,9 @@ object TypeGuaranteeValidator {
     * issue instead.
     */
   def validate(contracts: List[Contract], config: TypeGuaranteeConfig): List[TypeGuaranteeResult] =
-    config.enabled.distinct.flatMap(checkType => resolveCheck(checkType, config.customTypeGuaranteeTypes).toList.flatMap(_.check(contracts)))
+    config.enabled.distinct.flatMap { checkType =>
+      resolveCheck(checkType, config.customTypeGuaranteeTypes).map(_.check(contracts)).getOrElse(Nil)
+    }
 
   private def resolveCheck(checkType: String, customTypeGuaranteeTypes: Map[String, String]): Option[TypeGuaranteeCheck] =
     builtinChecks.get(checkType).orElse {

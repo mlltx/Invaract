@@ -71,7 +71,7 @@ object OrgPolicyLintCli {
       case Right(value) => value.getOrElse(DefaultWarnExpiringWithinDays)
     }
 
-    val (overlaysOpt, remaining) = extractStringFlag(afterWarnFlag, "--overlays")
+    val (overlaysOpt, remaining) = CliSupport.extractStringFlag(afterWarnFlag, "--overlays")
     val overlayPaths = overlaysOpt match {
       case Left(())    => err.println("--overlays requires a comma-separated list of policy paths"); return 2
       case Right(None) => Nil
@@ -136,7 +136,7 @@ object OrgPolicyLintCli {
     // slash, ".").
     val policyFiles = layerPaths.map(p => new File(p).getCanonicalFile).toSet
     val contractFiles = targets
-      .flatMap(findContractFiles)
+      .flatMap(CliSupport.findContractFiles)
       .distinct
       .filterNot(p => policyFiles.contains(new File(p).getCanonicalFile))
       .sorted
@@ -171,31 +171,15 @@ object OrgPolicyLintCli {
     if (hadFailure) 1 else 0
   }
 
-  /** Extracts `flagName VALUE` from anywhere in `args`: `Right(Some(v))` when
-    * present with a following token to take as its value, `Right(None)` when
-    * the flag isn't present at all, `Left(())` when it's present but is the
-    * very last argument, with no value to take. The second element is `args`
-    * with the flag and its value (if consumed) removed, in original order.
-    * `extractIntFlag` below is this same locate/extract logic, plus an
-    * integer parse on the leaf value - built on top of this rather than
-    * duplicating it, since only the leaf step actually differs.
-    */
-  private def extractStringFlag(args: Array[String], flagName: String): (Either[Unit, Option[String]], Array[String]) = {
-    val idx = args.indexOf(flagName)
-    if (idx < 0) (Right(None), args)
-    else if (idx == args.length - 1) (Left(()), args.take(idx))
-    else (Right(Some(args(idx + 1))), args.take(idx) ++ args.drop(idx + 2))
-  }
-
-  /** `extractStringFlag`, with the extracted value additionally parsed as an
-    * integer: `Right(Some(v))` on a valid integer value, `Right(None)` when
-    * the flag isn't present, `Left(rawValue)` when it's present but the
-    * following token isn't a valid integer (`""` when the flag was the very
-    * last argument, with no value at all). Scala 2.12 has no
-    * `String.toIntOption` (a 2.13+ addition), hence `scala.util.Try`.
+  /** `CliSupport.extractStringFlag`, with the extracted value additionally
+    * parsed as an integer: `Right(Some(v))` on a valid integer value,
+    * `Right(None)` when the flag isn't present, `Left(rawValue)` when it's
+    * present but the following token isn't a valid integer (`""` when the
+    * flag was the very last argument, with no value at all). Scala 2.12 has
+    * no `String.toIntOption` (a 2.13+ addition), hence `scala.util.Try`.
     */
   private def extractIntFlag(args: Array[String], flagName: String): (Either[String, Option[Int]], Array[String]) = {
-    val (rawResult, remaining) = extractStringFlag(args, flagName)
+    val (rawResult, remaining) = CliSupport.extractStringFlag(args, flagName)
     val result: Either[String, Option[Int]] = rawResult match {
       case Left(())         => Left("")
       case Right(None)      => Right(None)
@@ -206,26 +190,5 @@ object OrgPolicyLintCli {
         }
     }
     (result, remaining)
-  }
-
-  /** `target` itself if it's a single file; every `.yaml`/`.yml` file found
-    * recursively if it's a directory; empty if it's neither (doesn't exist,
-    * or is some other kind of filesystem entry).
-    */
-  private def findContractFiles(target: String): List[String] = {
-    val file = new File(target)
-    if (file.isDirectory) {
-      def walk(dir: File): List[File] =
-        Option(dir.listFiles()).toList.flatten.flatMap { f =>
-          if (f.isDirectory) walk(f)
-          else if (f.getName.endsWith(".yaml") || f.getName.endsWith(".yml")) List(f)
-          else Nil
-        }
-      walk(file).map(_.getPath)
-    } else if (file.isFile) {
-      List(file.getPath)
-    } else {
-      Nil
-    }
   }
 }

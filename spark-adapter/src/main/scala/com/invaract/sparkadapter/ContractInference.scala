@@ -101,22 +101,24 @@ private[sparkadapter] object ContractInference {
     * retained, so this only ever writes an observation for a human to
     * review, never a proven classification.
     *
-    * `matches` (a location's qualifier set) mirrors `SensitivityLineage`'s
-    * own `StructuralVerifier.locationsMatch`-based resolution — a
-    * `ColumnRef.qualifier` is either a `Read`'s alias or its dataset's raw
-    * (un-normalized) location (see `ir.Lineage.resolveInScopeT`'s `Read`
-    * case), so matching against this already-normalized `location` needs
-    * the same normalization-aware comparison, not a bare string `==`.
+    * Matching against `outputContributingQualifiers`/`conditionReferencedQualifiers`
+    * reuses `StructuralVerifier.matchesAny` — the same
+    * `RoleConsistencyVerifier` also calls for the identical "does this
+    * location match any observed qualifier" question — rather than a
+    * second, independent copy of it: a `ColumnRef.qualifier` is either a
+    * `Read`'s alias or its dataset's raw (un-normalized) location (see
+    * `ir.Lineage.resolveInScopeT`'s `Read` case), so matching against this
+    * already-normalized `location` needs the same normalization-aware
+    * comparison, not a bare string `==`.
     */
   private def observedUsageDescription(
       location: String,
       outputContributingQualifiers: Set[String],
       conditionReferencedQualifiers: Set[String]
   ): Option[String] = {
-    def matches(qualifiers: Set[String]): Boolean = qualifiers.exists(q => StructuralVerifier.locationsMatch(location, q))
-    if (matches(outputContributingQualifiers))
+    if (StructuralVerifier.matchesAny(location, outputContributingQualifiers))
       Some("Observed: contributes to at least one produced output column.")
-    else if (matches(conditionReferencedQualifiers))
+    else if (StructuralVerifier.matchesAny(location, conditionReferencedQualifiers))
       Some(
         "Observed: referenced only in a Filter/Join condition; never observed contributing to a produced output " +
           "column. Review whether this input's role is CONTROL rather than DATA_ASSET/SOURCE."

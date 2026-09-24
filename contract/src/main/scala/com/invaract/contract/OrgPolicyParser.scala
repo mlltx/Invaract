@@ -72,13 +72,7 @@ object OrgPolicyParser {
       case None        => Nil
     }
 
-    val customPolicyTypes = raw.get("customPolicyTypes") match {
-      case Some(value) =>
-        loadMap(value, "orgPolicy.customPolicyTypes").map { case (ruleType, className) =>
-          ruleType -> String.valueOf(className)
-        }
-      case None => Map.empty[String, String]
-    }
+    val customPolicyTypes = optStringMap(raw, "customPolicyTypes", "orgPolicy")
 
     val typeGuarantees = parseTypeGuarantees(raw)
 
@@ -107,13 +101,7 @@ object OrgPolicyParser {
         val m = loadMap(value, "orgPolicy.typeGuarantees")
         val enabled = optStringList(m, "enabled", "orgPolicy.typeGuarantees").distinct
         val mode = optString(m, "mode").map(parseMode(_, "orgPolicy.typeGuarantees")).getOrElse(PolicyMode.Enforce)
-        val customTypeGuaranteeTypes = m.get("customTypeGuaranteeTypes") match {
-          case Some(v) =>
-            loadMap(v, "orgPolicy.typeGuarantees.customTypeGuaranteeTypes").map { case (checkType, className) =>
-              checkType -> String.valueOf(className)
-            }
-          case None => Map.empty[String, String]
-        }
+        val customTypeGuaranteeTypes = optStringMap(m, "customTypeGuaranteeTypes", "orgPolicy.typeGuarantees")
         TypeGuaranteeConfig(enabled, mode, customTypeGuaranteeTypes)
     }
 
@@ -128,6 +116,26 @@ object OrgPolicyParser {
           case s: String => s
           case other     => throw new OrgPolicyParseException(s"Expected a list of strings for '$context.$key', got: $other")
         }
+    }
+
+  /** An optional string-to-string map (e.g. `customPolicyTypes`,
+    * `typeGuarantees.customTypeGuaranteeTypes`) — every value coerced via
+    * `String.valueOf` the same permissive way every other property in this
+    * parser is, since a class name is just an identifier, not something
+    * that needs type-checking here (`OrgPolicyValidator`/`*Factory.tryResolve`
+    * are where an actually-unresolvable name becomes a reported issue).
+    * `Map.empty` when `key` is absent entirely.
+    */
+  private def optStringMap(raw: Map[String, Any], key: String, context: String): Map[String, String] =
+    // Deliberately `raw.get`, not `optValue` (which treats an explicit
+    // `null` as absent): an explicit `key: null` should still surface
+    // loadMap's own "expected a mapping, but it was empty" error rather
+    // than being silently treated the same as the key being omitted
+    // entirely, matching this method's two call sites' prior behavior.
+    raw.get(key) match {
+      case None => Map.empty
+      case Some(value) =>
+        loadMap(value, s"$context.$key").map { case (k, v) => k -> String.valueOf(v) }
     }
 
   private def parsePolicyRule(raw: Map[String, Any], context: String): PolicyRule = {
@@ -229,15 +237,14 @@ object OrgPolicyParser {
 
   private def optString(raw: Map[String, Any], key: String): Option[String] = optValue(raw, key).map(String.valueOf)
 
-  private def requireStringList(raw: Map[String, Any], key: String, context: String): List[String] =
-    optValue(raw, key) match {
-      case None => throw new OrgPolicyParseException(s"Missing or empty required field '$key' in $context")
-      case Some(value) =>
-        val items = loadList(value, s"$context.$key").map {
-          case s: String => s
-          case other     => throw new OrgPolicyParseException(s"Expected a list of strings for '$context.$key', got: $other")
-        }
-        if (items.isEmpty) throw new OrgPolicyParseException(s"Missing or empty required field '$key' in $context")
-        items
-    }
+  /** Built on `optStringList` rather than its own copy of the same list
+    * coercion: a required list is simply an optional one that's rejected
+    * once absent or empty, which is exactly what "missing or empty" already
+    * means below.
+    */
+  private def requireStringList(raw: Map[String, Any], key: String, context: String): List[String] = {
+    val items = optStringList(raw, key, context)
+    if (items.isEmpty) throw new OrgPolicyParseException(s"Missing or empty required field '$key' in $context")
+    items
+  }
 }

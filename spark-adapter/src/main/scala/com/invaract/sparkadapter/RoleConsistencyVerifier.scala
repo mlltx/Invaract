@@ -66,8 +66,8 @@ private[sparkadapter] object RoleConsistencyVerifier {
       conditionReferencedQualifiers: Set[String]
   ): Option[RoleConformanceCheckResult] =
     input.datasetType.flatMap { datasetType =>
-      val contributesToOutput = matches(input.location, outputContributingQualifiers)
-      val referencedInCondition = matches(input.location, conditionReferencedQualifiers)
+      val contributesToOutput = StructuralVerifier.matchesAny(input.location, outputContributingQualifiers)
+      val referencedInCondition = StructuralVerifier.matchesAny(input.location, conditionReferencedQualifiers)
       if (!contributesToOutput && !referencedInCondition) {
         None // never observed at all in this plan - StructuralVerifier's MissingInput already covers this
       } else {
@@ -80,9 +80,6 @@ private[sparkadapter] object RoleConsistencyVerifier {
         Some(RoleConformanceCheckResult(input.name, datasetType, verdict, detail(datasetType, contributesToOutput, verdict)))
       }
     }
-
-  private def matches(location: String, qualifiers: Set[String]): Boolean =
-    qualifiers.exists(q => StructuralVerifier.locationsMatch(location, q))
 
   private def detail(datasetType: DatasetType, contributesToOutput: Boolean, verdict: RoleConformanceVerdict): String =
     (verdict, contributesToOutput) match {

@@ -771,6 +771,14 @@ private[sparkadapter] object StructuralVerifier {
     normalizedActual == normalizedDeclared || normalizedActual.endsWith("/" + normalizedDeclared)
   }
 
+  /** `location` against every member of `qualifiers` via `locationsMatch` —
+    * factored out since `RoleConsistencyVerifier`/`ContractInference` both
+    * need exactly this "does this declared/inferred location match any
+    * observed qualifier" predicate, not two independent copies of it.
+    */
+  private[sparkadapter] def matchesAny(location: String, qualifiers: Set[String]): Boolean =
+    qualifiers.exists(q => locationsMatch(location, q))
+
   /** The bare, OS-agnostic form a contract's `declared` location is
     * expected to already be in, derived from a location as Spark itself
     * reports it (always forward-slash, often `file:`-scheme-prefixed for a
