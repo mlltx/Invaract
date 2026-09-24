@@ -96,6 +96,15 @@ extension a user currently builds from source themselves (see its own
 part of this release process today. Publishing it to Central instead of
 requiring a manual <code dir="auto">sbt assembly</code> is a reasonable future improvement, but
 a separate decision from getting the core engine onto Central.</p>
+<p><code dir="auto">contract</code> is additionally published to <strong>GitHub Packages’</strong> Maven
+registry (<code dir="auto">https://maven.pkg.github.com/mlltx/Invaract</code>) in the same
+release.yml run, alongside its Sonatype release — see that workflow’s own
+top comment and <code dir="auto">docs/CONTRACT_REGISTRY.md</code>’s §2 for why: the separate
+<code dir="auto">mlltx/invaract-registry</code> repo needs a real, pinnable <code dir="auto">contract</code>
+coordinate to depend on, and can’t wait for Sonatype namespace
+verification (below) to land first. <code dir="auto">ir</code>/<code dir="auto">spark-adapter</code>/<code dir="auto">fingerprint</code>
+have no GitHub Packages destination — nothing outside this repo depends
+on them the way <code dir="auto">invaract-registry</code> depends on <code dir="auto">contract</code>.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="one-time-setup-a-human-must-do-this-nothing-here-is-automatable">One-time setup (a human must do this; nothing here is automatable)</h2><a class="sl-anchor-link" href="#one-time-setup-a-human-must-do-this-nothing-here-is-automatable"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “One-time setup (a human must do this; nothing here is automatable)”</span></a></div>
 <ol>
 <li>
@@ -175,7 +184,9 @@ releases <code dir="auto">contract</code>, <code dir="auto">ir</code>, then <cod
 matters: <code dir="auto">spark-adapter</code>’s own <code dir="auto">libraryDependencies</code> resolve
 <code dir="auto">contract</code>/<code dir="auto">ir</code> from the same runner’s local Ivy cache — see
 <code dir="auto">spark-adapter/build.sbt</code>’s comment on that dependency, and
-<code dir="auto">dev/build</code>’s matching local-build pattern).</li>
+<code dir="auto">dev/build</code>’s matching local-build pattern). <code dir="auto">contract</code>’s step
+additionally publishes to GitHub Packages right after its Sonatype
+release — one tag, two destinations for that one module.</li>
 <li>Watch the workflow run in the Actions tab. <code dir="auto">sonatypeCentralRelease</code>
 uploads a signed bundle to Central Portal, which validates and releases
 it automatically — no manual “close and release” step, unlike the old
