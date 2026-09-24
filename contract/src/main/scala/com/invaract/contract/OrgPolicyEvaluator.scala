@@ -226,6 +226,10 @@ object OrgPolicyEvaluator {
       case (contract, rule, InterpretedPolicy.RequireDatasetDescription) =>
         scopedDatasets(contract, rule).flatMap(checkRequireDatasetDescription(rule, _))
     },
+    PolicyType.RequireDatasetType -> interpreted {
+      case (contract, rule, InterpretedPolicy.RequireDatasetType(allowedTypes)) =>
+        scopedDatasets(contract, rule).flatMap(checkRequireDatasetType(rule, _, allowedTypes))
+    },
     PolicyType.RequireExtensionIf -> interpreted {
       case (contract, rule, InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
         checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
@@ -368,6 +372,27 @@ object OrgPolicyEvaluator {
           s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare a " +
             s"non-blank description, but it does not.",
           s"Add a 'description' to dataset '${dataset.name}' explaining what it is/contains."
+        )
+      )
+    }
+  }
+
+  private def checkRequireDatasetType(rule: PolicyRule, dataset: Dataset, allowedTypes: Option[List[DatasetType]]): List[PolicyViolation] = {
+    val satisfies = dataset.datasetType.exists(t => allowedTypes.forall(_.contains(t)))
+    if (satisfies) Nil
+    else {
+      val allowedSuffix = allowedTypes.map(ts => s" of one of [${ts.map(_.name).mkString(", ")}]").getOrElse("")
+      val actualSuffix = dataset.datasetType.map(t => s" (currently '${t.name}')").getOrElse(" (no type declared at all)")
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)} requires dataset '${dataset.name}' to declare " +
+            s"a type$allowedSuffix, but it does not$actualSuffix.",
+          s"Add a 'type: ${allowedTypes.flatMap(_.headOption).map(_.name).getOrElse("DATA_ASSET|SOURCE|CONTROL")}' " +
+            s"declaration to dataset '${dataset.name}'."
         )
       )
     }

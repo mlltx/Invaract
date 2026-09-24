@@ -213,6 +213,92 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
   }
 
+  // -- require_dataset_type -----------------------------------------------------
+
+  test("require_dataset_type: satisfied when the dataset declares any type, no 'types' pinned") {
+    val rule = PolicyRule("typed", PolicyType.RequireDatasetType, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: violated when the dataset declares no type at all") {
+    val rule = PolicyRule("typed", PolicyType.RequireDatasetType, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = None)))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.contains("out"))
+  }
+
+  test("require_dataset_type: satisfied when the dataset's type is in the allowed 'types' list") {
+    val rule = PolicyRule(
+      "output-must-be-data-asset",
+      PolicyType.RequireDatasetType,
+      Map("types" -> List("DATA_ASSET")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.DataAsset))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: violated when the dataset's type is declared but not in the allowed 'types' list") {
+    val rule = PolicyRule(
+      "output-must-be-data-asset",
+      PolicyType.RequireDatasetType,
+      Map("types" -> List("DATA_ASSET")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+  }
+
+  test("require_dataset_type: a single scalar 'types' value is shorthand for a one-element list") {
+    val rule = PolicyRule("control-only", PolicyType.RequireDatasetType, Map("types" -> "CONTROL"), scope = PolicyScope.Inputs)
+    val c = contract(inputs = List(dataset("in").copy(datasetType = Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: an empty types list is malformed - interpret returns None, no violation raised") {
+    val rule = PolicyRule("empty-list", PolicyType.RequireDatasetType, Map("types" -> List.empty[String]), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = None)))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: an unrecognized type name in 'types' is malformed - interpret returns None") {
+    val rule = PolicyRule("bad-type", PolicyType.RequireDatasetType, Map("types" -> List("DATA_ASSET", "NOT_REAL")), scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = None)))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: Warn mode reports without blocking") {
+    val rule = PolicyRule("typed-warn", PolicyType.RequireDatasetType, Map.empty, scope = PolicyScope.Outputs, mode = PolicyMode.Warn)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = None)))
+    val eval = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now)
+    assert(eval.enforceViolations.isEmpty)
+    assert(eval.warnViolations.size == 1)
+    assert(!eval.hasBlockingViolations)
+  }
+
+  test("require_dataset_type: honors scope like any other DatasetPolicy") {
+    val rule = PolicyRule("typed", PolicyType.RequireDatasetType, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      inputs = List(dataset("in")), // no type - would violate if inputs were in scope
+      outputs = List(dataset("out").copy(datasetType = Some(DatasetType.DataAsset)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_dataset_type: a per-contract exemption suppresses the violation") {
+    val rule = PolicyRule("typed", PolicyType.RequireDatasetType, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = None)))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption(c.id, List("typed"), reason = "legacy contract, migration in progress"))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

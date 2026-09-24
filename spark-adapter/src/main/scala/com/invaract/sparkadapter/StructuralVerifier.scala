@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{CatalogRequirement, Contract, Dataset, Field => ContractField}
+import com.invaract.contract.{CatalogRequirement, Contract, Dataset, DatasetType, Field => ContractField}
 import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.ir.{CatalogIdentity, Plan, Read, Write}
 
@@ -180,6 +180,77 @@ object ViolationType {
     * conservatism principle).
     */
   val DataQualityViolation = "DATA_QUALITY_VIOLATION"
+
+  /** Produced by `RoleConsistencyVerifier` — a high-confidence contradiction
+    * between a dataset's declared `DatasetType` and its observed role in the
+    * transformation (see docs/CONTRACT_MODEL.md's "Input and Output Types"
+    * section). Only `RoleConformanceVerdict.Contradicts` ever becomes a
+    * `Violation`; `Conforms`/`CannotDetermine` are reported
+    * (`VerificationResult.roleConformance`) but never block a write — the
+    * same "only the verdict that proves a violation blocks, everything else
+    * is informational" split `DataQualityViolation` already establishes for
+    * static data-quality checks.
+    */
+  val RoleConsistencyViolation = "ROLE_CONSISTENCY_VIOLATION"
+}
+
+/** The three-state verdict `RoleConsistencyVerifier` reaches for one
+  * dataset's declared `com.invaract.contract.DatasetType` against its
+  * observed role in the transformation — the spec's own vocabulary
+  * (docs/CONTRACT_MODEL.md's "Input and Output Types" section, "Unknown /
+  * Unprovable Cases"): "the important requirement is that validation
+  * results can distinguish between Conforms, Contradicts, Cannot
+  * determine." Mirrors `DataQualityVerdict`'s own three-or-four-state shape
+  * and its reasoning for never collapsing to a plain pass/fail: an
+  * unproven semantic property must never be represented as proven.
+  */
+sealed trait RoleConformanceVerdict
+object RoleConformanceVerdict {
+
+  /** The dataset's observed usage is consistent with its declared type —
+    * e.g. a `CONTROL`-typed input referenced only in a `Filter`/`Join`
+    * condition, never contributing to a produced output column.
+    */
+  case object Conforms extends RoleConformanceVerdict
+
+  /** The dataset's observed usage directly contradicts its declared type —
+    * becomes a `Violation` (`ViolationType.RoleConsistencyViolation`) and
+    * blocks the write, the same as any other structural violation. Reserved
+    * for the spec's own high-confidence example: a `CONTROL`-typed input
+    * whose data reaches a produced output column, i.e. it is substantive
+    * business data despite being declared pipeline-only.
+    */
+  case object Contradicts extends RoleConformanceVerdict
+
+  /** The transformation's structure alone cannot establish whether the
+    * declared type is correct — e.g. a `DATA_ASSET`/`SOURCE`-typed input
+    * observed only in `Filter`/`Join` conditions, never in output-column
+    * lineage: genuinely ambiguous (a join-only input can still gate which
+    * rows survive without any column of its own deriving into the output),
+    * so this is surfaced for a human to review, never asserted as a
+    * violation — never blocks a write.
+    */
+  case object CannotDetermine extends RoleConformanceVerdict
+}
+
+/** One role-consistency check `RoleConsistencyVerifier` performed for a
+  * single dataset against its declared `datasetType` — `detail` is a short,
+  * human-readable rendering of what was observed, the same role
+  * `DataQualityCheckResult.constraint` plays.
+  */
+case class RoleConformanceCheckResult(
+  dataset: String,
+  datasetType: DatasetType,
+  verdict: RoleConformanceVerdict,
+  detail: String
+) {
+
+  /** `verdict` rendered as its bare case-object name — the same
+    * plain-string-across-a-JSON-boundary convention `DataQualityCheckResult.toMap`
+    * already uses.
+    */
+  def toMap: Map[String, Any] =
+    Map("dataset" -> dataset, "datasetType" -> datasetType.name, "verdict" -> verdict.toString, "detail" -> detail)
 }
 
 /** The four-state verdict `StaticDataQualityVerifier` reaches for one
@@ -265,12 +336,24 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
   * same reasoning as the other three: proving static data-quality
   * properties is real additional analysis work this module should not
   * impose on every existing caller by default.
+  *
+  * `roleConsistency` is a fifth, independent opt-in (see
+  * docs/CONTRACT_MODEL.md's "Input and Output Types" section): when true,
+  * `ContractEnforcementRule.verifyOrThrow` runs
+  * `RoleConsistencyVerifier.verify` against the plan being checked,
+  * populating `VerificationResult.roleConformance` and folding any
+  * `RoleConformanceVerdict.Contradicts` result into `violations`. Off by
+  * default, same reasoning as the other four — attachable via
+  * `spark.invaract.roleConsistency` per the External Attachability
+  * Requirement, exactly like `staticDataQuality`'s own
+  * `spark.invaract.staticDataQuality`.
   */
 case class VerificationOptions(
   rejectUndeclaredInputs: Boolean = false,
   rejectUndeclaredFields: Boolean = false,
   computeFingerprint: Boolean = false,
-  staticDataQuality: Boolean = false
+  staticDataQuality: Boolean = false,
+  roleConsistency: Boolean = false
 )
 
 /** `fingerprints` is `None` unless the check that produced this result ran
@@ -290,13 +373,23 @@ case class VerificationOptions(
   * `ViolationType.DataQualityViolation`'s own doc). Report-only otherwise:
   * a `NotGuaranteed`/`NotStaticallyVerifiable` entry here never affects
   * `passed`.
+  *
+  * `roleConformance` is `Nil` unless the check that produced this result
+  * ran with `VerificationOptions.roleConsistency = true` — populated with
+  * one `RoleConformanceCheckResult` per dataset `RoleConsistencyVerifier`
+  * could form a verdict for, whatever the verdict (not only `Contradicts`,
+  * which is instead folded into `violations` above — see
+  * `ViolationType.RoleConsistencyViolation`'s own doc). Report-only
+  * otherwise: a `Conforms`/`CannotDetermine` entry here never affects
+  * `passed`.
   */
 case class VerificationResult(
   status: String,
   contract: String,
   violations: List[Violation],
   fingerprints: Option[TransformationFingerprint] = None,
-  dataQuality: List[DataQualityCheckResult] = Nil
+  dataQuality: List[DataQualityCheckResult] = Nil,
+  roleConformance: List[RoleConformanceCheckResult] = Nil
 ) {
   def passed: Boolean = status == "PASSED"
 }
@@ -306,9 +399,17 @@ object VerificationResult {
       contractRef: String,
       violations: List[Violation],
       fingerprints: Option[TransformationFingerprint] = None,
-      dataQuality: List[DataQualityCheckResult] = Nil
+      dataQuality: List[DataQualityCheckResult] = Nil,
+      roleConformance: List[RoleConformanceCheckResult] = Nil
   ): VerificationResult =
-    VerificationResult(if (violations.isEmpty) "PASSED" else "FAILED", contractRef, violations, fingerprints, dataQuality)
+    VerificationResult(
+      if (violations.isEmpty) "PASSED" else "FAILED",
+      contractRef,
+      violations,
+      fingerprints,
+      dataQuality,
+      roleConformance
+    )
 }
 
 /** Checks a transformation plan's actual inputs and output against a

@@ -112,6 +112,20 @@ object PolicyType {
     */
   val RequireExtensionIf = "require_extension_if"
 
+  /** A dataset must declare a `type` (see `DatasetType`'s own doc:
+    * `DATA_ASSET`/`SOURCE`/`CONTROL`) — optionally narrowed to a specific
+    * allowed subset via `types` (e.g. "every output must be `DATA_ASSET`").
+    * This is the mechanism that makes declaring `Dataset.datasetType`
+    * mandatory or optional *per organization*, exactly as the spec asks:
+    * `Dataset.datasetType` itself always defaults to `None` (purely
+    * optional at the model level); an org that wants it required attaches
+    * this policy type in `Enforce` mode, and an org that doesn't simply
+    * never declares it — the same opt-in-by-policy shape
+    * `RequireDatasetDescription`/`RequireCatalog` already establish for
+    * their own optional `Dataset` fields.
+    */
+  val RequireDatasetType = "require_dataset_type"
+
   val All: Set[String] = Set(
     RequireCatalog,
     RequireField,
@@ -119,7 +133,8 @@ object PolicyType {
     RequireExtension,
     RequireFormat,
     RequireDatasetDescription,
-    RequireExtensionIf
+    RequireExtensionIf,
+    RequireDatasetType
   )
 
   /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
@@ -174,6 +189,13 @@ object InterpretedPolicy {
     * configure.
     */
   case object RequireDatasetDescription extends DatasetPolicy
+
+  /** @param allowedTypes if set, `Dataset.datasetType` must be one of these
+    *   specific types (e.g. "every output must be DATA_ASSET"); if unset,
+    *   any of the three `DatasetType`s satisfies this rule - only the
+    *   *presence* of a declared type is required, not a specific one.
+    */
+  case class RequireDatasetType(allowedTypes: Option[List[DatasetType]]) extends DatasetPolicy
 
   /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
     *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
@@ -247,6 +269,26 @@ case class PolicyRule(
       PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case PolicyType.RequireDatasetDescription =>
       Some(InterpretedPolicy.RequireDatasetDescription)
+    case PolicyType.RequireDatasetType =>
+      properties.get("types") match {
+        case None => Some(InterpretedPolicy.RequireDatasetType(None))
+        case Some(raw) =>
+          // Reuses RequireFormat's own list-vs-scalar coercion (parseFormats
+          // takes a raw property value, not the "formats" key name itself)
+          // rather than duplicating it - the shape ("a YAML list, or a bare
+          // scalar as shorthand for a one-element list") is identical.
+          PolicyRule.parseFormats(Some(raw)).filter(_.nonEmpty).flatMap { rawTypes =>
+            val parsed = rawTypes.map(DatasetType.parse)
+            // All-or-nothing: one unrecognized type name in the list makes
+            // the whole property malformed, the same "None covers malformed
+            // properties too" total/safe convention every other type here
+            // follows - OrgPolicyValidator is where that becomes a reported
+            // issue, not a partially-applied list silently dropping the bad
+            // entry.
+            if (parsed.forall(_.isDefined)) Some(InterpretedPolicy.RequireDatasetType(Some(parsed.flatten)))
+            else None
+          }
+      }
     case PolicyType.RequireExtensionIf =>
       for {
         ifKey <- properties.get("ifKey").map(String.valueOf)

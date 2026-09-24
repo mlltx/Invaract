@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{ContractRule, InterpretedRule}
-import com.invaract.ir.{Aggregate, Filter, Join, JoinType, Plan}
+import com.invaract.ir.{Aggregate, ColumnRef, Filter, Join, JoinType, Plan}
 
 /** Checks a contract's declared plan-shape rules
   * (`com.invaract.contract.RuleType.PlanShapeTypes`) against a
@@ -67,6 +67,20 @@ private[sparkadapter] object PlanRuleVerifier {
 
   private def collectFilters(plan: Plan): List[Filter] =
     (plan match { case f: Filter => List(f); case _ => Nil }) ++ plan.children.flatMap(collectFilters)
+
+  /** Every column referenced in any `Filter` condition or `Join` condition
+    * anywhere in `plan` — shared by this object's own `required_filter_columns`
+    * check (via `collectFilters` above) and by `ContractInference`/
+    * `RoleConsistencyVerifier`'s dry-run/role-consistency usage observation,
+    * which need the identical "was this column read only to gate/match
+    * rows, never to compute output data" signal — written once here rather
+    * than reimplemented per caller.
+    */
+  private[sparkadapter] def collectConditionReferences(plan: Plan): Set[ColumnRef] = {
+    val filterRefs = collectFilters(plan).flatMap(_.condition.references)
+    val joinRefs = collectJoins(plan).flatMap(_.condition.toList.flatMap(_.references))
+    (filterRefs ++ joinRefs).toSet
+  }
 
   /** Satisfied when at least one `Aggregate` node's `groupBy` resolves (via
     * `Expr.references`) to a column-name set that's a superset of the

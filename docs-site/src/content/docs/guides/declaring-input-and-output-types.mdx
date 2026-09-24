@@ -1,0 +1,248 @@
+---
+title: Declare Input and Output Types
+description: Say what a dataset represents — a shareable data product, an external source, or pipeline control data — not just its physical shape.
+sidebar:
+  order: 2.1
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A contract already says *what a dataset looks like* (location, format, schema). It can
+also say *what a dataset represents* — a governed, shareable data product; data entering
+your pipeline from outside your own responsibility; or data that only operates or controls
+processing rather than being the business data itself. Two datasets can be physically
+identical (both, say, Delta tables) and still play completely different roles — the `type`
+you declare is what tells Invaract, and anyone reading the contract, which one this is.
+
+<Aside type="note" title="Entirely optional, unless your organization says otherwise">
+Declaring `type` has zero effect on schema/location/format checking on its own. See [Make
+it mandatory with an organizational policy](#make-it-mandatory-with-an-organizational-policy)
+below for how a platform team turns this from optional into required.
+</Aside>
+
+## The three types
+
+```yaml
+inputs:
+  - name: customer
+    location: gold.customer_master
+    type: DATA_ASSET
+  - name: vendor_feed
+    location: bronze.vendor_feed
+    type: SOURCE
+  - name: processing_calendar
+    location: control.processing_calendar
+    type: CONTROL
+outputs:
+  - name: customer_position
+    location: gold.customer_position
+    type: DATA_ASSET
+```
+
+- **`DATA_ASSET`** — a governed, shareable dataset produced for consumption by other
+  users, applications, or pipelines: a real data product (customer position, account
+  exposure, a daily transaction dataset), not implementation state. A `DATA_ASSET` your
+  contract produces can be consumed as a `DATA_ASSET` input to someone else's contract —
+  see [Cross-contract validation](#cross-contract-validation) below.
+- **`SOURCE`** — data entering your pipeline that *this contract* doesn't claim
+  responsibility for producing: an external vendor feed, an upstream system extract, data
+  received from another organizational boundary. Your contract can consume a `SOURCE`, but
+  never declare one as its own output — see [A SOURCE is never your own
+  output](#a-source-is-never-your-own-output) below.
+- **`CONTROL`** — data used to operate, control, or determine processing: a processing
+  calendar, a watermark, a readiness or reconciliation signal, a configuration value
+  represented as data. It can influence *how* your job runs without ever becoming part of
+  the business data your job produces.
+
+`type` is matched case-insensitively; anything other than these three values is rejected
+when the contract is parsed — a closed set, unlike the open-vocabulary `format` field.
+
+<Aside type="tip">
+Physical storage never decides this. A `DATA_ASSET`, a `SOURCE`, and a `CONTROL` dataset
+can all be the exact same table format in the exact same catalog — the type is a statement
+about ownership and responsibility, not about `format`/`catalog`.
+</Aside>
+
+## A SOURCE is never your own output
+
+```yaml
+outputs:
+  - name: result
+    location: gold.result
+    type: SOURCE # ContractValidator warns: a SOURCE can't be your own output
+```
+
+`ContractValidator` warns (not an error — nothing is structurally broken) when an *output*
+declares `type: SOURCE`. By definition, a `SOURCE` is data your contract doesn't claim
+responsibility for producing — declaring it as your own output contradicts that. If you
+meant "this is a real data product I produce," declare `DATA_ASSET`; if you meant "this is
+control/state I maintain," declare `CONTROL`.
+
+## Make it mandatory with an organizational policy
+
+`Dataset.datasetType` itself always defaults to unset — every existing contract is
+unaffected. Whether your organization *requires* every dataset to declare one is a policy
+decision, using the same [organizational policy](/guides/enforcing-organizational-policy/)
+mechanism that already makes `description`/`catalog` mandatory-or-optional per
+organization:
+
+```yaml
+# org-policy.yaml
+version: "1.0"
+policies:
+  - id: dataset-type-required
+    type: require_dataset_type
+    description: "Every input and output must declare its role."
+  - id: outputs-must-be-data-assets
+    type: require_dataset_type
+    scope: outputs
+    types: [DATA_ASSET]
+    description: "A governed output is a real data product, not control state."
+```
+
+`types` is optional — omit it to require *any* declared type; set it (a single value or a
+list) to require one of a specific subset. No policy attached (or one in `Warn` mode) means
+declaring `type` stays optional; an `Enforce`-mode `require_dataset_type` policy rejects a
+contract that doesn't declare one, the same way any other org-policy violation does — see
+[Enforce an Organizational Policy](/guides/enforcing-organizational-policy/).
+
+## Enable role-consistency checking
+
+Declaring a type is one thing; Invaract can also check whether your transformation's own
+logic *actually behaves* the way the declared type claims — the mechanically-verifiable
+half of contract conformance. `RoleConsistencyVerifier` checks this today for exactly one
+high-confidence shape: **a `CONTROL`-declared input whose data reaches a produced output
+column** — pipeline-only data isn't supposed to become part of the business data you
+produce.
+
+```yaml
+inputs:
+  - name: processing_calendar
+    location: control.processing_calendar
+    type: CONTROL
+    schema:
+      fields:
+        - name: as_of_date
+          type: date
+```
+
+If `as_of_date` only ever appears in a `WHERE`/join condition, this conforms. If it (or
+any column derived from it) ends up in a produced output column, that's a real,
+blocking contradiction — Invaract calls this out rather than silently trusting the
+declared type.
+
+Off by default — real additional analysis work, the same reasoning [static data
+quality](/guides/verifying-static-data-quality/) and [fingerprinting](/guides/fingerprinting-transformations/)
+already use:
+
+```bash
+spark-submit \
+  --class com.example.MyRealJob \
+  --master yarn \
+  --jars invaract-spark-adapter-0.8.0.jar \
+  --conf spark.invaract.roleConsistency=true \
+  my-real-job.jar
+```
+
+As long as the job already installs Invaract the ordinary way, that `--conf` is enough —
+`ContractEnforcementRule.resolveVerificationOptions` reads `spark.invaract.roleConsistency`
+off the real `SparkSession`, the identical mechanism
+[`spark.invaract.staticDataQuality`](/guides/verifying-static-data-quality/#enable-it)
+already uses. A platform team can turn this on for a job whose source they don't control —
+including forcing it on for every governed job via `inject.minVerificationOptions.roleConsistency`
+in an [organizational policy](/guides/enforcing-organizational-policy/), alongside
+`require_dataset_type` above.
+
+Setting it explicitly in code works the same way too:
+
+```scala
+import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
+
+val spark = SparkSession.builder()
+  .withExtensions(_.injectCheckRule(
+    ContractEnforcementRule.forContract(contract, VerificationOptions(roleConsistency = true))
+  ))
+  .getOrCreate()
+```
+
+### The three verdicts
+
+Every check reaches one of three verdicts — deliberately never collapsed to a simple
+pass/fail, so an unproven contradiction is never mistaken for a confirmed one:
+
+| Verdict | Meaning | Blocks the write? |
+|---|---|---|
+| `Contradicts` | A `CONTROL`-declared input's data reaches a produced output column. | **Yes** — `ROLE_CONSISTENCY_VIOLATION`, same abort path as any other violation. |
+| `Conforms` | A `CONTROL`-declared input observed only in a filter/join condition, never in output data; or a `DATA_ASSET`/`SOURCE`-declared input that does contribute to output data. | No. |
+| `CannotDetermine` | A `DATA_ASSET`/`SOURCE`-declared input observed only in a filter/join condition, never in output data. Genuinely ambiguous — a join-only input can still gate which rows survive without any column of its own reaching the output. | No. |
+
+An input with no declared `type`, or never observed at all in the plan (already a
+`MISSING_INPUT` violation's own job), produces no role-consistency result at all.
+
+**On a published `ContractValidationEvent`**, if you've also set up [a notification
+sink](/guides/notification-sinks/) — every entry, all three verdicts, on both a PASSED and
+a FAILED check:
+
+```json
+{"eventType": "CONTRACT_VALIDATION", "status": "FAILED", "...": "...", "roleConformance": [{"dataset": "processing_calendar", "datasetType": "CONTROL", "verdict": "Contradicts", "detail": "observed contributing to a produced output column - CONTROL data must not become part of the resulting business data asset it is declared to only operate/control"}]}
+```
+
+Empty (`"roleConformance": []`) whenever `spark.invaract.roleConsistency` isn't enabled, or
+no input declares a `type` at all — the same opt-in-and-empty-by-default shape
+`dataQuality`/`fingerprints` use.
+
+## Dry-run mode observes usage, never declares a type
+
+[Dry-run mode](/guides/dry-run-mode/) never invents a `type` for an inferred dataset —
+Invaract never represents an unproven semantic property as proven. What it *can* do is
+note what it actually saw: an inferred input's `description` carries a short observation —
+whether it contributed to a produced output column, or was only ever referenced inside a
+filter/join condition — for you to review before deciding what to declare:
+
+```yaml
+inputs:
+  - name: input_1
+    location: control.processing_calendar
+    schema:
+      fields:
+        - name: as_of_date
+          type: date
+          required: true
+    description: >-
+      Observed: referenced only in filter/join conditions; never observed
+      contributing to a produced output column. Review whether this is a
+      CONTROL input.
+```
+
+"Read and used to filter" is real, observed evidence — it just isn't proof of
+organizational intent, so it stays a note attached to `description`, not a declared
+`type: CONTROL`.
+
+## Cross-contract validation
+
+Once more than one contract exists, a role declaration can contradict *another*
+contract's own declaration for the same physical location — one contract declaring
+`customer_master` a `DATA_ASSET` output, another declaring the same location a `SOURCE`
+input instead, even though a governed contract already establishes what it really is.
+`CrossContractLintCli` checks exactly this across every pair of contracts found under one
+or more paths, no Spark involved:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
+```
+
+Exit code `0` means every contract parsed and no contradiction was found; `1` means a
+parse failure, no contract files found, or at least one contradiction — printed with the
+shared location and both contracts involved.
+
+## What this doesn't check yet
+
+- **Whether a `DATA_ASSET` output is genuinely a business data product**, as opposed to
+  pipeline-only state dressed up as one — not observable from a single transformation's
+  structure alone.
+- **Whether a `DATA_ASSET` is produced from inputs consistent with its own declared
+  contract** — a stronger semantic check, deliberately deferred until the basic type
+  model and conformance checks above are trusted.
+- **A `DATA_ASSET`/`SOURCE` input observed only gating rows** (present in a join/filter,
+  never contributing a column) is reported `CannotDetermine`, never asserted as a
+  contradiction — genuinely ambiguous from structure alone.

@@ -119,6 +119,7 @@ object ContractParser {
     dataset.saveMode.foreach(m.put("saveMode", _))
     dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
     dataset.description.foreach(m.put("description", _))
+    dataset.datasetType.foreach(t => m.put("type", t.name))
     m
   }
 
@@ -213,13 +214,30 @@ object ContractParser {
     val saveMode = optString(raw, "saveMode")
     val catalog = parseCatalog(raw, context)
     val description = optString(raw, "description")
+    val datasetType = optString(raw, "type").map(parseDatasetType(_, context))
     val schemaRaw = raw.getOrElse(
       "schema",
       throw new ContractParseException(s"Missing 'schema' in $context")
     )
     val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
-    Dataset(name, location, format, schema, saveMode, catalog, description)
+    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType)
   }
+
+  /** Parses a dataset's optional `type:` key — a closed three-value enum
+    * (see `DatasetType`'s own doc), so an unrecognized value is rejected at
+    * parse time rather than silently ignored, the same "closed enum ->
+    * throw on an unrecognized value" precedent
+    * `OrgPolicyParser.parseScope`/`parseMode` already establish, deliberately
+    * *not* the lax "open vocabulary, never rejected" treatment `format`
+    * gets (`DatasetType` is a small, fixed set the spec itself declares
+    * closed for the initial implementation, unlike a storage format name).
+    */
+  private def parseDatasetType(raw: String, context: String): DatasetType =
+    DatasetType.parse(raw).getOrElse(
+      throw new ContractParseException(
+        s"Invalid 'type' in $context: '$raw' (expected one of ${DatasetType.All.map(_.name).mkString(", ")})"
+      )
+    )
 
   /** Parses an optional nested `catalog:` block on a dataset — see
     * `CatalogRequirement`'s own doc for what each sub-field means. Every

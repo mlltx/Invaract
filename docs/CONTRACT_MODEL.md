@@ -106,6 +106,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `saveMode` | no | Expected write behavior toward existing data at `location` (`append`/`overwrite`/`ignore`/`error`). Meaningful for outputs only; checked against the plan's actual write mode. |
 | `catalog` | no | Expected data-catalog registration — see `CatalogRequirement` below. Unlike `saveMode`, meaningful for both inputs and outputs. Omitted entirely (the default) means no check at all. |
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
+| `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`. Matched case-insensitively; any other value is a `ContractParser` hard failure (a closed three-value set, unlike `format`'s open vocabulary). Absent by default — see "Input and Output Types" below for the full model, including how an organizational policy can make it mandatory. |
 | `schema.fields` | yes | List of fields (at least one). |
 
 A dataset's `catalog` block, when present:
@@ -590,7 +591,7 @@ same treatment `customPolicyTypes`' identical collision gets). It
 deliberately does **not** warn on a `ContractRule.ruleType` matching
 neither a built-in `RuleType` nor a `customRuleTypes` entry, unlike
 `OrgPolicyValidator`'s equivalent check for `PolicyType`: unlike
-`OrgPolicy`'s closed, org-controlled seven-type set (where an unrecognized
+`OrgPolicy`'s closed, org-controlled eight-type set (where an unrecognized
 type is almost always a typo), a contract's own `rules:` list routinely
 carries rule types no code interprets at all by design — `compatibility`
 being the standing, deliberately-inert example used throughout this
@@ -602,6 +603,167 @@ empty) can only happen in `spark-adapter`, which is where
 `customRuleTypes` entry via `CustomRuleVerifierFactory.tryResolve` — the
 same "fail loudly, at validation time, before any write is checked"
 treatment `OrgPolicyValidator`'s equivalent eager resolution gets.
+
+## Input and Output Types
+
+Every dataset (`inputs[]`/`outputs[]`) may declare its semantic role via an
+optional `type` key — `DATA_ASSET`, `SOURCE`, or `CONTROL`
+(`com.invaract.contract.DatasetType`). This is a statement about *what the
+object represents*, never about how it's physically stored: a `DATA_ASSET`,
+a `SOURCE`, and a `CONTROL` dataset may all physically be, say, BigQuery
+tables — the type distinguishes ownership and semantic responsibility, not
+storage technology.
+
+```yaml
+inputs:
+  - name: customer
+    location: gold.customer_master
+    type: DATA_ASSET
+  - name: vendor_feed
+    location: bronze.vendor_feed
+    type: SOURCE
+  - name: processing_calendar
+    location: control.processing_calendar
+    type: CONTROL
+outputs:
+  - name: customer_position
+    location: gold.customer_position
+    type: DATA_ASSET
+```
+
+- **`DATA_ASSET`** — a governed, shareable dataset produced for consumption
+  by other users, applications, or pipelines: a meaningful data product
+  (customer position, account exposure), not implementation state. May
+  itself be consumed as an input to another contract — see "Cross-contract
+  validation" below.
+- **`SOURCE`** — data entering the governed pipeline/domain that *this*
+  contract does not claim responsibility for producing (an external vendor
+  feed, an upstream system extract). A contract may consume a `SOURCE` but
+  must never declare one as its own output: `ContractValidator` warns if an
+  *output* dataset declares `type: SOURCE`, since that contradicts the
+  role's own definition.
+- **`CONTROL`** — data used to operate, control, or determine processing
+  (a processing calendar, a watermark, a readiness/reconciliation signal)
+  rather than the business data being produced. May influence execution
+  without itself becoming part of the resulting business data asset; not
+  automatically shareable the way a `DATA_ASSET` is.
+
+`type` is matched case-insensitively against those three canonical names by
+`ContractParser`; anything else is a hard parse failure (`ContractParseException`)
+— a closed set for the initial implementation, deliberately *not* an
+open-vocabulary field the way `format` is.
+
+### Mandatory or optional, per organization
+
+`Dataset.datasetType` itself always defaults to unset — declaring it is
+purely additive to every existing contract, with zero effect on
+`StructuralVerifier`/`RuleVerifier` on its own. Whether an organization
+*requires* every dataset to declare one is an org-policy decision, exactly
+like `require_dataset_description`/`require_catalog` already are for their
+own optional `Dataset` fields: see `require_dataset_type` under
+"Organizational Policy" below. No policy attached (or one in `Warn` mode) →
+optional; an `Enforce`-mode `require_dataset_type` policy → mandatory,
+rejected at contract-installation time the same way any other policy
+violation is.
+
+### Dry-run contract generation
+
+`ContractInference` (dry-run mode — see "Dry-run mode" in `docs/SPARK_ADAPTER.md`)
+never sets `datasetType` on an inferred dataset: dry-run analysis can
+observe that an input was *read and used to filter*, but that alone cannot
+prove the input is organisationally defined as `CONTROL` — the distinction
+between what the implementation demonstrates and what a contract declares
+must be retained (see "Unknown/unprovable cases" below). Instead, an
+inferred input's `description` (already documentary-only, never verified)
+carries a short, honest observation: whether the input was seen
+contributing to a produced output column, or only ever referenced inside a
+`Filter`/`Join` condition — a hint for the human reviewing the generated
+contract, never a declared classification.
+
+### Basic conformance checks
+
+Two of the mechanically-verifiable checks the spec calls for already exist,
+type-agnostically, in `StructuralVerifier`: `ViolationType.MissingInput`
+(a declared input never actually read) and `ViolationType.MissingOutput`
+(a declared output never actually produced). Declaring a `type` doesn't
+change either check — they were already checking exactly this before this
+field existed.
+
+### Role-consistency checks
+
+`spark-adapter`'s `RoleConsistencyVerifier` (opt-in via
+`VerificationOptions.roleConsistency` — see `docs/SPARK_ADAPTER.md`'s own
+section) checks a contract's declared input types against how each input
+is actually observed being used in the translated transformation plan,
+using the identical `ir.Lineage`/`Filter`/`Join`-condition machinery
+`ContractInference`'s own observation above reuses. Every check reaches one
+of three verdicts (`RoleConformanceVerdict`) — deliberately never collapsed
+to pass/fail, per the spec's own "Conforms / Contradicts / Cannot determine"
+requirement:
+
+- **`Contradicts`** (blocking, becomes `ViolationType.RoleConsistencyViolation`)
+  — a `CONTROL`-declared input whose data reaches a produced output column.
+  This is the spec's own high-confidence worked example: control data must
+  not become part of the resulting business data asset it's declared to
+  only operate/control.
+- **`Conforms`** (report-only) — a `CONTROL`-declared input referenced only
+  in a `Filter`/`Join` condition, never in output-column lineage; or a
+  `DATA_ASSET`/`SOURCE`-declared input that does contribute to output data.
+- **`CannotDetermine`** (report-only, never blocking) — a `DATA_ASSET`/`SOURCE`-declared
+  input observed only in a `Filter`/`Join` condition, never in output
+  lineage. Genuinely ambiguous, not a violation: a join-only input can
+  still gate which rows survive without any column of its own deriving
+  into the output, so this is surfaced for a human to review rather than
+  asserted either way — the same conservatism the spec's own dry-run
+  example describes ("read and used to filter processing dates" doesn't
+  prove `CONTROL`, in either direction).
+
+An input with no declared type, or never observed at all in the plan
+(already `MissingInput`'s own job), contributes no role-consistency result.
+Only *inputs* are checked — a declared output's type carries no
+role-consistency check of its own; whether a `DATA_ASSET` output is
+"genuinely a business data product" rather than pipeline-only state is
+exactly the kind of organisational judgment structural analysis alone
+cannot establish (see "What this does not do yet" below).
+
+### Cross-contract validation
+
+Once more than one contract exists, a role declaration can contradict
+*another* contract's own declaration for the same physical location — the
+spec's own example: contract A declares `customer_master` a `DATA_ASSET`
+output; contract B declares the same location a `SOURCE` input instead,
+even though a governed contract already establishes it as a `DATA_ASSET`.
+`CrossContractValidator.validate(contracts: List[Contract])` (pure,
+engine-independent, no Spark) checks exactly this one relationship across
+every pair of distinct contracts (matched by `Contract.id` — two versions
+of the *same* contract are never compared against each other). How a
+caller gathers the `List[Contract]` to compare (a local directory, a full
+registry listing) is out of scope for this module — `CrossContractLintCli`
+covers the common "lint a directory of contract files" case:
+
+```bash
+sbt "contract/runMain com.invaract.contract.cli.CrossContractLintCli contracts/"
+```
+
+### Unknown/unprovable cases
+
+Per the spec's own requirement, Invaract never represents an unproven
+semantic property as proven. This shows up in two places already covered
+above: `ContractInference` records an *observation* (a description), never
+a *declaration* (`datasetType` stays unset); and `RoleConsistencyVerifier`'s
+`CannotDetermine` verdict is kept structurally distinct from `Contradicts`,
+never silently upgraded to a violation just because a role looks
+suspicious.
+
+### What this does not do yet
+
+Deliberately deferred — the spec's own "Recommended Implementation Order"
+places these only after the basic type model and conformance model are
+trusted, not before: whether a `DATA_ASSET` output is genuinely a business
+data product versus pipeline-only state; whether a `DATA_ASSET` is
+produced from inputs consistent with its own declared contract; stronger
+semantic/guarantee validation generally (business guarantees beyond
+role-consistency, transformation-semantics-aware checks). See ROADMAP.md.
 
 ## Organizational Policy
 
@@ -669,7 +831,7 @@ Same three-layer split as the contract model itself, all in `contract/`
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
   warnViolations)`. Every rule — built-in or custom — is evaluated through
   the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
-  checks `builtinEvaluators` (the seven built-in types, each an ordinary
+  checks `builtinEvaluators` (the eight built-in types, each an ordinary
   `CustomPolicyEvaluator` compiled into this module) before falling back to
   `policy.customPolicyTypes` for a `ruleType` outside that set — see
   "Custom policy types" below for the full mechanism, and its own note on
@@ -733,6 +895,16 @@ grow to cover:
   no properties at all: there's nothing to configure beyond "this dataset
   must have one," so unlike every other type here, `interpret` can never
   fail on malformed properties for it.
+- **`require_dataset_type`** (optional `types`) — a dataset must declare a
+  `type` (`DATA_ASSET`/`SOURCE`/`CONTROL` — see "Input and Output Types"
+  above) at all; if `types` is also set (a single scalar or a YAML list,
+  the identical shorthand `require_format`'s own `formats` accepts, via
+  the same `PolicyRule.parseFormats` coercion), the declared type must
+  additionally be one of them (e.g. `types: [DATA_ASSET]` requires every
+  output specifically be a `DATA_ASSET`). This is the mechanism that makes
+  declaring `Dataset.datasetType` mandatory or optional *per organization*:
+  the field itself always defaults to unset at the model level, and an
+  org that wants it required attaches this policy in `Enforce` mode.
 - **`require_extension_if`** (required `ifKey`/`thenKey`, optional
   `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
   only once the contract already satisfies `ifKey` (optionally pinned to
@@ -750,7 +922,7 @@ grow to cover:
   needs it applied twice — once for its `if`, once for its `then`.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these seven shapes — `None` for an unrecognized `ruleType`
+into one of these eight shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -772,8 +944,8 @@ remains useful, though: it's what a reader (or `OrgPolicyValidator`, via
 built-in type is, without re-deriving it from each evaluator's own body:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
-  `field_naming_convention`, `require_format`, and
-  `require_dataset_description`. Each of these types' own
+  `field_naming_convention`, `require_format`, `require_dataset_description`,
+  and `require_dataset_type`. Each of these types' own
   `builtinEvaluators` entry narrows to `scopedDatasets(contract, rule)`
   (`datasetsInScope(contract, rule.scope)`, further filtered by
   `rule.when`) and checks each dataset independently, producing a
@@ -797,7 +969,7 @@ that was never about any one dataset.
 
 ### Custom policy types (`CustomPolicyEvaluator`)
 
-The seven built-in types above are deliberately closed — but an
+The eight built-in types above are deliberately closed — but an
 organization's own policy vocabulary isn't limited to them. `OrgPolicy`
 carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
 a `PolicyRule.ruleType` this document uses to the fully-qualified class
@@ -827,7 +999,7 @@ with zero change to any governed job's own source.
 There is nothing special about a *built-in* type's evaluation mechanism —
 `OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
 `builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering the
-seven built-in types, each an ordinary `CustomPolicyEvaluator`, built via
+eight built-in types, each an ordinary `CustomPolicyEvaluator`, built via
 the private `interpreted` helper — see that method's own doc for why —
 compiled into this module) before ever consulting `customPolicyTypes`.
 This is why
@@ -1129,11 +1301,12 @@ absent:
 
 ## API compatibility
 
-`Contract`, `Dataset`, `Schema`, `Field`, `ContractVersion`, `ContractRule`,
-`RuleType`, and `InterpretedRule` (all in `ContractModel.scala`), plus
-`ContractParser`, `ContractValidator`, and `ContractCompatibility`'s
-public methods, are this module's binary API surface — as are `OrgPolicy`
-and its own model/parser/validator/evaluator classes
+`Contract`, `Dataset`, `Schema`, `Field`, `DatasetType`, `ContractVersion`,
+`ContractRule`, `RuleType`, and `InterpretedRule` (all in
+`ContractModel.scala`), plus `ContractParser`, `ContractValidator`,
+`ContractCompatibility`, and `CrossContractValidator`'s public methods, are
+this module's binary API surface — as are `OrgPolicy` and its own
+model/parser/validator/evaluator classes
 (`OrgPolicyModel.scala`/`OrgPolicyParser.scala`/`OrgPolicyValidator.scala`/
 `OrgPolicyEvaluator.scala`), `CustomPolicyEvaluator`, and
 `CustomPolicyEvaluatorFactory` — checked by

@@ -57,11 +57,31 @@ object ContractValidator {
       )
     }
 
-    val namedDatasets =
-      contract.inputs.zipWithIndex.map { case (d, i) => (s"inputs[$i]", d) } ++
-        contract.outputs.zipWithIndex.map { case (d, i) => (s"outputs[$i]", d) }
+    val namedInputs = contract.inputs.zipWithIndex.map { case (d, i) => (s"inputs[$i]", d) }
+    val namedOutputs = contract.outputs.zipWithIndex.map { case (d, i) => (s"outputs[$i]", d) }
 
-    namedDatasets.foreach { case (path, dataset) => issues ++= validateDataset(path, dataset) }
+    namedInputs.foreach { case (path, dataset) => issues ++= validateDataset(path, dataset) }
+    namedOutputs.foreach { case (path, dataset) =>
+      issues ++= validateDataset(path, dataset)
+      // SOURCE means "data entering this contract's pipeline that this
+      // contract does not claim responsibility for producing" - declaring
+      // one as this same contract's own output contradicts that role by
+      // definition (see docs/CONTRACT_MODEL.md's "Input and Output Types"
+      // section: "a contract... does not define the SOURCE as an output
+      // produced by that contract"). A Warning, not an Error: nothing in
+      // this module or StructuralVerifier is actually broken by it, the
+      // same "structurally fine, semantically questionable" treatment the
+      // required-but-nullable Field check below already gets.
+      if (dataset.datasetType.contains(DatasetType.Source)) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          s"$path.type",
+          s"Output dataset '${dataset.name}' is declared SOURCE, but a SOURCE represents data entering the " +
+            "pipeline from outside this contract's own responsibility - it should not be declared as this " +
+            "contract's own output. Did you mean DATA_ASSET or CONTROL?"
+        )
+      }
+    }
 
     val duplicateInputs = duplicateNames(contract.inputs.map(_.name))
     duplicateInputs.foreach { name =>

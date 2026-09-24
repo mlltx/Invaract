@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A variant of demo/contracts/invaract_output.yaml declaring `orders` as
+    CONTROL - data used to operate/control processing rather than being
+    the business data being produced (see docs/CONTRACT_MODEL.md's "Input
+    and Output Types" section) - even though the real InvaractPlugin
+    transformation's `value` column genuinely does derive `value`,
+    `value_squared`, and `value_tier` in the produced output. This is
+    exactly the spec's own high-confidence contradiction: a CONTROL input
+    whose data reaches a produced output column. RoleConsistencyVerifier
+    reports this Contradicts, a real ROLE_CONSISTENCY_VIOLATION
+    (ViolationType.RoleConsistencyViolation), aborting the write before
+    any data is written, the same proof invaract_output_data_quality_fail.yaml
+    gives for a data-quality violation - with no change to InvaractPlugin
+    itself, only this contract's own declared type. Not wired into
+    ./dev/test - the real demo pipeline is expected to pass its real
+    contract, not this one.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    type: CONTROL
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_role_fail.parquet
+    format: parquet
+    saveMode: overwrite
+    type: DATA_ASSET
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

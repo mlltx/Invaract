@@ -26,6 +26,13 @@
 # this script, never ./dev/test), so this is genuinely the only place that
 # gap could be closed for something CI actually runs.
 #
+# Cases 5/6 give the same real, CI-gated proof to role-consistency checking
+# (docs/CONTRACT_MODEL.md's "Input and Output Types" section), opt-in via
+# spark.invaract.roleConsistency — the same shape Cases 3/4 already
+# establish for spark.invaract.staticDataQuality, reusing the exact same
+# real transformation and only varying the contract's own declared
+# `type:`.
+#
 # Usage:
 #   ./dev/regression            # builds jars first, then runs both cases
 #   SKIP_BUILD=1 ./dev/regression   # reuse jars already on disk (faster
@@ -80,7 +87,7 @@ mkdir -p demo/output
 
 # --- Case 1: contract satisfied -> execute -------------------------------
 echo ""
-echo -e "${YELLOW}Case 1/4: contract satisfied -> transformation executes${NC}"
+echo -e "${YELLOW}Case 1/6: contract satisfied -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output.yaml"
 
 # Output location must match what the contract declares — StructuralVerifier
@@ -129,7 +136,7 @@ check "a JobSummaryEvent (checksPassed=1, checksFailed=0) was published to $PASS
 
 # --- Case 2: contract violated -> abort before write ----------------------
 echo ""
-echo -e "${YELLOW}Case 2/4: contract violated -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 2/6: contract violated -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_broken_example.yaml"
 
 FAIL_OUTPUT="demo/output/result_broken_example.parquet"
@@ -186,7 +193,7 @@ check "a JobSummaryEvent (checksPassed=0, checksFailed=1) was published to $FAIL
 
 # --- Case 3: data-quality satisfied -> execute, Guaranteed reported -------
 echo ""
-echo -e "${YELLOW}Case 3/4: data-quality constraint satisfied -> transformation executes${NC}"
+echo -e "${YELLOW}Case 3/6: data-quality constraint satisfied -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output_data_quality_pass.yaml"
 
 DQ_PASS_OUTPUT="demo/output/result_dq_pass.parquet"
@@ -225,7 +232,7 @@ check "a ContractValidationEvent with value_tier's dataQuality verdict Guarantee
 
 # --- Case 4: data-quality violated -> abort before write ------------------
 echo ""
-echo -e "${YELLOW}Case 4/4: data-quality constraint violated -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 4/6: data-quality constraint violated -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_data_quality_fail.yaml"
 
 DQ_FAIL_OUTPUT="demo/output/result_dq_fail.parquet"
@@ -281,14 +288,114 @@ else
 fi
 check "no WriteEvent was published to $DQ_FAIL_EVENTS (the write never executed)" "$dq_fail_write_event_ok"
 
+# --- Case 5: role consistency satisfied -> execute, Conforms reported ----
+echo ""
+echo -e "${YELLOW}Case 5/6: declared dataset type consistent with observed usage -> transformation executes${NC}"
+echo "  contract: demo/contracts/invaract_output_role_consistency_pass.yaml"
+
+ROLE_PASS_OUTPUT="demo/output/result_role_pass.parquet"
+ROLE_PASS_REPORT="demo/output/regression_role_pass_report.json"
+ROLE_PASS_EVENTS="demo/output/regression_role_pass_events.jsonl"
+rm -rf "$ROLE_PASS_OUTPUT" "$ROLE_PASS_REPORT" "$ROLE_PASS_EVENTS"
+
+# `orders` is declared DATA_ASSET, and its `value` column genuinely does
+# derive value_squared/value_tier in the produced output - RoleConsistencyVerifier
+# reports this Conforms - real spark.invaract.roleConsistency attachment
+# purely via --conf, same as any real job would use (External
+# Attachability Requirement).
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.roleConsistency=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$ROLE_PASS_OUTPUT" "$ROLE_PASS_REPORT" \
+  "demo/contracts/invaract_output_role_consistency_pass.yaml" "demo/regression-notify-role-pass.properties"
+ROLE_PASS_EXIT=$?
+
+ROLE_PASS_STATUS="$(report_field "$ROLE_PASS_REPORT" status)"
+
+[ "$ROLE_PASS_EXIT" = "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits 0" "$ec_ok"
+
+[ "$ROLE_PASS_STATUS" = "PASS" ] && st_ok=true || st_ok=false
+check "report status is PASS (got '$ROLE_PASS_STATUS')" "$st_ok"
+
+[ -e "$ROLE_PASS_OUTPUT" ] && out_ok=true || out_ok=false
+check "output was written to $ROLE_PASS_OUTPUT" "$out_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$ROLE_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"dataset": "orders"' "$ROLE_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"verdict": "Conforms"' "$ROLE_PASS_EVENTS" 2>/dev/null; then
+  role_pass_event_ok=true
+else
+  role_pass_event_ok=false
+fi
+check "a ContractValidationEvent with orders' roleConformance verdict Conforms was published to $ROLE_PASS_EVENTS" "$role_pass_event_ok"
+
+# --- Case 6: role consistency violated -> abort before write -------------
+echo ""
+echo -e "${YELLOW}Case 6/6: declared dataset type contradicted by observed usage -> write aborted, no output${NC}"
+echo "  contract: demo/contracts/invaract_output_role_consistency_fail.yaml"
+
+ROLE_FAIL_OUTPUT="demo/output/result_role_fail.parquet"
+ROLE_FAIL_REPORT="demo/output/regression_role_fail_report.json"
+ROLE_FAIL_EVENTS="demo/output/regression_role_fail_events.jsonl"
+rm -rf "$ROLE_FAIL_OUTPUT" "$ROLE_FAIL_REPORT" "$ROLE_FAIL_EVENTS"
+
+# `orders` is declared CONTROL, yet its `value` column genuinely does
+# derive value_squared/value_tier in the produced output - the spec's own
+# high-confidence contradiction - a real ROLE_CONSISTENCY_VIOLATION
+# (ViolationType.RoleConsistencyViolation), aborting the write before any
+# data is written, the same proof Case 4 gives for a data-quality
+# violation.
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.roleConsistency=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$ROLE_FAIL_OUTPUT" "$ROLE_FAIL_REPORT" \
+  "demo/contracts/invaract_output_role_consistency_fail.yaml" "demo/regression-notify-role-fail.properties"
+ROLE_FAIL_EXIT=$?
+
+ROLE_FAIL_STATUS="$(report_field "$ROLE_FAIL_REPORT" status)"
+
+[ "$ROLE_FAIL_EXIT" != "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits non-zero (got $ROLE_FAIL_EXIT)" "$ec_ok"
+
+[ "$ROLE_FAIL_STATUS" = "FAIL" ] && st_ok=true || st_ok=false
+check "report status is FAIL (got '$ROLE_FAIL_STATUS')" "$st_ok"
+
+if grep -q "ROLE_CONSISTENCY_VIOLATION" "$ROLE_FAIL_REPORT" 2>/dev/null; then
+  role_violation_ok=true
+else
+  role_violation_ok=false
+fi
+check "report identifies the ROLE_CONSISTENCY_VIOLATION violation" "$role_violation_ok"
+
+if [ ! -e "$ROLE_FAIL_OUTPUT" ]; then
+  role_no_output_ok=true
+else
+  role_no_output_ok=false
+fi
+check "no output was written at $ROLE_FAIL_OUTPUT (write was actually aborted)" "$role_no_output_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$ROLE_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"status": "FAILED"' "$ROLE_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"dataset": "orders"' "$ROLE_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"verdict": "Contradicts"' "$ROLE_FAIL_EVENTS" 2>/dev/null; then
+  role_fail_event_ok=true
+else
+  role_fail_event_ok=false
+fi
+check "a FAILED ContractValidationEvent with orders' roleConformance verdict Contradicts was published to $ROLE_FAIL_EVENTS before the write was aborted" "$role_fail_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$ROLE_FAIL_EVENTS" 2>/dev/null; then
+  role_fail_write_event_ok=false
+else
+  role_fail_write_event_ok=true
+fi
+check "no WriteEvent was published to $ROLE_FAIL_EVENTS (the write never executed)" "$role_fail_write_event_ok"
+
 # --- Summary ---------------------------------------------------------------
 echo ""
 echo "======================================"
 if [ "$FAILURES" -eq 0 ]; then
-  echo -e "${GREEN}✓ Contract regression pack passed (4/4 cases behaved as contracted)${NC}"
+  echo -e "${GREEN}✓ Contract regression pack passed (6/6 cases behaved as contracted)${NC}"
   exit 0
 else
   echo -e "${RED}✗ Contract regression pack failed ($FAILURES assertion(s) did not hold)${NC}"
-  echo "See $PASS_REPORT, $FAIL_REPORT, $DQ_PASS_REPORT, and $DQ_FAIL_REPORT for full detail."
+  echo "See $PASS_REPORT, $FAIL_REPORT, $DQ_PASS_REPORT, $DQ_FAIL_REPORT, $ROLE_PASS_REPORT, and $ROLE_FAIL_REPORT for full detail."
   exit 1
 fi

@@ -114,6 +114,28 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(OrgPolicyValidator.validate(policy).isValid)
   }
 
+  test("require_dataset_type is valid with no 'types' property at all - unlike require_format, absence just means any declared type satisfies it") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("typed", PolicyType.RequireDatasetType, Map.empty)))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_dataset_type with a well-formed 'types' list is valid") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("output-typed", PolicyType.RequireDatasetType, Map("types" -> List("DATA_ASSET", "CONTROL")))))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_dataset_type with an empty 'types' list is an Error") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireDatasetType, Map("types" -> List.empty[String]))))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("require_dataset_type with an unrecognized type name in 'types' is an Error") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireDatasetType, Map("types" -> List("NOT_REAL")))))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
   test("require_extension_if with no 'ifKey'/'thenKey' properties is an Error, not silently accepted") {
     val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtensionIf, Map.empty)))
     val result = OrgPolicyValidator.validate(policy)

@@ -80,6 +80,11 @@
           "type": "string",
           "description": "Optional free-form human-readable explanation of what this dataset is/contains - purely documentary, never checked by RuleVerifier/StructuralVerifier. An organizational policy can require every dataset to declare one (com.invaract.contract.PolicyType.RequireDatasetDescription)."
         },
+        "type": {
+          "type": "string",
+          "enum": ["DATA_ASSET", "SOURCE", "CONTROL"],
+          "description": "Optional declared semantic role (com.invaract.contract.DatasetType), matched case-insensitively by ContractParser though only the canonical uppercase form is listed here: DATA_ASSET (a governed, shareable data product this contract may itself produce or consume), SOURCE (data entering this contract's pipeline from outside its own responsibility - never valid as this contract's own output; ContractValidator warns if declared there), or CONTROL (data used to operate/control processing rather than being the business data produced, e.g. a processing calendar or watermark). A closed three-value set for the initial implementation - an unrecognized value is a ContractParser hard failure, unlike the open-vocabulary `format` above. Whether declaring this is mandatory is an organizational choice, not enforced here: see com.invaract.contract.PolicyType.RequireDatasetType."
+        },
         "schema": { "$ref": "#/$defs/schema" }
       }
     },

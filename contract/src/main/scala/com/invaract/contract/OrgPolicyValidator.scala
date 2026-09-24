@@ -191,6 +191,7 @@ object OrgPolicyValidator {
     case PolicyType.RequireExtension       => " (expected a non-empty 'key' property)"
     case PolicyType.RequireFormat          => " (expected a non-empty 'formats' property - a single format or a list)"
     case PolicyType.RequireExtensionIf     => " (expected non-empty 'ifKey' and 'thenKey' properties)"
+    case PolicyType.RequireDatasetType     => " (if 'types' is set, expected a non-empty list of DATA_ASSET/SOURCE/CONTROL - omit 'types' entirely to require any declared type)"
     case _                                 => ""
   }
 

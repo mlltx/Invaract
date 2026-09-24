@@ -82,6 +82,58 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("Duplicate output dataset name 'out'")))
   }
 
+  test("validate should warn when an output dataset declares type SOURCE") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "source_output",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema, datasetType = Some(DatasetType.Source))),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    val result = ContractValidator.validate(contract)
+    assert(result.isValid) // a Warning, not an Error - this doesn't make the contract structurally invalid
+    assert(result.warnings.exists(w => w.path == "outputs[0].type" && w.message.contains("SOURCE")))
+  }
+
+  test("validate should not warn when an output declares DATA_ASSET or CONTROL, or no type at all") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    def contractWith(datasetType: Option[DatasetType]) = Contract(
+      id = "not_source_output",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = Nil,
+      outputs = List(Dataset("out", "gold.out", None, schema, datasetType = datasetType)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    List(Some(DatasetType.DataAsset), Some(DatasetType.Control), None).foreach { dt =>
+      val warnings = ContractValidator.validate(contractWith(dt)).warnings
+      assert(!warnings.exists(_.message.contains("SOURCE")), s"unexpected SOURCE warning for $dt")
+    }
+  }
+
+  test("validate should not warn when an INPUT dataset declares type SOURCE") {
+    // SOURCE is exactly the expected role for an input - the warning is
+    // specific to a contract declaring SOURCE as its own *output*.
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val contract = Contract(
+      id = "source_input",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = List(Dataset("in", "bronze.in", None, schema, datasetType = Some(DatasetType.Source))),
+      outputs = List(Dataset("out", "gold.out", None, schema)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+
+    assert(ContractValidator.validate(contract).warnings.isEmpty)
+  }
+
   test("validate should warn (not error) when two distinctly-named outputs declare the same location") {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     val contract = Contract(

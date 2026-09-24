@@ -102,6 +102,22 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies.head.interpret.contains(InterpretedPolicy.RequireDatasetDescription))
   }
 
+  test("parse should correctly decode require_dataset_type, with and without an allowed 'types' list") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: any-type-required
+        |    type: require_dataset_type
+        |  - id: output-must-be-data-asset
+        |    type: require_dataset_type
+        |    scope: outputs
+        |    types: [DATA_ASSET]
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies(0).interpret.contains(InterpretedPolicy.RequireDatasetType(None)))
+    assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireDatasetType(Some(List(DatasetType.DataAsset)))))
+  }
+
   test("parse should correctly decode require_extension_if, with and without ifValue/thenValue pins") {
     val yaml =
       """version: "1.0"

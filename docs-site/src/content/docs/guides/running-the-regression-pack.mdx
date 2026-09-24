@@ -38,9 +38,10 @@ guarantee on a machine that hasn't set up JDK/sbt/Spark at all. Only Docker is r
 
 ## What it checks
 
-Four real cases, exiting non-zero if any behaves unexpectedly — schema-level
+Six real cases, exiting non-zero if any behaves unexpectedly — schema-level
 enforcement, then the same pass/fail proof for [static data-quality
-verification](/guides/verifying-static-data-quality/):
+verification](/guides/verifying-static-data-quality/) and for [input/output type
+role-consistency](/guides/declaring-input-and-output-types/):
 
 1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the job exits `0`,
    the report says `PASS`, and the output file exists.
@@ -57,10 +58,21 @@ verification](/guides/verifying-static-data-quality/):
    declaring `value_tier` must be `[high]` only) — the same transformation provably
    produces `'low'` on its `ELSE` branch, so the job exits non-zero, the report shows a
    `DATA_QUALITY_VIOLATION`, and the output file is never created.
+5. **Declared type consistent with observed usage** (`demo/contracts/invaract_output_role_consistency_pass.yaml`,
+   declaring the `orders` input `DATA_ASSET`) — `orders`' `value` column genuinely does
+   derive `value_squared`/`value_tier` in the produced output, so the job exits `0` and
+   the published `ContractValidationEvent` carries a `Conforms` verdict for `orders`.
+6. **Declared type contradicted by observed usage** (`demo/contracts/invaract_output_role_consistency_fail.yaml`,
+   declaring the same `orders` input `CONTROL`) — its data still reaches a produced
+   output column, the exact high-confidence contradiction role-consistency checking
+   exists to catch, so the job exits non-zero, the report shows a
+   `ROLE_CONSISTENCY_VIOLATION`, and the output file is never created.
 
-Cases 3/4 both attach `spark.invaract.staticDataQuality=true` purely via `--conf`, the
-same way a platform team would against a job whose source they don't own — see [Verify
-Static Data Quality](/guides/verifying-static-data-quality/#enable-it).
+Cases 3/4 attach `spark.invaract.staticDataQuality=true` purely via `--conf`, the same
+way a platform team would against a job whose source they don't own — see [Verify Static
+Data Quality](/guides/verifying-static-data-quality/#enable-it). Cases 5/6 attach
+`spark.invaract.roleConsistency=true` the identical way — see [Declaring Input and Output
+Types](/guides/declaring-input-and-output-types/#enable-role-consistency-checking).
 
 <Aside type="tip">
 This same pack runs in CI on every push — directly, once per OS/Java combination in

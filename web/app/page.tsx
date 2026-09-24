@@ -64,6 +64,11 @@ interface Report {
     dataQuality?:
       | Array<{ field: string; constraint: string; verdict: string }>
       | { captured: boolean; note?: string }
+    // Same "captured: false on a PASSED check" shape as dataQuality above,
+    // for the identical underlying API gap - see that field's own comment.
+    roleConformance?:
+      | Array<{ dataset: string; datasetType: string; verdict: string; detail: string }>
+      | { captured: boolean; note?: string }
   }
   error?: string
 }
@@ -409,6 +414,38 @@ const ReportViewer = () => {
                       <h3 className={styles.dataQualityHeading}>Data Quality</h3>
                       <p className={styles.hint}>
                         {cv.dataQuality.note || 'Data quality verdicts were not captured for this run.'}
+                      </p>
+                    </>
+                  )
+                )}
+
+                {cvStatus !== 'DRY_RUN' && cv.roleConformance && (
+                  Array.isArray(cv.roleConformance) ? (
+                    cv.roleConformance.length > 0 && (
+                      <>
+                        <h3 className={styles.dataQualityHeading}>Role Conformance</h3>
+                        <div className={styles.dataQualityList}>
+                          {cv.roleConformance.map((rc, i) => {
+                            const verdictClass =
+                              rc.verdict === 'Conforms' ? styles.verdictGuaranteed :
+                              rc.verdict === 'Contradicts' ? styles.verdictViolated :
+                              styles.verdictNeutral
+                            return (
+                              <div key={i} className={styles.dataQualityCheck}>
+                                <span className={styles.dataQualityField}>{rc.dataset}</span>
+                                <span className={styles.dataQualityConstraint}>{rc.datasetType}</span>
+                                <span className={`${styles.verdictBadge} ${verdictClass}`}>{rc.verdict}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <h3 className={styles.dataQualityHeading}>Role Conformance</h3>
+                      <p className={styles.hint}>
+                        {cv.roleConformance.note || 'Role-conformance verdicts were not captured for this run.'}
                       </p>
                     </>
                   )

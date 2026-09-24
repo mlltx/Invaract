@@ -408,6 +408,67 @@ write actually performed); `StaticDataQualityVerifier` instead asks
 whether the *transformation's own logic* provably guarantees that shape
 holds for every possible row, which the schema check alone cannot answer.
 
+## Role-consistency checking
+
+`RoleConsistencyVerifier` (`RoleConsistencyVerifier.scala`) checks a
+contract's declared input `DatasetType`s (`DATA_ASSET`/`SOURCE`/`CONTROL` —
+see docs/CONTRACT_MODEL.md's "Input and Output Types" section) against how
+each input is actually observed being used in the translated
+transformation plan. Same division of labor as `SensitivityLineage`/
+`StaticDataQualityVerifier` above: this needs both a real `Contract`
+(declared types) and traced lineage (observed usage) together.
+
+```scala
+def verify(contract: Contract, plan: Plan): List[RoleConformanceCheckResult]
+def violations(results: List[RoleConformanceCheckResult]): List[Violation]
+```
+
+For each input with a declared `datasetType` that's observed anywhere in
+`plan` (an input with no declared type, or never observed at all — already
+`ViolationType.MissingInput`'s own job — contributes nothing), it computes
+two structural facts via machinery this module already has for other
+purposes:
+
+- **Does the input contribute to a produced output column?** —
+  `ir.Lineage.trace(plan)`'s traced `sources`, the identical resolution
+  `SensitivityLineage` reuses to propagate sensitivity tags forward.
+- **Is the input referenced in a `Filter`/`Join` condition anywhere in the
+  plan?** — `PlanRuleVerifier.collectConditionReferences`, the same
+  column-reference collection `required_filter_columns` checking already
+  performs, exposed for reuse rather than reimplemented.
+
+These two facts resolve to one of three verdicts
+(`RoleConformanceVerdict.{Conforms, Contradicts, CannotDetermine}` —
+docs/CONTRACT_MODEL.md's own "Role-consistency checks" section has the
+full table). Only `Contradicts` becomes a real `Violation`
+(`ViolationType.RoleConsistencyViolation`); `Conforms`/`CannotDetermine`
+are reporting-only, exactly like `DataQualityVerdict`'s
+non-`Violated` states, and never affect `VerificationResult.passed` on
+their own.
+
+**Opt-in, off by default**: `VerificationOptions.roleConsistency` (fifth
+flag, alongside `staticDataQuality`), attachable purely via `spark-submit
+--conf spark.invaract.roleConsistency=true` against a job whose source you
+don't own — the identical `resolveVerificationOptions` `||`-overlay
+mechanism every other flag uses (CLAUDE.md's "External Attachability
+Requirement"). An organizational policy can also floor this on for every
+governed job via `inject.minVerificationOptions.roleConsistency` (see
+`KnownMinVerificationOptionKeys`/`applyMinVerificationOptions`), the same
+mechanism every other `VerificationOptions` flag already gets — ties
+together with `require_dataset_type` (docs/CONTRACT_MODEL.md's
+"Organizational Policy" section): a policy can require both that datasets
+declare a type *and* that role-consistency is actually checked. When
+`false` (the default), none of this runs at all — no `roleConformance`
+entries, no possibility of a `RoleConsistencyViolation`, matching every
+existing caller's current behavior exactly. See `docs/CONTRACT_MODEL.md`'s
+"Mandatory or optional, per organization" for why the model itself never
+requires a declared type on its own.
+
+`ContractEnforcementRule.publishValidation` carries `VerificationResult.roleConformance`
+straight through to `notification.ContractValidationEvent.roleConformance`
+— reaches every configured sink, PASS or FAILED alike, the same as
+`dataQuality`/`fingerprints` above.
+
 ## Diagnostics: plan extraction examples
 
 From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
@@ -2514,9 +2575,11 @@ overhead. The two levers above reduced wasted time around that core cost
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a 4-way matrix job
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
-scoped to a fixed subset of the module's source files (29 as of
-`PlanRuleVerifier`/`EqualityConditions`, added to shard-3/shard-2
-respectively)
+scoped to a fixed subset of the module's source files (30 as of
+`RoleConsistencyVerifier`, added to shard-4 — the shard smallest by line
+count at the time, per this section's own "pick whichever shard is
+currently smallest" convention; `PlanRuleVerifier`/`EqualityConditions`
+were added to shard-3/shard-2 respectively before it)
 (`strategy.matrix.include`, one entry per shard). This doesn't reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
 once per mutant, exactly as before — it parallelizes it across four

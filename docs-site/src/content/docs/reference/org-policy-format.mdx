@@ -95,6 +95,7 @@ contract's own `rules:` entries work.
 | `require_extension` | `key` (required), `value` (optional) | The **contract itself** declares `key` in its top-level `extensions` map (e.g. `extensions: { owner: data-platform-team }`), optionally pinning `key` to an exact `value` (case-sensitive). A key present but mapped to YAML `null` counts as absent. |
 | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
+| `require_dataset_type` | `types` (optional) | The dataset declares a `type` ([`DATA_ASSET`/`SOURCE`/`CONTROL`](/guides/declaring-input-and-output-types/)) at all; if `types` is also set (a single string or a list), the declared type must additionally be one of them. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
 A policy `type` matching neither this set nor a [`customPolicyTypes`](#custom-policy-types)
@@ -112,8 +113,9 @@ type pin therefore uses the distinct key `fieldType`.
 </Aside>
 
 <Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
-`require_catalog`, `require_field`, `field_naming_convention`, `require_format`, and
-`require_dataset_description` each check one dataset at a time, honoring `scope`/`when`.
+`require_catalog`, `require_field`, `field_naming_convention`, `require_format`,
+`require_dataset_description`, and `require_dataset_type` each check one dataset at a
+time, honoring `scope`/`when`.
 `require_extension` and `require_extension_if` are different: they check the contract
 document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
 either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
@@ -151,7 +153,7 @@ trait CustomPolicyEvaluator {
 }
 ```
 
-`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the seven
+`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the eight
 built-in ones — a `customPolicyTypes` key matching a built-in `type` is dead (the built-in
 always wins; `OrgPolicyValidator` warns on this). `PolicyExemption` coverage and `mode:
 enforce`/`warn` splitting still apply automatically to a custom type's violations, exactly
