@@ -3114,6 +3114,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // end-to-end wiring: default-off, a genuine Contradicts abort, the
   // Conforms non-blocking case, and spark.invaract.roleConsistency
   // attached purely via conf.
+  // required: false throughout - Parquet reports every column nullable on
+  // read-back regardless of what was written (the same real,
+  // separate-from-role-consistency behavior the Delta input/output fixtures
+  // above document); nullability itself already has its own dedicated
+  // coverage in StructuralVerifierSpec. These tests are specifically about
+  // role-consistency, checked against a real read's real schema.
   private val roleConsistencyContractYaml =
     """id: role_demo
       |version: "1.0.0"
@@ -3125,14 +3131,14 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       |      fields:
       |        - name: gate
       |          type: long
-      |          required: true
+      |          required: false
       |  - name: data
       |    location: DATA_PATH
       |    schema:
       |      fields:
       |        - name: id
       |          type: long
-      |          required: true
+      |          required: false
       |outputs:
       |  - name: out
       |    location: OUTPUT_PATH
@@ -3141,7 +3147,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       |      fields:
       |        - name: id
       |          type: long
-      |          required: true
+      |          required: false
       |""".stripMargin
 
   test("roleConsistency defaults to false: a CONTROL input whose data reaches a produced output column still PASSES") {
