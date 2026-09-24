@@ -84,6 +84,10 @@ export default defineConfig({
 							label: 'Enforce an Organizational Policy',
 							slug: 'guides/enforcing-organizational-policy',
 						},
+						{
+							label: 'Use a Contract Registry',
+							slug: 'guides/using-a-contract-registry',
+						},
 					],
 				},
 				{

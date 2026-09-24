@@ -1521,11 +1521,14 @@ real session materializes, and that's where every `spark.invaract.*` key
 is actually read:
 
 - `spark.invaract.contract` (required, unless `spark.invaract.dryRun=true`)
-  — parsed via `ContractParser.parseFile`, then passed straight to
-  `forContract`, which performs its own conf-driven resolution
-  (`spark.invaract.locationMap`, `.rejectUndeclaredInputs`, etc.) exactly
-  as it would for a caller invoking it directly — `checkRuleFor` adds no
-  duplicate handling for any of those.
+  — resolved via `registry.ContractSource.resolve` (see "Contract
+  resolution: `registry://`" below — an ordinary path still goes straight
+  to `ContractParser.parseFile`, unchanged from before that object
+  existed), then passed straight to `forContract`, which performs its own
+  conf-driven resolution (`spark.invaract.locationMap`,
+  `.rejectUndeclaredInputs`, etc.) exactly as it would for a caller
+  invoking it directly — `checkRuleFor` adds no duplicate handling for any
+  of those.
 - `spark.invaract.dryRun=true` — installs `ContractEnforcementRule.dryRun`
   instead, ignoring `spark.invaract.contract` entirely (not merely leaving
   it unvalidated). With no job code to hand the inferred `Contract` to,
@@ -1547,6 +1550,79 @@ enforces a PASS and a FAIL, runs dry-run mode, fails closed with a clear
 message when neither conf key is set, and (with `spark.invaract.notifyConfig`
 also set) publishes both `ContractValidationEvent` and `WriteEvent` to a
 real `FileNotificationSink`.
+
+## Contract resolution: `registry://`
+
+`com.invaract.sparkadapter.registry`
+(`spark-adapter/src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala`)
+answers the same shape of question "Location resolution" above answers
+for a `Dataset.location`, but for `spark.invaract.contract`'s own value:
+instead of naming a file path, it can name a contract living in a
+separate contract registry (docs/CONTRACT_REGISTRY.md is the full design;
+that registry server is a separate deployable service, in a separate
+repo — this module never depends on it directly).
+
+- `ContractSource.parse(raw)` recognizes `registry://<id>@<version>`
+  (`@latest` sugar included) — `None` for an ordinary path, the same
+  `Some`-for-a-reference/`None`-for-a-literal shape `LocationRef.id`
+  already uses for `ref://`.
+- `ContractSource.resolve(raw, session)` is what `InvaractSparkSessionExtension`
+  and any caller of `ContractEnforcementRule.forContract` should call
+  instead of `ContractParser.parseFile` directly: an ordinary path goes
+  straight to `ContractParser.parseFile` (unchanged), a `registry://`
+  reference is fetched from the registry named by a new
+  `spark.invaract.registryUrl` conf key.
+- **Deliberately no compile-time dependency on `registry-client`** — a
+  contract registry is optional, opt-in infrastructure a platform team
+  may never deploy, following `notification-kafka`'s precedent (opt-in,
+  not part of this module's own dependency footprint) rather than
+  `fingerprint`'s (bundled unconditionally, since fingerprinting is core).
+  The real `HttpContractRegistryClient` implementation is resolved
+  reflectively by class name (`spark.invaract.registryClientClass`,
+  defaulting to `registry-client`'s own class), the same "class name in
+  config, public no-arg constructor, loaded once" mechanism
+  `notification.NotificationSinkFactory` already establishes for
+  `NotificationSink` — the one difference is there is no shared trait to
+  cast to here (that would itself be a compile-time dependency), so the
+  two methods actually needed (`configure`, `get`/`getLatest`) are
+  invoked via plain `java.lang.reflect.Method.invoke` instead of a
+  virtual call. Their return type, `com.invaract.contract.Contract`, is a
+  safe direct cast either way, since `contract` is already a real
+  dependency of both this module and `registry-client`.
+- A job that never sets `spark.invaract.registryUrl` or uses a
+  `registry://` reference never touches any of this, and
+  `registry-client`'s jar doesn't even need to be on the classpath — the
+  same "using it changes nothing for jobs that don't" guarantee
+  `notification-kafka` already gives.
+
+Satisfying CLAUDE.md's External Attachability Requirement the same way
+`ref://`/`locationMap` already do — a platform team points *any* job that
+already installs `InvaractSparkSessionExtension` at a registry-hosted
+contract purely via `spark-submit --conf`, no change to that job's
+source:
+
+```
+spark-submit \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=registry://customer_orders@2.1.0 \
+  --conf spark.invaract.registryUrl=https://registry.corp.internal \
+  --jars invaract-spark-adapter-*.jar,invaract-registry-client-*.jar \
+  my-job.jar
+```
+
+The explicit-code path needs no new spark-adapter API at all: a job's own
+code can call `registry-client` directly
+(`client.getLatest("customer_orders")`) to obtain a real `Contract`, then
+hand it to the existing `ContractEnforcementRule.forContract(contract)`
+overload exactly as it always could — the same way
+`ContractLocationResolution.resolve(...)`'s own explicit-code path
+produces a `Contract` and hands it to that same existing overload, with
+no dedicated "resolver" overload needed there either.
+
+See docs/CONTRACT_REGISTRY.md for the full design (the REST wire
+protocol, the registry server's storage/concurrency contract, and why the
+server lives in a separate repo) and `dev/registry-demo` for the
+conf-driven path proven against a real Spark job.
 
 ## DML rule verification
 
