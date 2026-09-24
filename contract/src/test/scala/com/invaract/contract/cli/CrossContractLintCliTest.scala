@@ -39,6 +39,10 @@ class CrossContractLintCliTest extends AnyFunSuite {
       |  - name: customer_master
       |    location: gold.customer_master
       |    type: DATA_ASSET
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: string
       |outputs:
       |  - name: out
       |    location: gold.downstream
@@ -55,6 +59,10 @@ class CrossContractLintCliTest extends AnyFunSuite {
       |  - name: customer_master
       |    location: gold.customer_master
       |    type: SOURCE
+      |    schema:
+      |      fields:
+      |        - name: id
+      |          type: string
       |outputs:
       |  - name: out
       |    location: gold.downstream
