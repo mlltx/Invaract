@@ -38,7 +38,9 @@ guarantee on a machine that hasn't set up JDK/sbt/Spark at all. Only Docker is r
 
 ## What it checks
 
-Two real cases, exiting non-zero if either behaves unexpectedly:
+Four real cases, exiting non-zero if any behaves unexpectedly — schema-level
+enforcement, then the same pass/fail proof for [static data-quality
+verification](/guides/verifying-static-data-quality/):
 
 1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the job exits `0`,
    the report says `PASS`, and the output file exists.
@@ -46,11 +48,25 @@ Two real cases, exiting non-zero if either behaves unexpectedly:
    requires a `customer_name` column the demo transformation never produces) — the job
    exits non-zero, the report says `FAIL` with a `MISSING_OUTPUT_FIELD` violation, and —
    the core guarantee — **the output file is never created**.
+3. **Data-quality constraint satisfied** (`demo/contracts/invaract_output_data_quality_pass.yaml`,
+   declaring `value_tier` must be one of `[high, low]`) — the demo transformation's own
+   `CASE WHEN value > 50 THEN 'high' ELSE 'low' END` provably satisfies that, so the job
+   exits `0` and the published `ContractValidationEvent` carries a `Guaranteed` verdict
+   for `value_tier`.
+4. **Data-quality constraint violated** (`demo/contracts/invaract_output_data_quality_fail.yaml`,
+   declaring `value_tier` must be `[high]` only) — the same transformation provably
+   produces `'low'` on its `ELSE` branch, so the job exits non-zero, the report shows a
+   `DATA_QUALITY_VIOLATION`, and the output file is never created.
+
+Cases 3/4 both attach `spark.invaract.staticDataQuality=true` purely via `--conf`, the
+same way a platform team would against a job whose source they don't own — see [Verify
+Static Data Quality](/guides/verifying-static-data-quality/#enable-it).
 
 <Aside type="tip">
-This same pack runs in CI on every push (`.github/workflows/test.yml`'s
-`docker-regression` job), so the abort path is checked automatically on every change, not
-just the happy path.
+This same pack runs in CI on every push — directly, once per OS/Java combination in
+`.github/workflows/test.yml`'s `test` job, and again inside a Docker image in the
+`docker-regression` job — so the abort path is checked automatically on every change,
+not just the happy path.
 </Aside>
 
 ## Why this exists as a separate script

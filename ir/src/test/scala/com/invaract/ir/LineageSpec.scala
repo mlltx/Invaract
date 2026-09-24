@@ -639,4 +639,35 @@ class LineageSpec extends AnyFunSuite {
     val lineage = Lineage.trace(plan)
     assert(lineage.head.sources == Set(ColumnRef("status", Some("raw.orders")), ColumnRef("tier", Some("raw.orders"))))
   }
+
+  // --- StructField / StructConstruct ------------------------------------------
+
+  test("classify: StructField over a bare column is Computed, never Direct - extraction is itself an operation") {
+    val lineage = lineageOf(StructField(amount, "zip"))
+    assert(lineage.derivation == DerivationKind.Computed)
+    assert(lineage.sources == Set(ColumnRef("amount", Some("raw.orders"))))
+  }
+
+  test("classify: StructField over a UDF-built struct is Opaque") {
+    assert(lineageOf(StructField(UDF(Some("f"), List(amount)), "zip")).derivation == DerivationKind.Opaque)
+  }
+
+  test("classify: StructConstruct built entirely from real columns is Computed, with every field's source unioned") {
+    val lineage = lineageOf(StructConstruct(List("amt" -> amount, "t" -> tax)))
+    assert(lineage.derivation == DerivationKind.Computed)
+    assert(lineage.sources == Set(ColumnRef("amount", Some("raw.orders")), ColumnRef("tax", Some("raw.orders"))))
+  }
+
+  test("classify: StructConstruct built entirely from literals is Constant") {
+    assert(lineageOf(StructConstruct(List("a" -> Literal(1, "integer"), "b" -> Literal("x", "string")))).derivation == DerivationKind.Constant)
+  }
+
+  test("classify: StructConstruct is Opaque if ANY one field's value is opaque, not only when all are") {
+    val udf = UDF(Some("f"), List(amount))
+    assert(lineageOf(StructConstruct(List("clean" -> amount, "risky" -> udf))).derivation == DerivationKind.Opaque)
+  }
+
+  test("classify: an empty StructConstruct is Constant (no sources to draw from)") {
+    assert(lineageOf(StructConstruct(Nil)).derivation == DerivationKind.Constant)
+  }
 }

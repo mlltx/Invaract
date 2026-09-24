@@ -22,6 +22,18 @@ name := "invaract-contract"
 // the same shape of break again - confirmed by a real `sbt
 // mimaReportBinaryIssues` run against the 0.7.0 baseline below (CI's
 // api-compatibility job on this PR), not assumed.
+// 0.8.0 -> 0.9.0: NOT a MiMa break (InterpretedFieldConstraint.FieldRange
+// is a purely additive new case on an already-`sealed` trait, and
+// FieldConstraintType.FieldRange is a new val - neither changes an
+// existing signature). Bumped purely for the same Ivy-cache coordinate-
+// collision reason `fingerprint`'s own 0.2.0 -> 0.3.0 bump documents:
+// `spark-adapter/build.sbt` declares a real compile-time
+// `"com.invaract" %% "invaract-contract" % <version>` dependency, so CI's
+// `api-compatibility` job - which publishes both base-ref's and PR-head's
+// own `contract` build into the same shared local Ivy cache within one
+// job, so `spark-adapter` can compile against each in turn - would
+// otherwise have both publishes collide under the identical
+// unbumped coordinate, with whichever runs second silently winning.
 // ThisBuild-scoped, not a bare `version :=` - sbt-sonatype's
 // sonatypePublishToBundle (and other cross-cutting plugin settings) reads
 // ThisBuild/version specifically, which otherwise silently stays at sbt's
@@ -30,7 +42,7 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.8.0"
+ThisBuild / version := "0.9.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -106,11 +118,23 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.8.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.9.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
 }
+
+// Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
+// comment for coverageScalacPluginVersion's own reasoning (pins a runtime
+// release confirmed reachable from this environment, not chosen for any
+// technical reason over another) and the "measure first, then pin"
+// discipline behind the two thresholds below (measured stmt=89.03%,
+// branch=81.22% via a real `sbt coverage test coverageReport` run).
+coverageScalacPluginVersion := "2.4.2"
+coverageMinimumStmtTotal := 87
+coverageMinimumBranchTotal := 79
+coverageFailOnMinimum := true
+coverageHighlighting := true
 
 // API compatibility (MiMa): fails `sbt mimaReportBinaryIssues` if this
 // module's public API (Contract/Dataset/Schema/Field/ContractVersion/
@@ -163,7 +187,7 @@ assembly / assemblyMergeStrategy := {
 // `sbt mimaReportBinaryIssues` run with no env var set; bump it whenever
 // convenient, but a stale value here can no longer break CI for anyone.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.7.0")
+  "com.invaract" %% "invaract-contract" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.8.0")
 )
 
 import com.typesafe.tools.mima.core._

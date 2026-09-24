@@ -116,7 +116,7 @@ even though the harness itself is not the thing being changed.
    └─> each module's target/scala-2.12/*.jar
 
 2. Build fingerprint (needs ir published locally — not contract/plugin)
-   └─> fingerprint/target/scala-2.12/invaract-fingerprint-0.2.0.jar
+   └─> fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar
 
 3. Build spark-adapter (needs contract, ir, fingerprint published locally)
    └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.7.0.jar
@@ -508,15 +508,35 @@ Testing Requirement." Summary:
   property-based fuzz suite (`SparkPlanAdapterFuzzSpec`, random chains of
   operations asserting the adapter never throws), and whole-module
   mutation testing.
-- **The harness (`plugin`/`runner`) via `./dev/test`**: real end-to-end
-  `spark-submit`, exercising the whole engine as installed, per ADR-005.
-- **`./dev/regression` (Docker, CI's `docker-regression` job)**: the
-  pass/fail pair proving `ContractEnforcementRule` actually enforces
-  something, not just that a harness run completes.
+- **The harness (`plugin`/`runner`) via real end-to-end `spark-submit`**,
+  exercising the whole engine as installed, per ADR-005 —
+  `./dev/regression`'s own four cases (below) are what CI actually runs for
+  this; `./dev/test` is the equivalent single-pass proof a contributor runs
+  locally/interactively (dev/lib.sh's own doc), not something any CI job
+  invokes.
+- **`./dev/regression`**: the pass/fail pair proving `ContractEnforcementRule`
+  actually enforces something, not just that a harness run completes — now
+  four cases, not two: schema-level enforcement (Cases 1/2) and static
+  data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md).
+  Runs twice in CI: directly, once per OS/Java combination in the `test`
+  job's matrix, and again via Docker in the separate `docker-regression` job
+  (`docker/Dockerfile`).
+- **A multi-Spark/Delta/Iceberg-version compatibility matrix** (CI's
+  `spark-version-matrix`/`delta-version-matrix`/`iceberg-version-matrix`
+  jobs) and **API-compatibility checking** (CI's `api-compatibility` job,
+  MiMa — see CLAUDE.md's "API Compatibility Requirement").
+- **Line/branch coverage gating** (CI's `coverage-gating` job, sbt-scoverage)
+  across `contract`/`ir`/`spark-adapter`/`fingerprint` — a different,
+  complementary question from mutation testing's own "does this code have
+  tests that would catch a change": "does this code have tests at all." Each
+  module's own `coverageMinimumStmtTotal`/`coverageMinimumBranchTotal`
+  (`build.sbt`) is measured against its real suite and pinned a few points
+  below, the same "measure first, then pin" discipline
+  `strykerThresholdsBreak` already follows — see CLAUDE.md's "Coverage
+  Gating Requirement."
 
-Guardrails still outstanding (ROADMAP.md, scoped to `contract`/`ir`/
-`spark-adapter`): a multi-Spark-version compatibility matrix, coverage
-gating, and API-compatibility checking.
+No guardrails remain outstanding from this file's own prior list — the last
+one, coverage gating, is covered above.
 
 ## Performance Characteristics
 

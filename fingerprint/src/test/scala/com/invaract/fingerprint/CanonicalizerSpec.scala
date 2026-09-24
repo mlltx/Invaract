@@ -286,6 +286,64 @@ class CanonicalizerSpec extends AnyFunSuite {
   }
 
   // -----------------------------------------------------------------
+  // StructField / StructConstruct
+  // -----------------------------------------------------------------
+
+  test("StructField's fieldName participates in the encoding") {
+    val struct = ColumnReference(ColumnRef("address"))
+    assert(encodeExpr(StructField(struct, "zip")) != encodeExpr(StructField(struct, "city")))
+  }
+
+  test("StructField's own struct expression participates in the encoding") {
+    val a = ColumnReference(ColumnRef("a"))
+    val b = ColumnReference(ColumnRef("b"))
+    assert(encodeExpr(StructField(a, "zip")) != encodeExpr(StructField(b, "zip")))
+  }
+
+  test("StructField and a plain Function of the same name/args do not collide in the encoding") {
+    val struct = ColumnReference(ColumnRef("address"))
+    assert(encodeExpr(StructField(struct, "zip")) != encodeExpr(Function("zip", List(struct))))
+  }
+
+  test("StructConstruct field ORDER DOES affect the encoding (not normalised, unlike Aggregate.groupBy)") {
+    val a = "a" -> ColumnReference(ColumnRef("a")): (String, Expr)
+    val b = "b" -> ColumnReference(ColumnRef("b")): (String, Expr)
+    assert(encodeExpr(StructConstruct(List(a, b))) != encodeExpr(StructConstruct(List(b, a))))
+  }
+
+  test("StructConstruct field NAMEs participate in the encoding, not just values") {
+    val value = Literal(1, "integer")
+    assert(encodeExpr(StructConstruct(List("a" -> value))) != encodeExpr(StructConstruct(List("b" -> value))))
+  }
+
+  test("StructConstruct field VALUEs participate in the encoding, not just names") {
+    assert(encodeExpr(StructConstruct(List("a" -> Literal(1, "integer")))) != encodeExpr(StructConstruct(List("a" -> Literal(2, "integer")))))
+  }
+
+  test("an empty StructConstruct has a stable, non-crashing encoding, distinguishable from a single-field one") {
+    assert(encodeExpr(StructConstruct(Nil)) != encodeExpr(StructConstruct(List("a" -> Literal(1, "integer")))))
+  }
+
+  test("StructField(StructConstruct(...), name) round-trips through the encoder deterministically") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    assert(encodeExpr(StructField(built, "zip")) == encodeExpr(StructField(built, "zip")))
+  }
+
+  test("StructField/StructConstruct/Field canonicalize to their exact tagged shape, not merely a distinguishable one") {
+    val ref = ColumnReference(ColumnRef("address"))
+    val fieldNode = Canonicalizer.canonicalizeExpr(StructField(ref, "zip"), Map.empty)
+    assert(fieldNode == CTag("StructField", List(Canonicalizer.canonicalizeExpr(ref, Map.empty), CanonicalNode.stringLeaf("zip"))))
+
+    val constructNode = Canonicalizer.canonicalizeExpr(StructConstruct(List("zip" -> Literal("94107", "string"))), Map.empty)
+    assert(
+      constructNode == CTag(
+        "StructConstruct",
+        List(CTag("Field", List(CanonicalNode.stringLeaf("zip"), Canonicalizer.canonicalizeExpr(Literal("94107", "string"), Map.empty))))
+      )
+    )
+  }
+
+  // -----------------------------------------------------------------
   // Deep expression resolution through nested/passthrough Projects
   // -----------------------------------------------------------------
 
@@ -309,6 +367,93 @@ class CanonicalizerSpec extends AnyFunSuite {
     val after = Canonicalizer.resolvedOutputs(plan(BigDecimal("1.25")))("value")
     assert(encodeExpr(before) != encodeExpr(after), "the real computation, several Projects down, must still be reachable")
     assert(!before.isInstanceOf[ColumnReference], "resolution must not stop at the outer passthrough reference")
+  }
+
+  test("resolveExprDeep reaches through Alias/Cast/BooleanExpr/Conditional to inline a buried passthrough reference") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val passthrough = ColumnReference(ColumnRef("real"))
+
+    Canonicalizer.resolveExprDeep(Alias("renamed", passthrough), inner) match {
+      case Alias("renamed", Arithmetic("+", _)) => // expected: the passthrough inside the Alias was resolved too
+      case other                                  => fail(s"expected Alias to wrap the resolved computation, got $other")
+    }
+    Canonicalizer.resolveExprDeep(Cast(passthrough, "double"), inner) match {
+      case Cast(Arithmetic("+", _), "double") => // expected
+      case other                               => fail(s"expected Cast to wrap the resolved computation, got $other")
+    }
+    Canonicalizer.resolveExprDeep(BooleanExpr("NOT", List(Comparison("=", passthrough, Literal(0, "integer")))), inner) match {
+      case BooleanExpr("NOT", List(Comparison("=", Arithmetic("+", _), Literal(0, "integer")))) => // expected
+      case other                                                                                    => fail(s"expected the Comparison's own passthrough operand resolved, got $other")
+    }
+    Canonicalizer.resolveExprDeep(Conditional(List((passthrough, Literal("a", "string"))), Some(passthrough)), inner) match {
+      case Conditional(List((Arithmetic("+", _), _)), Some(Arithmetic("+", _))) => // expected: both the branch condition and the ELSE value resolved
+      case other                                                                  => fail(s"expected both the branch condition and ELSE value resolved, got $other")
+    }
+  }
+
+  test("resolveExprDeep over a bare Conditional with no ELSE value leaves it None, not a crash") {
+    val plan = Read(DatasetRef("raw.orders"))
+    Canonicalizer.resolveExprDeep(Conditional(List((Literal(true, "boolean"), Literal(1, "integer"))), None), plan) match {
+      case Conditional(_, None) => // expected
+      case other                  => fail(s"expected elseValue to stay None, got $other")
+    }
+  }
+
+  test("a reference the Aggregate it passes through doesn't declare resolves to the original reference, not a crash") {
+    val agg = Aggregate(Read(DatasetRef("raw.orders")), Nil, List(NamedExpr("total", AggregateCall("SUM", ColumnReference(ColumnRef("amount"))))))
+    val outerOverAgg = Project(agg, List(NamedExpr("out", ColumnReference(ColumnRef("missing")))))
+    assert(Canonicalizer.resolvedOutputs(outerOverAgg)("out") == ColumnReference(ColumnRef("missing")))
+  }
+
+  test("a reference a Window doesn't declare falls through to its own input plan, not straight to None") {
+    val windowed = Window(Read(DatasetRef("raw.orders")), List(NamedExpr("rn", Function("ROW_NUMBER", Nil))))
+    val outerOverWindow = Project(windowed, List(NamedExpr("out", ColumnReference(ColumnRef("amount")))))
+    // "amount" isn't one of the Window's own declared names, but IS a real
+    // column of the Read it falls through to (an unqualified reference
+    // vacuously matches any Read's own scope) - proving the Window's None
+    // branch genuinely re-dispatches to `input`, not short-circuiting to
+    // the original unresolved reference the way Aggregate's own None
+    // branch does.
+    assert(Canonicalizer.resolvedOutputs(outerOverWindow)("out") == ColumnReference(ColumnRef("amount", Some("raw.orders"))))
+  }
+
+  test("resolveExprDeep passes an unresolved reference straight through Filter/Sort/Limit to their own input") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val ref = ColumnReference(ColumnRef("real"))
+
+    def resolvedThrough(wrap: Plan => Plan): Expr = Canonicalizer.resolveExprDeep(ref, wrap(inner))
+    assert(!resolvedThrough(Filter(_, Comparison(">", ColumnReference(ColumnRef("id")), Literal(0, "integer")))).isInstanceOf[ColumnReference])
+    assert(!resolvedThrough(Sort(_, List(SortOrder(ColumnReference(ColumnRef("id")))))).isInstanceOf[ColumnReference])
+    assert(!resolvedThrough(Limit(_, 10, 0)).isInstanceOf[ColumnReference])
+  }
+
+  test("resolveExprDeep resolves through a Write to its own input, the same as any other pass-through plan node") {
+    val inner = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("real", Arithmetic("+", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(1, "integer"))))))
+    val resolved = Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("real")), Write(DatasetRef("gold.out"), inner))
+    assert(!resolved.isInstanceOf[ColumnReference])
+  }
+
+  test("resolveExprDeep over an UnknownPlan resolves to the original reference, not a crash") {
+    val resolved = Canonicalizer.resolveExprDeep(ColumnReference(ColumnRef("x")), UnknownPlan("opaque", "SomeKind"))
+    assert(resolved == ColumnReference(ColumnRef("x")))
+  }
+
+  test("an ambiguous unqualified reference matching neither Join side resolves to the original reference") {
+    val left = Read(DatasetRef("raw.orders"))
+    val right = Read(DatasetRef("raw.customers"))
+    val outer = Project(Join(left, right, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("missing", Some("nowhere"))))))
+    assert(Canonicalizer.resolvedOutputs(outer)("out") == ColumnReference(ColumnRef("missing", Some("nowhere"))))
+  }
+
+  test("resolvedOutputs over an empty Union resolves to no outputs at all, not a crash") {
+    assert(Canonicalizer.resolvedOutputs(Union(Nil)).isEmpty)
+  }
+
+  test("resolvedOutputs combines a Window's own base plan outputs with its windowed ones") {
+    val agg = Project(Read(DatasetRef("raw.orders")), List(NamedExpr("base_col", ColumnReference(ColumnRef("amount", Some("raw.orders"))))))
+    val windowed = Window(agg, List(NamedExpr("rn", Function("ROW_NUMBER", Nil))))
+    val outputs = Canonicalizer.resolvedOutputs(windowed)
+    assert(outputs.keySet == Set("base_col", "rn"))
   }
 
   test("resolveExprDeep matches the correct name among several candidates declared by an Aggregate it passes through") {
@@ -448,5 +593,34 @@ class CanonicalizerSpec extends AnyFunSuite {
     val outerSwapped = Project(Join(customers, orders, JoinType.Inner), List(NamedExpr("out", ColumnReference(ColumnRef("id")))))
     assert(Canonicalizer.resolvedOutputs(outerOriginal)("out") == ColumnReference(ColumnRef("id", Some("raw.orders"))))
     assert(Canonicalizer.resolvedOutputs(outerSwapped)("out") == ColumnReference(ColumnRef("id", Some("raw.customers"))))
+  }
+
+  // -----------------------------------------------------------------
+  // Deep resolution reaches inside StructField / StructConstruct too
+  // -----------------------------------------------------------------
+
+  test("resolveExprDeep reaches through a StructField's own struct expression to inline a passthrough reference") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val inner = Project(orders, List(NamedExpr("amt", Arithmetic("*", List(ColumnReference(ColumnRef("amount", Some("raw.orders"))), Literal(BigDecimal("1.1"), "decimal"))))))
+    val built = StructConstruct(List("total" -> ColumnReference(ColumnRef("amt"))))
+    val outer = Project(inner, List(NamedExpr("out", StructField(built, "total"))))
+
+    val resolved = Canonicalizer.resolvedOutputs(outer)("out")
+    resolved match {
+      case StructField(StructConstruct(List(("total", Arithmetic("*", _)))), "total") => // expected: the passthrough "amt" reference was inlined to its real computation
+      case other => fail(s"expected the struct's own field value to be deeply resolved, got $other")
+    }
+  }
+
+  test("resolveExprDeep reaches through every field of a StructConstruct, not only the first") {
+    val orders = Read(DatasetRef("raw.orders"))
+    val inner = Project(orders, List(NamedExpr("a", Arithmetic("+", List(ColumnReference(ColumnRef("x", Some("raw.orders"))), Literal(1, "integer"))))))
+    val built = StructConstruct(List("first" -> Literal(0, "integer"), "second" -> ColumnReference(ColumnRef("a"))))
+    val outer = Project(inner, List(NamedExpr("out", built)))
+
+    Canonicalizer.resolvedOutputs(outer)("out") match {
+      case StructConstruct(List(("first", Literal(0, "integer")), ("second", Arithmetic("+", _)))) => // expected
+      case other => fail(s"expected the second field's passthrough reference to be deeply resolved too, got $other")
+    }
   }
 }

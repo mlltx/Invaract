@@ -40,6 +40,58 @@ object PropertyAnalysis {
       case other                    => outputsOfT(other, axioms)
     }).result
 
+  /** The raw `Expr` that defines the named column immediately produced by
+    * `plan` (walking through the same rename-preserving pass-through nodes
+    * `resolveInScopeT` already does — `Filter`/`Sort`/`Limit`/`Write` — and
+    * chasing a bare `ColumnReference` back to *its* own defining `Expr` the
+    * same way `resolveExprT`'s own `ColumnReference` case would), paired
+    * with the `Plan` any `ColumnReference` inside that `Expr` should itself
+    * resolve against. Exists so a caller that already has a `Plan` (rather
+    * than reducing straight to a `ColumnPropertyState`) can wrap the result
+    * in a further access — e.g. `StructField(_, fieldName)`, to reach one
+    * level into a nested field a `Field.properties` obligation declares —
+    * and resolve *that* via `analyzeExpr` below.
+    *
+    * Deliberately narrow, the same scope `resolveExprT`'s own
+    * `StructField(StructConstruct(...), ...)` case commits to: `None` for
+    * `Aggregate`/`Window`/`Union`/`Join` (none of these has one single
+    * defining `Expr` in the same sense — an aggregate's output is a
+    * function of a whole grouped input, a union/join's of multiple
+    * branches), a bare `Read` (declares no output list of its own — see
+    * `outputsOfT`'s own comment), or a name nothing above defines. A caller
+    * of this method (`StaticDataQualityVerifier`'s nested-field tracing)
+    * gets an honest `unsupported = true` for exactly this reason, not a
+    * guess — see docs/STATIC_DATA_QUALITY_VERIFICATION.md's own nested-field
+    * section for why the harder case (an axiom for a nested field on a
+    * struct read directly from an input `Read`, with no intervening
+    * `Project` at all) stays out of scope for now.
+    */
+  def definingExpr(plan: Plan, name: String): Option[(Expr, Plan)] =
+    definingExprT(ColumnRef(name), plan).result
+
+  private def definingExprT(ref: ColumnRef, plan: Plan): TailRec[Option[(Expr, Plan)]] = plan match {
+    case Project(input, columns) =>
+      columns.find(_.name == ref.name) match {
+        case Some(NamedExpr(_, ColumnReference(innerRef))) => tailcall(definingExprT(innerRef, input))
+        case Some(NamedExpr(_, expr))                       => done(Some((expr, input)))
+        case None                                            => done(None)
+      }
+    case Filter(input, _)         => tailcall(definingExprT(ref, input))
+    case Sort(input, _)           => tailcall(definingExprT(ref, input))
+    case Limit(input, _, _)       => tailcall(definingExprT(ref, input))
+    case Write(_, input, _, _, _) => tailcall(definingExprT(ref, input))
+    case Aggregate(_, _, _) | Window(_, _, _, _) | Union(_) | Join(_, _, _, _) | Read(_, _, _) | UnknownPlan(_, _, _) => done(None)
+  }
+
+  /** Resolves a single, already-extracted `Expr` into its `ColumnPropertyState`
+    * — the same resolution every `analyze` result is itself computed from —
+    * the public entry point a caller needs once it already has an `Expr`
+    * (typically one built by wrapping `definingExpr`'s own result in a
+    * further access) rather than a whole `Plan` to analyze from scratch.
+    */
+  def analyzeExpr(expr: Expr, input: Plan, axioms: Map[ColumnRef, ColumnPropertyState]): ColumnPropertyState =
+    resolveExprT(expr, input, axioms).result
+
   private def traverseT[A, B](xs: List[A])(f: A => TailRec[B]): TailRec[List[B]] = xs match {
     case Nil => done(Nil)
     case head :: tail =>
@@ -194,6 +246,72 @@ object PropertyAnalysis {
 
     case UnknownExpression(_, _, children) =>
       traverseT(children)(c => tailcall(resolveExprT(c, input, axioms))).map(_ => ColumnPropertyState.Unknown.copy(unsupported = true))
+
+    case StructField(struct, fieldName) =>
+      // The one shape this analysis can actually trace through: `struct`
+      // itself statically *reduces* to a StructConstruct (see
+      // `reduceToStructConstruct` — it's a StructConstruct directly, or a
+      // StructField chain extracting a field that was itself built as a
+      // StructConstruct, to any depth: `struct(struct(...)).field1.field2`
+      // reduces just as readily as a single-level `struct(...).field1`
+      // does) - resolve straight through to that field's own value
+      // expression, the same as any other nested expression. This is
+      // deliberately narrow: it proves exactly the "construct, then
+      // extract, in the same plan" pattern (Example 3's own oneOf/CASE WHEN
+      // shape, now for a struct field instead of a flat column), at
+      // whatever nesting depth the construction itself reaches — see
+      // docs/STATIC_DATA_QUALITY_VERIFICATION.md §3.8/§9 for why the harder
+      // case (an axiom for a nested field on an *input* struct column,
+      // propagated through arbitrary plan shapes) stays out of scope here.
+      reduceToStructConstruct(struct) match {
+        case Some(StructConstruct(fields)) =>
+          fields.find(_._1 == fieldName) match {
+            case Some((_, value)) => tailcall(resolveExprT(value, input, axioms))
+            case None              => done(ColumnPropertyState.Unknown.copy(unsupported = true))
+          }
+        case None =>
+          // Any other struct-valued expression (a column reference to an
+          // existing struct - e.g. one read from the input - the result of
+          // a UDF, ...): this analysis has no axiom representation for a
+          // struct's own internal fields (axioms are seeded per flat
+          // Read-scoped column only), so nothing here can be proven or
+          // refuted about a field reached through it. Still resolves (and
+          // discards) the struct expression itself so a well-formed plan
+          // terminates safely rather than short-circuiting.
+          tailcall(resolveExprT(struct, input, axioms)).map(_ => ColumnPropertyState.Unknown.copy(unsupported = true))
+      }
+
+    case StructConstruct(fields) =>
+      // A struct literal is itself never SQL NULL, even when one of its
+      // own fields is - constructing the struct is what StructField above
+      // actually reaches into; this case only handles a StructConstruct
+      // resolved as a column's own top-level value (e.g. a `nullable:
+      // false` check directly on a struct-typed output column), where
+      // Proven is a real, sound fact, not a guess.
+      traverseT(fields.map(_._2))(v => tailcall(resolveExprT(v, input, axioms)))
+        .map(_ => ColumnPropertyState(notNull = NullabilityFact.Proven))
+  }
+
+  /** Statically reduces a struct-valued `Expr` to its own `StructConstruct`
+    * shape, when that's possible without evaluating anything Spark-side —
+    * `expr` itself, if it already is one, or a `StructField(inner,
+    * fieldName)` chain whose own `inner` reduces to a `StructConstruct`
+    * whose `fieldName` entry is *itself* a `StructConstruct` (recursing to
+    * any depth: `struct(struct(...) as g).g.h` reduces the same way a
+    * single-level `struct(...).field` does). `None` the moment any link in
+    * the chain isn't statically a struct construction — a bare
+    * `ColumnReference`, a `UDF` result, a field whose own value isn't a
+    * further `StructConstruct`, or `fieldName` simply not present.
+    * Ordinary `Expr`s aren't deep enough to need trampolining the way a
+    * real generated pipeline's chain of nested `Project`s can (see this
+    * module's own doc) — struct nesting in a real schema is a handful of
+    * levels at most.
+    */
+  private def reduceToStructConstruct(expr: Expr): Option[StructConstruct] = expr match {
+    case sc: StructConstruct => Some(sc)
+    case StructField(inner, fieldName) =>
+      reduceToStructConstruct(inner).flatMap(_.fields.collectFirst { case (name, v: StructConstruct) if name == fieldName => v })
+    case _ => None
   }
 
   /** A `CASE WHEN ... END` with no `ELSE` produces SQL `NULL` for a
@@ -319,7 +437,11 @@ object PropertyAnalysis {
     else {
       val range =
         if (NumericLiterals.isNumeric(t)) NumericLiterals.toBigDecimal(v).map(bd => Property.Range(gte = Some(bd), lte = Some(bd))) else None
-      ColumnPropertyState(notNull = NullabilityFact.Proven, equalsConstant = Some(Property.EqualsConstant(v, t)), range = range)
+      val length = v match {
+        case s: String if t.toLowerCase == "string" => Some(Property.Length(exact = Some(s.length)))
+        case _                                        => None
+      }
+      ColumnPropertyState(notNull = NullabilityFact.Proven, equalsConstant = Some(Property.EqualsConstant(v, t)), range = range, length = length)
     }
 
   private def functionState(name: String, argPairs: List[(Expr, ColumnPropertyState)]): ColumnPropertyState = {
@@ -337,6 +459,27 @@ object PropertyAnalysis {
           case _                   => false
         }
         ColumnPropertyState(notNull = if (hasNonNullLiteralFallback) NullabilityFact.Proven else baseNotNull, unsupported = unsupported)
+      case "LENGTH" | "CHAR_LENGTH" | "CHARACTER_LENGTH" =>
+        // LENGTH(...) returns an integer, not a string - its own Range
+        // (not Length) is exactly its argument's already-known Length
+        // envelope, carried over verbatim (exact -> exact, min/max ->
+        // gte/lte). No rule at all when the argument's own length isn't
+        // known - this is a bridge between the two property kinds, not a
+        // fresh fact invented from nothing.
+        val range = argStates.headOption.flatMap(_.length).map(lengthAsRange)
+        ColumnPropertyState(notNull = baseNotNull, range = range, unsupported = unsupported)
+      case "UPPER" | "LOWER" =>
+        // Case conversion changes no character count - the result's own
+        // Length envelope is identical to the argument's.
+        ColumnPropertyState(notNull = baseNotNull, length = argStates.headOption.flatMap(_.length), unsupported = unsupported)
+      case "TRIM" | "LTRIM" | "RTRIM" =>
+        // Trimming can only shrink the string (or leave it unchanged) -
+        // only an upper bound on length survives; the lower bound (how
+        // much whitespace was actually removed) is never knowable
+        // statically, so it's deliberately dropped rather than carried
+        // over as a false floor.
+        val trimmedLength = argStates.headOption.flatMap(_.length).flatMap(lengthUpperBound).map(ub => Property.Length(max = Some(ub)))
+        ColumnPropertyState(notNull = baseNotNull, length = trimmedLength, unsupported = unsupported)
       case _ =>
         // Not flagged `unsupported` on its own - a Function is still a
         // claim this IR understands the *shape* of the computation (see
@@ -378,4 +521,16 @@ object PropertyAnalysis {
     case Literal(v, t) if NumericLiterals.isNumeric(t) => NumericLiterals.toBigDecimal(v)
     case _                                              => None
   }
+
+  /** `LENGTH(...)`'s own numeric-valued Range, carried over from its
+    * argument's already-known `Length` envelope: an `exact` length
+    * becomes a single-point range, a `min`/`max` envelope becomes
+    * `gte`/`lte`.
+    */
+  private def lengthAsRange(l: Property.Length): Property.Range = {
+    val (lo, hi) = if (l.exact.isDefined) (l.exact, l.exact) else (l.min, l.max)
+    Property.Range(gte = lo.map(BigDecimal(_)), lte = hi.map(BigDecimal(_)))
+  }
+
+  private def lengthUpperBound(l: Property.Length): Option[Int] = if (l.exact.isDefined) l.exact else l.max
 }

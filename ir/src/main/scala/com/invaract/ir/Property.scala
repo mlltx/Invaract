@@ -20,6 +20,58 @@ object Property {
 
   case class OneOf(values: Set[Any], literalType: String) extends Property
 
+  /** A string-valued column's length: either an `exact` value, or an
+    * inclusive `min`/`max` envelope — mirrors `Range`'s shape but
+    * simpler, since a length is always a non-negative integer with no
+    * exclusive-bound variant to carry. At most one of `exact` or
+    * `min`/`max` is ever populated on one `Length` — normalized at
+    * construction, the same discipline `Range` follows for `gte`/`gt`
+    * and `lte`/`lt`. Unlike the contract-facing
+    * `InterpretedFieldConstraint.Length` (which does reject `min > max`
+    * as a malformed, human-authored constraint), this type deliberately
+    * does *not* require `min <= max`: combining two real, simultaneously-
+    * true facts via `tighten` can legitimately produce a self-
+    * contradictory (empty) envelope — the same "a filter that can never
+    * pass" case `Range.tighten` already tolerates rather than crashing
+    * on, per its own doc. See docs/STATIC_DATA_QUALITY_VERIFICATION.md
+    * §3.9.
+    */
+  case class Length(exact: Option[Int] = None, min: Option[Int] = None, max: Option[Int] = None) {
+    require(exact.isEmpty || (min.isEmpty && max.isEmpty), "Length: exact may not be combined with min/max")
+
+    private def bounds: (Option[Int], Option[Int]) = if (exact.isDefined) (exact, exact) else (min, max)
+
+    /** The tightest length envelope consistent with both `this` and
+      * `other` holding simultaneously — the same "AND of two
+      * simultaneously-true facts" role `Range.tighten` plays.
+      */
+    def tighten(other: Length): Length = {
+      val (lo1, hi1) = bounds
+      val (lo2, hi2) = other.bounds
+      val lo = List(lo1, lo2).flatten.reduceOption(_ max _)
+      val hi = List(hi1, hi2).flatten.reduceOption(_ min _)
+      Length.fromBounds(lo, hi)
+    }
+
+    /** The loosest length envelope that still covers both `this` and
+      * `other` — the same "either branch could be where the real value
+      * came from" role `Range.widen` plays. `None` on either side of
+      * either operand wins, matching `Range.widen`'s "we no longer know
+      * a bound holds when even one branch doesn't guarantee it."
+      */
+    def widen(other: Length): Length = {
+      val (lo1, hi1) = bounds
+      val (lo2, hi2) = other.bounds
+      val lo = for { a <- lo1; b <- lo2 } yield a min b
+      val hi = for { a <- hi1; b <- hi2 } yield a max b
+      Length.fromBounds(lo, hi)
+    }
+  }
+  object Length {
+    private def fromBounds(lo: Option[Int], hi: Option[Int]): Length =
+      if (lo.isDefined && lo == hi) Length(exact = lo) else Length(min = lo, max = hi)
+  }
+
   /** A numeric bound. At most one of `gte`/`gt`, and at most one of
     * `lte`/`lt`, is ever populated on one `Range` — normalized at
     * construction, not left to callers to keep consistent.
@@ -162,7 +214,13 @@ case class ColumnPropertyState(
   equalsConstant: Option[Property.EqualsConstant] = None,
   oneOf: Option[Property.OneOf] = None,
   range: Option[Property.Range] = None,
-  unsupported: Boolean = false
+  unsupported: Boolean = false,
+  // Added after `unsupported` (not alongside `range`/`oneOf` above) so the
+  // new parameter lands at the end of the constructor - binary-compatible
+  // for existing positional-arg call sites, per CLAUDE.md's API
+  // Compatibility Requirement ("a default parameter added at the end of a
+  // case class, not the middle").
+  length: Option[Property.Length] = None
 ) {
 
   /** Combines `this` with a *newly established* fact, where both are
@@ -191,7 +249,11 @@ case class ColumnPropertyState(
       case (Some(a), Some(b)) => Some(a.tighten(b))
       case (a, b)              => a.orElse(b)
     },
-    unsupported = unsupported || other.unsupported
+    unsupported = unsupported || other.unsupported,
+    length = (length, other.length) match {
+      case (Some(a), Some(b)) => Some(a.tighten(b))
+      case (a, b)              => a.orElse(b)
+    }
   )
 
   /** Combines `this` with an *alternative* state — a different `Union`/
@@ -220,7 +282,11 @@ case class ColumnPropertyState(
       case (Some(a), Some(b)) => Some(a.widen(b))
       case _                   => None
     },
-    unsupported = unsupported || other.unsupported
+    unsupported = unsupported || other.unsupported,
+    length = (length, other.length) match {
+      case (Some(a), Some(b)) => Some(a.widen(b))
+      case _                   => None
+    }
   )
 }
 

@@ -241,6 +241,15 @@ object Canonicalizer {
       traverseT(children)(canonicalizeExprT(_, scope)).map { nodes =>
         CTag("UnknownExpression", List(stringLeaf(sourceType), CTag("Children", nodes)))
       }
+    case StructField(struct, fieldName) =>
+      tailcall(canonicalizeExprT(struct, scope)).map(n => CTag("StructField", List(n, stringLeaf(fieldName))))
+    case StructConstruct(fields) =>
+      // Field order always preserved, never sorted - the same "never
+      // normalize an abstractly-reorderable operand" discipline
+      // Arithmetic/Conditional's own comments above already document.
+      traverseT(fields) { case (name, value) =>
+        tailcall(canonicalizeExprT(value, scope)).map(n => CTag("Field", List(stringLeaf(name), n)): CanonicalNode)
+      }.map(nodes => CTag("StructConstruct", nodes))
   }
 
   def canonicalizeExpr(expr: Expr, scope: Map[String, String]): CanonicalNode = canonicalizeExprT(expr, scope).result
@@ -489,6 +498,12 @@ object Canonicalizer {
     case AggregateCall(function, arg, distinct) => tailcall(resolveExprDeepT(arg, input)).map(AggregateCall(function, _, distinct))
     case UnknownExpression(description, sourceType, children) =>
       traverseT(children)(resolveExprDeepT(_, input)).map(UnknownExpression(description, sourceType, _))
+    case StructField(struct, fieldName) =>
+      tailcall(resolveExprDeepT(struct, input)).map(StructField(_, fieldName))
+    case StructConstruct(fields) =>
+      traverseT(fields) { case (name, value) =>
+        tailcall(resolveExprDeepT(value, input)).map(name -> _)
+      }.map(StructConstruct(_))
   }
 
   def resolveExprDeep(expr: Expr, input: Plan): Expr = resolveExprDeepT(expr, input).result

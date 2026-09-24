@@ -32,7 +32,8 @@ import com.invaract.ir._
   */
 private[sparkadapter] object StaticDataQualityVerifier {
 
-  /** One `DataQualityCheckResult` per output field with a declared
+  /** One `DataQualityCheckResult` per output field (and, recursively, per
+    * nested struct field — see `checksForField`) with a declared
     * `nullable: false` and/or `constraints` property, against whichever of
     * `contract.outputs` `plan`'s `Write` matches (the same `matchOutput`
     * location-based rule `StructuralVerifier.verify` itself uses — a
@@ -48,10 +49,81 @@ private[sparkadapter] object StaticDataQualityVerifier {
         case Some(output) =>
           val axioms = buildAxioms(contract, plan)
           val analyzed = PropertyAnalysis.analyze(plan, axioms).map(r => r.output.name -> r.state).toMap
-          output.schema.fields.flatMap(field => checksFor(field, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown)))
+          output.schema.fields.flatMap { field =>
+            val definingExpr = PropertyAnalysis.definingExpr(plan, field.name)
+            checksForField(field, field.name, analyzed.getOrElse(field.name, ColumnPropertyState.Unknown), definingExpr, axioms, analyzed)
+          }
       }
     case _ => Nil
   }
+
+  /** Checks `field` itself against `state` (the real, analyzed state for a
+    * top-level field, or a nested one traced through `definingExpr` — see
+    * below), then recurses into `field.properties` for a struct/record
+    * field.
+    *
+    * `definingExpr` is `field`'s own raw `ir.Expr` (paired with the `Plan`
+    * any `ColumnReference` inside it resolves against) when one was found —
+    * `PropertyAnalysis.definingExpr` for a top-level field, or, for a
+    * nested one, this call's own construction below. Each `child` in
+    * `field.properties` gets its own defining `Expr` built by wrapping
+    * `definingExpr`'s `Expr` in one more `StructField(_, child.name)`
+    * access and resolving *that* — exactly the same
+    * `StructField(StructConstruct(...), ...)` resolution
+    * `ir.PropertyAnalysis.resolveExprT` already performs for a *flat*
+    * output column extracting one of its own just-built struct's fields,
+    * now reached for a field `Contract`'s schema model declares nested
+    * obligations on (`Field.properties`, see docs/CONTRACT_MODEL.md).
+    *
+    * `definingExpr` is `None` whenever no single well-defined source `Expr`
+    * exists for `field` at all — an `Aggregate`/`Window`/`Union`/`Join`
+    * output, a struct read straight from an input `Read` with no
+    * intervening `Project`, or (once nested) a struct-valued expression
+    * this analysis doesn't trace through (anything but a `StructConstruct`
+    * — see `PropertyAnalysis.definingExpr`'s own doc for why these stay out
+    * of scope). In every such case the field gets
+    * `ColumnPropertyState(unsupported = true)` — the same "genuinely
+    * analyzed but this construct is opaque" signal a UDF or an
+    * unrecognized function already produces, which resolves to
+    * `NotStaticallyVerifiable` below (see `notNullVerdict`/`setVerdict`/
+    * `rangeVerdict`) — never silently producing no `DataQualityCheckResult`
+    * at all (indistinguishable from "this field declares no constraints")
+    * and never `NotGuaranteed` (which would wrongly imply analysis was
+    * attempted and simply inconclusive, rather than never attempted).
+    * `path` is the dotted field path (`"address.zip"`) used as this
+    * result's own `field` name, so a violation or report entry for a
+    * nested field is still unambiguous.
+    *
+    * `siblings` is the top-level `analyzed` map — every *other* top-level
+    * output field's own already-computed `ColumnPropertyState` — passed
+    * down only for the outermost call `verify` itself makes. A
+    * `fieldRange` constraint uses it to resolve the field(s) it names (see
+    * `checksFor`/`fieldRangeVerdict`); every recursive call into
+    * `field.properties` passes `Map.empty` instead, so a `fieldRange`
+    * constraint declared on a *nested* field always resolves to
+    * `NotStaticallyVerifiable` rather than risking an accidental match
+    * against an unrelated top-level field that happens to share a nested
+    * field's bare name — cross-field comparison is deliberately scoped to
+    * top-level output fields only (see `InterpretedFieldConstraint.FieldRange`'s
+    * own doc, and docs/STATIC_DATA_QUALITY_VERIFICATION.md).
+    */
+  private def checksForField(
+    field: Field,
+    path: String,
+    state: ColumnPropertyState,
+    definingExpr: Option[(Expr, Plan)],
+    axioms: Map[ColumnRef, ColumnPropertyState],
+    siblings: Map[String, ColumnPropertyState]
+  ): List[DataQualityCheckResult] =
+    checksFor(field, path, state, siblings) ++
+      field.properties.flatMap { child =>
+        val childDefiningExpr = definingExpr.map { case (parentExpr, input) => (StructField(parentExpr, child.name): Expr, input) }
+        val childState = childDefiningExpr match {
+          case Some((expr, input)) => PropertyAnalysis.analyzeExpr(expr, input, axioms)
+          case None                 => ColumnPropertyState(unsupported = true)
+        }
+        checksForField(child, s"$path.${child.name}", childState, childDefiningExpr, axioms, Map.empty)
+      }
 
   /** `Violation`s for every `Violated` entry in `results` — the only
     * verdict that ever blocks a write; see `ViolationType.DataQualityViolation`'s
@@ -92,26 +164,40 @@ private[sparkadapter] object StaticDataQualityVerifier {
       notNull = if (!field.nullable) NullabilityFact.Proven else NullabilityFact.Unknown,
       equalsConstant = interpreted.collectFirst { case InterpretedFieldConstraint.Equals(v, t) => Property.EqualsConstant(v, t) },
       oneOf = interpreted.collectFirst { case InterpretedFieldConstraint.OneOf(vs, t) => Property.OneOf(vs, t) },
-      range = interpreted.collectFirst { case InterpretedFieldConstraint.Range(gte, gt, lte, lt) => Property.Range(gte, gt, lte, lt) }
+      range = interpreted.collectFirst { case InterpretedFieldConstraint.Range(gte, gt, lte, lt) => Property.Range(gte, gt, lte, lt) },
+      length = interpreted.collectFirst { case InterpretedFieldConstraint.Length(exact, min, max) => Property.Length(exact, min, max) }
     )
   }
 
-  private def checksFor(field: Field, state: ColumnPropertyState): List[DataQualityCheckResult] = {
-    val notNullCheck = if (!field.nullable) List(DataQualityCheckResult(field.name, "NOT NULL", notNullVerdict(state))) else Nil
+  private def checksFor(field: Field, path: String, state: ColumnPropertyState, siblings: Map[String, ColumnPropertyState]): List[DataQualityCheckResult] = {
+    val notNullCheck = if (!field.nullable) List(DataQualityCheckResult(path, "NOT NULL", notNullVerdict(state))) else Nil
     val constraintChecks = field.constraints.flatMap(_.interpret).map {
       case InterpretedFieldConstraint.Equals(v, _) =>
-        DataQualityCheckResult(field.name, s"= $v", setVerdict(state, Set(v)))
+        DataQualityCheckResult(path, s"= $v", setVerdict(state, Set(v)))
       case InterpretedFieldConstraint.OneOf(vs, _) =>
-        DataQualityCheckResult(field.name, s"IN (${vs.mkString(", ")})", setVerdict(state, vs))
+        DataQualityCheckResult(path, s"IN (${vs.mkString(", ")})", setVerdict(state, vs))
       case r @ InterpretedFieldConstraint.Range(_, _, _, _) =>
         val required = Property.Range(r.gte, r.gt, r.lte, r.lt)
-        DataQualityCheckResult(field.name, describeRange(required), rangeVerdict(state, required))
+        DataQualityCheckResult(path, describeRange(required), rangeVerdict(state, required))
+      case l @ InterpretedFieldConstraint.Length(_, _, _) =>
+        val required = Property.Length(l.exact, l.min, l.max)
+        DataQualityCheckResult(path, describeLength(required), lengthVerdict(state, required))
+      case fr @ InterpretedFieldConstraint.FieldRange(_, _, _, _) =>
+        DataQualityCheckResult(path, describeFieldRange(fr), fieldRangeVerdict(state, fr, siblings))
     }
     notNullCheck ++ constraintChecks
   }
 
   private def describeRange(r: Property.Range): String =
     List(r.gte.map(v => s">= $v"), r.gt.map(v => s"> $v"), r.lte.map(v => s"<= $v"), r.lt.map(v => s"< $v")).flatten.mkString(" and ")
+
+  private def describeLength(l: Property.Length): String = l.exact match {
+    case Some(n) => s"LENGTH = $n"
+    case None    => List(l.min.map(v => s"LENGTH >= $v"), l.max.map(v => s"LENGTH <= $v")).flatten.mkString(" and ")
+  }
+
+  private def describeFieldRange(fr: InterpretedFieldConstraint.FieldRange): String =
+    List(fr.gte.map(n => s">= $n"), fr.gt.map(n => s"> $n"), fr.lte.map(n => s"<= $n"), fr.lt.map(n => s"< $n")).flatten.mkString(" and ")
 
   private def notNullVerdict(state: ColumnPropertyState): DataQualityVerdict = state.notNull match {
     case NullabilityFact.Proven  => DataQualityVerdict.Guaranteed
@@ -170,5 +256,140 @@ private[sparkadapter] object StaticDataQualityVerifier {
     case (_, None)          => false
     case (None, Some(_))    => true
     case (Some(pv), Some(rv)) => pv > rv
+  }
+
+  /** Exactly `rangeVerdict`'s own structure and tie-breaking conventions —
+    * `Guaranteed` when `state.length`'s envelope is already at least as
+    * tight as `required`'s (`p.tighten(required) == p`, the same
+    * `Property.Range.tighten` idiom `Property.Length.tighten` mirrors),
+    * `Violated` only when `p` provably *escapes* `required` on either
+    * side, `NotGuaranteed`/`NotStaticallyVerifiable` otherwise. Simpler
+    * than `rangeVerdict`: `Length` has no `gt`/`lt` exclusive-bound
+    * variant, so `exact.orElse(min)`/`exact.orElse(max)` are the whole of
+    * each side's own "lower"/"upper" value, with no inclusive/exclusive
+    * distinction to carry through an escape check.
+    */
+  private def lengthVerdict(state: ColumnPropertyState, required: Property.Length): DataQualityVerdict = state.length match {
+    case Some(p) if p.tighten(required) == p                                         => DataQualityVerdict.Guaranteed
+    case Some(p) if lengthEscapesBelow(p, required) || lengthEscapesAbove(p, required) => DataQualityVerdict.Violated
+    case _                                                                             => if (state.unsupported) DataQualityVerdict.NotStaticallyVerifiable else DataQualityVerdict.NotGuaranteed
+  }
+
+  private def lengthLowerValue(l: Property.Length): Option[Int] = l.exact.orElse(l.min)
+  private def lengthUpperValue(l: Property.Length): Option[Int] = l.exact.orElse(l.max)
+
+  // Each `case (_, None) => false` below is a genuinely equivalent mutant
+  // to its own `=> true` flip, not an untested gap: whenever `required`
+  // declares no bound at all on this axis, `Length.tighten`'s own `lo`/`hi`
+  // computation always resolves to `p`'s own raw value there (nothing on
+  // required's side to widen or narrow it), so `p.tighten(required) == p`
+  // already succeeds on that axis by construction - `lengthVerdict` only
+  // ever reaches this function's `required`-missing-this-axis case when
+  // the *other* axis is what's keeping the verdict from being `Guaranteed`,
+  // and that other axis's own escape check is what actually decides the
+  // verdict. Confirmed by construction, not just asserted: no proven/
+  // required pair exists where flipping this branch changes `lengthVerdict`
+  // scoped Stryker output.
+  private def lengthEscapesBelow(p: Property.Length, required: Property.Length): Boolean = (lengthLowerValue(p), lengthLowerValue(required)) match {
+    case (_, None)            => false // required has no lower bound: nothing to escape below
+    case (None, Some(_))      => true  // p is unbounded below, required is not: p can escape
+    case (Some(pv), Some(rv)) => pv < rv // strict: an exact tie is not a proven escape
+  }
+
+  private def lengthEscapesAbove(p: Property.Length, required: Property.Length): Boolean = (lengthUpperValue(p), lengthUpperValue(required)) match {
+    case (_, None)            => false // see lengthEscapesBelow's own doc - the same equivalence applies here
+    case (None, Some(_))      => true
+    case (Some(pv), Some(rv)) => pv > rv
+  }
+
+  /** Whether one `fieldRange` bound clause (`field >= otherField`, etc.) is
+    * provably `Holds`, provably `Violated`, or `Unknown` — see
+    * `fieldRangeVerdict`'s own doc for how the (up to) four clauses a
+    * single constraint can carry combine into one overall verdict.
+    */
+  private sealed trait FieldRangeClause
+  private object FieldRangeClause {
+    case object Holds extends FieldRangeClause
+    case object Violated extends FieldRangeClause
+    case object Unknown extends FieldRangeClause
+  }
+
+  /** `left >= right`, purely from each side's own already-analyzed
+    * `Property.Range` — no new fact-propagation machinery needed, since
+    * `PropertyAnalysis.analyze` already computes every top-level output
+    * field's own `range` in the same pass this module's `analyzed` map
+    * comes from. Sound because `left`'s own analyzed lower bound holds for
+    * *every* possible `left` value, and `right`'s own analyzed upper bound
+    * holds for *every* possible `right` value:
+    *   - `Holds`: `left`'s lower bound is already `>=` `right`'s upper
+    *     bound — `left >= leftLower >= rightUpper >= right` for every row.
+    *   - `Violated`: `left`'s upper bound is strictly `<` `right`'s lower
+    *     bound — `left <= leftUpper < rightLower <= right` for every row,
+    *     i.e. `left < right` unconditionally, which breaks `left >= right`.
+    *     Strict, tie-conservative, the same convention `escapesBelow`/
+    *     `escapesAbove` already establish: an exact boundary tie still
+    *     leaves `left == right` possible, which satisfies `>=`.
+    * `gtClause` (`left > right`, strict) mirrors this with the strictness
+    * flipped on each side: the *guarantee* needs a strict
+    * `leftLower > rightUpper` (a tie could still let `left == right`,
+    * breaking a *strict* `>`), while a *violation* only needs a
+    * non-strict `leftUpper <= rightLower` (a tie there still forces
+    * `left <= right`, which already breaks a strict `>`). `lte`/`lt`
+    * bounds reuse both of these with `left`/`right` swapped
+    * (`fieldRangeVerdict` below) rather than two more near-duplicate
+    * functions — `field <= other` is exactly `other >= field`.
+    */
+  private def gteClause(left: ColumnPropertyState, right: ColumnPropertyState): FieldRangeClause = {
+    val holds = for { ll <- left.range.flatMap(lowerValue); ru <- right.range.flatMap(upperValue) } yield ll >= ru
+    val violated = for { lu <- left.range.flatMap(upperValue); rl <- right.range.flatMap(lowerValue) } yield lu < rl
+    if (holds.contains(true)) FieldRangeClause.Holds
+    else if (violated.contains(true)) FieldRangeClause.Violated
+    else FieldRangeClause.Unknown
+  }
+
+  private def gtClause(left: ColumnPropertyState, right: ColumnPropertyState): FieldRangeClause = {
+    val holds = for { ll <- left.range.flatMap(lowerValue); ru <- right.range.flatMap(upperValue) } yield ll > ru
+    val violated = for { lu <- left.range.flatMap(upperValue); rl <- right.range.flatMap(lowerValue) } yield lu <= rl
+    if (holds.contains(true)) FieldRangeClause.Holds
+    else if (violated.contains(true)) FieldRangeClause.Violated
+    else FieldRangeClause.Unknown
+  }
+
+  /** A `fieldRange` constraint can carry up to four independent bound
+    * clauses (`gte`/`gt`/`lte`/`lt`, each naming its own sibling field —
+    * e.g. `gte: budget_min, lte: budget_max`), the same way `Range` can
+    * combine two literal bounds into one interval. Unlike `Range`/`Length`,
+    * there's no single `tighten`-style combinator here: each clause can
+    * reference a *different* field, so there's no one "other side's
+    * interval" to tighten against — instead, each clause is resolved to
+    * its own `FieldRangeClause` independently (`gteClause`/`gtClause`
+    * above), then combined: `Violated` if *any* clause is provably
+    * violated (one broken required bound already breaks the whole
+    * constraint, regardless of what the others prove), `Guaranteed` only
+    * if *every declared* clause provably holds, `NotStaticallyVerifiable`
+    * if this field or any *referenced* field involved is `unsupported`
+    * (including a referenced name `siblings` doesn't contain at all —
+    * `siblingState`'s own fallback), else the honest `NotGuaranteed`.
+    */
+  private def fieldRangeVerdict(
+    state: ColumnPropertyState,
+    fr: InterpretedFieldConstraint.FieldRange,
+    siblings: Map[String, ColumnPropertyState]
+  ): DataQualityVerdict = {
+    def siblingState(name: String): ColumnPropertyState = siblings.getOrElse(name, ColumnPropertyState.Unknown.copy(unsupported = true))
+
+    val clauses: List[FieldRangeClause] = List(
+      fr.gte.map(n => gteClause(state, siblingState(n))),
+      fr.gt.map(n => gtClause(state, siblingState(n))),
+      fr.lte.map(n => gteClause(siblingState(n), state)),
+      fr.lt.map(n => gtClause(siblingState(n), state))
+    ).flatten
+
+    val referencedUnsupported = List(fr.gte, fr.gt, fr.lte, fr.lt).flatten.exists(n => siblingState(n).unsupported)
+
+    if (clauses.exists(_ == FieldRangeClause.Violated)) DataQualityVerdict.Violated
+    else if (clauses.nonEmpty && clauses.forall(_ == FieldRangeClause.Holds)) DataQualityVerdict.Guaranteed
+    else if (state.unsupported || referencedUnsupported) DataQualityVerdict.NotStaticallyVerifiable
+    else DataQualityVerdict.NotGuaranteed
   }
 }

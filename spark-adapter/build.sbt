@@ -875,8 +875,8 @@ excludeDependencies ++= Seq(
 // exactly, the same invariant this module's mimaPreviousArtifacts
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.4.0",
-  "com.invaract" %% "invaract-contract" % "0.8.0",
+  "com.invaract" %% "invaract-ir" % "0.5.0",
+  "com.invaract" %% "invaract-contract" % "0.9.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning
@@ -884,7 +884,7 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.2.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.7.0.jar"
@@ -1024,6 +1024,17 @@ strykerExcludedMutations := Seq("StringLiteral")
 strykerThresholdsHigh := 90
 strykerThresholdsLow := 80
 strykerThresholdsBreak := 70
+
+// Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
+// comment for coverageScalacPluginVersion's own reasoning and the "measure
+// first, then pin" discipline behind the two thresholds below (measured
+// stmt=94.58%, branch=90.88% via a real `sbt coverage test coverageReport`
+// run against the full 681-test real-Spark suite).
+coverageScalacPluginVersion := "2.4.2"
+coverageMinimumStmtTotal := 92
+coverageMinimumBranchTotal := 88
+coverageFailOnMinimum := true
+coverageHighlighting := true
 
 // API compatibility (MiMa) - see contract/build.sbt's comment for the full
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job

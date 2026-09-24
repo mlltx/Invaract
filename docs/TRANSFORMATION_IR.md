@@ -116,6 +116,8 @@ specifically):
 | `UDF(name, args, engineType)` | A user-defined function whose body is opaque to this IR — never conflated with `Function`. `name` is `None` when the engine exposes no real (non-generic) identifier. |
 | `AggregateCall(function, arg, distinct)` | An aggregate function (SUM, COUNT, AVG, MIN, MAX, ...). The one expression that changes cardinality. |
 | `UnknownExpression(description, sourceType, children)` | A construct a front-end translator couldn't represent — always paired with a diagnostic, never silently dropped. |
+| `StructField(struct, fieldName)` | Accesses one named field of a struct-valued expression (`.getField(...)`, dotted struct access). Matched ahead of the generic `Function`/`UnknownExpression` fallback in `spark-adapter`, since Catalyst's own `GetStructField.prettyName` is a generic `"getstructfield"` that carries no trace of which field was accessed. |
+| `StructConstruct(fields: List[(String, Expr)])` | Builds a struct from named field values (`struct(...)`/`F.struct(...)`). Field order is preserved, never sorted — the same "no commutative normalisation" convention `Arithmetic`/`Conditional` already follow. |
 | `NamedExpr(name, expr)` | Binds a name to a computed expression — how a plan stage declares an output column. Not an `Expr`. |
 | `SortOrder(expr, ascending, nullsFirst)` | One key of a `Sort` or `Window` ordering. |
 

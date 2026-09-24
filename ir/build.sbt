@@ -13,7 +13,7 @@ name := "invaract-ir"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.4.0"
+ThisBuild / version := "0.5.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -82,7 +82,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.4.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.5.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -95,6 +95,31 @@ strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerThresholdsHigh := 80
 strykerThresholdsLow := 60
 strykerThresholdsBreak := 50
+
+// Line/branch coverage gating (sbt-scoverage) - the guardrail CLAUDE.md's
+// Testing Strategy section (via ARCHITECTURE.md) had disclosed as still
+// outstanding: mutation testing above answers "does this code have tests
+// that would catch a change," a different, complementary question from
+// "does this code have tests at all." coverageScalacPluginVersion pins the
+// exact scalac-scoverage-plugin runtime release known reachable from this
+// environment (2.5.2, sbt-scoverage's own auto-selected default for this
+// Scala version, repeatedly hit a stale/edge-cached 429 on Maven Central
+// when resolved directly - confirmed by hand via direct HTTP HEAD requests
+// against several published versions - 2.4.2 does not) rather than a
+// version chosen for any technical reason over another; revisit if the
+// pinned version ever stops resolving instead of assuming this one is
+// special.
+coverageScalacPluginVersion := "2.4.2"
+// Measured via a real `sbt coverage test coverageReport` run against this
+// module's actual suite (statement 86.13%, branch 80.90%), then set a few
+// points below each - the same "measure first, then pin" discipline
+// `strykerThresholdsBreak` above already follows, not a guessed round
+// number, with headroom for minor fluctuation rather than pinning to the
+// exact measured value.
+coverageMinimumStmtTotal := 84
+coverageMinimumBranchTotal := 78
+coverageFailOnMinimum := true
+coverageHighlighting := true
 
 // API compatibility (MiMa) - see contract/build.sbt's comment for the full
 // rationale (no Maven Central release yet, so CI's `api-compatibility` job
@@ -119,4 +144,23 @@ strykerThresholdsBreak := 50
 // run and can no longer break CI by going stale.
 mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-ir" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.4.0")
+)
+
+import com.typesafe.tools.mima.core._
+
+// The real, deliberate break motivating the 0.4.0 -> 0.5.0 bump above:
+// ColumnPropertyState gained a sixth constructor parameter (length, for
+// string-constraint support - see docs/STATIC_DATA_QUALITY_VERIFICATION.md
+// §3.9) - a case class's compiled apply/copy/constructor arity changes even
+// when the new parameter carries a default and lands at the very end, the
+// same real-but-unavoidable break contract/build.sbt's and
+// spark-adapter/build.sbt's own filters document for their own case
+// classes. These filters are load-bearing for this PR's own
+// api-compatibility check (base-ref doesn't carry the bump yet) and become
+// inert, matching nothing, once base-ref's own version reaches 0.5.0 or
+// later - no future PR needs to remove them.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.this")
 )

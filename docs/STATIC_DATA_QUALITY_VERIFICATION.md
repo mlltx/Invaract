@@ -494,6 +494,218 @@ an otherwise-`Unknown` result reports `NotStaticallyVerifiable` instead of
 `NotGuaranteed` — "we don't know because we couldn't look," not "we looked and it
 isn't there."
 
+### 3.8 Struct/nested fields
+
+`Field.properties` (docs/CONTRACT_MODEL.md) already lets a contract author declare
+`nullable`/`constraints` on a *nested* field of a struct/record-typed column — the
+schema model doesn't distinguish a top-level field from a nested one at all.
+
+Struct member access is now a real, first-class part of the IR: `ir.Expr` gained
+`StructField(struct: Expr, fieldName: String)` and `StructConstruct(fields: List[(String,
+Expr)])`, `SparkPlanAdapter` translates Catalyst's `GetStructField`/`CreateNamedStruct`
+into them (matched *before* the generic `Function`/`UnknownExpression` fallback — both
+constructs' own `prettyName`s are unhelpful/generic, `"getstructfield"` and
+`"named_struct"`, which would otherwise lose the actual field name entirely), and
+`ir.Lineage`/`ir.PlanPrinter`/`fingerprint`'s `Canonicalizer`/`NonDeterminism` all carry
+real cases for both. This closes a genuine, independent mistranslation bug (a struct
+field access or construction used to be silently absorbed into a lossy `Function`/
+`UnknownExpression` node), regardless of what it enables for data-quality verification.
+
+`PropertyAnalysis` builds on this with one deliberately bounded transfer function: the
+*"construct, then extract one of its own fields, in the same plan"* pattern —
+`StructField(struct, fieldName)` where `struct` statically *reduces* to a `StructConstruct`
+(`reduceToStructConstruct`) — resolves straight through to that field's own value
+expression, exactly like Example 3's `CASE WHEN` resolution but for a struct field instead
+of a flat column. The reduction is recursive, not just single-level: `struct` can itself be
+a `StructField` chain extracting a field that was built as a further `StructConstruct`, to
+any nesting depth (`struct(geo = struct(code = "XYZ")).geo.code` resolves the same way a
+single-level `struct(...).field` does) — this matters for both a top-level output column
+and a `Field.properties`-declared nested obligation reaching two or more levels deep (see
+below). A freshly-built `StructConstruct` is also unconditionally `notNull = Proven`
+(constructing a struct is never itself SQL `NULL`, independent of any individual field's
+own nullability). Both are exercised automatically by `StaticDataQualityVerifier.verify`'s
+existing top-level `PropertyAnalysis.analyze` call — no `StaticDataQualityVerifier` code
+change was needed for a *top-level* output field whose own expression happens to take this
+shape (e.g. `struct(col("zip"), col("city")).getField("zip").as("just_zip")` now resolves
+to a real `Guaranteed`/`Violated`/`NotGuaranteed` verdict, not `NotStaticallyVerifiable`).
+
+Any *other* struct-valued expression — a bare reference to a struct-typed column (e.g.
+one read straight from a `Read`, with no `StructConstruct` in the same expression), the
+result of a UDF, or a nested `StructField` reached through one of those — still resolves
+to `Unknown`-with-`unsupported`: this analysis has no axiom representation for a struct's
+own *internal* fields (axioms are seeded per flat `Read`-scoped column only, never per
+nested field of a struct-typed one), so nothing here can prove or refute anything reached
+through it.
+
+**`StaticDataQualityVerifier.checksForField`'s own recursion into `Field.properties` is
+now connected to real tracing**, for exactly the case the `StructField(StructConstruct(...),
+...)` resolution above already covers: a struct built in the same plan (`StructConstruct`,
+possibly renamed through one or more pass-through `Project`/`Filter`/`Sort`/`Limit` nodes
+in between — the same `.withColumn(...).select(...)` shape a real job would write). `ir.
+PropertyAnalysis` gained two small public entry points to make this possible —
+`definingExpr(plan, name): Option[(Expr, Plan)]`, the raw `Expr` (and the `Plan` any
+`ColumnReference` inside it resolves against) that defines a named column immediately
+produced by `plan`, chasing a bare `ColumnReference` rename back to *its* own defining
+`Expr` the same way `resolveExprT`'s own `ColumnReference` case would; and `analyzeExpr(expr,
+input, axioms): ColumnPropertyState`, the same per-`Expr` resolution `analyze`'s own results
+are computed from, exposed for a caller that already has an `Expr` in hand rather than a
+whole `Plan`. `checksForField` uses the first to recover a top-level field's own defining
+`Expr`, then, for each `field.properties` child, wraps that `Expr` in one more
+`StructField(_, child.name)` access and resolves it with the second — recursing to
+arbitrary depth by carrying the wrapped `Expr` (and its resolving `Plan`) down through each
+further nesting level, exactly mirroring the dotted-path recursion `checksForField` already
+had. A nested field declared on the contract but absent from the actual struct construction
+resolves safely to `Unknown`-with-`unsupported` (`StructField(StructConstruct(fields), name)`'s
+own `fields.find` returning `None`), not a crash.
+
+Every case `definingExpr` doesn't reach — `Aggregate`/`Window`/`Union`/`Join` outputs (none
+of these has one single defining `Expr` in the same sense a `Project` column does), or a
+struct-typed column read straight from an input `Read` with **no** intervening `Project` at
+all (a truly trivial passthrough write) — still resolves to `None`, and every nested field
+under it still gets `ColumnPropertyState(unsupported = true)`, i.e. `NotStaticallyVerifiable`
+— the same verdict an unsupported construct (a UDF, a non-allowlisted function) already
+gets, applying §3.7's own principle: "we don't know because we couldn't look," never a false
+`NotGuaranteed` implying analysis was attempted and simply inconclusive. The struct field
+itself, at the top level, is unaffected either way — its own `nullable`/`constraints` still
+go through real `PropertyAnalysis`, the same as any other top-level column (e.g. a `WHERE
+address IS NOT NULL` filter still proves the whole struct column non-null, and now
+`struct(...)` itself proves it too).
+
+**What's still deferred, honestly**: propagating an *input* contract's own declared
+nested-field obligation (`Field.properties` on an *input* dataset's field) through to an
+output struct column that passes it through unchanged, with no `StructConstruct` anywhere
+in the plan at all — the genuinely harder case §3.8's own earlier draft flagged. That needs
+`buildAxioms` to seed axioms for nested `ColumnRef`s (not just flat, `Read`-scoped ones,
+which is all it does today), *and* `resolveExprT`'s `StructField(struct, _)` catch-all case
+to consult them when `struct` resolves back to a `ColumnReference` naming an axiomed input
+column, rather than discarding to `unsupported` unconditionally. Both are real, scoped, and
+left for a future pass — not a signal the feature above is incomplete for the case it
+actually targets (a struct the transformation's own logic constructs).
+
+### 3.9 String length constraints
+
+The brief's own worked example, `length(identifier) = 10`, named string length as a
+category to *investigate* — investigated and, for the `length` case specifically
+(pattern/regex remain out of scope; see §8/§9), now implemented: a new `Property`
+kind, `Property.Length(exact: Option[Int], min: Option[Int], max: Option[Int])`,
+mirroring `Range`'s own `exact`-or-`min`/`max` shape but simpler — a length is always a
+non-negative integer, so there's no `gt`/`lt` exclusive-bound variant to carry. The
+contract-facing side is `InterpretedFieldConstraint.Length`, decoded from a `length`
+`FieldConstraint` the same "closed vocabulary, malformed → `None`" way `Equals`/`OneOf`/
+`Range` already are (§5) — `exact` combined with `min`/`max` is rejected as
+contradictory, and (unlike `Property.Length` itself — see below) a declared `min > max`
+is rejected too, since a *human-authored* impossible range is a real mistake worth an
+`Error`, not something to represent and silently propagate.
+
+**The primary value path needed no new transfer function at all.** `ColumnPropertyState`
+gained a `length: Option[Property.Length]` field, combined by `tightenWith`/`unionWith`
+the same way `range` already is (`Length.tighten`/`Length.widen`, mirroring
+`Range.tighten`/`Range.widen`'s own "AND narrows, Union/CASE widens" roles). Since every
+existing plan/expression combinator (`Filter` narrowing, `Join` demotion, `Union`/
+`Conditional` widening, a pure passthrough `ColumnReference`/`Alias`) already threads the
+*whole* `ColumnPropertyState` through generically, an input contract's own declared
+`length` constraint on a field — seeded as an axiom by `StaticDataQualityVerifier`'s
+`fieldAxiomState`, the same way `notNull`/`range`/`oneOf`/`equalsConstant` already are —
+is provable through a pure passthrough for free (Example 5's own shape, now for length).
+`StaticDataQualityVerifier` gained one matching piece: `lengthVerdict`, structurally
+identical to `rangeVerdict` (§3.6) — `Guaranteed` when the proven envelope is already at
+least as tight as required (`p.tighten(required) == p`), `Violated` only when `p`
+provably *escapes* required on either side, `NotGuaranteed`/`NotStaticallyVerifiable`
+otherwise — simpler than `rangeVerdict` only in that there's no inclusive/exclusive
+distinction to carry through the escape check, so (unlike `Range`'s own boundary-tie
+case) an *exact* numeric tie between a proven and a required bound genuinely proves the
+constraint here, not merely a `NotGuaranteed` near-miss.
+
+A handful of expression-level transfer functions add real, deeper analysis beyond pure
+passthrough: a string `Literal` is provably its own exact length; `LENGTH`/
+`CHAR_LENGTH`/`CHARACTER_LENGTH` bridge a known `Length` fact on their argument to a
+numeric `Range` fact on their own result (a length-envelope fact and a value-range fact
+about a *different*, derived integer column, connected by one honest rule); `UPPER`/
+`LOWER` preserve length exactly (case conversion never changes character count); `TRIM`/
+`LTRIM`/`RTRIM` narrow to an upper bound only (trimming can only shrink a string, never
+grow it, and the amount actually removed is never statically knowable). `Cast` drops
+`length` entirely, the same "only `notNull` survives" MVP rule every other property
+already follows. This is deliberately not the full string-function transfer-function
+table §8/§9 originally scoped as a *second* MVP slice (`SUBSTRING`, `CONCAT`, `REPLACE`,
+...) — six functions covering the realistic "identifier normalization" shape, plus the
+axiom-passthrough path that needed no new code at all, not an attempt at completeness.
+
+### 3.10 Cross-field / row-level constraints
+
+Every constraint kind above compares a field against a *literal* — a constant, a set, a
+numeric or length interval. A common real-world data-quality rule instead compares two
+fields of the *same output row* against each other — `end_date >= start_date`,
+`discount_price <= list_price`. `FieldConstraintType.FieldRange`/
+`InterpretedFieldConstraint.FieldRange` add exactly this: `Range`'s own `gte`/`gt`/`lte`/
+`lt` shape, unchanged, except each bound's *value* is another field's name in the same
+schema rather than a numeric literal — a single constraint can combine two bounds against
+two different fields, the same way `Range` combines two literal bounds into one interval:
+
+```yaml
+schema:
+  fields:
+    - name: start_date
+      type: long
+    - name: end_date
+      type: long
+      constraints:
+        - type: fieldRange
+          gte: start_date
+    - name: price
+      type: double
+      constraints:
+        - type: fieldRange
+          gte: min_price
+          lte: max_price
+```
+
+**This needed no new `Property`, no new `ColumnPropertyState` field, and no `ir`
+changes at all** — a genuinely smaller addition than `Length` was. `PropertyAnalysis.analyze`
+already computes every top-level output field's own `range` in one pass;
+`StaticDataQualityVerifier.verify` already holds that whole `analyzed` map in scope. A
+`fieldRange` bound's own proof is a direct comparison between the constrained field's own
+`Property.Range` and the *referenced* field's own `Property.Range`, both already sitting in
+that map — no new fact needs to flow through the plan at all.
+
+**The proof itself** is sound, not merely plausible: to prove `field >= other` for every
+row, it's enough that `field`'s own proven lower bound is already `>=` `other`'s own proven
+upper bound (`field >= fieldLower >= otherUpper >= other`, for every row, regardless of the
+specific values either column actually takes). Violation is the mirror: `field`'s own proven
+upper bound strictly `<` `other`'s own proven lower bound forces `field < other` for every
+row, breaking `field >= other` unconditionally. Both directions reuse `rangeVerdict`'s own
+established "strict, tie-conservative" convention (§3.6) — an exact boundary tie between the
+two sides' bounds is `NotGuaranteed`, not `Violated`, for a non-strict `gte`/`lte` bound (the
+tie could still be satisfied), while it *is* `Violated` for a strict `gt`/`lt` bound (the tie
+already breaks strict inequality). `lte`/`lt` reuse the exact same two comparison functions
+(`gteClause`/`gtClause`) with the two sides swapped, rather than two more near-duplicate
+implementations — `field <= other` is exactly `other >= field`.
+
+A constraint with multiple bounds (`gte` + `lte` together) combines them the same way a
+compound `Range` does conceptually, but *not* via `Range.tighten` — each bound can name a
+*different* field, so there's no single "other side's interval" to tighten against. Instead
+each clause resolves independently to holds/violated/unknown, then combines: `Violated` if
+*any* clause is provably violated (one broken required bound already breaks the whole
+constraint, regardless of what the others prove), `Guaranteed` only if *every declared*
+clause provably holds, `NotStaticallyVerifiable`/`NotGuaranteed` otherwise (per the usual
+`unsupported`-flag distinction).
+
+**Deliberately scoped to top-level output fields only, on both sides of the comparison.**
+`StaticDataQualityVerifier.checksForField` only threads the top-level `analyzed` map down
+into the *outermost* call's own `checksFor`; every recursive call into `field.properties`
+passes an empty sibling map instead. A `fieldRange` constraint declared on a *nested* field
+therefore always resolves to `NotStaticallyVerifiable` — deliberately, not an oversight: a
+nested field's own bare name could otherwise accidentally collide with an unrelated
+top-level field sharing the same name, silently comparing against the wrong column.
+`ContractValidator` discloses this at author-time too (a `Warning`, since it degrades
+safely rather than breaking the contract) — see §5.
+
+**Type scope mirrors `Range`'s own**: proof only ever comes from each side's own
+`Property.Range`, which `PropertyAnalysis` only ever populates for numeric-typed values —
+the same scope `range`/`length`-via-`LENGTH()` already have. `ContractValidator` warns (not
+errors) when either the constrained field or a referenced field isn't numeric-typed, the
+same "structurally valid, degrades to `NotStaticallyVerifiable`, never a crash" pattern
+`Length` on a non-string field already establishes.
+
 ---
 
 ## 4. Where this lives: module boundaries
@@ -679,10 +891,9 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
 
 **In scope:**
 
-- Property kinds: `NotNull`, `EqualsConstant`, `OneOf`, `Range` (numeric only — no
-  string-length or pattern properties in MVP, despite the brief listing
-  `length(identifier) = 10` as a category to *investigate*; investigated and deferred,
-  see §9).
+- Property kinds: `NotNull`, `EqualsConstant`, `OneOf`, `Range` (numeric), `Length`
+  (string length — `exact` or `min`/`max`, added in a follow-up pass; see §3.9. Pattern/
+  regex properties remain out of scope, see below).
 - Plan nodes: `Read`, `Project`, `Filter`, `Join` (nullability-demotion only, per
   §3.5), `Union`, `Sort`, `Limit`, `Write`. `Aggregate`/`Window` deliberately return
   `Unknown` for every produced column in MVP (§3.2) — not because they're unsupported
@@ -701,23 +912,64 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
 - The four-state verdict, with `Violated` wired into real enforcement
   (`ViolationType.DataQualityViolation`) and the other three reporting-only.
 - `spark.invaract.staticDataQuality` conf key (External Attachability).
+- A nested (`Field.properties`) field's own declared `nullable`/`constraints`
+  obligations are recognized and reported, and now resolved for real (`Guaranteed`/
+  `Violated`/`NotGuaranteed`) whenever the parent struct is built by a `StructConstruct`
+  in the same plan (through any number of pass-through renames) — `NotStaticallyVerifiable`
+  only for the cases that genuinely can't be traced, never silently skipped nor a false
+  `NotGuaranteed`. See §3.8.
+- Struct member access is now a real `ir.Expr` node (`StructField`/`StructConstruct`),
+  translated by `SparkPlanAdapter` from Catalyst's `GetStructField`/`CreateNamedStruct`
+  — a genuine translation-correctness fix independent of data-quality verification —
+  and `PropertyAnalysis` resolves the "construct, then extract, in the same plan"
+  pattern to a real `Guaranteed`/`Violated`/`NotGuaranteed` verdict for both a
+  top-level output field and a `Field.properties`-declared nested one. See §3.8.
+- String `length` constraints (`exact`/`min`/`max`) — axiom propagation through every
+  existing combinator for free, plus real transfer functions for `LENGTH`/
+  `CHAR_LENGTH`/`CHARACTER_LENGTH`/`UPPER`/`LOWER`/`TRIM`/`LTRIM`/`RTRIM`. See §3.9.
+- Cross-field/row-level `fieldRange` constraints (`gte`/`gt`/`lte`/`lt`, each bound
+  naming another field in the same schema rather than a literal — `end_date >=
+  start_date`) — a direct comparison between two already-analyzed `Property.Range`s,
+  needing no new `Property`/`ir` changes at all. Scoped to top-level, numeric-typed
+  output fields on both sides of the comparison; a `fieldRange` on a nested field
+  always resolves `NotStaticallyVerifiable`, deliberately. See §3.10.
 
 **Explicitly outside the MVP** (§9 gives the reasoning, not just the list):
 
+- Propagating an *input* contract's own nested-field (`Field.properties`) obligation
+  through to an output struct column that passes it through unchanged, with no
+  `StructConstruct` anywhere in the plan — needs `buildAxioms` to seed nested `ColumnRef`
+  axioms (not just flat, `Read`-scoped ones) and `resolveExprT`'s `StructField` case to
+  consult them. §3.8 covers exactly what *is* now in scope (a struct the transformation's
+  own logic constructs) and why this harder case is deferred.
+- Any struct-valued expression that isn't a `StructConstruct` built in the same
+  expression — a bare reference to an existing struct-typed column (e.g. one read
+  straight from a `Read`), the result of a UDF, or a `StructField` reached through one of
+  those — stays `Unknown`-with-`unsupported`: no axiom representation exists for a
+  struct's own internal fields.
 - `Aggregate`/`Window` value-domain rules (only their *nullability-safe-Unknown*
   treatment is in MVP).
 - Cast-aware preservation of `EqualsConstant`/`OneOf`/`Range` (only `NotNull`
   survives a `Cast` in MVP).
-- String constraints (`length`, pattern/regex) — genuinely useful (the brief lists
-  `length(identifier) = 10`), but needs its own small property kind and its own
-  transfer-function table per string function (`substring`, `concat`, `upper`,
-  `trim`, ...); a second, later MVP slice, not this one.
-- Expression-derived relationship properties (`total = quantity * price`) — this is
-  a *different shape* of rule (a relationship between two output columns, or an
-  output column and an input column, not a value-domain fact about one column in
-  isolation) and needs its own representation (likely a new `FieldConstraint` kind
-  referencing another field by name) and its own analysis pass; flagged as a natural
-  second slice, not attempted here.
+- Pattern/regex string constraints — a genuinely different property shape (a finite
+  automaton or a `java.util.regex.Pattern`, not a bound), needing its own
+  representation entirely; not attempted alongside `length`.
+- The *remaining* string-function transfer functions (`SUBSTRING`, `CONCAT`,
+  `REPLACE`, `LPAD`/`RPAD`, ...) beyond the six §3.9 covers (`LENGTH` family, `UPPER`/
+  `LOWER`, `TRIM` family) — each needs its own, individually-reasoned rule the same
+  way `LENGTH`'s Length→Range bridge and `TRIM`'s upper-bound-only narrowing each
+  were; a further slice, not attempted here.
+- Expression-derived *formula* relationships between fields (`total = quantity *
+  price`, an arithmetic identity, not an ordering) — genuinely different from
+  `fieldRange` (§3.10): an ordering bound is provable from each side's own
+  already-analyzed `Range` alone, while a formula identity would need to trace
+  *how* one column's expression relates to another's (symbolic algebra over
+  `Expr`, not a value-domain fact comparison) — a real, still-unaddressed
+  second slice of "relationship between two output columns," not attempted here.
+  Also still out of scope: a `fieldRange`-style bound against an *input* field
+  (rather than a sibling *output* field), and any cross-field comparison
+  involving a nested (`Field.properties`) field on either side (§3.10's own
+  scoping note).
 - A `customRuleTypes`-style pluggable extension point for property kinds or transfer
   functions. The brief's own closing principle ("false claims of guarantees are worse
   than failing to prove a guarantee") argues for keeping this a closed, reviewed set
@@ -749,14 +1001,16 @@ distinct from a `NotGuaranteed` result the same way the brief insists it must be
   overflow and truncate; a `string` → `int` cast can produce a different-looking
   failure entirely) — correctly modeling that per type pair is real work, and getting
   it wrong produces a false `Guaranteed`, again the one thing to avoid above all.
-- **String properties are a second MVP, not this one**, even though the brief lists
-  `length(identifier) = 10` as investigate-worthy: it needs its own `Property` kind,
-  its own transfer functions per string `Function`, and doesn't share machinery with
-  `Range`/`OneOf`/`EqualsConstant` cleanly enough to bolt on for free. Landing four
-  well-tested kinds first, then a fifth once the pattern is proven (mirroring exactly
-  how the row-level-DML rules shipped three types first, and the plan-shape rules
-  shipped a second family only once that pattern held up), is the same discipline
-  this repo already applies elsewhere.
+- **String length landed as a real fifth `Property` kind, once the first four
+  proved the pattern out** — mirroring exactly how the row-level-DML rules shipped
+  three types first, and the plan-shape rules shipped a second family only once that
+  pattern held up (§3.9). It turned out to share more machinery with `Range` than
+  originally assumed: `Length.tighten`/`Length.widen` mirror `Range.tighten`/
+  `Range.widen` directly, and `ColumnPropertyState`'s generic combining meant the
+  primary (axiom-passthrough) value path needed zero new transfer-function code —
+  only the handful of real string-function rules (`LENGTH` family, `UPPER`/`LOWER`,
+  `TRIM` family) were genuinely new work. Pattern/regex properties remain a real
+  second MVP: they don't share `Range`'s bound-based shape at all.
 - **Expression-derived relationships (`total = quantity * price`) are a different
   question from every other rule in scope** — every other rule in this design is
   "does this one output column's value always lie in a set," checked via the

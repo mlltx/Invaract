@@ -123,6 +123,46 @@ case class FieldConstraint(constraintType: String, properties: Map[String, Any])
         }
       }
 
+    case FieldConstraintType.Length =>
+      val knownKeys = Set("exact", "min", "max")
+      if (properties.keySet.diff(knownKeys).nonEmpty) None
+      else {
+        val parsed: Map[String, Option[Int]] = knownKeys.flatMap(k => properties.get(k).map(k -> FieldConstraint.nonNegativeInt(_))).toMap
+        if (parsed.values.exists(_.isEmpty)) None // a declared bound that failed to parse as a non-negative integer
+        else {
+          val exact = parsed.get("exact").flatten
+          val min = parsed.get("min").flatten
+          val max = parsed.get("max").flatten
+          if (exact.isDefined && (min.isDefined || max.isDefined)) None // redundant/contradictory - pick one
+          else if (List(exact, min, max).forall(_.isEmpty)) None // at least one bound required
+          else if (min.isDefined && max.isDefined && min.get > max.get) None // an empty, unsatisfiable range
+          else Some(InterpretedFieldConstraint.Length(exact, min, max))
+        }
+      }
+
+    case FieldConstraintType.FieldRange =>
+      // Exactly Range's own shape (gte/gt/lte/lt, not both gte+gt or
+      // both lte+lt, at least one bound required) - only the bound's
+      // *value* differs: another field's name in this same schema,
+      // instead of a numeric literal. See
+      // docs/STATIC_DATA_QUALITY_VERIFICATION.md's cross-field section.
+      val knownKeys = Set("gte", "gt", "lte", "lt")
+      if (properties.keySet.diff(knownKeys).nonEmpty) None
+      else {
+        val parsed: Map[String, Option[String]] = knownKeys.flatMap(k => properties.get(k).map(k -> FieldConstraint.fieldNameRef(_))).toMap
+        if (parsed.values.exists(_.isEmpty)) None // a declared bound that failed to parse as a non-empty field name
+        else {
+          val gte = parsed.get("gte").flatten
+          val gt = parsed.get("gt").flatten
+          val lte = parsed.get("lte").flatten
+          val lt = parsed.get("lt").flatten
+          if (gte.isDefined && gt.isDefined) None // redundant/contradictory - pick one
+          else if (lte.isDefined && lt.isDefined) None
+          else if (List(gte, gt, lte, lt).forall(_.isEmpty)) None // at least one bound required
+          else Some(InterpretedFieldConstraint.FieldRange(gte, gt, lte, lt))
+        }
+      }
+
     case _ => None
   }
 }
@@ -152,6 +192,15 @@ object FieldConstraint {
     case s: String       => scala.util.Try(BigDecimal(s)).toOption
     case _                => None
   }
+
+  private def nonNegativeInt(raw: Any): Option[Int] = numeric(raw).flatMap { bd =>
+    if (bd.isValidInt && bd >= 0) Some(bd.toInt) else None
+  }
+
+  private def fieldNameRef(raw: Any): Option[String] = raw match {
+    case s: String if s.trim.nonEmpty => Some(s.trim)
+    case _                             => None
+  }
 }
 
 /** The closed set of `FieldConstraint.constraintType`s this module
@@ -163,8 +212,10 @@ object FieldConstraintType {
   val Equals = "equals"
   val OneOf = "oneOf"
   val Range = "range"
+  val Length = "length"
+  val FieldRange = "fieldRange"
 
-  val All: Set[String] = Set(Equals, OneOf, Range)
+  val All: Set[String] = Set(Equals, OneOf, Range, Length, FieldRange)
 }
 
 /** A `FieldConstraint`, decoded into one of the shapes
@@ -177,6 +228,27 @@ object InterpretedFieldConstraint {
   case class Equals(value: Any, literalType: String) extends InterpretedFieldConstraint
   case class OneOf(values: Set[Any], literalType: String) extends InterpretedFieldConstraint
   case class Range(gte: Option[BigDecimal], gt: Option[BigDecimal], lte: Option[BigDecimal], lt: Option[BigDecimal]) extends InterpretedFieldConstraint
+
+  /** A string-valued field's length: either an `exact` length, or a
+    * `min`/`max` (inclusive) range — never both `exact` and a `min`/`max`
+    * on the same constraint (`FieldConstraint.interpret` rejects that
+    * combination as malformed). See docs/STATIC_DATA_QUALITY_VERIFICATION.md
+    * §3.9.
+    */
+  case class Length(exact: Option[Int], min: Option[Int], max: Option[Int]) extends InterpretedFieldConstraint
+
+  /** A field's value compared against *another field in the same schema*,
+    * rather than a literal — the common "row-level" data-quality rule
+    * (`end_date >= start_date`, `discount_price <= list_price`). Exactly
+    * `Range`'s own `gte`/`gt`/`lte`/`lt` shape, except each bound names the
+    * other field rather than carrying a literal value directly — a single
+    * constraint can combine two bounds against two different fields (e.g.
+    * `gte: budget_min, lte: budget_max`), the same way `Range` combines two
+    * literal bounds into one interval. See
+    * docs/STATIC_DATA_QUALITY_VERIFICATION.md's cross-field section for the
+    * verification approach and its scope (top-level output fields only).
+    */
+  case class FieldRange(gte: Option[String], gt: Option[String], lte: Option[String], lt: Option[String]) extends InterpretedFieldConstraint
 }
 
 /** A dataset's expected data-catalog registration — e.g. "this must be

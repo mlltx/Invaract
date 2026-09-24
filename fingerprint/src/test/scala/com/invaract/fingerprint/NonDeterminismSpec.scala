@@ -16,6 +16,22 @@ class NonDeterminismSpec extends AnyFunSuite {
     assert(NonDeterminism.classify(Literal(5, "integer")) == Some(false))
   }
 
+  test("Alias/Cast classify transparently, by their own inner expression") {
+    assert(NonDeterminism.classify(Alias("renamed", Function("rand", Nil))) == Some(true))
+    assert(NonDeterminism.classify(Alias("renamed", ColumnReference(ColumnRef("amount")))) == Some(false))
+    assert(NonDeterminism.classify(Cast(Function("rand", Nil), "double")) == Some(true))
+    assert(NonDeterminism.classify(Cast(ColumnReference(ColumnRef("amount")), "double")) == Some(false))
+  }
+
+  test("Comparison/BooleanExpr consider both/all operands, not just the first") {
+    val comparison = Comparison("=", ColumnReference(ColumnRef("amount")), Function("rand", Nil))
+    assert(NonDeterminism.classify(comparison) == Some(true))
+    val boolExpr = BooleanExpr("AND", List(ColumnReference(ColumnRef("active")), Function("rand", Nil)))
+    assert(NonDeterminism.classify(boolExpr) == Some(true))
+    val allDeterministic = BooleanExpr("AND", List(ColumnReference(ColumnRef("active")), Literal(true, "boolean")))
+    assert(NonDeterminism.classify(allDeterministic) == Some(false))
+  }
+
   test("a known non-deterministic function classifies as Some(true)") {
     assert(NonDeterminism.classify(Function("rand", Nil)) == Some(true))
     assert(NonDeterminism.classify(Function("current_timestamp", Nil)) == Some(true))
@@ -63,5 +79,39 @@ class NonDeterminismSpec extends AnyFunSuite {
 
   test("an AggregateCall over a deterministic argument classifies as deterministic") {
     assert(NonDeterminism.classify(AggregateCall("SUM", ColumnReference(ColumnRef("amount")))) == Some(false))
+  }
+
+  test("StructField over a deterministic struct classifies as deterministic") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    assert(NonDeterminism.classify(StructField(built, "zip")) == Some(false))
+  }
+
+  test("StructField over a struct containing a non-deterministic field classifies as Some(true)") {
+    val built = StructConstruct(List("ts" -> Function("current_timestamp", Nil)))
+    assert(NonDeterminism.classify(StructField(built, "ts")) == Some(true))
+  }
+
+  test("StructField over a struct containing a UDF classifies as unknown (None)") {
+    val built = StructConstruct(List("risk" -> UDF(Some("f"), Nil)))
+    assert(NonDeterminism.classify(StructField(built, "risk")) == None)
+  }
+
+  test("StructConstruct is deterministic when every field is deterministic") {
+    val built = StructConstruct(List("a" -> Literal(1, "integer"), "b" -> ColumnReference(ColumnRef("name"))))
+    assert(NonDeterminism.classify(built) == Some(false))
+  }
+
+  test("StructConstruct is Some(true) when any one field is non-deterministic") {
+    val built = StructConstruct(List("clean" -> Literal(1, "integer"), "id" -> Function("uuid", Nil)))
+    assert(NonDeterminism.classify(built) == Some(true))
+  }
+
+  test("StructConstruct is None when any one field is opaque (a UDF), even alongside a non-deterministic field") {
+    val built = StructConstruct(List("rnd" -> Function("rand", Nil), "opaque" -> UDF(Some("f"), Nil)))
+    assert(NonDeterminism.classify(built) == None)
+  }
+
+  test("an empty StructConstruct classifies as deterministic") {
+    assert(NonDeterminism.classify(StructConstruct(Nil)) == Some(false))
   }
 }

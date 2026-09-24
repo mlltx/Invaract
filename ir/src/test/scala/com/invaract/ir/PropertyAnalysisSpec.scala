@@ -408,6 +408,189 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     assert(results.size == 1, s"expected alignment to the narrowest (1-column) branch, got ${results.size} columns")
   }
 
+  // --- Struct/nested fields: construct-then-extract (§3.8) --------------------
+
+  test("StructField(StructConstruct(...), name): resolves straight through to the matching field's own value state") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string"), "city" -> Literal("SF", "string")))
+    val state = analyzeOne(project(read(), "z", StructField(built, "zip")))
+    assert(state.equalsConstant.contains(Property.EqualsConstant("94107", "string")))
+    assert(!state.unsupported)
+  }
+
+  test("StructField(StructConstruct(...), name): picks the field actually named, not merely the first one") {
+    val built = StructConstruct(List("a" -> Literal(1, "integer"), "b" -> Literal(2, "integer")))
+    val stateA = analyzeOne(project(read(), "x", StructField(built, "a")))
+    val stateB = analyzeOne(project(read(), "x", StructField(built, "b")))
+    assert(stateA.equalsConstant.contains(Property.EqualsConstant(1, "integer")))
+    assert(stateB.equalsConstant.contains(Property.EqualsConstant(2, "integer")))
+  }
+
+  test("StructField(StructConstruct(...), name): a real axiom-backed range flows through the extracted field too") {
+    val axioms = Map(ColumnRef("amount", Some(source.location)) -> ColumnPropertyState(range = Some(Property.Range(gte = Some(0)))))
+    val built = StructConstruct(List("amt" -> col("amount", Some(source.location))))
+    val state = analyzeOne(project(read(), "x", StructField(built, "amt")), axioms)
+    assert(state.range.contains(Property.Range(gte = Some(0))))
+  }
+
+  test("StructField(StructConstruct(...), name): a name not present among the constructed fields is Unknown-with-unsupported") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val state = analyzeOne(project(read(), "x", StructField(built, "missing_field")))
+    assert(state == ColumnPropertyState.Unknown.copy(unsupported = true))
+  }
+
+  test("StructField(other, name): any non-StructConstruct struct expression is Unknown-with-unsupported, even over a Proven-axiom column") {
+    val axioms = Map(ColumnRef("address", Some(source.location)) -> ColumnPropertyState(notNull = NullabilityFact.Proven))
+    val state = analyzeOne(project(read(), "x", StructField(col("address", Some(source.location)), "zip")), axioms)
+    assert(state.unsupported)
+    assert(state.notNull == NullabilityFact.Unknown, "the input struct's own axiom must not leak into an unresolvable nested-field access")
+  }
+
+  test("StructField(other, name): a struct value wrapped in a UDF stays Unknown-with-unsupported, not a crash") {
+    val state = analyzeOne(project(read(), "x", StructField(UDF(Some("f"), Nil), "zip")))
+    assert(state.unsupported)
+  }
+
+  test("StructField(StructField(StructConstruct(...), name1), name2): resolves through a doubly-nested struct construction") {
+    // struct(geo = struct(code = "XYZ")).geo.code
+    val built = StructConstruct(List("geo" -> StructConstruct(List("code" -> Literal("XYZ", "string")))))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "geo"), "code")))
+    assert(state.notNull == NullabilityFact.Proven)
+    assert(state.equalsConstant.contains(Property.EqualsConstant("XYZ", "string")))
+  }
+
+  test("StructField(StructField(StructConstruct(...), name1), name2): None when the OUTER field name isn't present at the inner level") {
+    // struct(geo = struct(code = "XYZ")).missing.code - "missing" isn't a field geo's struct declares
+    val built = StructConstruct(List("geo" -> StructConstruct(List("code" -> Literal("XYZ", "string")))))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "missing"), "code")))
+    assert(state.unsupported)
+  }
+
+  test("StructField(StructField(StructConstruct(...), name1), name2): unsupported when the intermediate field's value isn't itself a struct") {
+    // struct(geo = "not a struct").geo.code - "geo" resolves to a plain Literal, not a StructConstruct,
+    // so nothing beneath it (.code) can be traced through - the type-guard in
+    // reduceToStructConstruct, not just the field-name match, is what decides this.
+    val built = StructConstruct(List("geo" -> Literal("flat", "string")))
+    val state = analyzeOne(project(read(), "x", StructField(StructField(built, "geo"), "code")))
+    assert(state.unsupported)
+  }
+
+  test("StructConstruct: a freshly-built struct is provably NotNull, regardless of any individual field's own nullability") {
+    val built = StructConstruct(List("zip" -> Literal(null, "string"), "city" -> Literal("SF", "string")))
+    val state = analyzeOne(project(read(), "addr", built))
+    assert(state.notNull == NullabilityFact.Proven, "constructing the struct itself never yields SQL NULL, independent of its fields")
+  }
+
+  test("StructConstruct: NotNull holds even when a field's own value is opaque (a UDF)") {
+    val built = StructConstruct(List("risk" -> UDF(Some("f"), Nil)))
+    val state = analyzeOne(project(read(), "addr", built))
+    assert(state.notNull == NullabilityFact.Proven)
+  }
+
+  test("StructConstruct: an empty struct construction is still provably NotNull") {
+    val state = analyzeOne(project(read(), "addr", StructConstruct(Nil)))
+    assert(state.notNull == NullabilityFact.Proven)
+  }
+
+  // --- Length (string constraints, §3.9) ---------------------------------------
+
+  test("Length: a string literal is provably its own exact length") {
+    val state = analyzeOne(project(read(), "x", Literal("ABCDEFGHIJ", "string")))
+    assert(state.length.contains(Property.Length(exact = Some(10))))
+  }
+
+  test("Length: an empty-string literal has exact length 0, not treated as absent") {
+    val state = analyzeOne(project(read(), "x", Literal("", "string")))
+    assert(state.length.contains(Property.Length(exact = Some(0))))
+  }
+
+  test("Length: a numeric literal never gets a Length fact, even though its printed form has a length") {
+    val state = analyzeOne(project(read(), "x", Literal(12345, "integer")))
+    assert(state.length.isEmpty)
+  }
+
+  test("Length: propagates through a pure passthrough from an input axiom, the same as Range/NotNull (Example 5's shape)") {
+    val axioms = Map(ColumnRef("identifier", Some(source.location)) -> ColumnPropertyState(length = Some(Property.Length(exact = Some(10)))))
+    val state = analyzeOne(project(read(), "identifier", col("identifier", Some(source.location))), axioms)
+    assert(state.length.contains(Property.Length(exact = Some(10))))
+  }
+
+  test("Length: a plain passthrough with no axiom proves nothing") {
+    val state = analyzeOne(project(read(), "identifier", col("identifier")))
+    assert(state.length.isEmpty)
+  }
+
+  test("Length: LENGTH(...) bridges to a numeric Range equal to its argument's own exact length") {
+    val state = analyzeOne(project(read(), "x", Function("LENGTH", List(Literal("ABCDEFGHIJ", "string")))))
+    assert(state.range.contains(Property.Range(gte = Some(10), lte = Some(10))))
+  }
+
+  test("Length: LENGTH(...) bridges a min/max Length envelope to the equivalent gte/lte Range") {
+    val axioms = Map(ColumnRef("identifier", Some(source.location)) -> ColumnPropertyState(length = Some(Property.Length(min = Some(1), max = Some(50)))))
+    val state = analyzeOne(project(read(), "x", Function("LENGTH", List(col("identifier", Some(source.location))))), axioms)
+    assert(state.range.contains(Property.Range(gte = Some(1), lte = Some(50))))
+  }
+
+  test("Length: LENGTH(...) proves no Range at all when its argument's own length is unknown") {
+    val state = analyzeOne(project(read(), "x", Function("LENGTH", List(col("identifier")))))
+    assert(state.range.isEmpty)
+    assert(!state.unsupported, "LENGTH is still a recognized, understood construct even with no length rule to apply")
+  }
+
+  test("Length: CHAR_LENGTH and CHARACTER_LENGTH are recognized aliases of LENGTH") {
+    val charLength = analyzeOne(project(read(), "x", Function("CHAR_LENGTH", List(Literal("ABCDE", "string")))))
+    val characterLength = analyzeOne(project(read(), "x", Function("CHARACTER_LENGTH", List(Literal("ABCDE", "string")))))
+    assert(charLength.range.contains(Property.Range(gte = Some(5), lte = Some(5))))
+    assert(characterLength.range.contains(Property.Range(gte = Some(5), lte = Some(5))))
+  }
+
+  test("Length: UPPER/LOWER preserve the argument's own exact Length verbatim") {
+    val upper = analyzeOne(project(read(), "x", Function("UPPER", List(Literal("hello", "string")))))
+    val lower = analyzeOne(project(read(), "x", Function("LOWER", List(Literal("hello", "string")))))
+    assert(upper.length.contains(Property.Length(exact = Some(5))))
+    assert(lower.length.contains(Property.Length(exact = Some(5))))
+  }
+
+  test("Length: TRIM narrows an exact argument length to an upper bound only, not the same exact value") {
+    val state = analyzeOne(project(read(), "x", Function("TRIM", List(Literal("  hi  ", "string")))))
+    assert(state.length.contains(Property.Length(max = Some(6))), s"expected an upper bound of 6 (the untrimmed length), got ${state.length}")
+  }
+
+  test("Length: TRIM over an argument with only a known max keeps that same max, not a fresh exact") {
+    val axioms = Map(ColumnRef("identifier", Some(source.location)) -> ColumnPropertyState(length = Some(Property.Length(max = Some(20)))))
+    val state = analyzeOne(project(read(), "x", Function("TRIM", List(col("identifier", Some(source.location))))), axioms)
+    assert(state.length.contains(Property.Length(max = Some(20))))
+  }
+
+  test("Length: TRIM over an argument with no known length at all proves nothing") {
+    val state = analyzeOne(project(read(), "x", Function("TRIM", List(col("identifier")))))
+    assert(state.length.isEmpty)
+  }
+
+  test("Length: LTRIM and RTRIM are recognized aliases of TRIM, with the same upper-bound-only rule") {
+    val ltrim = analyzeOne(project(read(), "x", Function("LTRIM", List(Literal("  hi  ", "string")))))
+    val rtrim = analyzeOne(project(read(), "x", Function("RTRIM", List(Literal("  hi  ", "string")))))
+    assert(ltrim.length.contains(Property.Length(max = Some(6))))
+    assert(rtrim.length.contains(Property.Length(max = Some(6))))
+  }
+
+  test("Length: unsupported propagates through LENGTH/UPPER/TRIM when the argument is opaque") {
+    assert(analyzeOne(project(read(), "x", Function("LENGTH", List(UDF(None, Nil))))).unsupported)
+    assert(analyzeOne(project(read(), "x", Function("UPPER", List(UDF(None, Nil))))).unsupported)
+    assert(analyzeOne(project(read(), "x", Function("TRIM", List(UDF(None, Nil))))).unsupported)
+  }
+
+  test("Length: Cast drops the Length fact, the same as it already drops Range/EqualsConstant/OneOf") {
+    val axioms = Map(ColumnRef("identifier", Some(source.location)) -> ColumnPropertyState(length = Some(Property.Length(exact = Some(10)))))
+    val state = analyzeOne(project(read(), "x", Cast(col("identifier", Some(source.location)), "string")), axioms)
+    assert(state.length.isEmpty)
+  }
+
+  test("Length: a CASE WHEN of two different-length string literals proves only the enclosing min/max envelope, never a false exact") {
+    val branches = List((col("is_short"), Literal("ab", "string")))
+    val state = analyzeOne(project(read(), "x", Conditional(branches, Some(Literal("abcdefghij", "string")))))
+    assert(state.length.contains(Property.Length(min = Some(2), max = Some(10))))
+  }
+
   test("Conditional: a later branch's narrowing correctly inherits an EARLIER branch's condition negated, not asserted true") {
     // WHEN amount < 0 THEN -1
     // WHEN amount < 10 THEN amount   -- must be narrowed by NOT(amount < 0) i.e. amount >= 0, combined with amount < 10
@@ -426,5 +609,88 @@ class PropertyAnalysisSpec extends AnyFunSuite {
     // derivation in the commit that added it for the full arithmetic.
     assert(state.range.exists(_.gte.contains(BigDecimal(-1))), s"expected a provable lower bound of -1, got ${state.range}")
     assert(state.range.exists(_.lte.contains(BigDecimal(999))), s"expected a provable upper bound of 999, got ${state.range}")
+  }
+
+  // --- definingExpr / analyzeExpr (nested-field tracing support) -------------
+
+  test("definingExpr: returns the defining Expr and its resolving input Plan directly beneath a Write's Project") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val plan = Write(DatasetRef("gold.out"), project(read(), "address", built))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: returns None when the requested name isn't defined by the top Project at all") {
+    val plan = Write(DatasetRef("gold.out"), project(read(), "other", col("other")))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: chases a single level of ColumnReference indirection back to the real defining Expr") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val inner = project(read(), "address", built)
+    val outer = project(inner, "address", col("address"))
+    val plan = Write(DatasetRef("gold.out"), outer)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: chases multiple levels of ColumnReference indirection through an intervening Filter") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val innermost = project(read(), "address", built)
+    val filtered = Filter(innermost, Function("ISNOTNULL", List(col("address"))))
+    val mid = project(filtered, "address", col("address"))
+    val outer = project(mid, "address", col("address"))
+    val plan = Write(DatasetRef("gold.out"), outer)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: passes through Sort and Limit exactly as it does Filter") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val sorted = Sort(project(read(), "address", built), List(SortOrder(col("address"), ascending = true)))
+    val limited = Limit(sorted, 10)
+    val plan = Write(DatasetRef("gold.out"), limited)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == Some((built, read())))
+  }
+
+  test("definingExpr: returns None for a struct read straight from an input Read, with no intervening Project at all") {
+    val plan = Write(DatasetRef("gold.out"), read())
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None when a ColumnReference chain bottoms out at a bare Read (struct passed straight through)") {
+    val plan = Write(DatasetRef("gold.out"), project(read(), "address", col("address")))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for an Aggregate output - no single defining Expr in the same sense") {
+    val agg = Aggregate(read(), groupBy = Nil, aggregates = List(NamedExpr("address", AggregateCall("SUM", col("amount")))))
+    val plan = Write(DatasetRef("gold.out"), agg)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Window output") {
+    val windowed = Window(read(), windowExprs = List(NamedExpr("address", Function("ROW_NUMBER", Nil))))
+    val plan = Write(DatasetRef("gold.out"), windowed)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Union output") {
+    val left = project(read(Some("l")), "address", StructConstruct(List("zip" -> Literal("1", "string"))))
+    val right = project(read(Some("r")), "address", StructConstruct(List("zip" -> Literal("2", "string"))))
+    val plan = Write(DatasetRef("gold.out"), Union(List(left, right)))
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("definingExpr: returns None for a Join output") {
+    val left = project(read(Some("l")), "address", StructConstruct(List("zip" -> Literal("1", "string"))))
+    val right = read(Some("r"))
+    val joined = Join(left, right, JoinType.Inner, None)
+    val plan = Write(DatasetRef("gold.out"), joined)
+    assert(PropertyAnalysis.definingExpr(plan, "address") == None)
+  }
+
+  test("analyzeExpr: resolves an already-extracted Expr the same way analyze resolves it inline") {
+    val built = StructConstruct(List("zip" -> Literal("94107", "string")))
+    val state = PropertyAnalysis.analyzeExpr(StructField(built, "zip"), read(), Map.empty)
+    assert(state.notNull == NullabilityFact.Proven)
+    assert(state.equalsConstant.contains(Property.EqualsConstant("94107", "string")))
   }
 }

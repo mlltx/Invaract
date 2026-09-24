@@ -76,6 +76,9 @@ object PlanPrinter {
       val d = if (distinct) "DISTINCT " else ""
       s"$function($d${renderExpr(arg)})"
     case UnknownExpression(description, _, _) => s"<unknown: $description>"
+    case StructField(struct, fieldName) => s"${renderExpr(struct)}.$fieldName"
+    case StructConstruct(fields) =>
+      s"STRUCT(${fields.map { case (name, value) => s"$name: ${renderExpr(value)}" }.mkString(", ")})"
   }
 
   private def label(plan: Plan): String = plan match {

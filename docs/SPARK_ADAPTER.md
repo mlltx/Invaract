@@ -193,6 +193,8 @@ part of).
 | `BinaryArithmetic` (`Add`, `Subtract`, ...) / `UnaryMinus` | `Arithmetic(symbol, [left, right])` / `Arithmetic("NEGATE", [child])` |
 | `CaseWhen` / `If` | `Conditional(branches, elseValue)` |
 | `ScalaUDF` / `PythonUDF` / Hive UDFs | `UDF(name, args, Some(engineType))` + `Diagnostic` — never `Function` |
+| `GetStructField` (`.getField(...)`, dotted struct access) | `StructField(translated child, fieldName)` — matched before the generic fallback: `.prettyName` is the unhelpful `"getstructfield"`, which would otherwise lose the field name to `Function("GETSTRUCTFIELD", ...)` entirely; `fieldName` comes from `.name` when resolvable, else the same `childSchema(ordinal).name` fallback Catalyst's own getter uses |
+| `CreateNamedStruct` (`struct(...)`/`F.struct(...)`) | `StructConstruct(fieldName -> translated value, ...)` — matched for the same reason: `.prettyName` is `"named_struct"`, and only `CreateNamedStruct`'s own `.names`/`.valExprs` accessors know the pairing convention over its flat, alternating `children` |
 | everything else | `Function(prettyName, children)` (generic) |
 | any other plan node | `UnknownPlan(description, sourceType, translated children)` + `Diagnostic` |
 

@@ -9,10 +9,12 @@ import { Aside } from '@astrojs/starlight/components';
 
 A contract can already require an output field to be non-null
 (`nullable: false`). Beyond that, a field can declare that it must always equal a
-specific constant, always be one of a finite set of values, or always fall within a
-numeric range — and Invaract will attempt to *prove*, from the transformation's own
-translated logic, that the requirement holds for every possible row, not just check it
-against whatever data happened to be present on one run.
+specific constant, always be one of a finite set of values, always fall within a
+numeric range, always fall within a range *relative to another field on the same row*
+(e.g. `end_date >= start_date`), or (for a string-typed field) always have a specific
+length — and Invaract will attempt to *prove*, from the transformation's own translated
+logic, that the requirement holds for every possible row, not just check it against
+whatever data happened to be present on one run.
 
 <Aside type="caution" title="This proves guarantees, not predicts them">
 The objective is never "will this data quality rule probably pass?" — it's "does the
@@ -50,6 +52,18 @@ outputs:
           constraints:
             - type: range
               gte: 0
+        - name: identifier
+          type: string
+          constraints:
+            - type: length
+              exact: 10
+        - name: start_date
+          type: long
+        - name: end_date
+          type: long
+          constraints:
+            - type: fieldRange
+              gte: start_date
 ```
 
 See [Reference → Contract Format](/reference/contract-format/#static-data-quality-constraints)
@@ -111,10 +125,24 @@ A few worked examples (the full set, mechanically traced, is in
   covered (there's an `ELSE`).
 - **A clamp** (`CASE WHEN amount < 0 THEN 0 ELSE amount END`) proves `constraints: [{type:
   range, gte: 0}]`, again with no input axiom.
+- **An input contract declaring `constraints: [{type: length, exact: 10}]` on an
+  `identifier` field**, passed straight through unchanged, proves the same `length: exact:
+  10` constraint on the output — the axiom flows through a pure passthrough for free, the
+  same mechanism `nullable: false`/`range` already use for Example 5's shape.
 - **Negating a column the input contract already guarantees non-negative** — `.withColumn("amount",
   -col("amount"))` — provably *violates* a `gte: 0` constraint on the output: the
   transformation's own logic guarantees the opposite of what's required, which is exactly
   the case that aborts the write (see "The four verdicts" below).
+- **A nested field's own constraint** — `struct(col("zip"), lit("US").as("country"))`
+  with `constraints: [{type: equals, value: US}]` declared on `address.country`'s own
+  [nested `properties`](/reference/contract-format/) — proves `Guaranteed` the same way a
+  flat column does, by tracing into the struct the transformation itself just built.
+- **A cross-field bound** — an `end_date` field with `constraints: [{type: fieldRange,
+  gte: start_date}]` proves `Guaranteed` whenever `end_date`'s own proven lower bound is
+  already `>=` `start_date`'s own proven upper bound (e.g. an input contract declaring
+  `start_date`'s own `range: {lte: 1000}` alongside `end_date`'s own `range: {gte:
+  1000}`, both passed straight through) — a direct comparison between each field's own
+  already-analyzed value range, not a new kind of tracing.
 
 ## The four verdicts
 
@@ -179,6 +207,38 @@ fact.
   reference or literal) doesn't get the same conditional narrowing a bare column reference
   does — a documented MVP simplification, not a soundness gap (it only ever under-claims,
   never over-claims, a guarantee).
+- **A constraint declared on a nested (struct/record) field** — `constraints`/`nullable:
+  false` on a field's own [nested `properties`](/reference/contract-format/) — is now
+  proven for real whenever the parent struct is built by the transformation itself (e.g.
+  `struct(col("zip"), col("city"))`, even through an intervening rename like
+  `.withColumn("address", struct(...)).select("address", ...)`): the same "construct,
+  then extract" resolution a flat output column already gets, now reached one level into
+  a nested field a contract declares its own obligation on. It still reports
+  `NotStaticallyVerifiable` when the struct comes from anywhere this analysis can't trace
+  into — a struct-typed column read straight from the input with no transformation at
+  all, the result of a UDF, or an `Aggregate`/`Window`/`Union`/`Join` output. The struct
+  field *itself* (at the top level) is unaffected either way — its own `nullable`/
+  `constraints` are checked normally. A flat output column produced by extracting one
+  field straight back out of a struct built in the same expression (e.g.
+  `struct(col("zip"), col("city")).getField("zip")`) is checked for real too, the same as
+  any other computed column.
+- **String constraints beyond `length`** — pattern/regex requirements aren't supported at
+  all. `length` itself is proven through a pure passthrough (an unchanged input column),
+  a string literal, `LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH`, `UPPER`/`LOWER`, and
+  `TRIM`/`LTRIM`/`RTRIM` — not the full string-function surface (`SUBSTRING`, `CONCAT`,
+  `REPLACE`, ... all resolve to `NotGuaranteed`, the same honest "I don't know" every
+  other unrecognized construct gets).
 - **Sampling, historical runs, or current data** — never consulted. Every proof (or
   disproof) comes from the transformation's translated logic and the contract's declared
   input properties alone.
+- **A `fieldRange` constraint on a nested field, or referencing a nested field** —
+  always `NotStaticallyVerifiable`: cross-field comparison only resolves between
+  top-level output fields, deliberately, to avoid an ambiguous match against an
+  unrelated field that happens to share a nested field's bare name. Both the
+  constrained field and the field it references must also be numeric-typed — the
+  proof is a direct comparison of each side's own analyzed numeric range.
+- **A formula relationship between fields** (`total = quantity * price`, an arithmetic
+  identity, not an ordering) — genuinely different from `fieldRange`: an ordering bound
+  is proven from each side's own already-known value range alone, while a formula
+  identity would need to trace how one column's expression actually relates to
+  another's. Not supported.
