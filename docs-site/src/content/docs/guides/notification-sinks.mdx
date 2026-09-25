@@ -76,13 +76,13 @@ Code](/guides/calling-invaract-explicitly/#wire-a-notification-sink).
 Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": []}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": [], "roleConformance": []}
 ```
 
 ...and a `WriteEvent`, once the write completes:
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null, "catalog": null, "partitionColumns": []}
+{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null, "catalog": null, "partitionColumns": [], "datasetType": null}
 ```
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
@@ -106,6 +106,13 @@ verification](/guides/verifying-static-data-quality/) with a contract that decla
 `constraints` — populated the same way on both a PASSED and a FAILED check, since most
 verdicts (`Guaranteed`/`NotGuaranteed`/`NotStaticallyVerifiable`) never block the write on
 their own; only a `Violated` entry does, and only that one also shows up in `violations`.
+
+`roleConformance` is `[]` unless you've opted into [role-consistency
+checking](/guides/declaring-input-and-output-types/) (`spark.invaract.roleConsistency=true`)
+with a contract that declares `type:` on at least one input — populated the same way on a
+PASSED and a FAILED check, since most verdicts (`Conforms`/`CannotDetermine`) never block
+the write on their own; only a `Contradicts` entry does, and only that one also shows up in
+`violations`.
 
 `WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
 callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal
@@ -147,6 +154,20 @@ bare column name:
 This reports which columns the target is partitioned *by*, not which specific partition
 values this particular write's own rows happened to touch — Invaract doesn't currently
 surface that.
+
+`datasetType` is the contract's own declared [type](/guides/declaring-input-and-output-types/)
+(`DATA_ASSET`/`SOURCE`/`CONTROL`) for whichever output dataset the write's `location`
+matches (whichever is declared *first*, if more than one output shares a location) —
+`null` whenever there's no contract at all (dry-run mode), the matching output declares
+no `type:`, or no output matches the write's location:
+
+```json
+{"...": "...", "location": "file:/demo/output/result.parquet", "datasetType": "DATA_ASSET"}
+```
+
+Unlike every other `WriteEvent` field above, this needs no `VerificationOptions` flag to
+opt into — it's a plain lookup against the contract's own static declarations, not a
+runtime check, so it's always populated when a matching output declares a type.
 
 `operation` distinguishes a MERGE/UPDATE/DELETE from a plain append or overwrite —
 `saveMode` is always `null` for these (in-place mutation isn't append/overwrite/ignore/

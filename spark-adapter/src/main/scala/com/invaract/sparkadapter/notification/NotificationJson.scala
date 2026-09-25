@@ -58,7 +58,8 @@ object NotificationJson {
         "icebergSnapshotId" -> e.icebergSnapshotId,
         "operation" -> e.operation,
         "catalog" -> e.catalog.map(_.toMap),
-        "partitionColumns" -> e.partitionColumns
+        "partitionColumns" -> e.partitionColumns,
+        "datasetType" -> e.datasetType.map(_.name)
       )
     case e: JobSummaryEvent =>
       Map(

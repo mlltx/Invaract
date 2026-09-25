@@ -285,6 +285,25 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(NotificationJson.toJson(partitioned).contains("\"partitionColumns\": [\"year\", \"month\"]"))
   }
 
+  test("toJson for WriteEvent renders default datasetType=None as null") {
+    val untyped = WriteEvent(None, "file:/tmp/out.parquet", Some("parquet"), Some("overwrite"), Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(untyped).contains("\"datasetType\": null"))
+  }
+
+  test("toJson for WriteEvent renders a populated datasetType as its bare name, not wrapped") {
+    val typed = WriteEvent(
+      None,
+      "file:/tmp/out.parquet",
+      Some("parquet"),
+      Some("overwrite"),
+      Nil,
+      0L,
+      Map.empty,
+      datasetType = Some(DatasetType.DataAsset)
+    )
+    assert(NotificationJson.toJson(typed).contains("\"datasetType\": \"DATA_ASSET\""))
+  }
+
   test("toJson for JobSummaryEvent includes every field") {
     val summary = JobSummaryEvent(
       totalWrites = 3L,
