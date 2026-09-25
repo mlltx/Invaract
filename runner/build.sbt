@@ -156,7 +156,7 @@ dependencyOverrides ++= Seq(
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.11.0",
   "com.invaract" %% "invaract-ir" % "0.5.0",
-  "com.invaract" %% "invaract-spark-adapter" % "0.8.0"
+  "com.invaract" %% "invaract-spark-adapter" % "0.9.0"
 )
 
 // registry-client is deliberately NOT a dependency here, matching
