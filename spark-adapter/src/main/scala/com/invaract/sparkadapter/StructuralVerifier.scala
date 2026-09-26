@@ -615,6 +615,15 @@ private[sparkadapter] object StructuralVerifier {
     val declaredButNotRead = contract.inputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
 
     val (missingInputs, unverifiableInputs) =
+      // Genuinely equivalent mutant, confirmed via scoped Stryker4s: forcing
+      // this condition to `false` still produces (Nil, Nil) whenever
+      // declaredButNotRead really is empty, since both branches below only
+      // ever .map over declaredButNotRead - mapping an empty list is Nil
+      // either way, so no test could ever observe a difference. Kept as an
+      // explicit branch anyway, for the same reason the two branches below
+      // are spelled out separately rather than combined: readability of
+      // "empty / confidently missing / unverifiable" as three distinct
+      // cases, not two.
       if (declaredButNotRead.isEmpty) (Nil, Nil)
       else if (!plan.containsUnknownPlan)
         (
