@@ -299,6 +299,323 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
   }
 
+  // -- forbid_control_sensitivity_tags -----------------------------------------
+
+  test("forbid_control_sensitivity_tags: violated when a CONTROL dataset carries a default-forbidden tag (pii or financial)") {
+    for (tag <- Seq("pii", "financial")) {
+      val rule = PolicyRule("control-no-sensitive", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+      val c = contract(
+        outputs = List(
+          dataset("out", fields = List(field("id"), field("sensitive_field", tags = Set(tag)))).copy(datasetType = Some(DatasetType.Control))
+        )
+      )
+      val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+      assert(violations.size == 1, s"expected a violation for default-forbidden tag '$tag'")
+      assert(violations.head.dataset.contains("out"))
+      assert(violations.head.message.contains(tag), s"violation message should mention '$tag'")
+    }
+  }
+
+  test("forbid_control_sensitivity_tags: satisfied when a CONTROL dataset carries no forbidden tag") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("watermark_ts"))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a DATA_ASSET dataset with a pii tag is never in scope, regardless of tags") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.DataAsset))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a dataset with no declared type at all is never in scope") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii"))))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a matched tag is checked case-insensitively") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("PII")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: an explicit 'tags' list overrides the default, allowing a tag the default would have forbidden") {
+    val rule = PolicyRule(
+      "control-no-restricted-only",
+      PolicyType.ForbidControlSensitivityTags,
+      Map("tags" -> List("restricted")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: an explicit 'tags' list is still enforced when it matches") {
+    val rule = PolicyRule(
+      "control-no-restricted",
+      PolicyType.ForbidControlSensitivityTags,
+      Map("tags" -> List("restricted")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("secret", tags = Set("restricted")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: a single scalar 'tags' value is shorthand for a one-element list") {
+    val rule = PolicyRule("control-no-hr", PolicyType.ForbidControlSensitivityTags, Map("tags" -> "hr"), scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("salary", tags = Set("hr")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: an empty 'tags' list is malformed - interpret returns None, no violation raised") {
+    val rule = PolicyRule("bad", PolicyType.ForbidControlSensitivityTags, Map("tags" -> List.empty[String]), scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: recurses into nested struct fields") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val nested = field("customer", properties = List(field("ssn", tags = Set("pii"))))
+    val c = contract(
+      outputs = List(dataset("out", fields = List(nested)).copy(datasetType = Some(DatasetType.Control)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: Warn mode reports without blocking") {
+    val rule = PolicyRule("control-no-pii-warn", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs, mode = PolicyMode.Warn)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val eval = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now)
+    assert(eval.enforceViolations.isEmpty)
+    assert(eval.warnViolations.size == 1)
+    assert(!eval.hasBlockingViolations)
+  }
+
+  test("forbid_control_sensitivity_tags: honors scope like any other DatasetPolicy") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      inputs = List(
+        // a CONTROL input with a pii tag - would violate if inputs were in scope
+        dataset("in", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      ),
+      outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a per-contract exemption suppresses the violation") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption(c.id, List("control-no-pii"), reason = "known legacy control table, migration tracked"))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  // -- require_control_registration ---------------------------------------
+
+  test("require_control_registration: satisfied when a CONTROL dataset matches a registered location") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy("1.0", List(rule), controlTables = List(ControlTableRegistration("loc/out", owner = "data-platform-team")))
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: strict mode (default) violates when a CONTROL dataset has no registry entry at all") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.contains("out"))
+    assert(violations.head.message.contains("no active entry"))
+  }
+
+  test("require_control_registration: a non-CONTROL dataset is never in scope, registered or not") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.DataAsset))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: a dataset with no declared type at all is never in scope") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out")))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: requireRegistration=false does not violate an unregistered CONTROL dataset") {
+    val rule = PolicyRule(
+      "control-registry-loose",
+      PolicyType.RequireControlRegistration,
+      Map("requireRegistration" -> java.lang.Boolean.FALSE),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: requireRegistration=false still enforces conformance once an entry matches") {
+    val rule = PolicyRule(
+      "control-registry-loose",
+      PolicyType.RequireControlRegistration,
+      Map("requireRegistration" -> java.lang.Boolean.FALSE),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      controlTables = List(ControlTableRegistration("loc/out", owner = "data-platform-team", requiredFields = List("watermark_ts")))
+    )
+    val violations = OrgPolicyEvaluator.evaluate(c, policy, now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("watermark_ts"))
+  }
+
+  test("require_control_registration: a malformed 'requireRegistration' property (not a boolean) never produces a violation") {
+    val rule = PolicyRule(
+      "control-registry-bad",
+      PolicyType.RequireControlRegistration,
+      Map("requireRegistration" -> "not-a-boolean"),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: violated when registered but the schema is missing a required field") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      controlTables = List(
+        ControlTableRegistration("loc/out", owner = "streaming-team", requiredFields = List("watermark_ts", "run_id"))
+      )
+    )
+    val violations = OrgPolicyEvaluator.evaluate(c, policy, now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("watermark_ts"))
+    assert(violations.head.message.contains("run_id"))
+  }
+
+  test("require_control_registration: satisfied once the schema carries every required field") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("watermark_ts"))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      controlTables = List(ControlTableRegistration("loc/out", owner = "streaming-team", requiredFields = List("watermark_ts")))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: an expired registration is treated as no registration at all") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      controlTables = List(
+        ControlTableRegistration("loc/out", owner = "data-platform-team", reviewBy = Some(now.minusDays(1)))
+      )
+    )
+    val violations = OrgPolicyEvaluator.evaluate(c, policy, now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.message.contains("no active entry"))
+  }
+
+  test("require_control_registration: a registration active exactly on its reviewBy date still counts") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      controlTables = List(ControlTableRegistration("loc/out", owner = "data-platform-team", reviewBy = Some(now)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: matches location with backslash normalization, like CrossContractValidator elsewhere") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy("1.0", List(rule), controlTables = List(ControlTableRegistration("loc\\out", owner = "data-platform-team")))
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: Warn mode reports without blocking") {
+    val rule = PolicyRule("control-registry-warn", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs, mode = PolicyMode.Warn)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val eval = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now)
+    assert(eval.enforceViolations.isEmpty)
+    assert(eval.warnViolations.size == 1)
+    assert(!eval.hasBlockingViolations)
+  }
+
+  test("require_control_registration: honors scope like any other DatasetPolicy") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      // a CONTROL input with no registration - would violate if inputs were in scope
+      inputs = List(dataset("in").copy(datasetType = Some(DatasetType.Control))),
+      outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control)))
+    )
+    val policy = OrgPolicy("1.0", List(rule), controlTables = List(ControlTableRegistration("loc/out", owner = "data-platform-team")))
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
+  test("require_control_registration: a per-contract exemption suppresses the violation") {
+    val rule = PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control))))
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption(c.id, List("control-registry"), reason = "registration in progress"))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

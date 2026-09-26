@@ -146,6 +146,49 @@ object OrgPolicyValidator {
       }
     }
 
+    policy.controlTables.zipWithIndex.foreach { case (registration, idx) =>
+      val path = s"controlTables[$idx]"
+      if (registration.location.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "controlTables entry's location must not be empty")
+      }
+      if (registration.owner.trim.isEmpty) {
+        issues += ValidationIssue(ValidationSeverity.Error, path, "controlTables entry's owner must not be empty")
+      }
+      registration.reviewBy.filter(_.isBefore(now)).foreach { date =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          path,
+          s"controlTables entry's reviewBy date ($date) has already passed; it no longer counts as registered for " +
+            "require_control_registration - the dataset falls back to being treated as unregistered"
+        )
+      }
+    }
+
+    duplicateNames(policy.controlTables.map(r => CrossContractValidator.normalize(r.location))).foreach { location =>
+      issues += ValidationIssue(
+        ValidationSeverity.Error,
+        "controlTables",
+        s"Duplicate controlTables location '$location' (compared after path normalization) - ambiguous which entry a matching dataset should be checked against"
+      )
+    }
+
+    // controlTables is a catalogue independent of enforcement (see its own
+    // doc) - a non-empty one with no require_control_registration rule
+    // anywhere in this document (built-in type, so a customPolicyTypes
+    // entry can never be what makes it "used" - the built-in always wins)
+    // is very likely a platform team that built the catalogue and forgot
+    // the rule that actually checks it, not an intentional "documentation
+    // only" choice. Worth surfacing, the same "likely mistake, not fatal"
+    // treatment every other maybe-dead-config Warning in this file gets.
+    if (policy.controlTables.nonEmpty && !policy.policies.exists(_.ruleType == PolicyType.RequireControlRegistration)) {
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        "controlTables",
+        s"controlTables has ${policy.controlTables.size} entr${if (policy.controlTables.size == 1) "y" else "ies"} " +
+          "but no require_control_registration policy is attached - the catalogue is purely documentary until one is"
+      )
+    }
+
     ValidationResult(issues.result())
   }
 
@@ -206,6 +249,8 @@ object OrgPolicyValidator {
     case PolicyType.RequireFormat          => " (expected a non-empty 'formats' property - a single format or a list)"
     case PolicyType.RequireExtensionIf     => " (expected non-empty 'ifKey' and 'thenKey' properties)"
     case PolicyType.RequireDatasetType     => " (if 'types' is set, expected a non-empty list of DATA_ASSET/SOURCE/CONTROL - omit 'types' entirely to require any declared type)"
+    case PolicyType.ForbidControlSensitivityTags => " (if 'tags' is set, expected a non-empty list of strings - omit 'tags' entirely to use the default pii/financial set)"
+    case PolicyType.RequireControlRegistration => " (if 'requireRegistration' is set, expected a boolean - omit it entirely to default to true)"
     case _                                 => ""
   }
 

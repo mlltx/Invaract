@@ -591,7 +591,7 @@ same treatment `customPolicyTypes`' identical collision gets). It
 deliberately does **not** warn on a `ContractRule.ruleType` matching
 neither a built-in `RuleType` nor a `customRuleTypes` entry, unlike
 `OrgPolicyValidator`'s equivalent check for `PolicyType`: unlike
-`OrgPolicy`'s closed, org-controlled eight-type set (where an unrecognized
+`OrgPolicy`'s closed, org-controlled ten-type set (where an unrecognized
 type is almost always a typo), a contract's own `rules:` list routinely
 carries rule types no code interprets at all by design — `compatibility`
 being the standing, deliberately-inert example used throughout this
@@ -879,7 +879,12 @@ Same three-layer split as the contract model itself, all in `contract/`
   checks" under "Input and Output Types" above; unlike every other field
   here, `OrgPolicyEvaluator` never consults it — only
   `TypeGuaranteeValidator`/`CrossContractLintCli` do, since it governs a
-  cross-contract check, not a per-contract one). A `PolicyRule` carries `id`
+  cross-contract check, not a per-contract one), `controlTables:
+  List[ControlTableRegistration]` (the org-owned catalogue
+  `require_control_registration` checks against — see "Control table
+  registration" below; unlike `typeGuarantees`, `OrgPolicyEvaluator` *does*
+  consult this one directly, since the check it backs stays per-contract).
+  A `PolicyRule` carries `id`
   (referenced by exemptions, shown in violation messages), `ruleType`, open
   `properties: Map[String, Any]` (the same shape `ContractRule.properties`
   uses), `scope` (`Inputs`/`Outputs`/`All`), an optional `when:
@@ -911,7 +916,9 @@ Same three-layer split as the contract model itself, all in `contract/`
   `customPolicyTypes` entry with an empty ruleType/class name, or one
   naming a class `CustomPolicyEvaluatorFactory` can't resolve; the
   identical pair of checks again for `typeGuarantees.customTypeGuaranteeTypes`,
-  resolved via `TypeGuaranteeCheckFactory` instead. Warnings:
+  resolved via `TypeGuaranteeCheckFactory` instead; a `controlTables` entry
+  with an empty `location`/`owner`, or two entries sharing the same
+  normalized `location`. Warnings:
   an exemption whose `reviewBy` has already passed (informational — the
   exemption simply stops applying, per "Exemptions" below); a
   `PolicyRule.ruleType` matching neither a built-in type nor a
@@ -919,20 +926,30 @@ Same three-layer split as the contract model itself, all in `contract/`
   `customPolicyTypes` entry whose ruleType collides with a built-in
   `PolicyType` (dead — the built-in always wins); the same two warnings
   again, mirrored exactly, for `typeGuarantees.enabled`/
-  `customTypeGuaranteeTypes` against `TypeGuaranteeType`. See "Custom policy
-  types" below for the `customPolicyTypes` pair, and "Type guarantee checks"
-  under "Input and Output Types" above for the `typeGuarantees` pair.
+  `customTypeGuaranteeTypes` against `TypeGuaranteeType`; a `controlTables`
+  entry whose `reviewBy` has already passed (informational, mirroring an
+  expired exemption exactly); `controlTables` non-empty with no
+  `require_control_registration` rule attached anywhere in the document
+  (almost always a forgotten rule, not intentional). See "Custom policy
+  types" below for the `customPolicyTypes` pair, "Type guarantee checks"
+  under "Input and Output Types" above for the `typeGuarantees` pair, and
+  "Control table registration" below for `controlTables`.
 - **`OrgPolicyEvaluator`** — the pure engine. `evaluate(contract, policy,
   now)` evaluates every policy rule (skipping one an unexpired exemption
   covers for `contract.id`) and splits the resulting `PolicyViolation`s by
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
   warnViolations)`. Every rule — built-in or custom — is evaluated through
   the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
-  checks `builtinEvaluators` (the eight built-in types, each an ordinary
-  `CustomPolicyEvaluator` compiled into this module) before falling back to
-  `policy.customPolicyTypes` for a `ruleType` outside that set — see
-  "Custom policy types" below for the full mechanism, and its own note on
-  why a built-in type always wins a naming collision.
+  checks `builtinEvaluators` (nine of the ten built-in types, each an
+  ordinary `CustomPolicyEvaluator` compiled into this module) before
+  falling back to `policy.customPolicyTypes` for a `ruleType` outside that
+  set — see "Custom policy types" below for the full mechanism, and its
+  own note on why a built-in type always wins a naming collision. The
+  tenth built-in type, `require_control_registration`, is special-cased in
+  `evaluateRule` ahead of that dispatch instead, since it needs
+  `policy.controlTables` — data no `CustomPolicyEvaluator` can see through
+  `evaluate(contract, rule)` alone — see "Control table registration"
+  below.
   `applyInjectedRules(contract, policy)` merges `policy.inject.rules` into
   `contract.rules` (skipping a rule the contract already declares, by
   `ruleType`+`properties` equality) — see "Rule/option injection" below.
@@ -982,7 +999,7 @@ grow to cover:
   output must be `"delta"` or `"iceberg"`, never raw `"parquet"`/`"csv"`).
   `formats` accepts either a single scalar (`formats: delta`) or a YAML
   list (`formats: [delta, iceberg]`) — the one property in this file that
-  needs list coercion at all, handled by `PolicyRule.parseFormats`. A
+  needs list coercion at all, handled by `PolicyRule.parseStringList`. A
   dataset with no `format` declared at all does not satisfy this, the
   same "required but absent" treatment every other check in this section
   gives.
@@ -996,12 +1013,42 @@ grow to cover:
   `type` (`DATA_ASSET`/`SOURCE`/`CONTROL` — see "Input and Output Types"
   above) at all; if `types` is also set (a single scalar or a YAML list,
   the identical shorthand `require_format`'s own `formats` accepts, via
-  the same `PolicyRule.parseFormats` coercion), the declared type must
+  the same `PolicyRule.parseStringList` coercion), the declared type must
   additionally be one of them (e.g. `types: [DATA_ASSET]` requires every
   output specifically be a `DATA_ASSET`). This is the mechanism that makes
   declaring `Dataset.datasetType` mandatory or optional *per organization*:
   the field itself always defaults to unset at the model level, and an
   org that wants it required attaches this policy in `Enforce` mode.
+- **`forbid_control_sensitivity_tags`** (optional `tags`, defaulting to
+  `["pii", "financial"]` when omitted — same scalar-or-list shorthand as
+  `formats`/`types` above) — a dataset already declared `type: CONTROL`
+  must not carry any schema field (recursing into nested struct
+  `properties`) tagged with one of `tags`. A genuine control/watermark/
+  processing-calendar/reconciliation signal has no legitimate reason to
+  carry sensitive business data, so a `CONTROL`-declared dataset whose
+  schema does is a mechanical, single-contract signal that the
+  declaration may really be a relabeled `DATA_ASSET` avoiding
+  `DATA_ASSET`-scoped obligations (`require_catalog`, role-consistency
+  checking, etc.) — see "Input and Output Types" above. Deliberately
+  narrower than `require_dataset_type`: this says nothing about whether a
+  type is declared at all, and a dataset with no declared type, or one
+  declared `DATA_ASSET`/`SOURCE`, is never in scope for this check
+  regardless of its own tags — that's `require_dataset_type`'s and
+  ordinary sensitivity governance's own job, not this one's. An explicit
+  empty `tags` list is malformed (`interpret` returns `None`), the same
+  "empty means malformed" treatment `require_format`'s `formats` already
+  gets.
+- **`require_control_registration`** (optional `requireRegistration`
+  boolean, default `true`) — see "Control table registration" below for
+  the full design. In short: a dataset declared `type: CONTROL` must match
+  a `location` entry in the top-level `OrgPolicy.controlTables` catalogue,
+  and once matched, its schema must carry every field that entry's
+  `requiredFields` names. `requireRegistration: false` skips the "must be
+  registered at all" half but still enforces conformance against any
+  entry that *does* match — the loose-vs-strict knob a platform rolling
+  this out gradually needs. Unlike every other type in this list, this one
+  isn't dispatched through `builtinEvaluators` (see "`DatasetPolicy` vs.
+  `ContractPolicy`" below).
 - **`require_extension_if`** (required `ifKey`/`thenKey`, optional
   `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
   only once the contract already satisfies `ifKey` (optionally pinned to
@@ -1019,7 +1066,7 @@ grow to cover:
   needs it applied twice — once for its `if`, once for its `then`.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these eight shapes — `None` for an unrecognized `ruleType`
+into one of these ten shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -1031,20 +1078,25 @@ rather than a silent no-op).
 
 `InterpretedPolicy` is split into two sub-traits, reflecting the two
 different granularities a policy rule can check at. This is a
-*classification*, not `OrgPolicyEvaluator`'s dispatch mechanism — each
-built-in type is its own `CustomPolicyEvaluator` in `builtinEvaluators`
-(see "Custom policy types" below), and it's that evaluator's own body,
-not a shared branch keyed off this split, that decides whether to narrow
-to `scopedDatasets` or check the contract as a whole. The trait split
-remains useful, though: it's what a reader (or `OrgPolicyValidator`, via
+*classification*, not `OrgPolicyEvaluator`'s dispatch mechanism — every
+`DatasetPolicy`/`ContractPolicy` type but one is its own
+`CustomPolicyEvaluator` in `builtinEvaluators` (see "Custom policy types"
+below), and it's that evaluator's own body, not a shared branch keyed off
+this split, that decides whether to narrow to `scopedDatasets` or check
+the contract as a whole. The one exception, `require_control_registration`,
+is still a `DatasetPolicy` by this classification (it narrows to
+`scopedDatasets` exactly like the rest), but `evaluateRule` special-cases
+its dispatch ahead of `builtinEvaluators` rather than giving it a map
+entry — see "Control table registration" below for why. The trait split
+remains useful regardless: it's what a reader (or `OrgPolicyValidator`, via
 `PolicyType.ContractLevelTypes`) uses to know which shape a given
 built-in type is, without re-deriving it from each evaluator's own body:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
   `field_naming_convention`, `require_format`, `require_dataset_description`,
-  and `require_dataset_type`. Each of these types' own
-  `builtinEvaluators` entry narrows to `scopedDatasets(contract, rule)`
-  (`datasetsInScope(contract, rule.scope)`, further filtered by
+  `require_dataset_type`, `forbid_control_sensitivity_tags`, and
+  `require_control_registration`. Each narrows to `scopedDatasets(contract,
+  rule)` (`datasetsInScope(contract, rule.scope)`, further filtered by
   `rule.when`) and checks each dataset independently, producing a
   `PolicyViolation` with `dataset = Some(name)` per offending dataset.
 - **`ContractPolicy`** — `require_extension` and `require_extension_if`
@@ -1066,7 +1118,7 @@ that was never about any one dataset.
 
 ### Custom policy types (`CustomPolicyEvaluator`)
 
-The eight built-in types above are deliberately closed — but an
+The ten built-in types above are deliberately closed — but an
 organization's own policy vocabulary isn't limited to them. `OrgPolicy`
 carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
 a `PolicyRule.ruleType` this document uses to the fully-qualified class
@@ -1093,13 +1145,16 @@ attachment point ("Enforcement in `spark-adapter`" below) — a platform
 team points `--jars` at their own evaluator jar alongside the engine's,
 with zero change to any governed job's own source.
 
-There is nothing special about a *built-in* type's evaluation mechanism —
-`OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
-`builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering the
-eight built-in types, each an ordinary `CustomPolicyEvaluator`, built via
-the private `interpreted` helper — see that method's own doc for why —
+There is nothing special about *most* built-in types' evaluation
+mechanism — `OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
+`builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering nine
+of the ten built-in types, each an ordinary `CustomPolicyEvaluator`, built
+via the private `interpreted` helper — see that method's own doc for why —
 compiled into this module) before ever consulting `customPolicyTypes`.
-This is why
+The tenth, `require_control_registration`, needs `OrgPolicy.controlTables`
+— data the `CustomPolicyEvaluator` trait has no way to receive — so
+`evaluateRule` checks for it by name before ever reaching this map; see
+"Control table registration" below. This is why
 a `customPolicyTypes` key that collides with a built-in type is inert; the
 built-in lookup always wins (`OrgPolicyValidator` warns on this, not
 errors, the same "still evaluates correctly, just not the way you might
@@ -1183,6 +1238,123 @@ passed simply stops applying (`PolicyExemption.covers`'s
 rather than remaining a silent, forever bypass. `OrgPolicyValidator`
 warns (does not error) once a `reviewBy` has already passed, so an
 expired exemption stays visible without being fatal on its own.
+
+### Control table registration
+
+`type: CONTROL` (see "Input and Output Types" above) is self-declared by
+whoever writes the contract — `forbid_control_sensitivity_tags` catches
+one honest signal that a declaration is wrong (sensitive fields on a
+supposed control table), but it proves nothing about whether an
+*unsuspicious* `CONTROL` claim was ever actually sanctioned. `controlTables:
+List[ControlTableRegistration]` closes that gap the same way `exemptions`
+already closes an analogous one: it's a top-level `OrgPolicy` field, not a
+rule property, so it lives in the *policy* document rather than any one
+contract, and only whoever owns that document can add an entry to it.
+
+```scala
+case class ControlTableRegistration(
+  location: String,
+  owner: String,
+  purpose: Option[String] = None,
+  requiredFields: List[String] = Nil,
+  reviewBy: Option[LocalDate] = None
+)
+```
+
+- **`location`** — matched against a `CONTROL`-declared dataset's own
+  `location` via `CrossContractValidator.sameLocation`/`.normalize` (the
+  identical backslash-tolerant comparison this feature already uses
+  elsewhere), not string equality — a Windows-authored path doesn't cause
+  a false mismatch. Must be unique across `controlTables` after
+  normalization; `OrgPolicyValidator` errors on a duplicate.
+- **`owner`** — required, unlike every other field beyond `location`: an
+  entry nobody's accountable for defeats the point of registering it.
+- **`purpose`** — optional, purely documentary (the catalogue's own
+  `Dataset.description`).
+- **`requiredFields`** — the schema shape this control table is expected
+  to carry (e.g. `[watermark_ts, run_id]`), checked against the matching
+  dataset's own top-level schema fields (`Schema.field`'s lookup
+  semantics, not recursive into nested structs — the same scope
+  `require_field` already uses). Empty means no shape is pinned;
+  registration alone satisfies the check for this entry.
+- **`reviewBy`** — optional expiry, identical semantics to
+  `PolicyExemption.reviewBy`: a registration with no `reviewBy` never
+  lapses, and `ControlTableRegistration.isActive(now)` treats one whose
+  `reviewBy` has passed exactly like no registration at all — the dataset
+  falls back to unregistered, so a real control table has to be
+  periodically re-approved rather than registered once and forgotten.
+  `OrgPolicyValidator` warns (does not error) once this has passed, the
+  same "visible, not fatal on its own" treatment an expired exemption
+  gets.
+
+`controlTables` exists independently of enforcement: an organization can
+maintain it purely as a browsable catalogue of every known control table,
+with zero effect on any contract, until it attaches the policy rule that
+actually checks it. `OrgPolicyValidator` warns (not errors) when
+`controlTables` is non-empty but no `require_control_registration` rule
+is attached anywhere in the document — almost always a forgotten rule,
+not an intentional documentation-only choice, but never fatal on its own.
+
+**`require_control_registration`** (see "Policy types" above for its full
+`PolicyType` doc) is the rule that turns the catalogue into an actual
+gate — and it's opt-in like everything else in this feature, with its own
+loose/strict knob for how far to take it:
+
+```yaml
+# org-policy.yaml
+controlTables:
+  - location: control.watermark_state
+    owner: streaming-team
+    purpose: "Tracks the last successfully processed batch."
+    requiredFields: [watermark_ts, run_id]
+  - location: control.processing_calendar
+    owner: data-platform-team
+    reviewBy: "2026-12-31"
+
+policies:
+  - id: control-table-registry
+    type: require_control_registration
+    mode: enforce  # or 'warn' - the usual burn-down rollout
+    # requireRegistration defaults to true - the strict reading:
+    # "CONTROL is the only thing allowed, and only once registered."
+    # Set to false for the looser reading: registration is optional,
+    # but a dataset that *is* registered must still conform to what
+    # was approved (its requiredFields).
+    requireRegistration: true
+```
+
+Two independent failure shapes, both per-contract (no other contract's
+declarations are ever consulted — this stays entirely within the
+single-contract `OrgPolicyEvaluator.evaluate` model, unlike
+`TypeGuaranteeValidator`'s cross-contract checks above):
+
+- **Unregistered** — a `CONTROL`-declared dataset with no active
+  `controlTables` match at all. A violation only when `requireRegistration`
+  is `true` (the default); `false` means this half is simply never
+  checked, so an organization can build the catalogue up gradually without
+  retroactively blocking every `CONTROL` declaration nobody's registered
+  yet.
+- **Non-conforming** — a dataset that *does* match a `controlTables`
+  entry, but whose schema is missing one of that entry's `requiredFields`.
+  Always checked, regardless of `requireRegistration`: once an
+  organization has approved a specific shape for a control table, drifting
+  away from it is worth flagging whether or not registration itself is
+  mandatory.
+
+Like every other `DatasetPolicy`, `scope`/`when` still narrow which
+datasets are considered, and an unexpired `PolicyExemption` still
+suppresses a violation from this type the same as any other. What's
+different from every other built-in type is evaluation itself needing
+`OrgPolicy.controlTables` — data outside any one rule's own `properties`,
+and therefore outside what the `CustomPolicyEvaluator` trait's
+`evaluate(contract, rule)` signature can express. Rather than widen that
+trait (a real, MiMa-relevant break to every external `CustomPolicyEvaluator`
+implementation, just to support one built-in type), `OrgPolicyEvaluator.evaluateRule`
+special-cases `require_control_registration` by name, ahead of the ordinary
+`builtinEvaluators`/`customPolicyTypes` dispatch — the smallest change that
+keeps this a real `PolicyRule` type (mode, scope, when, exemptions, all
+for free) rather than growing its own parallel subsystem the way
+`typeGuarantees` needed to for a genuinely cross-contract concern.
 
 ### Policy layering
 
@@ -1395,6 +1567,20 @@ absent:
   registered id — but nothing consumes it to evaluate a cross-contract
   rule yet; this remains real, unbuilt work, just no longer blocked on
   the registry itself existing.
+- **Registration proves declaration, not behavior** — `require_control_registration`
+  and `forbid_control_sensitivity_tags` both check the *declared* shape of
+  a `CONTROL` dataset (is it registered, does its schema carry the right
+  fields, does it avoid sensitive tags); neither traces what the real
+  transformation actually *does* with the data. `spark-adapter`'s
+  `RoleConsistencyVerifier` (see "Role-consistency checks" under "Input
+  and Output Types" above) is the one check in this feature that proves
+  something dynamically — a `CONTROL`-declared input whose data actually
+  reaches a produced output column, from the real translated plan, not a
+  static declaration. The two layers are complementary, not redundant:
+  static registration/conformance catches a mislabeled table before a job
+  ever runs; `roleConsistency` (opt-in, off by default) catches one a
+  static check can't — a registered, correctly-shaped `CONTROL` table
+  whose transformation logic quietly lets its data leak into real output.
 
 ## API compatibility
 

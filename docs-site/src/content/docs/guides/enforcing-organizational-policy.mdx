@@ -369,7 +369,7 @@ one-line YAML edit instead of a failed production job.
 
 ## Common organizational policy patterns
 
-The eight policy types above compose into most standardization an organization actually
+The ten policy types above compose into most standardization an organization actually
 wants to enforce. A few real-world patterns, each a complete, working rule:
 
 **Cost attribution.** Every contract must be attributable to a cost center, so nothing
@@ -500,9 +500,38 @@ data-dictionary discoverability — no properties to configure, just presence:
   description: "Every output must document what it is/contains."
 ```
 
+**CONTROL hygiene.** `type: CONTROL` is self-declared, so nothing structurally stops a
+real business dataset from being labeled `CONTROL` to dodge `DATA_ASSET`-scoped
+obligations. A genuine control/watermark/reconciliation signal has no legitimate reason
+to carry sensitive business data — see [Keep a CONTROL table honest](/reference/org-policy-format/#keep-a-control-table-honest)
+for the full rationale:
+
+```yaml
+- id: control-no-sensitive-fields
+  type: forbid_control_sensitivity_tags
+  description: "A CONTROL-declared dataset must not carry pii/financial-tagged fields."
+```
+
+**CONTROL table registration.** For stronger guarantees than a schema heuristic can give,
+require every `CONTROL`-declared dataset to be pre-approved in an org-owned catalogue —
+see [Keep a CONTROL table honest](/reference/org-policy-format/#keep-a-control-table-honest)
+for the full design, including the `requireRegistration` loose/strict knob:
+
+```yaml
+controlTables:
+  - location: control.watermark_state
+    owner: streaming-team
+    requiredFields: [watermark_ts, run_id]
+
+policies:
+  - id: control-table-registry
+    type: require_control_registration
+    description: "Every CONTROL dataset must be pre-approved and match its registered shape."
+```
+
 ## Write your own policy type
 
-The eight built-in types cover a lot of ground, but they're a closed set — an
+The ten built-in types cover a lot of ground, but they're a closed set — an
 organization's own vocabulary ("every dataset must carry an `approvedBy` extension
 matching one of these three names," "every output's location must fall under one of
 these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a

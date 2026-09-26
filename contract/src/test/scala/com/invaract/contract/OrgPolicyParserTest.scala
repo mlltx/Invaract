@@ -143,6 +143,90 @@ class OrgPolicyParserTest extends AnyFunSuite {
     )
   }
 
+  test("parse should correctly decode require_control_registration, with and without a 'requireRegistration' override") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: control-registry-strict
+        |    type: require_control_registration
+        |  - id: control-registry-loose
+        |    type: require_control_registration
+        |    requireRegistration: false
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies(0).interpret.contains(InterpretedPolicy.RequireControlRegistration(true)))
+    assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireControlRegistration(false)))
+  }
+
+  test("require_control_registration's 'requireRegistration' also tolerates a quoted 'true'/'false' string") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: control-registry-quoted-false
+        |    type: require_control_registration
+        |    requireRegistration: "false"
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies.head.interpret.contains(InterpretedPolicy.RequireControlRegistration(false)))
+  }
+
+  test("parse should default controlTables to empty when absent, and decode entries when present") {
+    val absent = OrgPolicyParser.parse("""version: "1.0"""" + "\n")
+    assert(absent.controlTables.isEmpty)
+
+    val yaml =
+      """version: "1.0"
+        |controlTables:
+        |  - location: control.watermark_state
+        |    owner: streaming-team
+        |    purpose: "Tracks the last successfully processed batch."
+        |    requiredFields: [watermark_ts, run_id]
+        |    reviewBy: "2099-01-01"
+        |  - location: control.processing_calendar
+        |    owner: data-platform-team
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.controlTables.size == 2)
+
+    val watermark = policy.controlTables.find(_.location == "control.watermark_state").get
+    assert(watermark.owner == "streaming-team")
+    assert(watermark.purpose.contains("Tracks the last successfully processed batch."))
+    assert(watermark.requiredFields == List("watermark_ts", "run_id"))
+    assert(watermark.reviewBy.contains(LocalDate.of(2099, 1, 1)))
+
+    val calendar = policy.controlTables.find(_.location == "control.processing_calendar").get
+    assert(calendar.purpose.isEmpty)
+    assert(calendar.requiredFields.isEmpty)
+    assert(calendar.reviewBy.isEmpty)
+  }
+
+  test("parseFile should throw when a controlTables entry is missing 'location' or 'owner'") {
+    val missingLocation = """version: "1.0"
+                             |controlTables:
+                             |  - owner: streaming-team
+                             |""".stripMargin
+    val exLocation = intercept[OrgPolicyParseException](OrgPolicyParser.parse(missingLocation))
+    assert(exLocation.getMessage.contains("location"))
+
+    val missingOwner = """version: "1.0"
+                          |controlTables:
+                          |  - location: control.watermark_state
+                          |""".stripMargin
+    val exOwner = intercept[OrgPolicyParseException](OrgPolicyParser.parse(missingOwner))
+    assert(exOwner.getMessage.contains("owner"))
+  }
+
+  test("parseFile should throw when a controlTables entry's reviewBy is not a valid date") {
+    val yaml = """version: "1.0"
+                 |controlTables:
+                 |  - location: control.watermark_state
+                 |    owner: streaming-team
+                 |    reviewBy: not-a-date
+                 |""".stripMargin
+    val ex = intercept[OrgPolicyParseException](OrgPolicyParser.parse(yaml))
+    assert(ex.getMessage.contains("reviewBy"))
+  }
+
   test("parse should default typeGuarantees to empty/Enforce when the block is absent entirely") {
     val policy = OrgPolicyParser.parse("""version: "1.0"""" + "\n")
     assert(policy.typeGuarantees == TypeGuaranteeConfig())
@@ -202,6 +286,7 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies.isEmpty)
     assert(policy.inject == InjectedDefaults())
     assert(policy.exemptions.isEmpty)
+    assert(policy.controlTables.isEmpty)
   }
 
   test("parseFile should throw when the file does not exist") {

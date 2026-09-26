@@ -40,6 +40,69 @@ object PolicyScope {
   */
 case class PolicyCondition(sensitivityTag: String)
 
+/** Shared "is this optional expiry date still active" test, used identically
+  * by `PolicyExemption.covers` and `ControlTableRegistration.isActive` — both
+  * model an org-owned grant (an exemption, a control-table registration) that
+  * never lapses when `reviewBy` is unset, and stops applying the moment `now`
+  * is strictly after it. `true` both for no expiry at all and for `now`
+  * on-or-before `reviewBy` — only a `now` strictly after it is inactive.
+  */
+private[contract] object ReviewByExpiry {
+  def isActive(reviewBy: Option[LocalDate], now: LocalDate): Boolean = reviewBy.forall(!now.isAfter(_))
+}
+
+/** One entry in the org-owned catalogue of known `CONTROL`-declared datasets
+  * (`OrgPolicy.controlTables`) — the trust boundary that makes `type:
+  * CONTROL` something a contract author has to get *approved*, not merely
+  * self-declare, the same way a `PolicyExemption` can only be granted by
+  * whoever owns the policy document, never the contract's own author. This
+  * list exists independently of whether anything actually checks it — an
+  * organization can maintain it purely as a browsable catalogue of every
+  * known control table, and only start enforcing it once a
+  * `require_control_registration` policy rule is attached (see
+  * `PolicyType.RequireControlRegistration`'s own doc for the opt-in/strict
+  * split this affords).
+  *
+  * @param location the physical location a `CONTROL`-declared dataset must
+  *   match to be considered registered — compared via
+  *   `CrossContractValidator.normalize`/`sameLocation`, the identical
+  *   location-matching this module already uses elsewhere, so a
+  *   Windows-authored path's backslashes don't cause a false mismatch.
+  * @param owner required, unlike every other field here beyond `location`:
+  *   a catalogue entry with no accountable owner defeats the point of
+  *   registering it at all.
+  * @param purpose optional free-form explanation of what this control table
+  *   is for — purely documentary, the catalogue's own equivalent of
+  *   `Dataset.description`.
+  * @param requiredFields the schema shape this control table is expected to
+  *   carry (e.g. `watermark_ts`, `run_id`) — checked against the governed
+  *   contract's own top-level schema fields for the matching dataset
+  *   (`Schema.field`'s own lookup semantics, not recursive into nested
+  *   structs, the same scope `RequireField` already uses). Empty means no
+  *   shape is pinned — registration alone is enough to satisfy
+  *   `require_control_registration` for this entry.
+  * @param reviewBy optional expiry, identical semantics to
+  *   `PolicyExemption.reviewBy`: a registration with no `reviewBy` never
+  *   lapses; one whose `reviewBy` has passed stops counting as registered
+  *   at all (see `isActive`) — the dataset falls back to being treated as
+  *   entirely unregistered, the same way an expired exemption's suppressed
+  *   violation re-surfaces, so a real control table has to be periodically
+  *   re-approved rather than registered once and forgotten forever.
+  */
+case class ControlTableRegistration(
+  location: String,
+  owner: String,
+  purpose: Option[String] = None,
+  requiredFields: List[String] = Nil,
+  reviewBy: Option[LocalDate] = None
+) {
+
+  /** Whether this registration still counts as active as of `now` — see
+    * `ReviewByExpiry`, the identical boundary `PolicyExemption.covers` uses.
+    */
+  def isActive(now: LocalDate): Boolean = ReviewByExpiry.isActive(reviewBy, now)
+}
+
 /** Policy types Invaract itself knows how to interpret during org-policy
   * evaluation (see `InterpretedPolicy`, and `OrgPolicyEvaluator`) —
   * deliberately a narrow, closed set (mirroring `RuleType`'s own role for
@@ -126,6 +189,62 @@ object PolicyType {
     */
   val RequireDatasetType = "require_dataset_type"
 
+  /** A dataset declared `CONTROL` (see `DatasetType`'s own doc) must not
+    * carry any field whose `sensitivityTags` include one of `tags`
+    * (optional; defaults to `PolicyRule.DefaultForbiddenControlTags` —
+    * `pii`/`financial` — when omitted). A genuine control/watermark/
+    * processing-calendar/reconciliation signal has no legitimate reason to
+    * carry sensitive business data, so a `CONTROL`-declared dataset whose
+    * schema does is a mechanical, single-contract signal that the
+    * declaration may really be a relabeled `DATA_ASSET` avoiding
+    * `DATA_ASSET`-scoped obligations (`require_catalog`, role-consistency
+    * checking, etc.) — see docs/CONTRACT_MODEL.md's "Input and Output
+    * Types" section. Deliberately narrower than `RequireDatasetType`: this
+    * says nothing about whether a type is declared at all, only that a
+    * dataset already declared `CONTROL` must not also carry these tags. A
+    * dataset with no declared type, or one declared `DATA_ASSET`/`SOURCE`,
+    * is never in scope for this check regardless of its own tags — that's
+    * `RequireDatasetType`'s and ordinary sensitivity governance's own job,
+    * not this one's.
+    */
+  val ForbidControlSensitivityTags = "forbid_control_sensitivity_tags"
+
+  /** A dataset declared `CONTROL` must match a `location` entry in the
+    * org-owned `OrgPolicy.controlTables` catalogue (see
+    * `ControlTableRegistration`'s own doc) — and, when it does, its schema
+    * must carry every field that entry's `requiredFields` names. An entry
+    * whose `reviewBy` has lapsed (`ControlTableRegistration.isActive`
+    * returns `false`) no longer counts as a match, so a `CONTROL` dataset
+    * behind a stale registration is treated as unregistered, not silently
+    * grandfathered in.
+    *
+    * @see optional `requireRegistration` property (default `true`) — the
+    *   knob that makes this either the strict "CONTROL is the only thing
+    *   allowed, and only once registered" gate, or the looser "registration
+    *   is optional, but a dataset that *is* registered must still conform
+    *   to what was approved" mode a platform rolling this out gradually may
+    *   want instead:
+    *   - `true` (default): an unregistered `CONTROL` dataset is itself a
+    *     violation, in addition to a registered-but-nonconforming one.
+    *   - `false`: an unregistered `CONTROL` dataset produces no violation at
+    *     all — only a dataset that *does* match a `controlTables` entry is
+    *     checked, against that entry's own `requiredFields`. This lets an
+    *     organization build the catalogue up gradually (registering real
+    *     control tables as they're found) without retroactively blocking
+    *     every `CONTROL` declaration nobody's registered yet.
+    *
+    * Like every other `DatasetPolicy` here, `scope`/`when` still narrow
+    * which datasets are considered (e.g. `scope: outputs` to only police
+    * `CONTROL` outputs); an exemption still suppresses a violation from
+    * this type the same as any other. Unlike every other built-in type,
+    * though, evaluating this one needs data beyond the rule's own
+    * `properties` — the whole `OrgPolicy.controlTables` catalogue — so
+    * `OrgPolicyEvaluator.evaluateRule` special-cases this `ruleType` ahead
+    * of the ordinary `CustomPolicyEvaluator`/`builtinEvaluators` dispatch
+    * every other built-in type goes through; see that method's own doc.
+    */
+  val RequireControlRegistration = "require_control_registration"
+
   val All: Set[String] = Set(
     RequireCatalog,
     RequireField,
@@ -134,7 +253,9 @@ object PolicyType {
     RequireFormat,
     RequireDatasetDescription,
     RequireExtensionIf,
-    RequireDatasetType
+    RequireDatasetType,
+    ForbidControlSensitivityTags,
+    RequireControlRegistration
   )
 
   /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
@@ -196,6 +317,28 @@ object InterpretedPolicy {
     *   *presence* of a declared type is required, not a specific one.
     */
   case class RequireDatasetType(allowedTypes: Option[List[DatasetType]]) extends DatasetPolicy
+
+  /** @param tags the lower-cased sensitivity tags forbidden on a
+    *   `CONTROL`-declared dataset's schema — always resolved by
+    *   `PolicyRule.interpret` (defaulted from
+    *   `PolicyRule.DefaultForbiddenControlTags` when the rule's own `tags`
+    *   property is absent), never empty: an explicit empty list is
+    *   malformed, the same "empty means malformed" treatment
+    *   `RequireFormat.formats` already gets.
+    */
+  case class ForbidControlSensitivityTags(tags: Set[String]) extends DatasetPolicy
+
+  /** @param requireRegistration decoded from the rule's own optional
+    *   `requireRegistration` property (default `true` when absent) — see
+    *   `PolicyType.RequireControlRegistration`'s own doc for what `true`
+    *   vs. `false` means. This is the only thing `PolicyRule.interpret`
+    *   decodes for this type: the actual `OrgPolicy.controlTables` catalogue
+    *   this flag is checked against isn't part of any one rule's own
+    *   `properties`, so it can't live in this case class — see
+    *   `OrgPolicyEvaluator.evaluateRule`'s special-case dispatch for this
+    *   `ruleType`.
+    */
+  case class RequireControlRegistration(requireRegistration: Boolean) extends DatasetPolicy
 
   /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
     *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
@@ -266,18 +409,19 @@ case class PolicyRule(
         InterpretedPolicy.RequireExtension(key, properties.get("value").map(String.valueOf))
       }
     case PolicyType.RequireFormat =>
-      PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
+      PolicyRule.parseStringList(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case PolicyType.RequireDatasetDescription =>
       Some(InterpretedPolicy.RequireDatasetDescription)
     case PolicyType.RequireDatasetType =>
       properties.get("types") match {
         case None => Some(InterpretedPolicy.RequireDatasetType(None))
         case Some(raw) =>
-          // Reuses RequireFormat's own list-vs-scalar coercion (parseFormats
-          // takes a raw property value, not the "formats" key name itself)
-          // rather than duplicating it - the shape ("a YAML list, or a bare
-          // scalar as shorthand for a one-element list") is identical.
-          PolicyRule.parseFormats(Some(raw)).filter(_.nonEmpty).flatMap { rawTypes =>
+          // Reuses RequireFormat's own list-vs-scalar coercion
+          // (parseStringList takes a raw property value, not the "formats"
+          // key name itself) rather than duplicating it - the shape ("a
+          // YAML list, or a bare scalar as shorthand for a one-element
+          // list") is identical.
+          PolicyRule.parseStringList(Some(raw)).filter(_.nonEmpty).flatMap { rawTypes =>
             val parsed = rawTypes.map(DatasetType.parse)
             // All-or-nothing: one unrecognized type name in the list makes
             // the whole property malformed, the same "None covers malformed
@@ -288,6 +432,19 @@ case class PolicyRule(
             if (parsed.forall(_.isDefined)) Some(InterpretedPolicy.RequireDatasetType(Some(parsed.flatten)))
             else None
           }
+      }
+    case PolicyType.ForbidControlSensitivityTags =>
+      properties.get("tags") match {
+        case None => Some(InterpretedPolicy.ForbidControlSensitivityTags(PolicyRule.DefaultForbiddenControlTags))
+        case some =>
+          PolicyRule.parseStringList(some).filter(_.nonEmpty).map { rawTags =>
+            InterpretedPolicy.ForbidControlSensitivityTags(rawTags.map(_.toLowerCase).toSet)
+          }
+      }
+    case PolicyType.RequireControlRegistration =>
+      properties.get("requireRegistration") match {
+        case None      => Some(InterpretedPolicy.RequireControlRegistration(requireRegistration = true))
+        case Some(raw) => PolicyRule.parseBoolean(raw).map(InterpretedPolicy.RequireControlRegistration)
       }
     case PolicyType.RequireExtensionIf =>
       for {
@@ -312,20 +469,47 @@ object PolicyRule {
       case _: java.util.regex.PatternSyntaxException => false
     }
 
-  /** Coerces `require_format`'s `formats` property, accepting either a YAML
-    * list (`formats: [delta, iceberg]`, decoded by SnakeYAML as a
+  /** Coerces a `PolicyRule` property that may be either a YAML list
+    * (`formats: [delta, iceberg]`, decoded by SnakeYAML as a
     * `java.util.List`) or a bare scalar (`formats: delta`) as shorthand for
-    * a single-element list — every other `PolicyRule` property is a single
-    * scalar, so this is the one place properties needs list coercion at
-    * all. `None` when the property is absent; an empty list is possible
-    * (e.g. `formats: []`) and is filtered out by the caller, the same
-    * "empty means malformed" treatment `pattern`/`name` already get.
+    * a single-element list — used by `require_format`'s `formats`,
+    * `require_dataset_type`'s `types`, and `forbid_control_sensitivity_tags`'s
+    * `tags`, the only properties in this file that ever need list coercion
+    * (every other property is a single scalar). `None` when the property is
+    * absent; an empty list is possible (e.g. `formats: []`) and is filtered
+    * out by the caller, the same "empty means malformed" treatment
+    * `pattern`/`name` already get.
     */
-  private[contract] def parseFormats(raw: Option[Any]): Option[List[String]] = raw match {
+  private[contract] def parseStringList(raw: Option[Any]): Option[List[String]] = raw match {
     case Some(list: java.util.List[_]) => Some(list.asScala.toList.map(String.valueOf).filter(_.nonEmpty))
     case Some(list: Seq[_])            => Some(list.toList.map(String.valueOf).filter(_.nonEmpty))
     case Some(scalar)                  => Some(List(String.valueOf(scalar)).filter(_.nonEmpty))
     case None                          => None
+  }
+
+  /** `forbid_control_sensitivity_tags`'s own default `tags` set, used
+    * whenever a rule of that type omits the property entirely — see
+    * `PolicyType.ForbidControlSensitivityTags`'s own doc for why these two.
+    */
+  private[contract] val DefaultForbiddenControlTags: Set[String] = Set("pii", "financial")
+
+  /** Coerces a `PolicyRule` property that should be a boolean — accepts a
+    * real YAML boolean or a `"true"`/`"false"` string (case-insensitive),
+    * the identical tolerance `OrgPolicyParser.parseBoolean` already gives
+    * `inject.minVerificationOptions`' own boolean values, just returned as
+    * an `Option` instead of thrown: `interpret`'s total/safe convention
+    * needs a malformed property to produce `None`, not an exception. Used
+    * by `require_control_registration`'s `requireRegistration`.
+    */
+  private[contract] def parseBoolean(raw: Any): Option[Boolean] = raw match {
+    case b: java.lang.Boolean => Some(b.booleanValue())
+    case s: String =>
+      s.trim.toLowerCase match {
+        case "true"  => Some(true)
+        case "false" => Some(false)
+        case _       => None
+      }
+    case _ => None
   }
 }
 
@@ -385,12 +569,10 @@ case class PolicyExemption(
 ) {
 
   /** Whether this exemption currently covers `policyId` for `contractId0`,
-    * as of `now`. `reviewBy.forall(!now.isAfter(_))` is `true` both when
-    * there's no expiry at all and when `now` is on-or-before it — only a
-    * `now` strictly after `reviewBy` makes the exemption inactive.
+    * as of `now` — see `ReviewByExpiry` for the expiry boundary itself.
     */
   def covers(contractId0: String, policyId: String, now: LocalDate): Boolean =
-    contractId0 == contractId && policyIds.contains(policyId) && reviewBy.forall(!now.isAfter(_))
+    contractId0 == contractId && policyIds.contains(policyId) && ReviewByExpiry.isActive(reviewBy, now)
 }
 
 /** What this policy contributes to every contract it governs, merged in
@@ -472,8 +654,14 @@ case class TypeGuaranteeConfig(
   * @param typeGuarantees which "stronger semantic and guarantee validation"
   *   checks (`TypeGuaranteeValidator`) this document turns on across the
   *   contracts it governs, and how a `Contradicts` verdict is handled — see
-  *   `TypeGuaranteeConfig`'s own doc. Appended last (not alongside
-  *   `customPolicyTypes` above) specifically to keep this addition
+  *   `TypeGuaranteeConfig`'s own doc.
+  * @param controlTables the org-owned catalogue of known `CONTROL`-declared
+  *   datasets — see `ControlTableRegistration`'s own doc. Exists
+  *   independently of `policies`: an organization can maintain this purely
+  *   as a browsable catalogue with no enforcement at all, and only start
+  *   checking it once a `require_control_registration` policy rule
+  *   (`PolicyType.RequireControlRegistration`) is attached. Appended last
+  *   (like `typeGuarantees` before it) specifically to keep this addition
   *   binary-compatible with existing compiled callers — see the API
   *   Compatibility Requirement's own worked example for why a new case-class
   *   field belongs at the end, not the middle.
@@ -484,5 +672,6 @@ case class OrgPolicy(
   inject: InjectedDefaults = InjectedDefaults(),
   exemptions: List[PolicyExemption] = Nil,
   customPolicyTypes: Map[String, String] = Map.empty,
-  typeGuarantees: TypeGuaranteeConfig = TypeGuaranteeConfig()
+  typeGuarantees: TypeGuaranteeConfig = TypeGuaranteeConfig(),
+  controlTables: List[ControlTableRegistration] = Nil
 )

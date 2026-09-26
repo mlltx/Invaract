@@ -58,8 +58,9 @@ object OrgPolicyEvaluator {
     * violations alike, since both happen here, before dispatch.
     */
   def evaluate(contract: Contract, policy: OrgPolicy, now: LocalDate = LocalDate.now()): OrgPolicyEvaluation = {
-    val violations =
-      policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, now))
+    val violations = policy.policies.flatMap(rule =>
+      evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, policy.controlTables, now)
+    )
     val (enforceViolations, warnViolations) = violations.partition(_.mode == PolicyMode.Enforce)
     OrgPolicyEvaluation(enforceViolations, warnViolations)
   }
@@ -155,15 +156,35 @@ object OrgPolicyEvaluator {
       .sortBy(_.reviewBy.get.toEpochDay)
   }
 
+  /** `require_control_registration` is special-cased here, ahead of the
+    * ordinary `resolveEvaluator`/`CustomPolicyEvaluator` dispatch every
+    * other `ruleType` goes through: evaluating it needs `controlTables`
+    * (`OrgPolicy`'s own field), which the `CustomPolicyEvaluator` trait's
+    * `evaluate(contract, rule)` signature has no way to receive — the same
+    * reason `typeGuarantees` isn't a `PolicyRule` type at all, but a
+    * separate document-level mechanism (`TypeGuaranteeValidator`). Unlike
+    * `typeGuarantees`, this one still fits the ordinary per-contract,
+    * `PolicyMode`/`PolicyExemption`-covered rule shape closely enough to
+    * stay a real `PolicyType`/`PolicyRule` rather than growing its own
+    * parallel subsystem — it just needs one extra piece of `OrgPolicy`
+    * threaded through to it.
+    */
   private def evaluateRule(
       contract: Contract,
       rule: PolicyRule,
       exemptions: List[PolicyExemption],
       customPolicyTypes: Map[String, String],
+      controlTables: List[ControlTableRegistration],
       now: LocalDate
   ): List[PolicyViolation] =
     if (exemptions.exists(_.covers(contract.id, rule.id, now))) Nil
-    else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
+    else if (rule.ruleType == PolicyType.RequireControlRegistration) {
+      rule.interpret match {
+        case Some(InterpretedPolicy.RequireControlRegistration(requireRegistration)) =>
+          controlDatasetsInScope(contract, rule).flatMap(checkRequireControlRegistration(rule, _, controlTables, requireRegistration, now))
+        case _ => Nil // malformed properties - OrgPolicyValidator's job to report, the same total/safe convention every other type follows
+      }
+    } else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
 
   /** Looks up the `CustomPolicyEvaluator` that evaluates `ruleType` — a
     * built-in `PolicyType` (`builtinEvaluators`, below) always wins when
@@ -182,7 +203,7 @@ object OrgPolicyEvaluator {
       customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
     }
 
-  /** The seven built-in `PolicyType`s, each an ordinary
+  /** Nine of `PolicyType.All`'s ten built-in types, each an ordinary
     * `CustomPolicyEvaluator` — the identical trait a third party's own
     * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
     * about a built-in type's *evaluation* is privileged anymore; what
@@ -192,7 +213,12 @@ object OrgPolicyEvaluator {
     * version of this method had (a hardcoded match on `InterpretedPolicy`,
     * split by `DatasetPolicy`/`ContractPolicy` — see that trait's own doc,
     * still accurate as a *classification* even though evaluation no
-    * longer branches on it directly here).
+    * longer branches on it directly here). The tenth,
+    * `PolicyType.RequireControlRegistration`, is the one exception:
+    * `evaluateRule` special-cases it directly, ahead of this map, since it
+    * needs `OrgPolicy.controlTables` — data no `CustomPolicyEvaluator` can
+    * receive through `evaluate(contract, rule)` alone. See that method's
+    * own doc.
     *
     * Each entry is built via `interpreted` (below): every built-in
     * evaluator's real shape is "start from `rule.interpret`'s already
@@ -233,6 +259,10 @@ object OrgPolicyEvaluator {
     PolicyType.RequireExtensionIf -> interpreted {
       case (contract, rule, InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
         checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
+    },
+    PolicyType.ForbidControlSensitivityTags -> interpreted {
+      case (contract, rule, InterpretedPolicy.ForbidControlSensitivityTags(tags)) =>
+        controlDatasetsInScope(contract, rule).flatMap(checkForbidControlSensitivityTags(rule, _, tags))
     }
   )
 
@@ -257,6 +287,15 @@ object OrgPolicyEvaluator {
     */
   private def scopedDatasets(contract: Contract, rule: PolicyRule): List[Dataset] =
     datasetsInScope(contract, rule.scope).filter(matchesCondition(_, rule.when))
+
+  /** `scopedDatasets`, further narrowed to only `CONTROL`-declared datasets —
+    * shared by `forbid_control_sensitivity_tags`/`require_control_registration`,
+    * the two built-in types that only ever care about `CONTROL`-declared
+    * datasets, so each `check*` function below can assume it's only ever
+    * handed one rather than re-checking `datasetType` itself.
+    */
+  private def controlDatasetsInScope(contract: Contract, rule: PolicyRule): List[Dataset] =
+    scopedDatasets(contract, rule).filter(_.datasetType.contains(DatasetType.Control))
 
   private def datasetsInScope(contract: Contract, scope: PolicyScope): List[Dataset] = scope match {
     case PolicyScope.Inputs  => contract.inputs
@@ -395,6 +434,115 @@ object OrgPolicyEvaluator {
             s"declaration to dataset '${dataset.name}'."
         )
       )
+    }
+  }
+
+  /** Only ever called with a `CONTROL`-declared dataset - `controlDatasetsInScope`
+    * already filters on `datasetType` (a `DATA_ASSET`/`SOURCE`/undeclared
+    * dataset carrying the same tags is unaffected, since this rule says
+    * nothing about whether `CONTROL` is the *right* type to forbid these
+    * tags on, only that a dataset already claiming `CONTROL` must not also
+    * carry them - see `PolicyType.ForbidControlSensitivityTags`'s own doc).
+    */
+  private def checkForbidControlSensitivityTags(rule: PolicyRule, dataset: Dataset, tags: Set[String]): List[PolicyViolation] = {
+    val matched = collectSensitivityTags(dataset.schema.fields).intersect(tags)
+    if (matched.isEmpty) Nil
+    else {
+      val matchedList = matched.toList.sorted.mkString(", ")
+      List(
+        PolicyViolation(
+          rule.id,
+          rule.ruleType,
+          rule.mode,
+          Some(dataset.name),
+          s"organizational policy '${rule.id}'${describe(rule)} declares dataset '${dataset.name}' CONTROL, but " +
+            s"its schema carries sensitivity tag(s) $matchedList - a control/watermark/reconciliation signal " +
+            "should not carry sensitive business data.",
+          s"Declare '${dataset.name}' DATA_ASSET instead if it genuinely carries this data, or remove the " +
+            s"$matchedList sensitivity tag(s) from its schema if they were applied in error."
+        )
+      )
+    }
+  }
+
+  /** Every distinct, lower-cased `sensitivityTags` entry anywhere in
+    * `fields`, recursing into nested struct `properties` - the same
+    * recursive reach `hasSensitivityTag`/`checkFieldNamingConvention` above
+    * already give a schema, except collecting every tag found rather than
+    * testing for one specific one.
+    */
+  private def collectSensitivityTags(fields: List[Field]): Set[String] =
+    fields.flatMap(f => f.sensitivityTags.map(_.toLowerCase) ++ collectSensitivityTags(f.properties)).toSet
+
+  /** Only ever called with a `CONTROL`-declared dataset (see
+    * `controlDatasetsInScope`). `controlTables` is searched for the first
+    * *active* (`isActive(now)`) entry whose `location` matches
+    * `dataset.location` (`CrossContractValidator.normalize` — the identical
+    * backslash-tolerant comparison the rest of this module already uses;
+    * `dataset.location` is normalized once up front rather than once per
+    * `controlTables` entry, since `sameLocation` would otherwise
+    * re-normalize the invariant side of the comparison on every iteration),
+    * exactly mirroring `PolicyExemption.covers`'s own "an expired one no
+    * longer counts" treatment: a lapsed registration is indistinguishable
+    * from no registration at all here, so a real control table has to be
+    * periodically re-approved rather than registered once and forgotten.
+    *
+    * Two independent failure shapes, matching `PolicyType.RequireControlRegistration`'s
+    * own doc:
+    *   - no active match at all: a violation only when `requireRegistration`
+    *     is `true` (the default) — the "CONTROL is the only thing allowed,
+    *     and only once registered" strict mode. `false` means an
+    *     unregistered `CONTROL` dataset is simply not checked at all here.
+    *   - a match exists, but the dataset's schema is missing one of the
+    *     matched entry's `requiredFields`: always a violation, regardless
+    *     of `requireRegistration` — once an organization *has* approved a
+    *     specific shape for this control table, drifting away from it is
+    *     worth flagging whether or not registration itself is mandatory.
+    */
+  private def checkRequireControlRegistration(
+      rule: PolicyRule,
+      dataset: Dataset,
+      controlTables: List[ControlTableRegistration],
+      requireRegistration: Boolean,
+      now: LocalDate
+  ): List[PolicyViolation] = {
+    val datasetLocation = CrossContractValidator.normalize(dataset.location)
+    controlTables.find(r => r.isActive(now) && CrossContractValidator.normalize(r.location) == datasetLocation) match {
+      case None =>
+        if (!requireRegistration) Nil
+        else
+          List(
+            PolicyViolation(
+              rule.id,
+              rule.ruleType,
+              rule.mode,
+              Some(dataset.name),
+              s"organizational policy '${rule.id}'${describe(rule)} declares dataset '${dataset.name}' CONTROL, " +
+                s"but '${dataset.location}' has no active entry in the org's controlTables registry.",
+              s"Ask the org policy owner to register '${dataset.location}' in controlTables (with an owner and, " +
+                "optionally, requiredFields), or declare this dataset DATA_ASSET/SOURCE instead if it isn't " +
+                "genuinely a control table."
+            )
+          )
+      case Some(registration) =>
+        val missing = registration.requiredFields.filterNot(name => dataset.schema.field(name).isDefined)
+        if (missing.isEmpty) Nil
+        else {
+          val missingList = missing.mkString(", ")
+          List(
+            PolicyViolation(
+              rule.id,
+              rule.ruleType,
+              rule.mode,
+              Some(dataset.name),
+              s"organizational policy '${rule.id}'${describe(rule)}: dataset '${dataset.name}' is registered as a " +
+                s"CONTROL table (owner: ${registration.owner}) at '${dataset.location}', but its schema is " +
+                s"missing required field(s): $missingList.",
+              s"Add $missingList to dataset '${dataset.name}''s schema, or update the controlTables registration " +
+                s"for '${dataset.location}' if its expected shape has genuinely changed."
+            )
+          )
+        }
     }
   }
 
