@@ -136,6 +136,30 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("malformed or missing properties")))
   }
 
+  test("forbid_control_sensitivity_tags is valid with no 'tags' property at all - it falls back to the default pii/financial set") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty)))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("forbid_control_sensitivity_tags with a well-formed 'tags' list is valid") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("control-no-restricted", PolicyType.ForbidControlSensitivityTags, Map("tags" -> List("restricted", "hr"))))
+    )
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("forbid_control_sensitivity_tags with a scalar 'tags' value is valid") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("control-no-hr", PolicyType.ForbidControlSensitivityTags, Map("tags" -> "hr"))))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("forbid_control_sensitivity_tags with an empty 'tags' list is an Error") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.ForbidControlSensitivityTags, Map("tags" -> List.empty[String]))))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
   test("require_extension_if with no 'ifKey'/'thenKey' properties is an Error, not silently accepted") {
     val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtensionIf, Map.empty)))
     val result = OrgPolicyValidator.validate(policy)

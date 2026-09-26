@@ -591,7 +591,7 @@ same treatment `customPolicyTypes`' identical collision gets). It
 deliberately does **not** warn on a `ContractRule.ruleType` matching
 neither a built-in `RuleType` nor a `customRuleTypes` entry, unlike
 `OrgPolicyValidator`'s equivalent check for `PolicyType`: unlike
-`OrgPolicy`'s closed, org-controlled eight-type set (where an unrecognized
+`OrgPolicy`'s closed, org-controlled nine-type set (where an unrecognized
 type is almost always a typo), a contract's own `rules:` list routinely
 carries rule types no code interprets at all by design — `compatibility`
 being the standing, deliberately-inert example used throughout this
@@ -928,7 +928,7 @@ Same three-layer split as the contract model itself, all in `contract/`
   `PolicyMode` into `OrgPolicyEvaluation(enforceViolations,
   warnViolations)`. Every rule — built-in or custom — is evaluated through
   the identical `CustomPolicyEvaluator` interface: `resolveEvaluator`
-  checks `builtinEvaluators` (the eight built-in types, each an ordinary
+  checks `builtinEvaluators` (the nine built-in types, each an ordinary
   `CustomPolicyEvaluator` compiled into this module) before falling back to
   `policy.customPolicyTypes` for a `ruleType` outside that set — see
   "Custom policy types" below for the full mechanism, and its own note on
@@ -982,7 +982,7 @@ grow to cover:
   output must be `"delta"` or `"iceberg"`, never raw `"parquet"`/`"csv"`).
   `formats` accepts either a single scalar (`formats: delta`) or a YAML
   list (`formats: [delta, iceberg]`) — the one property in this file that
-  needs list coercion at all, handled by `PolicyRule.parseFormats`. A
+  needs list coercion at all, handled by `PolicyRule.parseStringList`. A
   dataset with no `format` declared at all does not satisfy this, the
   same "required but absent" treatment every other check in this section
   gives.
@@ -996,12 +996,31 @@ grow to cover:
   `type` (`DATA_ASSET`/`SOURCE`/`CONTROL` — see "Input and Output Types"
   above) at all; if `types` is also set (a single scalar or a YAML list,
   the identical shorthand `require_format`'s own `formats` accepts, via
-  the same `PolicyRule.parseFormats` coercion), the declared type must
+  the same `PolicyRule.parseStringList` coercion), the declared type must
   additionally be one of them (e.g. `types: [DATA_ASSET]` requires every
   output specifically be a `DATA_ASSET`). This is the mechanism that makes
   declaring `Dataset.datasetType` mandatory or optional *per organization*:
   the field itself always defaults to unset at the model level, and an
   org that wants it required attaches this policy in `Enforce` mode.
+- **`forbid_control_sensitivity_tags`** (optional `tags`, defaulting to
+  `["pii", "financial"]` when omitted — same scalar-or-list shorthand as
+  `formats`/`types` above) — a dataset already declared `type: CONTROL`
+  must not carry any schema field (recursing into nested struct
+  `properties`) tagged with one of `tags`. A genuine control/watermark/
+  processing-calendar/reconciliation signal has no legitimate reason to
+  carry sensitive business data, so a `CONTROL`-declared dataset whose
+  schema does is a mechanical, single-contract signal that the
+  declaration may really be a relabeled `DATA_ASSET` avoiding
+  `DATA_ASSET`-scoped obligations (`require_catalog`, role-consistency
+  checking, etc.) — see "Input and Output Types" above. Deliberately
+  narrower than `require_dataset_type`: this says nothing about whether a
+  type is declared at all, and a dataset with no declared type, or one
+  declared `DATA_ASSET`/`SOURCE`, is never in scope for this check
+  regardless of its own tags — that's `require_dataset_type`'s and
+  ordinary sensitivity governance's own job, not this one's. An explicit
+  empty `tags` list is malformed (`interpret` returns `None`), the same
+  "empty means malformed" treatment `require_format`'s `formats` already
+  gets.
 - **`require_extension_if`** (required `ifKey`/`thenKey`, optional
   `ifValue`/`thenValue`) — a conditional counterpart to `require_extension`:
   only once the contract already satisfies `ifKey` (optionally pinned to
@@ -1019,7 +1038,7 @@ grow to cover:
   needs it applied twice — once for its `if`, once for its `then`.
 
 `PolicyRule.interpret: Option[InterpretedPolicy]` decodes `properties`
-into one of these eight shapes — `None` for an unrecognized `ruleType`
+into one of these nine shapes — `None` for an unrecognized `ruleType`
 *or* malformed properties for a recognized one, the identical
 total/safe design `ContractRule.interpret` already documents; this is
 what lets `OrgPolicyEvaluator.evaluate` run safely even against a policy
@@ -1042,7 +1061,7 @@ built-in type is, without re-deriving it from each evaluator's own body:
 
 - **`DatasetPolicy`** — `require_catalog`, `require_field`,
   `field_naming_convention`, `require_format`, `require_dataset_description`,
-  and `require_dataset_type`. Each of these types' own
+  `require_dataset_type`, and `forbid_control_sensitivity_tags`. Each of these types' own
   `builtinEvaluators` entry narrows to `scopedDatasets(contract, rule)`
   (`datasetsInScope(contract, rule.scope)`, further filtered by
   `rule.when`) and checks each dataset independently, producing a
@@ -1066,7 +1085,7 @@ that was never about any one dataset.
 
 ### Custom policy types (`CustomPolicyEvaluator`)
 
-The eight built-in types above are deliberately closed — but an
+The nine built-in types above are deliberately closed — but an
 organization's own policy vocabulary isn't limited to them. `OrgPolicy`
 carries a fifth field, `customPolicyTypes: Map[String, String]`, mapping
 a `PolicyRule.ruleType` this document uses to the fully-qualified class
@@ -1096,7 +1115,7 @@ with zero change to any governed job's own source.
 There is nothing special about a *built-in* type's evaluation mechanism —
 `OrgPolicyEvaluator.resolveEvaluator` looks `ruleType` up in
 `builtinEvaluators` (a `Map[String, CustomPolicyEvaluator]` covering the
-eight built-in types, each an ordinary `CustomPolicyEvaluator`, built via
+nine built-in types, each an ordinary `CustomPolicyEvaluator`, built via
 the private `interpreted` helper — see that method's own doc for why —
 compiled into this module) before ever consulting `customPolicyTypes`.
 This is why

@@ -182,7 +182,7 @@ object OrgPolicyEvaluator {
       customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
     }
 
-  /** The seven built-in `PolicyType`s, each an ordinary
+  /** The nine built-in `PolicyType`s, each an ordinary
     * `CustomPolicyEvaluator` — the identical trait a third party's own
     * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
     * about a built-in type's *evaluation* is privileged anymore; what
@@ -233,6 +233,10 @@ object OrgPolicyEvaluator {
     PolicyType.RequireExtensionIf -> interpreted {
       case (contract, rule, InterpretedPolicy.RequireExtensionIf(ifKey, ifValue, thenKey, thenValue)) =>
         checkRequireExtensionIf(rule, contract, ifKey, ifValue, thenKey, thenValue)
+    },
+    PolicyType.ForbidControlSensitivityTags -> interpreted {
+      case (contract, rule, InterpretedPolicy.ForbidControlSensitivityTags(tags)) =>
+        scopedDatasets(contract, rule).flatMap(checkForbidControlSensitivityTags(rule, _, tags))
     }
   )
 
@@ -397,6 +401,47 @@ object OrgPolicyEvaluator {
       )
     }
   }
+
+  /** `dataset.schema`'s own declared type is never checked here - only a
+    * dataset already declared `CONTROL` is in scope at all (a `DATA_ASSET`/
+    * `SOURCE`/undeclared dataset carrying the same tags is unaffected,
+    * since this rule says nothing about whether `CONTROL` is the *right*
+    * type to forbid these tags on, only that a dataset already claiming
+    * `CONTROL` must not also carry them - see
+    * `PolicyType.ForbidControlSensitivityTags`'s own doc).
+    */
+  private def checkForbidControlSensitivityTags(rule: PolicyRule, dataset: Dataset, tags: Set[String]): List[PolicyViolation] = {
+    if (!dataset.datasetType.contains(DatasetType.Control)) Nil
+    else {
+      val matched = collectSensitivityTags(dataset.schema.fields).intersect(tags)
+      if (matched.isEmpty) Nil
+      else {
+        val matchedList = matched.toList.sorted.mkString(", ")
+        List(
+          PolicyViolation(
+            rule.id,
+            rule.ruleType,
+            rule.mode,
+            Some(dataset.name),
+            s"organizational policy '${rule.id}'${describe(rule)} declares dataset '${dataset.name}' CONTROL, but " +
+              s"its schema carries sensitivity tag(s) $matchedList - a control/watermark/reconciliation signal " +
+              "should not carry sensitive business data.",
+            s"Declare '${dataset.name}' DATA_ASSET instead if it genuinely carries this data, or remove the " +
+              s"$matchedList sensitivity tag(s) from its schema if they were applied in error."
+          )
+        )
+      }
+    }
+  }
+
+  /** Every distinct, lower-cased `sensitivityTags` entry anywhere in
+    * `fields`, recursing into nested struct `properties` - the same
+    * recursive reach `hasSensitivityTag`/`checkFieldNamingConvention` above
+    * already give a schema, except collecting every tag found rather than
+    * testing for one specific one.
+    */
+  private def collectSensitivityTags(fields: List[Field]): Set[String] =
+    fields.flatMap(f => f.sensitivityTags.map(_.toLowerCase) ++ collectSensitivityTags(f.properties)).toSet
 
   /** Whether `contract.extensions` declares `key` at all - and, if `value`
     * is set, that the declared value equals it exactly (case-sensitive:

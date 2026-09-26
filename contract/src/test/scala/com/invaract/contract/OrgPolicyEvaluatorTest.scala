@@ -299,6 +299,166 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
   }
 
+  // -- forbid_control_sensitivity_tags -----------------------------------------
+
+  test("forbid_control_sensitivity_tags: violated when a CONTROL dataset carries a default-forbidden tag (pii)") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+    assert(violations.size == 1)
+    assert(violations.head.dataset.contains("out"))
+    assert(violations.head.message.contains("pii"))
+  }
+
+  test("forbid_control_sensitivity_tags: satisfied when a CONTROL dataset carries no forbidden tag") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("watermark_ts"))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a DATA_ASSET dataset with a pii tag is never in scope, regardless of tags") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.DataAsset))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a dataset with no declared type at all is never in scope") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(outputs = List(dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii"))))))
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: the default tag set also catches 'financial'") {
+    val rule = PolicyRule("control-no-financial", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("account_balance", tags = Set("financial")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: a matched tag is checked case-insensitively") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("PII")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: an explicit 'tags' list overrides the default, allowing a tag the default would have forbidden") {
+    val rule = PolicyRule(
+      "control-no-restricted-only",
+      PolicyType.ForbidControlSensitivityTags,
+      Map("tags" -> List("restricted")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: an explicit 'tags' list is still enforced when it matches") {
+    val rule = PolicyRule(
+      "control-no-restricted",
+      PolicyType.ForbidControlSensitivityTags,
+      Map("tags" -> List("restricted")),
+      scope = PolicyScope.Outputs
+    )
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("secret", tags = Set("restricted")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: a single scalar 'tags' value is shorthand for a one-element list") {
+    val rule = PolicyRule("control-no-hr", PolicyType.ForbidControlSensitivityTags, Map("tags" -> "hr"), scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("salary", tags = Set("hr")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: an empty 'tags' list is malformed - interpret returns None, no violation raised") {
+    val rule = PolicyRule("bad", PolicyType.ForbidControlSensitivityTags, Map("tags" -> List.empty[String]), scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: recurses into nested struct fields") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val nested = field("customer", properties = List(field("ssn", tags = Set("pii"))))
+    val c = contract(
+      outputs = List(dataset("out", fields = List(nested)).copy(datasetType = Some(DatasetType.Control)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
+  }
+
+  test("forbid_control_sensitivity_tags: Warn mode reports without blocking") {
+    val rule = PolicyRule("control-no-pii-warn", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs, mode = PolicyMode.Warn)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val eval = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now)
+    assert(eval.enforceViolations.isEmpty)
+    assert(eval.warnViolations.size == 1)
+    assert(!eval.hasBlockingViolations)
+  }
+
+  test("forbid_control_sensitivity_tags: honors scope like any other DatasetPolicy") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      inputs = List(
+        // a CONTROL input with a pii tag - would violate if inputs were in scope
+        dataset("in", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      ),
+      outputs = List(dataset("out").copy(datasetType = Some(DatasetType.Control)))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
+  }
+
+  test("forbid_control_sensitivity_tags: a per-contract exemption suppresses the violation") {
+    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+    val c = contract(
+      outputs = List(
+        dataset("out", fields = List(field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+      )
+    )
+    val policy = OrgPolicy(
+      "1.0",
+      List(rule),
+      exemptions = List(PolicyExemption(c.id, List("control-no-pii"), reason = "known legacy control table, migration tracked"))
+    )
+    assert(OrgPolicyEvaluator.evaluate(c, policy, now).allViolations.isEmpty)
+  }
+
   // -- scope ------------------------------------------------------------------
 
   test("scope Outputs: a policy scoped to outputs never fires on a violating input") {

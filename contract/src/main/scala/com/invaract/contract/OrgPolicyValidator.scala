@@ -206,6 +206,7 @@ object OrgPolicyValidator {
     case PolicyType.RequireFormat          => " (expected a non-empty 'formats' property - a single format or a list)"
     case PolicyType.RequireExtensionIf     => " (expected non-empty 'ifKey' and 'thenKey' properties)"
     case PolicyType.RequireDatasetType     => " (if 'types' is set, expected a non-empty list of DATA_ASSET/SOURCE/CONTROL - omit 'types' entirely to require any declared type)"
+    case PolicyType.ForbidControlSensitivityTags => " (if 'tags' is set, expected a non-empty list of strings - omit 'tags' entirely to use the default pii/financial set)"
     case _                                 => ""
   }
 

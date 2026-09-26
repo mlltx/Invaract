@@ -126,6 +126,26 @@ object PolicyType {
     */
   val RequireDatasetType = "require_dataset_type"
 
+  /** A dataset declared `CONTROL` (see `DatasetType`'s own doc) must not
+    * carry any field whose `sensitivityTags` include one of `tags`
+    * (optional; defaults to `PolicyRule.DefaultForbiddenControlTags` —
+    * `pii`/`financial` — when omitted). A genuine control/watermark/
+    * processing-calendar/reconciliation signal has no legitimate reason to
+    * carry sensitive business data, so a `CONTROL`-declared dataset whose
+    * schema does is a mechanical, single-contract signal that the
+    * declaration may really be a relabeled `DATA_ASSET` avoiding
+    * `DATA_ASSET`-scoped obligations (`require_catalog`, role-consistency
+    * checking, etc.) — see docs/CONTRACT_MODEL.md's "Input and Output
+    * Types" section. Deliberately narrower than `RequireDatasetType`: this
+    * says nothing about whether a type is declared at all, only that a
+    * dataset already declared `CONTROL` must not also carry these tags. A
+    * dataset with no declared type, or one declared `DATA_ASSET`/`SOURCE`,
+    * is never in scope for this check regardless of its own tags — that's
+    * `RequireDatasetType`'s and ordinary sensitivity governance's own job,
+    * not this one's.
+    */
+  val ForbidControlSensitivityTags = "forbid_control_sensitivity_tags"
+
   val All: Set[String] = Set(
     RequireCatalog,
     RequireField,
@@ -134,7 +154,8 @@ object PolicyType {
     RequireFormat,
     RequireDatasetDescription,
     RequireExtensionIf,
-    RequireDatasetType
+    RequireDatasetType,
+    ForbidControlSensitivityTags
   )
 
   /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
@@ -196,6 +217,16 @@ object InterpretedPolicy {
     *   *presence* of a declared type is required, not a specific one.
     */
   case class RequireDatasetType(allowedTypes: Option[List[DatasetType]]) extends DatasetPolicy
+
+  /** @param tags the lower-cased sensitivity tags forbidden on a
+    *   `CONTROL`-declared dataset's schema — always resolved by
+    *   `PolicyRule.interpret` (defaulted from
+    *   `PolicyRule.DefaultForbiddenControlTags` when the rule's own `tags`
+    *   property is absent), never empty: an explicit empty list is
+    *   malformed, the same "empty means malformed" treatment
+    *   `RequireFormat.formats` already gets.
+    */
+  case class ForbidControlSensitivityTags(tags: Set[String]) extends DatasetPolicy
 
   /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
     *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
@@ -266,18 +297,19 @@ case class PolicyRule(
         InterpretedPolicy.RequireExtension(key, properties.get("value").map(String.valueOf))
       }
     case PolicyType.RequireFormat =>
-      PolicyRule.parseFormats(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
+      PolicyRule.parseStringList(properties.get("formats")).filter(_.nonEmpty).map(InterpretedPolicy.RequireFormat)
     case PolicyType.RequireDatasetDescription =>
       Some(InterpretedPolicy.RequireDatasetDescription)
     case PolicyType.RequireDatasetType =>
       properties.get("types") match {
         case None => Some(InterpretedPolicy.RequireDatasetType(None))
         case Some(raw) =>
-          // Reuses RequireFormat's own list-vs-scalar coercion (parseFormats
-          // takes a raw property value, not the "formats" key name itself)
-          // rather than duplicating it - the shape ("a YAML list, or a bare
-          // scalar as shorthand for a one-element list") is identical.
-          PolicyRule.parseFormats(Some(raw)).filter(_.nonEmpty).flatMap { rawTypes =>
+          // Reuses RequireFormat's own list-vs-scalar coercion
+          // (parseStringList takes a raw property value, not the "formats"
+          // key name itself) rather than duplicating it - the shape ("a
+          // YAML list, or a bare scalar as shorthand for a one-element
+          // list") is identical.
+          PolicyRule.parseStringList(Some(raw)).filter(_.nonEmpty).flatMap { rawTypes =>
             val parsed = rawTypes.map(DatasetType.parse)
             // All-or-nothing: one unrecognized type name in the list makes
             // the whole property malformed, the same "None covers malformed
@@ -287,6 +319,14 @@ case class PolicyRule(
             // entry.
             if (parsed.forall(_.isDefined)) Some(InterpretedPolicy.RequireDatasetType(Some(parsed.flatten)))
             else None
+          }
+      }
+    case PolicyType.ForbidControlSensitivityTags =>
+      properties.get("tags") match {
+        case None => Some(InterpretedPolicy.ForbidControlSensitivityTags(PolicyRule.DefaultForbiddenControlTags))
+        case some =>
+          PolicyRule.parseStringList(some).filter(_.nonEmpty).map { rawTags =>
+            InterpretedPolicy.ForbidControlSensitivityTags(rawTags.map(_.toLowerCase).toSet)
           }
       }
     case PolicyType.RequireExtensionIf =>
@@ -312,21 +352,29 @@ object PolicyRule {
       case _: java.util.regex.PatternSyntaxException => false
     }
 
-  /** Coerces `require_format`'s `formats` property, accepting either a YAML
-    * list (`formats: [delta, iceberg]`, decoded by SnakeYAML as a
+  /** Coerces a `PolicyRule` property that may be either a YAML list
+    * (`formats: [delta, iceberg]`, decoded by SnakeYAML as a
     * `java.util.List`) or a bare scalar (`formats: delta`) as shorthand for
-    * a single-element list — every other `PolicyRule` property is a single
-    * scalar, so this is the one place properties needs list coercion at
-    * all. `None` when the property is absent; an empty list is possible
-    * (e.g. `formats: []`) and is filtered out by the caller, the same
-    * "empty means malformed" treatment `pattern`/`name` already get.
+    * a single-element list — used by `require_format`'s `formats`,
+    * `require_dataset_type`'s `types`, and `forbid_control_sensitivity_tags`'s
+    * `tags`, the only properties in this file that ever need list coercion
+    * (every other property is a single scalar). `None` when the property is
+    * absent; an empty list is possible (e.g. `formats: []`) and is filtered
+    * out by the caller, the same "empty means malformed" treatment
+    * `pattern`/`name` already get.
     */
-  private[contract] def parseFormats(raw: Option[Any]): Option[List[String]] = raw match {
+  private[contract] def parseStringList(raw: Option[Any]): Option[List[String]] = raw match {
     case Some(list: java.util.List[_]) => Some(list.asScala.toList.map(String.valueOf).filter(_.nonEmpty))
     case Some(list: Seq[_])            => Some(list.toList.map(String.valueOf).filter(_.nonEmpty))
     case Some(scalar)                  => Some(List(String.valueOf(scalar)).filter(_.nonEmpty))
     case None                          => None
   }
+
+  /** `forbid_control_sensitivity_tags`'s own default `tags` set, used
+    * whenever a rule of that type omits the property entirely — see
+    * `PolicyType.ForbidControlSensitivityTags`'s own doc for why these two.
+    */
+  private[contract] val DefaultForbiddenControlTags: Set[String] = Set("pii", "financial")
 }
 
 /** Extension point for an organizational policy type Invaract's own

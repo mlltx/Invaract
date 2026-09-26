@@ -369,7 +369,7 @@ one-line YAML edit instead of a failed production job.
 
 ## Common organizational policy patterns
 
-The eight policy types above compose into most standardization an organization actually
+The nine policy types above compose into most standardization an organization actually
 wants to enforce. A few real-world patterns, each a complete, working rule:
 
 **Cost attribution.** Every contract must be attributable to a cost center, so nothing
@@ -500,9 +500,21 @@ data-dictionary discoverability — no properties to configure, just presence:
   description: "Every output must document what it is/contains."
 ```
 
+**CONTROL hygiene.** `type: CONTROL` is self-declared, so nothing structurally stops a
+real business dataset from being labeled `CONTROL` to dodge `DATA_ASSET`-scoped
+obligations. A genuine control/watermark/reconciliation signal has no legitimate reason
+to carry sensitive business data — see [Keep a CONTROL table honest](/reference/org-policy-format/#keep-a-control-table-honest)
+for the full rationale:
+
+```yaml
+- id: control-no-sensitive-fields
+  type: forbid_control_sensitivity_tags
+  description: "A CONTROL-declared dataset must not carry pii/financial-tagged fields."
+```
+
 ## Write your own policy type
 
-The eight built-in types cover a lot of ground, but they're a closed set — an
+The nine built-in types cover a lot of ground, but they're a closed set — an
 organization's own vocabulary ("every dataset must carry an `approvedBy` extension
 matching one of these three names," "every output's location must fall under one of
 these three approved prefixes") isn't limited to it. `customPolicyTypes` maps a

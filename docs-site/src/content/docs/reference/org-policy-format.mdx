@@ -101,6 +101,7 @@ contract's own `rules:` entries work.
 | `require_format` | `formats` (required) | The dataset declares `format` as one of `formats` — a single string (`formats: delta`) or a list (`formats: [delta, iceberg]`) — matched case-insensitively. A dataset with no `format` at all does not satisfy this. |
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
 | `require_dataset_type` | `types` (optional) | The dataset declares a `type` ([`DATA_ASSET`/`SOURCE`/`CONTROL`](/guides/declaring-input-and-output-types/)) at all; if `types` is also set (a single string or a list), the declared type must additionally be one of them. |
+| `forbid_control_sensitivity_tags` | `tags` (optional, defaults to `[pii, financial]`) | A dataset already declared `type: CONTROL` must not carry any schema field (recursing into nested structs) tagged with one of `tags`. A dataset with no declared type, or declared `DATA_ASSET`/`SOURCE`, is never in scope — see [Keep a CONTROL table honest](#keep-a-control-table-honest) below. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
 A policy `type` matching neither this set nor a [`customPolicyTypes`](#custom-policy-types)
@@ -119,8 +120,8 @@ type pin therefore uses the distinct key `fieldType`.
 
 <Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
 `require_catalog`, `require_field`, `field_naming_convention`, `require_format`,
-`require_dataset_description`, and `require_dataset_type` each check one dataset at a
-time, honoring `scope`/`when`.
+`require_dataset_description`, `require_dataset_type`, and `forbid_control_sensitivity_tags`
+each check one dataset at a time, honoring `scope`/`when`.
 `require_extension` and `require_extension_if` are different: they check the contract
 document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
 either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
@@ -133,6 +134,43 @@ another key's value. `require_extension_if` fills that gap — e.g. only a contr
 `extensions.status` is `deprecated` needs to also declare `extensions.sunsetDate`; a
 contract that isn't deprecated is entirely unaffected by the rule, not merely exempted
 from it.
+</Aside>
+
+### Keep a CONTROL table honest
+
+`forbid_control_sensitivity_tags` exists because `type: CONTROL` is self-declared by
+whoever writes the contract — nothing stops a real business dataset from being labeled
+`CONTROL` to dodge `DATA_ASSET`-scoped obligations like `require_catalog` or
+[role-consistency checking](/guides/declaring-input-and-output-types/#role-consistency-checks).
+A genuine control/watermark/processing-calendar/reconciliation signal has no legitimate
+reason to carry sensitive business data, so a `CONTROL`-declared dataset whose schema
+does is a mechanical, single-contract red flag:
+
+```yaml
+policies:
+  - id: control-no-sensitive-fields
+    type: forbid_control_sensitivity_tags
+    mode: enforce
+```
+
+With no `tags` property, this forbids the default `pii`/`financial` set on every
+`CONTROL`-declared dataset in the contract. Pin your own vocabulary instead:
+
+```yaml
+policies:
+  - id: control-no-restricted-fields
+    type: forbid_control_sensitivity_tags
+    properties:
+      tags: [pii, financial, restricted]
+```
+
+<Aside type="caution" title="Design your other rules so CONTROL isn't a free pass">
+If a universal rule like `require_catalog` or `require_dataset_description` is scoped or
+conditioned so it only applies to `DATA_ASSET` datasets, relabeling something `CONTROL`
+becomes the easiest way to dodge it. Keep governance rules that should bind *everyone*
+scoped `all`/`outputs` with no type-based narrowing, and reserve a type-conditioned rule
+like `forbid_control_sensitivity_tags` for checks that are specifically about whether the
+type claim itself holds up.
 </Aside>
 
 ## Custom policy types
@@ -158,7 +196,7 @@ trait CustomPolicyEvaluator {
 }
 ```
 
-`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the eight
+`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the nine
 built-in ones — a `customPolicyTypes` key matching a built-in `type` is dead (the built-in
 always wins; `OrgPolicyValidator` warns on this). `PolicyExemption` coverage and `mode:
 enforce`/`warn` splitting still apply automatically to a custom type's violations, exactly
