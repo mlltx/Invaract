@@ -3913,6 +3913,28 @@ business-guarantee reasoning generally beyond these two mechanical,
 structural checks. A new <code dir="auto">TypeGuaranteeCheck</code> — built in, or via
 <code dir="auto">customTypeGuaranteeTypes</code> with zero change to <code dir="auto">contract</code> itself —
 is the intended path to closing any of these as confidence grows.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: <code dir="auto">datasetType</code> on <code dir="auto">notification.WriteEvent</code></strong>: a
+completed write’s own event now carries the contract’s declared
+<code dir="auto">DatasetType</code> for whichever output its location matches
+(<code dir="auto">SparkAdapterListener.datasetTypeFor</code>, reusing
+<code dir="auto">StructuralVerifier.locationsMatch</code> and its established “whichever
+output is declared first” resolution for two outputs sharing one
+location — never a second, different answer to that same
+ambiguity). Always-on (no <code dir="auto">VerificationOptions</code> flag), since it’s a
+plain lookup against the contract’s static declarations rather than
+a runtime check — the write-observation counterpart to
+<code dir="auto">ContractValidationEvent.roleConformance</code> above, which instead
+reports what <code dir="auto">RoleConsistencyVerifier</code> proved about a declared
+<em>input’s</em> usage, opt-in and only at check time. <code dir="auto">spark-adapter</code>
+0.8.0 → 0.9.0 (<code dir="auto">notification.WriteEvent</code> gained a trailing
+parameter; <code dir="auto">SparkAdapterListener</code>, a plain class, gained a trailing
+constructor parameter too) with matching <code dir="auto">mimaBinaryIssueFilters</code>
+entries and jar-filename updates, the same disclosed-break pattern
+as every prior bump above. <code dir="auto">docs/SPARK_ADAPTER.md</code> and the
+docs-site “Notification sinks” guide (whose <code dir="auto">ContractValidationEvent</code>
+JSON example was also missing <code dir="auto">roleConformance</code> — a pre-existing
+gap from Phase 4 above, fixed in the same change since both fields’
+examples live in the same file) updated to match.</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>

@@ -1207,6 +1207,27 @@ concrete value in the query itself, but that value isn’t carried by this
 field either — a real, narrower follow-up this field doesn’t attempt, the
 same “disclosed, not silently missing” treatment <code dir="auto">fingerprint</code>’s own
 Maven Central publishing gap gets in CLAUDE.md.</p>
+<p><strong><code dir="auto">WriteEvent</code> also carries <code dir="auto">datasetType: Option[contract.DatasetType]</code>,
+the contract’s own declared type for whichever output the write’s
+location matches.</strong> Unlike every other <code dir="auto">WriteEvent</code> field above, this one
+isn’t read off Spark’s plan or metrics at all — <code dir="auto">SparkAdapterListener</code>
+matches <code dir="auto">location</code> against the active contract’s declared <code dir="auto">outputs</code> via
+the same <code dir="auto">StructuralVerifier.locationsMatch</code> predicate the check rule
+itself uses, and takes the <em>first</em> such output’s own <code dir="auto">datasetType</code> — the
+identical “whichever is declared first” resolution <code dir="auto">StructuralVerifier</code>’s
+own output-matching already uses when two outputs share one location (see
+<code dir="auto">ContractValidator</code>’s own Warning for that case), not a second, different
+answer invented here. <code dir="auto">None</code> whenever there is no contract (dry-run mode),
+the matching output declares no <code dir="auto">type:</code> at all (see “Input and Output
+Types” in docs/CONTRACT_MODEL.md for when declaring one is mandatory vs.
+optional), or no output matches the write’s location. This is a completed write’s
+counterpart to <code dir="auto">ContractValidationEvent.roleConformance</code> (see that field’s
+own doc): <code dir="auto">roleConformance</code> reports what <code dir="auto">RoleConsistencyVerifier</code> proved
+about a declared <em>input’s</em> usage in the plan, opt-in via
+<code dir="auto">VerificationOptions.roleConsistency</code> and only at check time;
+<code dir="auto">datasetType</code> here is a plain, always-on lookup of what a completed
+write’s own <em>output</em> was declared as, needing no verification flag since
+it only consults the contract’s static declarations.</p>
 <p><strong>Configuration is a plain <code dir="auto">.properties</code> file, deliberately not YAML and
 deliberately not part of the contract document.</strong> Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment
