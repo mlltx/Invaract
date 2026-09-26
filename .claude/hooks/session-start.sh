@@ -129,7 +129,19 @@ warm_module() {
   (
     cd "$CLAUDE_PROJECT_DIR/$dir" || exit 1
     for i in 1 2 3 4 5 6; do
-      if sbt -Dsbt.log.noformat=true -batch "$cmd" > /tmp/sbt-warm-"${dir//\//_}"-"$i".log 2>&1; then
+      # $cmd deliberately unquoted here - it's a space-separated sequence of
+      # sbt commands (e.g. "compile test assembly publishLocal"), and sbt
+      # expects each one as its own argv token, the same way dev/build's own
+      # start_module already invokes it. Quoting this (as an earlier version
+      # of this line did) hands sbt one argv token containing embedded
+      # spaces, which its command parser can't parse as a task expression -
+      # confirmed the hard way: every attempt failed instantly with "Expected
+      # whitespace character" / "Expected '/'", before ever making a network
+      # request, silently burning this whole retry loop's budget on a local
+      # parse error rather than the real, separate Maven Central rate
+      # limiting this loop's own retry/backoff is actually meant to ride out.
+      # shellcheck disable=SC2086
+      if sbt -Dsbt.log.noformat=true -batch $cmd > /tmp/sbt-warm-"${dir//\//_}"-"$i".log 2>&1; then
         echo "  $dir warmed"
         exit 0
       fi

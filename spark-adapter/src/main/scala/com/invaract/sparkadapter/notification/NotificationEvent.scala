@@ -3,6 +3,7 @@
 
 package com.invaract.sparkadapter.notification
 
+import com.invaract.contract.DatasetType
 import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.sparkadapter.{DataQualityCheckResult, RoleConformanceCheckResult, Violation}
 
@@ -218,6 +219,31 @@ object CatalogInfo {
   * `INSERT ... PARTITION(dt = '2024-01-01')`) does supply a concrete
   * value, but that value isn't carried by this field either — see
   * `WriteCommandInfo.partitionColumns`'s own doc.
+  *
+  * `datasetType` is the contract's own declared `DatasetType`
+  * (`DATA_ASSET`/`SOURCE`/`CONTROL`) for whichever *output* dataset
+  * `location` matches — resolved once, here, at the moment this event is
+  * built, by matching `location` against `contract`'s declared outputs the
+  * same way `StructuralVerifier.locationsMatch` already matches a
+  * contract-declared location against a real plan's actual one (a
+  * `SparkAdapterListener` never re-runs `StructuralVerifier` itself; it
+  * only reuses that one predicate). Two outputs declaring the same
+  * location resolve to whichever is declared *first* — the identical
+  * resolution `StructuralVerifier`'s own output-matching already uses for
+  * this exact ambiguity (see `ContractValidator`'s own Warning for that
+  * case), not a second, different answer invented here. `None` — never a
+  * guess — whenever there is no contract at all (dry-run mode), the
+  * matching output has no declared `type:` (declaring one is only
+  * mandatory under an `Enforce`-mode `require_dataset_type` org policy —
+  * see docs/CONTRACT_MODEL.md's "Input and Output Types" section), or no
+  * output matches this write's location at all. This is the
+  * write-observation counterpart to `ContractValidationEvent
+  * .roleConformance` above: that field reports what
+  * `RoleConsistencyVerifier` proved about a declared input's *usage* in
+  * the plan, opt-in and only at check time; `datasetType` here is a plain,
+  * always-on lookup of what a completed write's own *output* was declared
+  * as, needing no `VerificationOptions` flag since it consults only the
+  * contract's static declarations, not a runtime plan-analysis check.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -236,7 +262,8 @@ case class WriteEvent(
   icebergSnapshotId: Option[Long] = None,
   operation: Option[String] = None,
   catalog: Option[CatalogInfo] = None,
-  partitionColumns: List[String] = Nil
+  partitionColumns: List[String] = Nil,
+  datasetType: Option[DatasetType] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }

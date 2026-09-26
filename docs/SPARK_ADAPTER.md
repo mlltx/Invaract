@@ -1199,6 +1199,28 @@ field either — a real, narrower follow-up this field doesn't attempt, the
 same "disclosed, not silently missing" treatment `fingerprint`'s own
 Maven Central publishing gap gets in CLAUDE.md.
 
+**`WriteEvent` also carries `datasetType: Option[contract.DatasetType]`,
+the contract's own declared type for whichever output the write's
+location matches.** Unlike every other `WriteEvent` field above, this one
+isn't read off Spark's plan or metrics at all — `SparkAdapterListener`
+matches `location` against the active contract's declared `outputs` via
+the same `StructuralVerifier.locationsMatch` predicate the check rule
+itself uses, and takes the *first* such output's own `datasetType` — the
+identical "whichever is declared first" resolution `StructuralVerifier`'s
+own output-matching already uses when two outputs share one location (see
+`ContractValidator`'s own Warning for that case), not a second, different
+answer invented here. `None` whenever there is no contract (dry-run mode),
+the matching output declares no `type:` at all (see "Input and Output
+Types" in docs/CONTRACT_MODEL.md for when declaring one is mandatory vs.
+optional), or no output matches the write's location. This is a completed write's
+counterpart to `ContractValidationEvent.roleConformance` (see that field's
+own doc): `roleConformance` reports what `RoleConsistencyVerifier` proved
+about a declared *input's* usage in the plan, opt-in via
+`VerificationOptions.roleConsistency` and only at check time;
+`datasetType` here is a plain, always-on lookup of what a completed
+write's own *output* was declared as, needing no verification flag since
+it only consults the contract's static declarations.
+
 **Configuration is a plain `.properties` file, deliberately not YAML and
 deliberately not part of the contract document.** Sink configuration (an
 endpoint, a file path, possibly credentials) is a deployment-environment

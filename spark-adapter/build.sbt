@@ -35,11 +35,21 @@ name := "invaract-spark-adapter"
 // subscriber has for a passing check's dataQuality entries at all. Same
 // shape of break again, confirmed by a real `sbt mimaReportBinaryIssues`
 // run against the 0.6.0 baseline before this bump, not assumed.
+// 0.8.0 -> 0.9.0: notification.WriteEvent gained a trailing
+// `datasetType: Option[DatasetType]` constructor parameter (a completed
+// write's own event now carries the contract's declared type for whichever
+// output its location matches - see WriteEvent.datasetType's own doc) -
+// the same "case class gained a field" break as every prior bump above.
+// SparkAdapterListener (a plain class, not a case class - only its own
+// generated constructor is affected, no apply/copy/companion) also gained
+// a trailing `contractOutputs: List[Dataset]` constructor parameter, the
+// data datasetType's lookup is resolved from; same MINOR-not-MAJOR
+// treatment.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.8.0"
+ThisBuild / version := "0.9.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -887,7 +897,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.8.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.9.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1144,4 +1154,26 @@ mimaBinaryIssueFilters ++= Seq(
 // additional parameter too without needing new entries - left as-is
 // (matching MiMa's own by-name filtering, confirmed against this file's
 // own established pattern) rather than duplicated.
+
+// The real, deliberate break motivating the 0.8.0 -> 0.9.0 bump above:
+// notification.WriteEvent gained an eighteenth constructor parameter
+// (datasetType), and SparkAdapterListener - a plain class, so only its own
+// constructor is affected, no apply/copy/companion object the way a case
+// class would have - gained a fourth constructor parameter
+// (contractOutputs). Neither class has an existing filter block above
+// (WriteEvent's own prior break, from the 0.4.0 -> 0.5.0 bump, had its
+// filters removed once that break landed on the base branch - see
+// mimaPreviousArtifacts' own comment above for why that removal was safe;
+// SparkAdapterListener has never had a binary-breaking change before this
+// one), so both need a first filter block here, load-bearing for this PR's
+// own api-compatibility check until base-ref's own version reaches 0.9.0
+// or later - the same "becomes inert on its own, safe to leave" property
+// every filter block in this section already has.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.notification.WriteEvent.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.notification.WriteEvent$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.SparkAdapterListener.this")
+)
 

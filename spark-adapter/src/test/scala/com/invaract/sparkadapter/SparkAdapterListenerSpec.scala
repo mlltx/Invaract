@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.ContractParser
+import com.invaract.contract.{ContractParser, DatasetType}
 import com.invaract.sparkadapter.notification.{TestNotificationSink, WriteEvent}
 
 import org.apache.spark.sql.SparkSession
@@ -268,6 +268,122 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     val event = awaitEvent(sink)
     assert(event.contract.contains("listener_demo@1.0.0"))
     assert(event.metadata.get("team").contains("data-platform"))
+  }
+
+  test("a write matching a contract output that declares a type carries that datasetType") {
+    val outputPath = scratchDir.resolve("listener_typed_output.parquet").toString
+    val yaml =
+      s"""id: listener_typed
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    type: DATA_ASSET
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), Some(contract))
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.mode("overwrite").parquet(outputPath)
+
+    val event = awaitEvent(sink)
+    assert(event.datasetType.contains(DatasetType.DataAsset), s"expected Some(DataAsset), got ${event.datasetType}")
+  }
+
+  test("a write matching a contract output that declares no type carries datasetType = None") {
+    val outputPath = scratchDir.resolve("listener_untyped_output.parquet").toString
+    val yaml =
+      s"""id: listener_untyped
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), Some(contract))
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.mode("overwrite").parquet(outputPath)
+
+    val event = awaitEvent(sink)
+    assert(event.datasetType.isEmpty, s"expected None for an output declaring no type, got ${event.datasetType}")
+  }
+
+  test("a write whose location matches no declared output carries datasetType = None") {
+    val outputPath = scratchDir.resolve("listener_unmatched_output.parquet").toString
+    val declaredElsewhere = scratchDir.resolve("listener_unmatched_elsewhere.parquet").toString
+    val yaml =
+      s"""id: listener_unmatched
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $declaredElsewhere
+         |    type: CONTROL
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), Some(contract))
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.mode("overwrite").parquet(outputPath)
+
+    val event = awaitEvent(sink)
+    assert(event.datasetType.isEmpty, s"expected None when no declared output matches the write's location, got ${event.datasetType}")
+  }
+
+  test("two outputs sharing the same location resolve to the first-declared one's datasetType") {
+    val outputPath = scratchDir.resolve("listener_ambiguous_output.parquet").toString
+    val yaml =
+      s"""id: listener_ambiguous
+         |version: "1.0.0"
+         |outputs:
+         |  - name: first
+         |    location: $outputPath
+         |    type: DATA_ASSET
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |  - name: second
+         |    location: $outputPath
+         |    type: CONTROL
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: long
+         |          required: true
+         |""".stripMargin
+    val contract = ContractParser.parse(yaml)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), Some(contract))
+    spark.listenerManager.register(listener)
+
+    spark.range(5).write.mode("overwrite").parquet(outputPath)
+
+    val event = awaitEvent(sink)
+    // Same "whichever is declared first" resolution StructuralVerifier's own
+    // output-matching already uses for this exact ambiguity (see
+    // ContractValidator's Warning for duplicate output locations) - the
+    // *second* output's CONTROL type must never win here.
+    assert(event.datasetType.contains(DatasetType.DataAsset), s"expected the first-declared output's DataAsset, got ${event.datasetType}")
   }
 
   test("SparkAdapterListener.deltaVersionOf returns None (not a thrown exception) for an unparseable location") {

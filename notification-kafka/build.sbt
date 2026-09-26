@@ -32,7 +32,19 @@ scalacOptions ++= Seq(
 // spark-adapter's own build.sbt, so they're excluded from its assembly
 // jar - this module needs no Spark on its classpath either, at compile or
 // runtime.
-unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.8.0.jar")
+//
+// This filename must track spark-adapter/build.sbt's own current
+// `assembly / assemblyJarName` exactly, the same "versions must track the
+// producing module's own version :=" invariant runner/build.sbt's matching
+// libraryDependencies comment already states for its own real Maven
+// coordinate - confirmed the hard way: a spark-adapter version bump
+// (0.8.0 -> 0.9.0, WriteEvent.datasetType) that updated assemblyJarName
+// but not this literal path broke this module's own compile with "object
+// NotificationEvent is not a member of package
+// com.invaract.sparkadapter.notification" (the jar unmanagedJars pointed
+// at simply didn't exist on disk under the old name), caught by this
+// module's own CI job, not assumed fixed.
+unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.9.0.jar")
 
 assembly / assemblyJarName := "invaract-notification-kafka-0.2.0.jar"
 assembly / assemblyMergeStrategy := {

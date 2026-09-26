@@ -3830,6 +3830,28 @@ first written: one field's value compared against *another field on the same row
       structural checks. A new `TypeGuaranteeCheck` — built in, or via
       `customTypeGuaranteeTypes` with zero change to `contract` itself —
       is the intended path to closing any of these as confidence grows.
+- [x] **Follow-up: `datasetType` on `notification.WriteEvent`**: a
+      completed write's own event now carries the contract's declared
+      `DatasetType` for whichever output its location matches
+      (`SparkAdapterListener.datasetTypeFor`, reusing
+      `StructuralVerifier.locationsMatch` and its established "whichever
+      output is declared first" resolution for two outputs sharing one
+      location — never a second, different answer to that same
+      ambiguity). Always-on (no `VerificationOptions` flag), since it's a
+      plain lookup against the contract's static declarations rather than
+      a runtime check — the write-observation counterpart to
+      `ContractValidationEvent.roleConformance` above, which instead
+      reports what `RoleConsistencyVerifier` proved about a declared
+      *input's* usage, opt-in and only at check time. `spark-adapter`
+      0.8.0 → 0.9.0 (`notification.WriteEvent` gained a trailing
+      parameter; `SparkAdapterListener`, a plain class, gained a trailing
+      constructor parameter too) with matching `mimaBinaryIssueFilters`
+      entries and jar-filename updates, the same disclosed-break pattern
+      as every prior bump above. `docs/SPARK_ADAPTER.md` and the
+      docs-site "Notification sinks" guide (whose `ContractValidationEvent`
+      JSON example was also missing `roleConformance` — a pre-existing
+      gap from Phase 4 above, fixed in the same change since both fields'
+      examples live in the same file) updated to match.
 
 ---
 

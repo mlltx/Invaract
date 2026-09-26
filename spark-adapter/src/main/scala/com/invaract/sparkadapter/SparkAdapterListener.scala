@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.Contract
+import com.invaract.contract.{Contract, Dataset, DatasetType}
 import com.invaract.sparkadapter.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
 
 import org.apache.spark.sql.SparkSession
@@ -35,7 +35,8 @@ import org.apache.spark.sql.util.QueryExecutionListener
 class SparkAdapterListener(
     sink: Option[NotificationSink],
     contractRef: Option[String],
-    metadata: Map[String, Any]
+    metadata: Map[String, Any],
+    contractOutputs: List[Dataset] = Nil
 ) extends QueryExecutionListener {
   @volatile private var _lastWrite: Option[TranslationResult] = None
 
@@ -44,15 +45,37 @@ class SparkAdapterListener(
     * same zero-argument constructor this class had before `WriteEvent`
     * publishing existed.
     */
-  def this() = this(None, None, Map.empty)
+  def this() = this(None, None, Map.empty, Nil)
 
-  /** `contractRef`/`metadata` derived from a real `Contract` (its
-    * `"id@version"` ref and `extensions` bag, respectively) — the
-    * convenience most callers that do have a contract will actually want,
-    * rather than pulling those two fields out by hand.
+  /** `contractRef`/`metadata`/`contractOutputs` derived from a real
+    * `Contract` (its `"id@version"` ref, `extensions` bag, and declared
+    * `outputs` list, respectively) — the convenience most callers that do
+    * have a contract will actually want, rather than pulling those fields
+    * out by hand.
     */
   def this(sink: Option[NotificationSink], contract: Option[Contract]) =
-    this(sink, contract.map(c => s"${c.id}@${c.version}"), contract.map(_.extensions).getOrElse(Map.empty))
+    this(
+      sink,
+      contract.map(c => s"${c.id}@${c.version}"),
+      contract.map(_.extensions).getOrElse(Map.empty),
+      contract.map(_.outputs).getOrElse(Nil)
+    )
+
+  /** `location` (as Spark itself reports it for a completed write) against
+    * `contractOutputs`' own declared locations, via the same
+    * `StructuralVerifier.locationsMatch` predicate the check rule uses to
+    * match a contract-declared location against a real plan — never a
+    * second, independent comparison. Takes the *first* matching output's
+    * own declared `datasetType` (`.find`, not `.filter`), the identical
+    * "whichever is declared first" resolution `StructuralVerifier`'s own
+    * output-matching already uses for two outputs sharing one location
+    * (`ContractValidator`'s own Warning for that case names this exact
+    * behavior) — this listener intentionally doesn't invent a second,
+    * different answer to the same ambiguity. `None` when nothing matches
+    * at all, or when the matched output declares no `type:`.
+    */
+  private def datasetTypeFor(location: String): Option[DatasetType] =
+    contractOutputs.find(output => StructuralVerifier.locationsMatch(output.location, location)).flatMap(_.datasetType)
 
   /** The most recently captured write's translation, if any query with a
     * write command at its root has executed since this listener was
@@ -110,7 +133,8 @@ class SparkAdapterListener(
             },
             operation = info.operation,
             catalog = info.catalogIdentity.map(CatalogInfo.from),
-            partitionColumns = info.partitionColumns
+            partitionColumns = info.partitionColumns,
+            datasetType = datasetTypeFor(info.location)
           )
         )
       }
