@@ -301,17 +301,19 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
 
   // -- forbid_control_sensitivity_tags -----------------------------------------
 
-  test("forbid_control_sensitivity_tags: violated when a CONTROL dataset carries a default-forbidden tag (pii)") {
-    val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
-    val c = contract(
-      outputs = List(
-        dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii")))).copy(datasetType = Some(DatasetType.Control))
+  test("forbid_control_sensitivity_tags: violated when a CONTROL dataset carries a default-forbidden tag (pii or financial)") {
+    for (tag <- Seq("pii", "financial")) {
+      val rule = PolicyRule("control-no-sensitive", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
+      val c = contract(
+        outputs = List(
+          dataset("out", fields = List(field("id"), field("sensitive_field", tags = Set(tag)))).copy(datasetType = Some(DatasetType.Control))
+        )
       )
-    )
-    val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
-    assert(violations.size == 1)
-    assert(violations.head.dataset.contains("out"))
-    assert(violations.head.message.contains("pii"))
+      val violations = OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations
+      assert(violations.size == 1, s"expected a violation for default-forbidden tag '$tag'")
+      assert(violations.head.dataset.contains("out"))
+      assert(violations.head.message.contains(tag), s"violation message should mention '$tag'")
+    }
   }
 
   test("forbid_control_sensitivity_tags: satisfied when a CONTROL dataset carries no forbidden tag") {
@@ -338,16 +340,6 @@ class OrgPolicyEvaluatorTest extends AnyFunSuite {
     val rule = PolicyRule("control-no-pii", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
     val c = contract(outputs = List(dataset("out", fields = List(field("id"), field("ssn", tags = Set("pii"))))))
     assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.isEmpty)
-  }
-
-  test("forbid_control_sensitivity_tags: the default tag set also catches 'financial'") {
-    val rule = PolicyRule("control-no-financial", PolicyType.ForbidControlSensitivityTags, Map.empty, scope = PolicyScope.Outputs)
-    val c = contract(
-      outputs = List(
-        dataset("out", fields = List(field("account_balance", tags = Set("financial")))).copy(datasetType = Some(DatasetType.Control))
-      )
-    )
-    assert(OrgPolicyEvaluator.evaluate(c, OrgPolicy("1.0", List(rule)), now).allViolations.size == 1)
   }
 
   test("forbid_control_sensitivity_tags: a matched tag is checked case-insensitively") {

@@ -40,6 +40,17 @@ object PolicyScope {
   */
 case class PolicyCondition(sensitivityTag: String)
 
+/** Shared "is this optional expiry date still active" test, used identically
+  * by `PolicyExemption.covers` and `ControlTableRegistration.isActive` — both
+  * model an org-owned grant (an exemption, a control-table registration) that
+  * never lapses when `reviewBy` is unset, and stops applying the moment `now`
+  * is strictly after it. `true` both for no expiry at all and for `now`
+  * on-or-before `reviewBy` — only a `now` strictly after it is inactive.
+  */
+private[contract] object ReviewByExpiry {
+  def isActive(reviewBy: Option[LocalDate], now: LocalDate): Boolean = reviewBy.forall(!now.isAfter(_))
+}
+
 /** One entry in the org-owned catalogue of known `CONTROL`-declared datasets
   * (`OrgPolicy.controlTables`) — the trust boundary that makes `type:
   * CONTROL` something a contract author has to get *approved*, not merely
@@ -86,11 +97,10 @@ case class ControlTableRegistration(
   reviewBy: Option[LocalDate] = None
 ) {
 
-  /** Whether this registration still counts as active as of `now` — `true`
-    * both when there's no expiry at all and when `now` is on-or-before it,
-    * the identical boundary `PolicyExemption.covers` already uses.
+  /** Whether this registration still counts as active as of `now` — see
+    * `ReviewByExpiry`, the identical boundary `PolicyExemption.covers` uses.
     */
-  def isActive(now: LocalDate): Boolean = reviewBy.forall(!now.isAfter(_))
+  def isActive(now: LocalDate): Boolean = ReviewByExpiry.isActive(reviewBy, now)
 }
 
 /** Policy types Invaract itself knows how to interpret during org-policy
@@ -433,9 +443,8 @@ case class PolicyRule(
       }
     case PolicyType.RequireControlRegistration =>
       properties.get("requireRegistration") match {
-        case None                       => Some(InterpretedPolicy.RequireControlRegistration(requireRegistration = true))
-        case Some(b: java.lang.Boolean) => Some(InterpretedPolicy.RequireControlRegistration(b.booleanValue))
-        case Some(_)                    => None // malformed - not a boolean
+        case None      => Some(InterpretedPolicy.RequireControlRegistration(requireRegistration = true))
+        case Some(raw) => PolicyRule.parseBoolean(raw).map(InterpretedPolicy.RequireControlRegistration)
       }
     case PolicyType.RequireExtensionIf =>
       for {
@@ -483,6 +492,25 @@ object PolicyRule {
     * `PolicyType.ForbidControlSensitivityTags`'s own doc for why these two.
     */
   private[contract] val DefaultForbiddenControlTags: Set[String] = Set("pii", "financial")
+
+  /** Coerces a `PolicyRule` property that should be a boolean — accepts a
+    * real YAML boolean or a `"true"`/`"false"` string (case-insensitive),
+    * the identical tolerance `OrgPolicyParser.parseBoolean` already gives
+    * `inject.minVerificationOptions`' own boolean values, just returned as
+    * an `Option` instead of thrown: `interpret`'s total/safe convention
+    * needs a malformed property to produce `None`, not an exception. Used
+    * by `require_control_registration`'s `requireRegistration`.
+    */
+  private[contract] def parseBoolean(raw: Any): Option[Boolean] = raw match {
+    case b: java.lang.Boolean => Some(b.booleanValue())
+    case s: String =>
+      s.trim.toLowerCase match {
+        case "true"  => Some(true)
+        case "false" => Some(false)
+        case _       => None
+      }
+    case _ => None
+  }
 }
 
 /** Extension point for an organizational policy type Invaract's own
@@ -541,12 +569,10 @@ case class PolicyExemption(
 ) {
 
   /** Whether this exemption currently covers `policyId` for `contractId0`,
-    * as of `now`. `reviewBy.forall(!now.isAfter(_))` is `true` both when
-    * there's no expiry at all and when `now` is on-or-before it — only a
-    * `now` strictly after `reviewBy` makes the exemption inactive.
+    * as of `now` — see `ReviewByExpiry` for the expiry boundary itself.
     */
   def covers(contractId0: String, policyId: String, now: LocalDate): Boolean =
-    contractId0 == contractId && policyIds.contains(policyId) && reviewBy.forall(!now.isAfter(_))
+    contractId0 == contractId && policyIds.contains(policyId) && ReviewByExpiry.isActive(reviewBy, now)
 }
 
 /** What this policy contributes to every contract it governs, merged in

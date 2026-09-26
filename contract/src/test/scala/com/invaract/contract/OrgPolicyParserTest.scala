@@ -158,6 +158,18 @@ class OrgPolicyParserTest extends AnyFunSuite {
     assert(policy.policies(1).interpret.contains(InterpretedPolicy.RequireControlRegistration(false)))
   }
 
+  test("require_control_registration's 'requireRegistration' also tolerates a quoted 'true'/'false' string") {
+    val yaml =
+      """version: "1.0"
+        |policies:
+        |  - id: control-registry-quoted-false
+        |    type: require_control_registration
+        |    requireRegistration: "false"
+        |""".stripMargin
+    val policy = OrgPolicyParser.parse(yaml)
+    assert(policy.policies.head.interpret.contains(InterpretedPolicy.RequireControlRegistration(false)))
+  }
+
   test("parse should default controlTables to empty when absent, and decode entries when present") {
     val absent = OrgPolicyParser.parse("""version: "1.0"""" + "\n")
     assert(absent.controlTables.isEmpty)
