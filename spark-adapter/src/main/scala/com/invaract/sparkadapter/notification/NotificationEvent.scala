@@ -5,7 +5,7 @@ package com.invaract.sparkadapter.notification
 
 import com.invaract.contract.DatasetType
 import com.invaract.fingerprint.TransformationFingerprint
-import com.invaract.sparkadapter.{DataQualityCheckResult, RoleConformanceCheckResult, Violation}
+import com.invaract.sparkadapter.{DataQualityCheckResult, RoleConformanceCheckResult, UnverifiableInput, Violation}
 
 /** One thing worth telling an external system about, published through a
   * `NotificationSink` when one is configured and enabled (see
@@ -82,6 +82,17 @@ sealed trait NotificationEvent {
   * verdict, the same as `dataQuality` above — a subscriber sees
   * `Conforms`/`CannotDetermine` results here too, not only the
   * `Contradicts` ones already implied by `violations`.
+  *
+  * `unverifiableInputs` is `result.unverifiableInputs` carried through the
+  * same way — always populated when applicable, with no
+  * `VerificationOptions` flag gating it (see
+  * `VerificationResult.unverifiableInputs`'s own doc for why). A subscriber
+  * sees a declared input this check couldn't confirm was read but also
+  * couldn't confidently report as missing — most commonly a `.checkpoint()`
+  * call sitting upstream of it (see `StructuralVerifier`'s "Inputs hidden
+  * behind a lineage boundary" section for why a bare `.cache()`/`.persist()`
+  * alone doesn't reach here) — on both a passing and a failing check alike,
+  * the same as `dataQuality`/`roleConformance` above.
   */
 case class ContractValidationEvent(
   contract: String,
@@ -92,7 +103,8 @@ case class ContractValidationEvent(
   applicationId: Option[String] = None,
   fingerprints: Option[TransformationFingerprint] = None,
   dataQuality: List[DataQualityCheckResult] = Nil,
-  roleConformance: List[RoleConformanceCheckResult] = Nil
+  roleConformance: List[RoleConformanceCheckResult] = Nil,
+  unverifiableInputs: List[UnverifiableInput] = Nil
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }

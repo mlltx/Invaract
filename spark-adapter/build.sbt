@@ -45,11 +45,25 @@ name := "invaract-spark-adapter"
 // a trailing `contractOutputs: List[Dataset]` constructor parameter, the
 // data datasetType's lookup is resolved from; same MINOR-not-MAJOR
 // treatment.
+// The real, deliberate break motivating the 0.9.0 -> 0.10.0 bump: both
+// VerificationResult and notification.ContractValidationEvent gained a
+// trailing constructor parameter (unverifiableInputs: List[UnverifiableInput])
+// - see StructuralVerifier's "Inputs hidden behind a lineage boundary"
+// section and docs/SPARK_ADAPTER.md's matching section for what this fixes
+// (a false-positive MISSING_INPUT for a declared input read through a real
+// .checkpoint() boundary). The same "case class gained a field" break as
+// every prior bump above - no new mimaBinaryIssueFilters entries needed,
+// since the existing VerificationResult/ContractValidationEvent filter
+// blocks below already exclude apply/copy/this/the companion object for
+// both classes by method name, not by a specific arity/signature (see the
+// 0.7.0 -> 0.8.0 bump's own comment for this same reasoning) - confirmed
+// with a real `sbt mimaReportBinaryIssues` run against a locally-published
+// 0.9.0 baseline, not assumed.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.9.0"
+ThisBuild / version := "0.10.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -897,7 +911,7 @@ libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.9.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.10.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,

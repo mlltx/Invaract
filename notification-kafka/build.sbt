@@ -44,7 +44,7 @@ scalacOptions ++= Seq(
 // com.invaract.sparkadapter.notification" (the jar unmanagedJars pointed
 // at simply didn't exist on disk under the old name), caught by this
 // module's own CI job, not assumed fixed.
-unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.9.0.jar")
+unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.10.0.jar")
 
 assembly / assemblyJarName := "invaract-notification-kafka-0.2.0.jar"
 assembly / assemblyMergeStrategy := {

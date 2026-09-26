@@ -279,6 +279,53 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(unknown.sourceType.nonEmpty, "UnknownPlan should carry the Catalyst class name as sourceType")
   }
 
+  test("translates a real .checkpoint() boundary as an UnknownPlan naming LogicalRDD, with a diagnostic explaining why") {
+    val checkpointDir = Files.createTempDirectory("invaract-spark-adapter-checkpoint")
+    spark.sparkContext.setCheckpointDir(checkpointDir.toString)
+    // .checkpoint() eagerly rebuilds the returned Dataset's own analyzed
+    // plan as a LogicalRDD immediately - unlike .cache() below, this
+    // reaches .queryExecution.analyzed directly, with no separate
+    // substitution step needed (see SparkPlanAdapter's own
+    // InMemoryRelation/LogicalRDD doc, confirmed against a real captured
+    // ContractEnforcementRule-checked plan in ContractEnforcementRuleSpec).
+    val checkpointed = readSample().checkpoint()
+
+    val result = SparkPlanAdapter.translate(checkpointed.queryExecution.analyzed)
+
+    result.plan match {
+      case UnknownPlan(_, "LogicalRDD", _) => // expected
+      case other                           => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+    }
+    assert(result.diagnostics.exists(_.message.toLowerCase.contains("checkpoint")), s"expected a checkpoint-mentioning diagnostic, got ${result.diagnostics}")
+  }
+
+  test("translates a real, cache-substituted relation as an UnknownPlan naming InMemoryRelation, with a diagnostic explaining why") {
+    // Unlike .checkpoint() above, a bare .cache() does NOT change what
+    // .queryExecution.analyzed reports for a later query - Spark only
+    // substitutes InMemoryRelation in via QueryExecution.withCachedData,
+    // confirmed to run strictly after checkAnalysis (where
+    // ContractEnforcementRule's own check rule fires - see
+    // ContractEnforcementRuleSpec's real .cache() case, which shows the
+    // checked plan still contains the *original* relation, not
+    // InMemoryRelation). This test exercises SparkPlanAdapter.translate
+    // directly against a real, genuinely-substituted plan the way another
+    // caller (or a future one) could still hand it one - not via
+    // ContractEnforcementRule, which never does for a bare .cache().
+    val cached = readSample().cache()
+    cached.count() // force real materialization, not just plan-level registration
+    val downstream = cached.select(col("id"))
+    val substituted = downstream.queryExecution.withCachedData
+
+    val result = SparkPlanAdapter.translate(substituted)
+
+    result.plan match {
+      case UnknownPlan(_, "InMemoryRelation", _)                  => // expected
+      case Project(UnknownPlan(_, "InMemoryRelation", _), _)      => // expected, wrapped in the outer select's Project
+      case other                                                  => fail(s"expected an InMemoryRelation-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+    }
+    assert(result.diagnostics.exists(_.message.toLowerCase.contains("cache")), s"expected a cache-mentioning diagnostic, got ${result.diagnostics}")
+  }
+
   test("translates Sort, capturing direction and null ordering") {
     val df = readSample()
     val sorted = df.orderBy(col("value").desc_nulls_last)

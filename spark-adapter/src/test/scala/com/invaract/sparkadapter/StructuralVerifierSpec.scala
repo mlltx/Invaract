@@ -94,6 +94,140 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
   }
 
+  test("UNVERIFIABLE_INPUT (not MISSING_INPUT): the plan contains an UnknownPlan node, so the declared input's absence can't be confidently proven") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    // Stand in for what SparkPlanAdapter's real InMemoryRelation case
+    // produces where the declared input's Read would otherwise sit (see
+    // that file's own doc for the real trigger, .checkpoint(), and why a
+    // bare .cache() doesn't reach ContractEnforcementRule this way):
+    // collectReads finds no Read node here, but the UnknownPlan means that
+    // absence isn't proof of anything - StructuralVerifier's own logic
+    // doesn't care how the UnknownPlan got there.
+    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => com.invaract.ir.UnknownPlan("InMemoryRelation(cached relation, 2 column(s))", "InMemoryRelation")
+      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+      case other                         => other
+    }
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${result.violations}")
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.inputLocation == "demo/input/sample.csv")
+    assert(entry.unknownNodeTypes == List("InMemoryRelation"))
+  }
+
+  test("an UnverifiableInput entry never becomes a Violation and never fails the check on its own") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => com.invaract.ir.UnknownPlan("LogicalRDD(checkpointed relation, 2 column(s))", "LogicalRDD")
+      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+      case other                         => other
+    }
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(result.passed, s"expected PASSED (an unverifiable input alone must not block the write), got violations: ${result.violations}")
+    assert(result.unverifiableInputs.nonEmpty)
+  }
+
+  test("an input that IS actually read produces neither MISSING_INPUT nor UnverifiableInput, even when an unrelated UnknownPlan sits elsewhere in the plan") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    val realPlan = SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan
+    // Graft an unrelated UnknownPlan alongside the real, fully-resolved
+    // read: containsUnknownPlan is true for the whole plan, but the
+    // declared input itself was genuinely read, so neither a violation nor
+    // a report-only entry should appear for it.
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Union(List(realPlan, com.invaract.ir.UnknownPlan("Generate(explode)", "Generate")))
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
+  }
+
+  test("unknownNodeTypes collects every distinct UnknownPlan.sourceType found in the plan, not just the first") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => com.invaract.ir.UnknownPlan("InMemoryRelation(cached relation, 2 column(s))", "InMemoryRelation")
+      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+      case other                         => other
+    }
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Union(List(
+        rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan),
+        com.invaract.ir.UnknownPlan("Generate(explode)", "Generate")
+      ))
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.unknownNodeTypes == List("InMemoryRelation", "Generate"))
+  }
+
+  test("unknownNodeTypes deduplicates a sourceType repeated at multiple points in the plan") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Union(List(
+        com.invaract.ir.UnknownPlan("InMemoryRelation(a)", "InMemoryRelation"),
+        com.invaract.ir.UnknownPlan("InMemoryRelation(b)", "InMemoryRelation")
+      ))
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.unknownNodeTypes == List("InMemoryRelation"))
+  }
+
+  test("a blank UnknownPlan.sourceType contributes nothing to unknownNodeTypes, rather than an empty string entry") {
+    val contract = realDemoContract()
+    val inputDf = realDemoInput()
+    val outputDf = realDemoOutput(inputDf)
+    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => com.invaract.ir.UnknownPlan("some construct with no known sourceType")
+      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+      case other                         => other
+    }
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
+    )
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.unknownNodeTypes.isEmpty)
+  }
+
   test("UNDECLARED_INPUT is reported only when rejectUndeclaredInputs is enabled") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()

@@ -678,7 +678,8 @@ object ContractEnforcementRule {
           structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
           fingerprints,
           dataQualityResults,
-          roleConformanceResults
+          roleConformanceResults,
+          structuralResult.unverifiableInputs
         )
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
@@ -832,7 +833,8 @@ object ContractEnforcementRule {
           applicationId = applicationId,
           fingerprints = result.fingerprints,
           dataQuality = result.dataQuality,
-          roleConformance = result.roleConformance
+          roleConformance = result.roleConformance,
+          unverifiableInputs = result.unverifiableInputs
         )
       )
     }

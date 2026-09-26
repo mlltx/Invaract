@@ -469,6 +469,85 @@ straight through to `notification.ContractValidationEvent.roleConformance`
 — reaches every configured sink, PASS or FAILED alike, the same as
 `dataQuality`/`fingerprints` above.
 
+## Inputs hidden behind a lineage boundary (`unverifiableInputs`)
+
+`StructuralVerifier.verify`'s `MISSING_INPUT` check has always assumed that
+"no matching `Read` node anywhere in the translated plan" proves a declared
+input was never read. A real gap in that assumption: a `.checkpoint()` call
+sitting between the real read and the checked write erases Spark's own
+analyzed-plan lineage back to it. `LogicalRDD` (`.checkpoint()`, or a
+`Dataset` built directly from an RDD) is a Catalyst `LeafNode` — confirmed
+directly against Spark 3.5.7's real class files (`javap`), not assumed —
+with no retained `LogicalPlan` at all past that point (its own `rdd` field
+is a raw `RDD[InternalRow]`, a structurally different representation this
+`LogicalPlan`-only translator has no way to walk). Before this fix, a job
+like:
+
+```scala
+val orders = spark.read.csv("demo/input/sample.csv") // the declared input
+val checkpointed = orders.checkpoint()
+checkpointed.withColumn(...).write.parquet(outputPath) // the checked write
+```
+
+would be rejected with a false-positive `MISSING_INPUT` for `orders`, even
+though the job plainly read it — `SparkPlanAdapter.translate` sees a
+`LogicalRDD` where the original `Read` used to be (`.checkpoint()` eagerly
+rebuilds the returned `Dataset`'s own analyzed plan this way, before any
+later action's analysis even begins — confirmed against a real checked
+plan, captured via `ContractEnforcementRuleSpec`'s own test), and the old
+`missingInputs` computation had no way to tell "genuinely never read" apart
+from "read, but the read is no longer visible from here."
+
+A bare `.cache()`/`.persist()` does **not** reach `ContractEnforcementRule`
+this way, despite `InMemoryRelation` (the Catalyst node Spark substitutes
+for a cached subtree) sharing the identical `LeafNode`/no-retained-`LogicalPlan`
+shape as `LogicalRDD` — confirmed directly, not assumed: `injectCheckRule`
+fires during Spark's own `checkAnalysis`, which runs strictly *before*
+`QueryExecution.withCachedData` ever performs that substitution, so the
+plan `ContractEnforcementRule` actually checks still shows the original
+`Read` even after a real `.cache().count()`. `SparkPlanAdapter` still
+translates a real `InMemoryRelation` to the same `ir.UnknownPlan` shape —
+for translation completeness/robustness against any other caller that
+might hand it a post-cache-substitution plan (e.g. one taken from
+`.queryExecution.optimizedPlan`), covered directly in
+`SparkPlanAdapterSpec` — but it is not how this false positive actually
+manifests through the enforcement path.
+
+`SparkPlanAdapter` translates `InMemoryRelation`/`LogicalRDD` to an
+`ir.UnknownPlan` (`ir.Plan`'s existing "opaque, couldn't-fully-translate"
+placeholder — see its own doc), named specifically (`"InMemoryRelation"`/
+`"LogicalRDD"`, not a bare Catalyst class name) rather than left to the
+generic unrecognized-node fallback, purely so a person reading the result
+can tell *why*. `ir.Plan.containsUnknownPlan` reports whether an
+`UnknownPlan` exists anywhere in a plan, and `StructuralVerifier.verify`
+consults it before deciding how to report a declared input with no matching
+`Read`:
+
+- `plan.containsUnknownPlan` is `false` → unchanged: a confident
+  `MISSING_INPUT` violation, blocking the write, exactly as before this fix.
+- `plan.containsUnknownPlan` is `true` → the same unmatched input becomes an
+  `UnverifiableInput` instead (`inputName`, `inputLocation`,
+  `unknownNodeTypes` — the distinct `ir.UnknownPlan.sourceType`s found in the
+  plan) — report-only, never a `Violation`, never blocking, collected on
+  `VerificationResult.unverifiableInputs`.
+
+Deliberately the same non-blocking `RoleConsistencyVerifier`-style
+precedent (`Conforms`/`Contradicts`/`CannotDetermine`) as role-consistency
+and static data-quality checking above, not `UNVERIFIABLE_WRITE`'s
+fail-closed one: the uncertainty is about one input's visibility, not the
+whole write's meaning, and failing closed on it would only turn a job that
+already reads its input just fine into a newly-blocked one.
+
+**Always on, no `VerificationOptions` flag** — unlike `dataQuality`/
+`roleConformance` above, this isn't new opt-in instrumentation layered on
+top of an existing check; it's the honest half of `MISSING_INPUT`'s own
+always-on check, so gating it behind a flag would mean the false positive
+it fixes still fires by default. `ContractEnforcementRule.publishValidation`
+carries `VerificationResult.unverifiableInputs` straight through to
+`notification.ContractValidationEvent.unverifiableInputs`, reaching every
+configured sink, PASS or FAILED alike, the same as `dataQuality`/
+`roleConformance`/`fingerprints`.
+
 ## Diagnostics: plan extraction examples
 
 From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):

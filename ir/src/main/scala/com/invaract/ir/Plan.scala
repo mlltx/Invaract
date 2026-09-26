@@ -22,6 +22,26 @@ object JoinType {
   */
 sealed trait Plan {
   def children: List[Plan]
+
+  /** Whether this plan, or anything beneath it, contains an `UnknownPlan`
+    * node — the honest "there's a real-engine construct in here this
+    * translator could not fully see through" signal `UnknownPlan`'s own
+    * doc already establishes ("the rest of the tree stays inspectable,
+    * `Lineage` degrades to 'no known source' for anything that would need
+    * to resolve through it"). `Lineage.trace` already honors that
+    * degradation at the column level (see its own `UnknownPlan` cases); a
+    * caller checking a coarser, *structural* property instead — "is this
+    * declared input really absent, or could it be hidden behind an opaque
+    * boundary this translator couldn't see past" — needs the identical
+    * honesty and should consult this before treating an absence anywhere
+    * in the plan as a confidently-proven fact. A concrete method on the
+    * sealed trait itself (not requiring each case class to implement it)
+    * so adding it doesn't touch every existing `Plan` subtype.
+    */
+  def containsUnknownPlan: Boolean = this match {
+    case _: UnknownPlan => true
+    case _              => children.exists(_.containsUnknownPlan)
+  }
 }
 
 /** The catalog identity a `Read`/`Write` was actually observed to resolve

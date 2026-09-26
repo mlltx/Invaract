@@ -220,6 +220,80 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // A real Spark .checkpoint() call between reading a declared input and
+  // the checked write. Confirmed directly (not assumed) which of
+  // .cache()/.checkpoint() actually reaches ContractEnforcementRule this
+  // way: injectCheckRule fires during Spark's own checkAnalysis, which
+  // happens BEFORE QueryExecution.withCachedData ever substitutes a cached
+  // subtree with InMemoryRelation - so a bare .cache()/.persist() alone
+  // never actually shows InMemoryRelation to this check rule; captured a
+  // real checked plan's tree to confirm (still `Relation ... csv`, not
+  // InMemoryRelation, after .cache().count()). .checkpoint() is different:
+  // it eagerly rebuilds the returned Dataset's own analyzed plan as a
+  // LogicalRDD immediately, before any later action's analysis even
+  // begins, so it genuinely reaches the check rule this way - confirmed
+  // the same way (a captured real checked plan showing `LogicalRDD [...]`
+  // in place of the original Read). Proves the fix end-to-end against a
+  // real SparkSession, real checkpointing, and a real published
+  // notification event - not just the hand-constructed ir.Plan trees
+  // StructuralVerifierSpec exercises the same StructuralVerifier logic
+  // against. SparkPlanAdapterSpec separately covers InMemoryRelation
+  // translation directly (bypassing ContractEnforcementRule, the same way
+  // a caller other than it could still hand SparkPlanAdapter a
+  // post-cache-substitution plan).
+  test("PASS: a declared input read through a real .checkpoint() boundary is not falsely reported as MISSING_INPUT") {
+    val inputPath = scratchDir.resolve("cache_input.csv").toString
+    val outputPath = scratchDir.resolve("cache_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id,value\n1,10\n2,20\n".getBytes)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: raw
+         |    location: $inputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |        - name: doubled
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("checkpoints").toString)
+    withContract(yaml, sink = Some(sink)) {
+      val raw = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath)
+      val checkpointed = raw.checkpoint()
+      val df = checkpointed.withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)), "the write must not be blocked by a false-positive MISSING_INPUT")
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty, "expected at least one ContractValidationEvent")
+    val event = events.last
+    assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
+    assert(!event.violations.exists(_.violationType == ViolationType.MissingInput))
+    val entry = event.unverifiableInputs.find(_.inputName == "raw")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'raw', got: ${event.unverifiableInputs}"))
+    assert(entry.unknownNodeTypes.contains("LogicalRDD"), s"expected LogicalRDD among ${entry.unknownNodeTypes}")
+  }
+
   // com.invaract.sparkadapter.location - resolving a contract's ref://<id>
   // locations from Spark configuration (spark.invaract.locationMap), so a
   // platform invoking spark-submit can attach this without the job's own

@@ -92,4 +92,44 @@ class PlanSpec extends AnyFunSuite {
     val input = Read(DatasetRef("raw.orders"))
     assert(Limit(input, 10).children == List(input))
   }
+
+  // -- containsUnknownPlan -----------------------------------------------
+
+  test("containsUnknownPlan is false for a plan with no UnknownPlan anywhere") {
+    val read = Read(DatasetRef("raw.orders"))
+    val plan = Filter(Project(read, Nil), Literal(true, "boolean"))
+    assert(!plan.containsUnknownPlan)
+  }
+
+  test("containsUnknownPlan is true when the plan's own root is an UnknownPlan") {
+    assert(UnknownPlan("Generate(explode)", sourceType = "Generate").containsUnknownPlan)
+  }
+
+  test("containsUnknownPlan is true when an UnknownPlan is buried arbitrarily deep beneath other nodes") {
+    val buried = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
+    val plan = Sort(Filter(Project(buried, Nil), Literal(true, "boolean")), Nil)
+    assert(plan.containsUnknownPlan)
+  }
+
+  test("containsUnknownPlan checks every branch of a multi-child node, not just the first") {
+    val clean = Read(DatasetRef("raw.orders"))
+    val tainted = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
+
+    // Left branch clean, right branch tainted - must still find it.
+    assert(Join(clean, tainted, JoinType.Inner).containsUnknownPlan)
+    // Left branch tainted, right branch clean - order must not matter.
+    assert(Join(tainted, clean, JoinType.Inner).containsUnknownPlan)
+    // Every branch clean - must not report a false positive.
+    assert(!Join(clean, clean, JoinType.Inner).containsUnknownPlan)
+  }
+
+  test("containsUnknownPlan is false for a leaf Read, which has no children to search") {
+    assert(!Read(DatasetRef("raw.orders")).containsUnknownPlan)
+  }
+
+  test("an UnknownPlan's own listed children are still searched for a nested UnknownPlan") {
+    val nestedUnknown = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
+    val outer = UnknownPlan("Generate(explode)", sourceType = "Generate", children = List(nestedUnknown))
+    assert(outer.containsUnknownPlan)
+  }
 }

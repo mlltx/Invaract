@@ -49,7 +49,7 @@ If your job is installed with [`InvaractSparkSessionExtension`](/guides/installi
 spark-submit \
   --class com.example.MyRealJob \
   --master yarn \
-  --jars invaract-spark-adapter-0.9.0.jar \
+  --jars invaract-spark-adapter-0.10.0.jar \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.contract=/path/to/contract.yaml \
   --conf spark.invaract.notifyConfig=/path/to/notify.properties \
@@ -76,7 +76,7 @@ Code](/guides/calling-invaract-explicitly/#wire-a-notification-sink).
 Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": [], "roleConformance": []}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": [], "roleConformance": [], "unverifiableInputs": []}
 ```
 
 ...and a `WriteEvent`, once the write completes:
@@ -113,6 +113,20 @@ with a contract that declares `type:` on at least one input — populated the sa
 PASSED and a FAILED check, since most verdicts (`Conforms`/`CannotDetermine`) never block
 the write on their own; only a `Contradicts` entry does, and only that one also shows up in
 `violations`.
+
+`unverifiableInputs` is `[]` for the overwhelming majority of checks, and always on — there's
+no flag to enable it. It's populated when a declared input has no matching read anywhere in
+the checked plan, but the plan also contains a construct Invaract's Spark translator
+couldn't see through (most commonly a `.checkpoint()` call sitting between the real read and
+the checked write, which severs Spark's own analyzed-plan lineage back to it). Each entry
+names the input (`inputName`/`inputLocation`) and the real cause (`unknownNodeTypes`, e.g.
+`["LogicalRDD"]`) — report-only, the same as `dataQuality`/`roleConformance` above: an entry
+here never becomes a `MISSING_INPUT` violation and never blocks the write, since an absence
+Invaract can't actually prove must never be treated as a caught defect (the same reasoning
+`RoleConformanceVerdict.CannotDetermine` follows — this is deliberately *not* the fail-closed
+treatment [Fail-Closed by Default](/concepts/fail-closed/) describes for a totally
+unrecognized write, since here only one input's visibility is uncertain, not the whole
+write's meaning).
 
 `WriteEvent`'s `durationMs` is always populated, straight from Spark's own listener
 callback. `rowCount`, `bytesWritten`, and `fileCount` come from Spark's internal

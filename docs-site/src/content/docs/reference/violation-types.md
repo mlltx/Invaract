@@ -24,7 +24,7 @@ flag in the same case class, the identical way).
 
 | Type | Meaning |
 |---|---|
-| `MISSING_INPUT` | A dataset the contract declares as an input was never read by the plan. |
+| `MISSING_INPUT` | A dataset the contract declares as an input was never read by the plan. Not reported when the plan contains a construct Invaract couldn't fully translate (most commonly a `.checkpoint()` boundary) — see `unverifiableInputs` in the [notification sinks guide](/guides/notification-sinks/#what-an-event-looks-like) for that report-only alternative. |
 | `UNDECLARED_INPUT` | The plan read a dataset the contract doesn't declare as an input. Only checked when `rejectUndeclaredInputs` is enabled. |
 | `MISSING_INPUT_FIELD` | A required input field is absent from the actual input schema. |
 | `UNDECLARED_INPUT_COLUMN` | The actual input schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
