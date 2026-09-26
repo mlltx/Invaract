@@ -58,8 +58,9 @@ object OrgPolicyEvaluator {
     * violations alike, since both happen here, before dispatch.
     */
   def evaluate(contract: Contract, policy: OrgPolicy, now: LocalDate = LocalDate.now()): OrgPolicyEvaluation = {
-    val violations =
-      policy.policies.flatMap(rule => evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, now))
+    val violations = policy.policies.flatMap(rule =>
+      evaluateRule(contract, rule, policy.exemptions, policy.customPolicyTypes, policy.controlTables, now)
+    )
     val (enforceViolations, warnViolations) = violations.partition(_.mode == PolicyMode.Enforce)
     OrgPolicyEvaluation(enforceViolations, warnViolations)
   }
@@ -155,15 +156,35 @@ object OrgPolicyEvaluator {
       .sortBy(_.reviewBy.get.toEpochDay)
   }
 
+  /** `require_control_registration` is special-cased here, ahead of the
+    * ordinary `resolveEvaluator`/`CustomPolicyEvaluator` dispatch every
+    * other `ruleType` goes through: evaluating it needs `controlTables`
+    * (`OrgPolicy`'s own field), which the `CustomPolicyEvaluator` trait's
+    * `evaluate(contract, rule)` signature has no way to receive — the same
+    * reason `typeGuarantees` isn't a `PolicyRule` type at all, but a
+    * separate document-level mechanism (`TypeGuaranteeValidator`). Unlike
+    * `typeGuarantees`, this one still fits the ordinary per-contract,
+    * `PolicyMode`/`PolicyExemption`-covered rule shape closely enough to
+    * stay a real `PolicyType`/`PolicyRule` rather than growing its own
+    * parallel subsystem — it just needs one extra piece of `OrgPolicy`
+    * threaded through to it.
+    */
   private def evaluateRule(
       contract: Contract,
       rule: PolicyRule,
       exemptions: List[PolicyExemption],
       customPolicyTypes: Map[String, String],
+      controlTables: List[ControlTableRegistration],
       now: LocalDate
   ): List[PolicyViolation] =
     if (exemptions.exists(_.covers(contract.id, rule.id, now))) Nil
-    else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
+    else if (rule.ruleType == PolicyType.RequireControlRegistration) {
+      rule.interpret match {
+        case Some(InterpretedPolicy.RequireControlRegistration(requireRegistration)) =>
+          scopedDatasets(contract, rule).flatMap(checkRequireControlRegistration(rule, _, controlTables, requireRegistration, now))
+        case _ => Nil // malformed properties - OrgPolicyValidator's job to report, the same total/safe convention every other type follows
+      }
+    } else resolveEvaluator(rule.ruleType, customPolicyTypes).map(_.evaluate(contract, rule)).getOrElse(Nil)
 
   /** Looks up the `CustomPolicyEvaluator` that evaluates `ruleType` — a
     * built-in `PolicyType` (`builtinEvaluators`, below) always wins when
@@ -182,7 +203,7 @@ object OrgPolicyEvaluator {
       customPolicyTypes.get(ruleType).flatMap(className => CustomPolicyEvaluatorFactory.tryResolve(className).toOption)
     }
 
-  /** The nine built-in `PolicyType`s, each an ordinary
+  /** Nine of `PolicyType.All`'s ten built-in types, each an ordinary
     * `CustomPolicyEvaluator` — the identical trait a third party's own
     * policy type implements via `OrgPolicy.customPolicyTypes`. Nothing
     * about a built-in type's *evaluation* is privileged anymore; what
@@ -192,7 +213,12 @@ object OrgPolicyEvaluator {
     * version of this method had (a hardcoded match on `InterpretedPolicy`,
     * split by `DatasetPolicy`/`ContractPolicy` — see that trait's own doc,
     * still accurate as a *classification* even though evaluation no
-    * longer branches on it directly here).
+    * longer branches on it directly here). The tenth,
+    * `PolicyType.RequireControlRegistration`, is the one exception:
+    * `evaluateRule` special-cases it directly, ahead of this map, since it
+    * needs `OrgPolicy.controlTables` — data no `CustomPolicyEvaluator` can
+    * receive through `evaluate(contract, rule)` alone. See that method's
+    * own doc.
     *
     * Each entry is built via `interpreted` (below): every built-in
     * evaluator's real shape is "start from `rule.interpret`'s already
@@ -442,6 +468,75 @@ object OrgPolicyEvaluator {
     */
   private def collectSensitivityTags(fields: List[Field]): Set[String] =
     fields.flatMap(f => f.sensitivityTags.map(_.toLowerCase) ++ collectSensitivityTags(f.properties)).toSet
+
+  /** `controlTables` is searched for the first *active* (`isActive(now)`)
+    * entry whose `location` matches `dataset.location`
+    * (`CrossContractValidator.sameLocation` — the identical
+    * backslash-tolerant comparison the rest of this module already uses),
+    * exactly mirroring `PolicyExemption.covers`'s own "an expired one no
+    * longer counts" treatment: a lapsed registration is indistinguishable
+    * from no registration at all here, so a real control table has to be
+    * periodically re-approved rather than registered once and forgotten.
+    *
+    * Two independent failure shapes, matching `PolicyType.RequireControlRegistration`'s
+    * own doc:
+    *   - no active match at all: a violation only when `requireRegistration`
+    *     is `true` (the default) — the "CONTROL is the only thing allowed,
+    *     and only once registered" strict mode. `false` means an
+    *     unregistered `CONTROL` dataset is simply not checked at all here.
+    *   - a match exists, but the dataset's schema is missing one of the
+    *     matched entry's `requiredFields`: always a violation, regardless
+    *     of `requireRegistration` — once an organization *has* approved a
+    *     specific shape for this control table, drifting away from it is
+    *     worth flagging whether or not registration itself is mandatory.
+    */
+  private def checkRequireControlRegistration(
+      rule: PolicyRule,
+      dataset: Dataset,
+      controlTables: List[ControlTableRegistration],
+      requireRegistration: Boolean,
+      now: LocalDate
+  ): List[PolicyViolation] = {
+    if (!dataset.datasetType.contains(DatasetType.Control)) Nil
+    else
+      controlTables.find(r => r.isActive(now) && CrossContractValidator.sameLocation(r.location, dataset.location)) match {
+        case None =>
+          if (!requireRegistration) Nil
+          else
+            List(
+              PolicyViolation(
+                rule.id,
+                rule.ruleType,
+                rule.mode,
+                Some(dataset.name),
+                s"organizational policy '${rule.id}'${describe(rule)} declares dataset '${dataset.name}' CONTROL, " +
+                  s"but '${dataset.location}' has no active entry in the org's controlTables registry.",
+                s"Ask the org policy owner to register '${dataset.location}' in controlTables (with an owner and, " +
+                  "optionally, requiredFields), or declare this dataset DATA_ASSET/SOURCE instead if it isn't " +
+                  "genuinely a control table."
+              )
+            )
+        case Some(registration) =>
+          val missing = registration.requiredFields.filterNot(name => dataset.schema.field(name).isDefined)
+          if (missing.isEmpty) Nil
+          else {
+            val missingList = missing.mkString(", ")
+            List(
+              PolicyViolation(
+                rule.id,
+                rule.ruleType,
+                rule.mode,
+                Some(dataset.name),
+                s"organizational policy '${rule.id}'${describe(rule)}: dataset '${dataset.name}' is registered as a " +
+                  s"CONTROL table (owner: ${registration.owner}) at '${dataset.location}', but its schema is " +
+                  s"missing required field(s): $missingList.",
+                s"Add $missingList to dataset '${dataset.name}''s schema, or update the controlTables registration " +
+                  s"for '${dataset.location}' if its expected shape has genuinely changed."
+              )
+            )
+          }
+      }
+  }
 
   /** Whether `contract.extensions` declares `key` at all - and, if `value`
     * is set, that the declared value equals it exactly (case-sensitive:

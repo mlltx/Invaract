@@ -160,6 +160,86 @@ class OrgPolicyValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("malformed or missing properties")))
   }
 
+  test("require_control_registration is valid with no properties at all - defaults requireRegistration to true") {
+    val policy = OrgPolicy("1.0", List(PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty)))
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_control_registration with a boolean 'requireRegistration' property is valid") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map("requireRegistration" -> java.lang.Boolean.FALSE)))
+    )
+    assert(OrgPolicyValidator.validate(policy).isValid)
+  }
+
+  test("require_control_registration with a non-boolean 'requireRegistration' property is an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      List(PolicyRule("bad", PolicyType.RequireControlRegistration, Map("requireRegistration" -> "not-a-boolean")))
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("malformed or missing properties")))
+  }
+
+  test("a controlTables entry with an empty location is an Error") {
+    val policy = OrgPolicy("1.0", controlTables = List(ControlTableRegistration(location = "", owner = "data-platform-team")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("location must not be empty")))
+  }
+
+  test("a controlTables entry with an empty owner is an Error") {
+    val policy = OrgPolicy("1.0", controlTables = List(ControlTableRegistration(location = "control.watermark", owner = "")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("owner must not be empty")))
+  }
+
+  test("two controlTables entries at the same normalized location is an Error") {
+    val policy = OrgPolicy(
+      "1.0",
+      controlTables = List(
+        ControlTableRegistration(location = "control/watermark", owner = "team-a"),
+        ControlTableRegistration(location = "control\\watermark", owner = "team-b")
+      )
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.errors.exists(_.message.contains("Duplicate controlTables location")))
+  }
+
+  test("a controlTables entry with a past reviewBy is a Warning, not an Error") {
+    val now = LocalDate.of(2026, 1, 2)
+    val policy = OrgPolicy(
+      "1.0",
+      controlTables = List(ControlTableRegistration(location = "control.watermark", owner = "team-a", reviewBy = Some(LocalDate.of(2026, 1, 1))))
+    )
+    val result = OrgPolicyValidator.validate(policy, now)
+    assert(result.isValid)
+    assert(result.warnings.exists(_.message.contains("no longer counts as registered")))
+  }
+
+  test("controlTables with entries but no require_control_registration policy attached is a Warning") {
+    val policy = OrgPolicy("1.0", controlTables = List(ControlTableRegistration(location = "control.watermark", owner = "team-a")))
+    val result = OrgPolicyValidator.validate(policy)
+    assert(result.isValid)
+    assert(result.warnings.exists(_.message.contains("purely documentary")))
+  }
+
+  test("controlTables with entries AND a require_control_registration policy attached produces no 'documentary' warning") {
+    val policy = OrgPolicy(
+      "1.0",
+      policies = List(PolicyRule("control-registry", PolicyType.RequireControlRegistration, Map.empty)),
+      controlTables = List(ControlTableRegistration(location = "control.watermark", owner = "team-a"))
+    )
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.warnings.exists(_.message.contains("purely documentary")))
+  }
+
+  test("an empty controlTables list produces no 'documentary' warning either") {
+    val policy = OrgPolicy("1.0")
+    val result = OrgPolicyValidator.validate(policy)
+    assert(!result.warnings.exists(_.message.contains("purely documentary")))
+  }
+
   test("require_extension_if with no 'ifKey'/'thenKey' properties is an Error, not silently accepted") {
     val policy = OrgPolicy("1.0", List(PolicyRule("bad", PolicyType.RequireExtensionIf, Map.empty)))
     val result = OrgPolicyValidator.validate(policy)

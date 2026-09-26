@@ -40,6 +40,59 @@ object PolicyScope {
   */
 case class PolicyCondition(sensitivityTag: String)
 
+/** One entry in the org-owned catalogue of known `CONTROL`-declared datasets
+  * (`OrgPolicy.controlTables`) — the trust boundary that makes `type:
+  * CONTROL` something a contract author has to get *approved*, not merely
+  * self-declare, the same way a `PolicyExemption` can only be granted by
+  * whoever owns the policy document, never the contract's own author. This
+  * list exists independently of whether anything actually checks it — an
+  * organization can maintain it purely as a browsable catalogue of every
+  * known control table, and only start enforcing it once a
+  * `require_control_registration` policy rule is attached (see
+  * `PolicyType.RequireControlRegistration`'s own doc for the opt-in/strict
+  * split this affords).
+  *
+  * @param location the physical location a `CONTROL`-declared dataset must
+  *   match to be considered registered — compared via
+  *   `CrossContractValidator.normalize`/`sameLocation`, the identical
+  *   location-matching this module already uses elsewhere, so a
+  *   Windows-authored path's backslashes don't cause a false mismatch.
+  * @param owner required, unlike every other field here beyond `location`:
+  *   a catalogue entry with no accountable owner defeats the point of
+  *   registering it at all.
+  * @param purpose optional free-form explanation of what this control table
+  *   is for — purely documentary, the catalogue's own equivalent of
+  *   `Dataset.description`.
+  * @param requiredFields the schema shape this control table is expected to
+  *   carry (e.g. `watermark_ts`, `run_id`) — checked against the governed
+  *   contract's own top-level schema fields for the matching dataset
+  *   (`Schema.field`'s own lookup semantics, not recursive into nested
+  *   structs, the same scope `RequireField` already uses). Empty means no
+  *   shape is pinned — registration alone is enough to satisfy
+  *   `require_control_registration` for this entry.
+  * @param reviewBy optional expiry, identical semantics to
+  *   `PolicyExemption.reviewBy`: a registration with no `reviewBy` never
+  *   lapses; one whose `reviewBy` has passed stops counting as registered
+  *   at all (see `isActive`) — the dataset falls back to being treated as
+  *   entirely unregistered, the same way an expired exemption's suppressed
+  *   violation re-surfaces, so a real control table has to be periodically
+  *   re-approved rather than registered once and forgotten forever.
+  */
+case class ControlTableRegistration(
+  location: String,
+  owner: String,
+  purpose: Option[String] = None,
+  requiredFields: List[String] = Nil,
+  reviewBy: Option[LocalDate] = None
+) {
+
+  /** Whether this registration still counts as active as of `now` — `true`
+    * both when there's no expiry at all and when `now` is on-or-before it,
+    * the identical boundary `PolicyExemption.covers` already uses.
+    */
+  def isActive(now: LocalDate): Boolean = reviewBy.forall(!now.isAfter(_))
+}
+
 /** Policy types Invaract itself knows how to interpret during org-policy
   * evaluation (see `InterpretedPolicy`, and `OrgPolicyEvaluator`) —
   * deliberately a narrow, closed set (mirroring `RuleType`'s own role for
@@ -146,6 +199,42 @@ object PolicyType {
     */
   val ForbidControlSensitivityTags = "forbid_control_sensitivity_tags"
 
+  /** A dataset declared `CONTROL` must match a `location` entry in the
+    * org-owned `OrgPolicy.controlTables` catalogue (see
+    * `ControlTableRegistration`'s own doc) — and, when it does, its schema
+    * must carry every field that entry's `requiredFields` names. An entry
+    * whose `reviewBy` has lapsed (`ControlTableRegistration.isActive`
+    * returns `false`) no longer counts as a match, so a `CONTROL` dataset
+    * behind a stale registration is treated as unregistered, not silently
+    * grandfathered in.
+    *
+    * @see optional `requireRegistration` property (default `true`) — the
+    *   knob that makes this either the strict "CONTROL is the only thing
+    *   allowed, and only once registered" gate, or the looser "registration
+    *   is optional, but a dataset that *is* registered must still conform
+    *   to what was approved" mode a platform rolling this out gradually may
+    *   want instead:
+    *   - `true` (default): an unregistered `CONTROL` dataset is itself a
+    *     violation, in addition to a registered-but-nonconforming one.
+    *   - `false`: an unregistered `CONTROL` dataset produces no violation at
+    *     all — only a dataset that *does* match a `controlTables` entry is
+    *     checked, against that entry's own `requiredFields`. This lets an
+    *     organization build the catalogue up gradually (registering real
+    *     control tables as they're found) without retroactively blocking
+    *     every `CONTROL` declaration nobody's registered yet.
+    *
+    * Like every other `DatasetPolicy` here, `scope`/`when` still narrow
+    * which datasets are considered (e.g. `scope: outputs` to only police
+    * `CONTROL` outputs); an exemption still suppresses a violation from
+    * this type the same as any other. Unlike every other built-in type,
+    * though, evaluating this one needs data beyond the rule's own
+    * `properties` — the whole `OrgPolicy.controlTables` catalogue — so
+    * `OrgPolicyEvaluator.evaluateRule` special-cases this `ruleType` ahead
+    * of the ordinary `CustomPolicyEvaluator`/`builtinEvaluators` dispatch
+    * every other built-in type goes through; see that method's own doc.
+    */
+  val RequireControlRegistration = "require_control_registration"
+
   val All: Set[String] = Set(
     RequireCatalog,
     RequireField,
@@ -155,7 +244,8 @@ object PolicyType {
     RequireDatasetDescription,
     RequireExtensionIf,
     RequireDatasetType,
-    ForbidControlSensitivityTags
+    ForbidControlSensitivityTags,
+    RequireControlRegistration
   )
 
   /** The subset of `All` whose `InterpretedPolicy` is a `ContractPolicy`
@@ -227,6 +317,18 @@ object InterpretedPolicy {
     *   `RequireFormat.formats` already gets.
     */
   case class ForbidControlSensitivityTags(tags: Set[String]) extends DatasetPolicy
+
+  /** @param requireRegistration decoded from the rule's own optional
+    *   `requireRegistration` property (default `true` when absent) — see
+    *   `PolicyType.RequireControlRegistration`'s own doc for what `true`
+    *   vs. `false` means. This is the only thing `PolicyRule.interpret`
+    *   decodes for this type: the actual `OrgPolicy.controlTables` catalogue
+    *   this flag is checked against isn't part of any one rule's own
+    *   `properties`, so it can't live in this case class — see
+    *   `OrgPolicyEvaluator.evaluateRule`'s special-case dispatch for this
+    *   `ruleType`.
+    */
+  case class RequireControlRegistration(requireRegistration: Boolean) extends DatasetPolicy
 
   /** @param ifKey/ifValue the condition: `extensions(ifKey)` must be
     *   present (and, if `ifValue` is set, equal to it) for `thenKey`/
@@ -328,6 +430,12 @@ case class PolicyRule(
           PolicyRule.parseStringList(some).filter(_.nonEmpty).map { rawTags =>
             InterpretedPolicy.ForbidControlSensitivityTags(rawTags.map(_.toLowerCase).toSet)
           }
+      }
+    case PolicyType.RequireControlRegistration =>
+      properties.get("requireRegistration") match {
+        case None                       => Some(InterpretedPolicy.RequireControlRegistration(requireRegistration = true))
+        case Some(b: java.lang.Boolean) => Some(InterpretedPolicy.RequireControlRegistration(b.booleanValue))
+        case Some(_)                    => None // malformed - not a boolean
       }
     case PolicyType.RequireExtensionIf =>
       for {
@@ -520,8 +628,14 @@ case class TypeGuaranteeConfig(
   * @param typeGuarantees which "stronger semantic and guarantee validation"
   *   checks (`TypeGuaranteeValidator`) this document turns on across the
   *   contracts it governs, and how a `Contradicts` verdict is handled — see
-  *   `TypeGuaranteeConfig`'s own doc. Appended last (not alongside
-  *   `customPolicyTypes` above) specifically to keep this addition
+  *   `TypeGuaranteeConfig`'s own doc.
+  * @param controlTables the org-owned catalogue of known `CONTROL`-declared
+  *   datasets — see `ControlTableRegistration`'s own doc. Exists
+  *   independently of `policies`: an organization can maintain this purely
+  *   as a browsable catalogue with no enforcement at all, and only start
+  *   checking it once a `require_control_registration` policy rule
+  *   (`PolicyType.RequireControlRegistration`) is attached. Appended last
+  *   (like `typeGuarantees` before it) specifically to keep this addition
   *   binary-compatible with existing compiled callers — see the API
   *   Compatibility Requirement's own worked example for why a new case-class
   *   field belongs at the end, not the middle.
@@ -532,5 +646,6 @@ case class OrgPolicy(
   inject: InjectedDefaults = InjectedDefaults(),
   exemptions: List[PolicyExemption] = Nil,
   customPolicyTypes: Map[String, String] = Map.empty,
-  typeGuarantees: TypeGuaranteeConfig = TypeGuaranteeConfig()
+  typeGuarantees: TypeGuaranteeConfig = TypeGuaranteeConfig(),
+  controlTables: List[ControlTableRegistration] = Nil
 )

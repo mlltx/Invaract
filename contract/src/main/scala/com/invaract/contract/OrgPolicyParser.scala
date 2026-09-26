@@ -76,13 +76,19 @@ object OrgPolicyParser {
 
     val typeGuarantees = parseTypeGuarantees(raw)
 
+    val controlTables = raw.get("controlTables") match {
+      case Some(value) => parseListOf(value, "orgPolicy.controlTables")(parseControlTableRegistration)
+      case None        => Nil
+    }
+
     // Duplicate policy ids, a customPolicyTypes entry colliding with a
-    // built-in PolicyType, or one naming a class that doesn't resolve are
-    // all structurally sound documents (same as a Contract with duplicate
-    // dataset names) — OrgPolicyValidator flags these as Errors/Warnings,
-    // not this parser, the same split ContractValidator uses for duplicate
-    // dataset/field names.
-    OrgPolicy(version, policies, inject, exemptions, customPolicyTypes, typeGuarantees)
+    // built-in PolicyType, one naming a class that doesn't resolve, or a
+    // controlTables entry duplicating a location are all structurally
+    // sound documents (same as a Contract with duplicate dataset names) —
+    // OrgPolicyValidator flags these as Errors/Warnings, not this parser,
+    // the same split ContractValidator uses for duplicate dataset/field
+    // names.
+    OrgPolicy(version, policies, inject, exemptions, customPolicyTypes, typeGuarantees, controlTables)
   }
 
   /** Parses an optional `typeGuarantees:` block — absent entirely means
@@ -190,6 +196,15 @@ object OrgPolicyParser {
     val reason = requireString(raw, "reason", context)
     val reviewBy = optString(raw, "reviewBy").map(parseDate(_, context))
     PolicyExemption(contractId, policyIds, reason, reviewBy)
+  }
+
+  private def parseControlTableRegistration(raw: Map[String, Any], context: String): ControlTableRegistration = {
+    val location = requireString(raw, "location", context)
+    val owner = requireString(raw, "owner", context)
+    val purpose = optString(raw, "purpose")
+    val requiredFields = optStringList(raw, "requiredFields", context)
+    val reviewBy = optString(raw, "reviewBy").map(parseDate(_, context))
+    ControlTableRegistration(location, owner, purpose, requiredFields, reviewBy)
   }
 
   private def parseDate(raw: String, context: String): LocalDate =

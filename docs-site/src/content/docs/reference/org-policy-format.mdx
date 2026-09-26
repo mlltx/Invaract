@@ -63,6 +63,11 @@ customPolicyTypes:
 typeGuarantees:
   enabled: [data_asset_schema_consistency, data_asset_downstream_consumption]
   mode: enforce
+
+controlTables:
+  - location: control.watermark_state
+    owner: streaming-team
+    requiredFields: [watermark_ts, run_id]
 ```
 
 ## Top-level fields
@@ -75,6 +80,7 @@ typeGuarantees:
 | `exemptions` | no | Platform-controlled exceptions — see [Exemptions](#exemptions). |
 | `customPolicyTypes` | no | Maps a `type:` name outside the built-in set to a `CustomPolicyEvaluator` class — see [Custom policy types](#custom-policy-types). |
 | `typeGuarantees` | no | Configures cross-contract type guarantee checks (`data_asset_schema_consistency`/`data_asset_downstream_consumption`, and any registered custom check) — see [Type guarantees](#type-guarantees). Unlike every other field here, only `CrossContractLintCli --org-policy` consults this one; `OrgPolicyEvaluator`/`ContractEnforcementRule` never do, since it governs a check across many contracts, not one contract at a time. |
+| `controlTables` | no | The org-owned catalogue of known `CONTROL`-declared datasets, checked by `require_control_registration` — see [Keep a CONTROL table honest](#keep-a-control-table-honest). |
 
 ## Policy rule fields (`policies[]`)
 
@@ -102,6 +108,7 @@ contract's own `rules:` entries work.
 | `require_dataset_description` | *(none)* | The dataset declares a non-blank `description`. |
 | `require_dataset_type` | `types` (optional) | The dataset declares a `type` ([`DATA_ASSET`/`SOURCE`/`CONTROL`](/guides/declaring-input-and-output-types/)) at all; if `types` is also set (a single string or a list), the declared type must additionally be one of them. |
 | `forbid_control_sensitivity_tags` | `tags` (optional, defaults to `[pii, financial]`) | A dataset already declared `type: CONTROL` must not carry any schema field (recursing into nested structs) tagged with one of `tags`. A dataset with no declared type, or declared `DATA_ASSET`/`SOURCE`, is never in scope — see [Keep a CONTROL table honest](#keep-a-control-table-honest) below. |
+| `require_control_registration` | `requireRegistration` (optional, defaults to `true`) | A dataset already declared `type: CONTROL` must match a `location` entry in the top-level `controlTables` catalogue, and once matched, its schema must carry every field that entry's `requiredFields` names. `requireRegistration: false` skips the "must be registered at all" half but still enforces conformance against any entry that does match. See [Keep a CONTROL table honest](#keep-a-control-table-honest) below. |
 | `require_extension_if` | `ifKey` (required), `ifValue` (optional), `thenKey` (required), `thenValue` (optional) | A conditional `require_extension`: only once the **contract itself** already satisfies `ifKey` (optionally `=ifValue`) must it also satisfy `thenKey` (optionally `=thenValue`). A contract not satisfying the `if` condition at all produces no violation. |
 
 A policy `type` matching neither this set nor a [`customPolicyTypes`](#custom-policy-types)
@@ -120,8 +127,8 @@ type pin therefore uses the distinct key `fieldType`.
 
 <Aside type="note" title="require_extension and require_extension_if check the whole contract, not a dataset">
 `require_catalog`, `require_field`, `field_naming_convention`, `require_format`,
-`require_dataset_description`, `require_dataset_type`, and `forbid_control_sensitivity_tags`
-each check one dataset at a time, honoring `scope`/`when`.
+`require_dataset_description`, `require_dataset_type`, `forbid_control_sensitivity_tags`,
+and `require_control_registration` each check one dataset at a time, honoring `scope`/`when`.
 `require_extension` and `require_extension_if` are different: they check the contract
 document as a whole, exactly once, so `scope`/`when` have no effect on either — setting
 either produces an `OrgPolicyValidator` Warning (not an Error; the rule still evaluates
@@ -173,6 +180,57 @@ like `forbid_control_sensitivity_tags` for checks that are specifically about wh
 type claim itself holds up.
 </Aside>
 
+#### Require CONTROL tables to be registered
+
+`forbid_control_sensitivity_tags` catches one honest signal that a `CONTROL` claim is
+wrong — but it proves nothing about an *unsuspicious* declaration nobody ever actually
+approved. `controlTables` is the org-owned catalogue that closes that gap: it lives in
+the policy document, not the contract, so only whoever owns the policy can add an entry
+— exactly the same trust boundary `exemptions` already gives you.
+
+```yaml
+controlTables:
+  - location: control.watermark_state
+    owner: streaming-team
+    purpose: "Tracks the last successfully processed batch."
+    requiredFields: [watermark_ts, run_id]
+  - location: control.processing_calendar
+    owner: data-platform-team
+    reviewBy: "2026-12-31"
+
+policies:
+  - id: control-table-registry
+    type: require_control_registration
+    mode: enforce
+```
+
+`controlTables` is purely documentary until `require_control_registration` is attached —
+you can build the catalogue up first, then turn on enforcement once it's populated.
+`OrgPolicyValidator` warns if you have entries but no such rule, since that's almost
+always a forgotten step rather than intentional.
+
+The rule has one knob for how far to take it — `requireRegistration`, default `true`:
+
+- **`true` (strict)** — "`CONTROL` is the only thing allowed, and only once registered."
+  A `CONTROL`-declared dataset with no matching `controlTables` entry is itself a
+  violation.
+- **`false` (loose)** — registration is optional; an unregistered `CONTROL` dataset is
+  never flagged for that alone. But a dataset that *is* registered still has to conform:
+  if the matching entry names `requiredFields`, your schema must carry them, or it's a
+  violation regardless of `requireRegistration`. This is the shape a platform rolling
+  the catalogue out gradually wants — register real control tables as you find them,
+  without retroactively blocking everything nobody's gotten to yet.
+
+A registration can lapse, too: give it a `reviewBy` date (identical semantics to an
+exemption's own) and a stale entry stops counting as registered — the dataset falls
+back to unregistered, forcing periodic re-approval rather than a one-time rubber stamp.
+
+<Aside type="tip" title="A catalogue, not just a gate">
+Because `controlTables` is a plain top-level list, it doubles as a browsable inventory of
+every control table your organization has approved — owner, purpose, and expected shape
+all in one place — independent of whether you've turned on enforcement yet.
+</Aside>
+
 ## Custom policy types
 
 `customPolicyTypes` maps a `type:` name your document uses to the fully-qualified class
@@ -196,7 +254,7 @@ trait CustomPolicyEvaluator {
 }
 ```
 
-`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the nine
+`OrgPolicyEvaluator` only consults `customPolicyTypes` for a `type:` outside the ten
 built-in ones — a `customPolicyTypes` key matching a built-in `type` is dead (the built-in
 always wins; `OrgPolicyValidator` warns on this). `PolicyExemption` coverage and `mode:
 enforce`/`warn` splitting still apply automatically to a custom type's violations, exactly
