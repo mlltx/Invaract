@@ -293,8 +293,8 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(checkpointed.queryExecution.analyzed)
 
     result.plan match {
-      case UnknownPlan(_, "LogicalRDD", _) => // expected
-      case other                           => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+      case UnknownPlan(_, "LogicalRDD", _, columns) => assert(columns == List("id", "value"), s"expected the checkpointed relation's own columns, got $columns")
+      case other                                    => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
     }
     assert(result.diagnostics.exists(_.message.toLowerCase.contains("checkpoint")), s"expected a checkpoint-mentioning diagnostic, got ${result.diagnostics}")
   }
@@ -318,11 +318,16 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     val result = SparkPlanAdapter.translate(substituted)
 
-    result.plan match {
-      case UnknownPlan(_, "InMemoryRelation", _)                  => // expected
-      case Project(UnknownPlan(_, "InMemoryRelation", _), _)      => // expected, wrapped in the outer select's Project
-      case other                                                  => fail(s"expected an InMemoryRelation-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+    def findUnknown(plan: Plan): Option[UnknownPlan] = plan match {
+      case u: UnknownPlan => Some(u)
+      case other          => other.children.flatMap(findUnknown).headOption
     }
+    val unknown = findUnknown(result.plan).getOrElse(fail(s"expected an InMemoryRelation-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}"))
+    assert(unknown.sourceType == "InMemoryRelation")
+    // The cached relation's own full columns (id, value), not the outer
+    // .select(col("id"))'s narrower projection - the InMemoryRelation node
+    // substitutes for the cached DataFrame itself, upstream of that select.
+    assert(unknown.columns == List("id", "value"), s"expected the cached relation's own columns, got ${unknown.columns}")
     assert(result.diagnostics.exists(_.message.toLowerCase.contains("cache")), s"expected a cache-mentioning diagnostic, got ${result.diagnostics}")
   }
 

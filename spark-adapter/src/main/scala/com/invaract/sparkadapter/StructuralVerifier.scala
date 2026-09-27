@@ -316,15 +316,27 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
 
 /** One declared input `StructuralVerifier.verify` could not confirm was
   * read, but also could not confidently report as `MissingInput` — the
-  * checked plan contains an `ir.UnknownPlan` node somewhere in it (see
-  * `ir.Plan.containsUnknownPlan`'s own doc), so a real read of this input
-  * may be hidden behind a lineage boundary the translator couldn't see
-  * through, rather than genuinely absent. The most common real cause is a
-  * `.cache()`/`.persist()`/`.checkpoint()` call sitting between the read and
-  * the checked write: Spark's own analyzed plan no longer retains the
-  * original source(s) read before that point (see `SparkPlanAdapter`'s
-  * `InMemoryRelation`/`LogicalRDD` cases), so `collectReads` can genuinely
-  * find no matching `Read` node even though the input really was read.
+  * checked plan contains an `ir.UnknownPlan` node whose own output
+  * `columns` are a superset of this input's declared schema fields, so a
+  * real read of this input specifically may be hidden behind a lineage
+  * boundary the translator couldn't see through, rather than genuinely
+  * absent. The most common real cause is a `.checkpoint()` call sitting
+  * between the read and the checked write: Spark's own analyzed plan no
+  * longer retains the original source(s) read before that point (see
+  * `SparkPlanAdapter`'s `LogicalRDD` case), so `collectReads` can
+  * genuinely find no matching `Read` node even though the input really
+  * was read.
+  *
+  * Deliberately narrower than "the plan contains an `UnknownPlan`
+  * *somewhere*": an `UnknownPlan` unrelated to this input (different
+  * columns entirely — a checkpoint of some other, unrelated dataset) must
+  * never excuse a declared input that's genuinely missing because of a
+  * wrong location, a typo, or a job that simply never reads it. A
+  * contract that's actually wrong must still fail loudly even when the
+  * job happens to use `.checkpoint()`/caching for something unrelated
+  * elsewhere in the same plan — see `StructuralVerifier.verify`'s own
+  * "Inputs hidden behind a lineage boundary" doc for the column-overlap
+  * check this class name's matching is built on.
   *
   * Report-only, the same `Conforms`/`CannotDetermine`-style convention
   * `RoleConformanceCheckResult` already uses for "verification declined to
@@ -338,11 +350,13 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
   * rather than the plan itself.
   *
   * @param unknownNodeTypes the distinct `ir.UnknownPlan.sourceType` values
-  *   found anywhere in the checked plan, in the order first encountered —
-  *   named directly (e.g. `"InMemoryRelation"`, `"LogicalRDD"`) rather than
-  *   folded into a generic "something was unrecognized" message, so a
-  *   person reading a report can immediately tell *why* this input's
-  *   absence isn't proven.
+  *   of specifically the node(s) whose `columns` plausibly cover this
+  *   input, in the order first encountered — named directly (e.g.
+  *   `"LogicalRDD"`) rather than folded into a generic "something was
+  *   unrecognized" message, so a person reading a report can immediately
+  *   tell *why* this input's absence isn't proven. Never includes an
+  *   unrelated `UnknownPlan` elsewhere in the plan whose columns don't
+  *   overlap with this input's declared fields.
   */
 case class UnverifiableInput(inputName: String, inputLocation: String, unknownNodeTypes: List[String]) {
   def toMap: Map[String, Any] =
@@ -561,20 +575,40 @@ object VerificationResult {
   * perfectly correctly can still show no `Read` node for it by the time
   * this method sees the plan.
   *
-  * `verify` distinguishes the two: when `plan.containsUnknownPlan` is
-  * `false`, an unmatched declared input is reported exactly as before —
-  * `MISSING_INPUT`, blocking the write. When it's `true`, the same
-  * unmatched input becomes an `UnverifiableInput` instead — report-only,
-  * never a `Violation`, never blocking — naming the distinct
-  * `ir.UnknownPlan.sourceType`s found in the plan (`unknownNodeTypes`) so a
-  * person reading the result can tell *why* the absence isn't proven. This
-  * is deliberately the narrower, non-blocking `RoleConsistencyVerifier`-style
-  * precedent (`Conforms`/`Contradicts`/`CannotDetermine`), not
-  * `UNVERIFIABLE_WRITE`'s fail-closed one: the uncertainty here is about one
-  * input's visibility, not the whole write's meaning, and failing closed on
-  * it would only turn a job that already reads its input just fine into a
-  * newly-blocked one — strictly worse than the false positive it would
-  * replace.
+  * `verify` distinguishes the two **per input**, not for the plan as a
+  * whole — this matters: "the plan contains *some* `UnknownPlan`
+  * somewhere" is not, on its own, evidence about any *particular* missing
+  * input. A job can perfectly innocently `.checkpoint()` one dataset
+  * while a completely unrelated declared input is missing because of a
+  * genuine typo/wrong location/forgotten read — that input must still
+  * fail loudly. So for each declared input with no matching `Read`,
+  * `verify` looks for an `ir.UnknownPlan` node anywhere in `plan` whose
+  * own `columns` are a superset of that specific input's declared schema
+  * field names (and only when the input actually declares at least one
+  * field — an input with no declared fields has no signal to match
+  * against, and defaults to confidently missing rather than vacuously
+  * "always plausible"). No matching node → `MISSING_INPUT`, blocking the
+  * write, exactly as before this check existed. A matching node → the
+  * same input becomes an `UnverifiableInput` instead — report-only, never
+  * a `Violation`, never blocking — naming just the matching node's own
+  * `ir.UnknownPlan.sourceType`(s) (`unknownNodeTypes`), not every unknown
+  * node anywhere in the plan, so a person reading the result can tell
+  * *why* this specific input's absence isn't proven. This is deliberately
+  * the narrower, non-blocking `RoleConsistencyVerifier`-style precedent
+  * (`Conforms`/`Contradicts`/`CannotDetermine`), not `UNVERIFIABLE_WRITE`'s
+  * fail-closed one: the uncertainty here is about one input's visibility,
+  * not the whole write's meaning, and failing closed on it would only turn
+  * a job that already reads its input just fine into a newly-blocked one —
+  * strictly worse than the false positive it would replace.
+  *
+  * The column-overlap check is a heuristic, not a proof — a checkpoint
+  * whose columns happen to coincide with an unrelated missing input's own
+  * declared fields could still, in principle, produce a false negative.
+  * It's a deliberate, disclosed trade-off: requiring the *full* declared
+  * field set to be a subset (not just some overlap) keeps that window
+  * narrow, and matches the common real shape (`.checkpoint()` on the
+  * input's own `Dataset` before any projection narrows it, so its output
+  * columns are exactly, or a superset of, the original read's columns).
   *
   * ## Visibility
   *
@@ -604,43 +638,42 @@ private[sparkadapter] object StructuralVerifier {
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
 
     // A declared input with no matching Read node in the plan is normally
-    // confidently missing - but not when the plan also contains an
-    // ir.UnknownPlan node (see ir.Plan.containsUnknownPlan's own doc): a
-    // .cache()/.persist()/.checkpoint() call upstream of the real read
-    // erases Spark's own analyzed-plan lineage back to it (see
-    // SparkPlanAdapter's InMemoryRelation/LogicalRDD cases), so "no Read
-    // node found" no longer proves "never read." That case is reported as
-    // UnverifiableInput instead - honest uncertainty, not a false-positive
-    // MissingInput violation blocking a job that reads its input just fine.
+    // confidently missing - but not when some ir.UnknownPlan node's own
+    // columns are a superset of THIS input's declared fields (see
+    // UnverifiableInput's own doc for why it must be checked per input,
+    // not "does an UnknownPlan exist anywhere in the plan": an unrelated
+    // checkpoint elsewhere must never excuse a genuinely wrong/missing
+    // declared input). That covered case is reported as UnverifiableInput
+    // instead - honest uncertainty, not a false-positive MissingInput
+    // violation blocking a job that reads its input just fine.
     val declaredButNotRead = contract.inputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
 
     val (missingInputs, unverifiableInputs) =
       // Genuinely equivalent mutant, confirmed via scoped Stryker4s: forcing
       // this condition to `false` still produces (Nil, Nil) whenever
-      // declaredButNotRead really is empty, since both branches below only
-      // ever .map over declaredButNotRead - mapping an empty list is Nil
-      // either way, so no test could ever observe a difference. Kept as an
-      // explicit branch anyway, for the same reason the two branches below
-      // are spelled out separately rather than combined: readability of
-      // "empty / confidently missing / unverifiable" as three distinct
-      // cases, not two.
+      // declaredButNotRead really is empty, since the classification below
+      // only ever operates on declaredButNotRead's own elements - mapping
+      // an empty list is Nil either way, so no test could ever observe a
+      // difference. Kept as an explicit branch anyway, for the same reason
+      // "empty / confidently missing / unverifiable" reads as three
+      // distinct cases, not two.
       if (declaredButNotRead.isEmpty) (Nil, Nil)
-      else if (!plan.containsUnknownPlan)
-        (
-          declaredButNotRead.map(input =>
-            Violation(
-              ViolationType.MissingInput,
-              s"declared input '${input.name}' (${input.location}) was not read by this plan",
-              remediation =
-                s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed.",
-              location = Some(input.location)
-            )
-          ),
-          Nil
-        )
       else {
-        val unknownTypes = collectUnknownSourceTypes(plan)
-        (Nil, declaredButNotRead.map(input => UnverifiableInput(input.name, input.location, unknownTypes)))
+        val unknownPlans = collectUnknownPlans(plan)
+        val classified = declaredButNotRead.map(input => input -> coveringUnknownPlans(input, unknownPlans))
+        val missing = classified.collect { case (input, covering) if covering.isEmpty =>
+          Violation(
+            ViolationType.MissingInput,
+            s"declared input '${input.name}' (${input.location}) was not read by this plan",
+            remediation =
+              s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed.",
+            location = Some(input.location)
+          )
+        }
+        val unverifiable = classified.collect { case (input, covering) if covering.nonEmpty =>
+          UnverifiableInput(input.name, input.location, covering.map(_.sourceType).filter(_.nonEmpty).distinct)
+        }
+        (missing, unverifiable)
       }
 
     val undeclaredInputs =
@@ -861,19 +894,27 @@ private[sparkadapter] object StructuralVerifier {
     case other    => other.children.flatMap(collectReads)
   }
 
-  /** The distinct `ir.UnknownPlan.sourceType` values found anywhere in
-    * `plan`, in the order first encountered — feeds `UnverifiableInput`'s
-    * `unknownNodeTypes`. A blank `sourceType` (the front-end declined to
-    * name one) contributes nothing, since it would only add a
-    * meaningless empty string to the reported list.
+  /** Every `ir.UnknownPlan` node found anywhere in `plan` — feeds
+    * `coveringUnknownPlans`' per-input matching below.
     */
-  private def collectUnknownSourceTypes(plan: Plan): List[String] = {
-    val here = plan match {
-      case u: UnknownPlan if u.sourceType.nonEmpty => List(u.sourceType)
-      case _                                       => Nil
-    }
-    here ++ plan.children.flatMap(collectUnknownSourceTypes)
-  }.distinct
+  private def collectUnknownPlans(plan: Plan): List[UnknownPlan] = plan match {
+    case u: UnknownPlan => u :: u.children.flatMap(collectUnknownPlans)
+    case other          => other.children.flatMap(collectUnknownPlans)
+  }
+
+  /** The `unknownPlans` entries whose own `columns` are a superset of
+    * `input`'s declared schema field names — see `UnverifiableInput`'s own
+    * doc for why a declared input's absence is only excused by a
+    * *specific* matching `UnknownPlan`, never by "some UnknownPlan exists
+    * somewhere in this plan" regardless of what it actually is. An input
+    * declaring no fields at all has no signal to match against and never
+    * matches anything here, rather than vacuously matching everything.
+    */
+  private def coveringUnknownPlans(input: Dataset, unknownPlans: List[UnknownPlan]): List[UnknownPlan] = {
+    val declaredFields = input.schema.fields.map(_.name).toSet
+    if (declaredFields.isEmpty) Nil
+    else unknownPlans.filter(u => declaredFields.subsetOf(u.columns.toSet))
+  }
 
   // private[sparkadapter], not private: reused by SensitivityLineage to
   // match a traced ColumnRef's qualifier (a Read's actual reported

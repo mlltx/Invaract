@@ -761,7 +761,11 @@ private[sparkadapter] object SparkPlanAdapter {
           "A .cache()/.persist() call sits upstream of this point - Spark's own analyzed plan no longer retains " +
             "the original source(s) read before caching; Invaract cannot see past this boundary"
         )
-        ir.UnknownPlan(s"InMemoryRelation(cached/persisted relation, ${imr.output.size} column(s))", "InMemoryRelation")
+        ir.UnknownPlan(
+          s"InMemoryRelation(cached/persisted relation, ${imr.output.size} column(s))",
+          "InMemoryRelation",
+          columns = safeColumnsOf(imr)
+        )
 
       case lrdd: LogicalRDD =>
         report(
@@ -770,12 +774,16 @@ private[sparkadapter] object SparkPlanAdapter {
             "Spark's own analyzed plan no longer retains the original source(s) read before it; Invaract cannot " +
             "see past this boundary"
         )
-        ir.UnknownPlan(s"LogicalRDD(checkpointed/RDD-backed relation, ${lrdd.output.size} column(s))", "LogicalRDD")
+        ir.UnknownPlan(
+          s"LogicalRDD(checkpointed/RDD-backed relation, ${lrdd.output.size} column(s))",
+          "LogicalRDD",
+          columns = safeColumnsOf(lrdd)
+        )
 
       case other =>
         val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"
         report(other.getClass.getSimpleName, "No translation for this plan node; using an opaque placeholder")
-        ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList)
+        ir.UnknownPlan(description, other.getClass.getSimpleName, other.children.map(translatePlan).toList, safeColumnsOf(other))
     }
 
     /** A LIMIT clause's row cap is virtually always a plain integer literal
@@ -795,6 +803,19 @@ private[sparkadapter] object SparkPlanAdapter {
 
     private def safeSimpleString(plan: LogicalPlan): String =
       scala.util.Try(plan.simpleString(80)).getOrElse(plan.getClass.getName)
+
+    /** `.output` is defined on every real Catalyst `LogicalPlan`, and this
+      * translator only ever runs against an already-analyzed plan (see this
+      * object's own "Integration point" doc) - so this should never
+      * actually throw in practice. Guarded the same defensive way as
+      * `safeSimpleString` anyway, since `ir.UnknownPlan.columns` is only
+      * ever a best-effort hint (see its own doc), and this translator's own
+      * contract is that it never throws on an unrecognized construct - an
+      * empty `columns` list (the "genuinely unknown" case that field's doc
+      * already documents) is a fully safe degradation, an exception is not.
+      */
+    private def safeColumnsOf(plan: LogicalPlan): List[String] =
+      scala.util.Try(plan.output.map(_.name).toList).getOrElse(Nil)
 
     // ---- Expression translation ----------------------------------------
 

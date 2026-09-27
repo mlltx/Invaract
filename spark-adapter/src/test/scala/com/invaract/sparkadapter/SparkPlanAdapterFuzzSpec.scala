@@ -191,7 +191,7 @@ class SparkPlanAdapterFuzzSpec extends AnyFunSuite with BeforeAndAfterAll with S
   private def assertUnsupportedIsDiagnosed(plan: Plan, diagnostics: List[Diagnostic]): Unit = {
     def walk(p: Plan): Unit = {
       p match {
-        case UnknownPlan(description, _, _) =>
+        case UnknownPlan(description, _, _, _) =>
           assert(
             diagnostics.nonEmpty,
             s"plan contains UnknownPlan($description) but no Diagnostic was recorded"

@@ -93,43 +93,14 @@ class PlanSpec extends AnyFunSuite {
     assert(Limit(input, 10).children == List(input))
   }
 
-  // -- containsUnknownPlan -----------------------------------------------
+  // -- UnknownPlan.columns -------------------------------------------------
 
-  test("containsUnknownPlan is false for a plan with no UnknownPlan anywhere") {
-    val read = Read(DatasetRef("raw.orders"))
-    val plan = Filter(Project(read, Nil), Literal(true, "boolean"))
-    assert(!plan.containsUnknownPlan)
+  test("UnknownPlan.columns defaults to Nil when a front-end doesn't supply it") {
+    assert(UnknownPlan("Generate(explode)", sourceType = "Generate").columns.isEmpty)
   }
 
-  test("containsUnknownPlan is true when the plan's own root is an UnknownPlan") {
-    assert(UnknownPlan("Generate(explode)", sourceType = "Generate").containsUnknownPlan)
-  }
-
-  test("containsUnknownPlan is true when an UnknownPlan is buried arbitrarily deep beneath other nodes") {
-    val buried = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
-    val plan = Sort(Filter(Project(buried, Nil), Literal(true, "boolean")), Nil)
-    assert(plan.containsUnknownPlan)
-  }
-
-  test("containsUnknownPlan checks every branch of a multi-child node, not just the first") {
-    val clean = Read(DatasetRef("raw.orders"))
-    val tainted = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
-
-    // Left branch clean, right branch tainted - must still find it.
-    assert(Join(clean, tainted, JoinType.Inner).containsUnknownPlan)
-    // Left branch tainted, right branch clean - order must not matter.
-    assert(Join(tainted, clean, JoinType.Inner).containsUnknownPlan)
-    // Every branch clean - must not report a false positive.
-    assert(!Join(clean, clean, JoinType.Inner).containsUnknownPlan)
-  }
-
-  test("containsUnknownPlan is false for a leaf Read, which has no children to search") {
-    assert(!Read(DatasetRef("raw.orders")).containsUnknownPlan)
-  }
-
-  test("an UnknownPlan's own listed children are still searched for a nested UnknownPlan") {
-    val nestedUnknown = UnknownPlan("InMemoryRelation", sourceType = "InMemoryRelation")
-    val outer = UnknownPlan("Generate(explode)", sourceType = "Generate", children = List(nestedUnknown))
-    assert(outer.containsUnknownPlan)
+  test("UnknownPlan.columns carries through whatever column names a front-end could determine") {
+    val unknown = UnknownPlan("InMemoryRelation(cached, 2 column(s))", sourceType = "InMemoryRelation", columns = List("id", "value"))
+    assert(unknown.columns == List("id", "value"))
   }
 }

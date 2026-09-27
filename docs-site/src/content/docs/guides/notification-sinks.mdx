@@ -116,10 +116,13 @@ the write on their own; only a `Contradicts` entry does, and only that one also 
 
 `unverifiableInputs` is `[]` for the overwhelming majority of checks, and always on — there's
 no flag to enable it. It's populated when a declared input has no matching read anywhere in
-the checked plan, but the plan also contains a construct Invaract's Spark translator
-couldn't see through (most commonly a `.checkpoint()` call sitting between the real read and
-the checked write, which severs Spark's own analyzed-plan lineage back to it). Each entry
-names the input (`inputName`/`inputLocation`) and the real cause (`unknownNodeTypes`, e.g.
+the checked plan, but a construct Invaract's Spark translator couldn't see through (most
+commonly a `.checkpoint()` call sitting between the real read and the checked write, which
+severs Spark's own analyzed-plan lineage back to it) has output columns matching that
+*specific* input's declared schema — an unrelated `.checkpoint()`/cache elsewhere in the same
+plan, with different columns, never excuses a genuinely missing input (a wrong location, a
+typo, a forgotten read): that still fails as `MISSING_INPUT`. Each entry names the input
+(`inputName`/`inputLocation`) and the real cause (`unknownNodeTypes`, e.g.
 `["LogicalRDD"]`) — report-only, the same as `dataQuality`/`roleConformance` above: an entry
 here never becomes a `MISSING_INPUT` violation and never blocks the write, since an absence
 Invaract can't actually prove must never be treated as a caught defect (the same reasoning

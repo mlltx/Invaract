@@ -22,26 +22,6 @@ object JoinType {
   */
 sealed trait Plan {
   def children: List[Plan]
-
-  /** Whether this plan, or anything beneath it, contains an `UnknownPlan`
-    * node — the honest "there's a real-engine construct in here this
-    * translator could not fully see through" signal `UnknownPlan`'s own
-    * doc already establishes ("the rest of the tree stays inspectable,
-    * `Lineage` degrades to 'no known source' for anything that would need
-    * to resolve through it"). `Lineage.trace` already honors that
-    * degradation at the column level (see its own `UnknownPlan` cases); a
-    * caller checking a coarser, *structural* property instead — "is this
-    * declared input really absent, or could it be hidden behind an opaque
-    * boundary this translator couldn't see past" — needs the identical
-    * honesty and should consult this before treating an absence anywhere
-    * in the plan as a confidently-proven fact. A concrete method on the
-    * sealed trait itself (not requiring each case class to implement it)
-    * so adding it doesn't touch every existing `Plan` subtype.
-    */
-  def containsUnknownPlan: Boolean = this match {
-    case _: UnknownPlan => true
-    case _              => children.exists(_.containsUnknownPlan)
-  }
 }
 
 /** The catalog identity a `Read`/`Write` was actually observed to resolve
@@ -211,5 +191,13 @@ case class Window(
   * @param children any sub-plans the front-end could still translate even
   *   though it couldn't interpret this node itself — so unsupported
   *   structure never hides understood structure nested beneath it.
+  * @param columns the unrepresented node's own output column names, when
+  *   the front-end could determine them (every real Catalyst `LogicalPlan`
+  *   exposes `.output`, so a Spark front-end can always populate this) —
+  *   `Nil` when genuinely unknown. Lets a consumer reason about *which*
+  *   upstream dataset this opaque node could plausibly be standing in for
+  *   (e.g. `StructuralVerifier` deciding whether a declared input's
+  *   absence is hidden behind exactly this boundary, or is unrelated to
+  *   it) without needing this IR to carry a full schema representation.
   */
-case class UnknownPlan(description: String, sourceType: String = "", children: List[Plan] = Nil) extends Plan
+case class UnknownPlan(description: String, sourceType: String = "", children: List[Plan] = Nil, columns: List[String] = Nil) extends Plan

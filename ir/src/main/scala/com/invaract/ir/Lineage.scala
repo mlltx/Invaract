@@ -199,7 +199,7 @@ object Lineage {
 
     // An untranslated construct declares no known output list either —
     // there is nothing to trace past it.
-    case UnknownPlan(_, _, _) => done(Nil)
+    case UnknownPlan(_, _, _, _) => done(Nil)
   }
 
   private def named(name: String, p: Provenance): ColumnLineage =
@@ -394,6 +394,6 @@ object Lineage {
 
     case Write(_, input, _, _, _) => tailcall(resolveInScopeT(ref, input))
 
-    case UnknownPlan(_, _, _) => done(None)
+    case UnknownPlan(_, _, _, _) => done(None)
   }
 }

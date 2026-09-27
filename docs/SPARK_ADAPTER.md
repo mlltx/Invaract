@@ -518,18 +518,38 @@ manifests through the enforcement path.
 placeholder — see its own doc), named specifically (`"InMemoryRelation"`/
 `"LogicalRDD"`, not a bare Catalyst class name) rather than left to the
 generic unrecognized-node fallback, purely so a person reading the result
-can tell *why*. `ir.Plan.containsUnknownPlan` reports whether an
-`UnknownPlan` exists anywhere in a plan, and `StructuralVerifier.verify`
-consults it before deciding how to report a declared input with no matching
-`Read`:
+can tell *why*. It also carries the unrepresented node's own output
+`columns` (`ir.UnknownPlan.columns`, populated from Catalyst's `.output` —
+every real `LogicalPlan` node has one), since a coarse "does *some*
+`UnknownPlan` exist anywhere in this plan" signal is dangerously
+under-specified on its own: a job innocently checkpointing one dataset
+must never excuse a *completely unrelated* declared input that's missing
+because of a wrong location, a typo, or a job that simply forgot to read
+it — that must still fail loudly. So `StructuralVerifier.verify` checks
+**per declared input**, not for the plan as a whole: for each unmatched
+input, it looks for an `ir.UnknownPlan` node whose own `columns` are a
+superset of that specific input's declared schema field names (and only
+when the input actually declares at least one field — an input with no
+declared fields has no signal to match against, and defaults to
+confidently missing rather than vacuously "always plausible"):
 
-- `plan.containsUnknownPlan` is `false` → unchanged: a confident
-  `MISSING_INPUT` violation, blocking the write, exactly as before this fix.
-- `plan.containsUnknownPlan` is `true` → the same unmatched input becomes an
+- No `UnknownPlan` node's columns cover this input → unchanged: a
+  confident `MISSING_INPUT` violation, blocking the write, exactly as
+  before this fix — even if a wholly unrelated `UnknownPlan` (different
+  columns) exists elsewhere in the same plan.
+- A covering `UnknownPlan` node exists → this input becomes an
   `UnverifiableInput` instead (`inputName`, `inputLocation`,
-  `unknownNodeTypes` — the distinct `ir.UnknownPlan.sourceType`s found in the
-  plan) — report-only, never a `Violation`, never blocking, collected on
+  `unknownNodeTypes` — the distinct `ir.UnknownPlan.sourceType`s of
+  specifically the matching node(s), not every unknown node in the plan) —
+  report-only, never a `Violation`, never blocking, collected on
   `VerificationResult.unverifiableInputs`.
+
+This column-overlap check is a heuristic, not a proof — requiring the
+*full* declared field set to be a subset (not just partial overlap) keeps
+the false-negative window as narrow as a cheap, schema-only check can:
+the common real shape is a `.checkpoint()` on the input's own `Dataset`
+before any projection narrows it, so its output columns are exactly, or a
+superset of, the original read's columns.
 
 Deliberately the same non-blocking `RoleConsistencyVerifier`-style
 precedent (`Conforms`/`Contradicts`/`CannotDetermine`) as role-consistency
