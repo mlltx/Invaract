@@ -581,19 +581,38 @@ manifests through the enforcement path.</p>
 placeholder — see its own doc), named specifically (<code dir="auto">"InMemoryRelation"</code>/
 <code dir="auto">"LogicalRDD"</code>, not a bare Catalyst class name) rather than left to the
 generic unrecognized-node fallback, purely so a person reading the result
-can tell <em>why</em>. <code dir="auto">ir.Plan.containsUnknownPlan</code> reports whether an
-<code dir="auto">UnknownPlan</code> exists anywhere in a plan, and <code dir="auto">StructuralVerifier.verify</code>
-consults it before deciding how to report a declared input with no matching
-<code dir="auto">Read</code>:</p>
+can tell <em>why</em>. It also carries the unrepresented node’s own output
+<code dir="auto">columns</code> (<code dir="auto">ir.UnknownPlan.columns</code>, populated from Catalyst’s <code dir="auto">.output</code> —
+every real <code dir="auto">LogicalPlan</code> node has one), since a coarse “does <em>some</em>
+<code dir="auto">UnknownPlan</code> exist anywhere in this plan” signal is dangerously
+under-specified on its own: a job innocently checkpointing one dataset
+must never excuse a <em>completely unrelated</em> declared input that’s missing
+because of a wrong location, a typo, or a job that simply forgot to read
+it — that must still fail loudly. So <code dir="auto">StructuralVerifier.verify</code> checks
+<strong>per declared input</strong>, not for the plan as a whole: for each unmatched
+input, it looks for an <code dir="auto">ir.UnknownPlan</code> node whose own <code dir="auto">columns</code> are a
+superset of that specific input’s declared schema field names (and only
+when the input actually declares at least one field — an input with no
+declared fields has no signal to match against, and defaults to
+confidently missing rather than vacuously “always plausible”):</p>
 <ul>
-<li><code dir="auto">plan.containsUnknownPlan</code> is <code dir="auto">false</code> → unchanged: a confident
-<code dir="auto">MISSING_INPUT</code> violation, blocking the write, exactly as before this fix.</li>
-<li><code dir="auto">plan.containsUnknownPlan</code> is <code dir="auto">true</code> → the same unmatched input becomes an
+<li>No <code dir="auto">UnknownPlan</code> node’s columns cover this input → unchanged: a
+confident <code dir="auto">MISSING_INPUT</code> violation, blocking the write, exactly as
+before this fix — even if a wholly unrelated <code dir="auto">UnknownPlan</code> (different
+columns) exists elsewhere in the same plan.</li>
+<li>A covering <code dir="auto">UnknownPlan</code> node exists → this input becomes an
 <code dir="auto">UnverifiableInput</code> instead (<code dir="auto">inputName</code>, <code dir="auto">inputLocation</code>,
-<code dir="auto">unknownNodeTypes</code> — the distinct <code dir="auto">ir.UnknownPlan.sourceType</code>s found in the
-plan) — report-only, never a <code dir="auto">Violation</code>, never blocking, collected on
+<code dir="auto">unknownNodeTypes</code> — the distinct <code dir="auto">ir.UnknownPlan.sourceType</code>s of
+specifically the matching node(s), not every unknown node in the plan) —
+report-only, never a <code dir="auto">Violation</code>, never blocking, collected on
 <code dir="auto">VerificationResult.unverifiableInputs</code>.</li>
 </ul>
+<p>This column-overlap check is a heuristic, not a proof — requiring the
+<em>full</em> declared field set to be a subset (not just partial overlap) keeps
+the false-negative window as narrow as a cheap, schema-only check can:
+the common real shape is a <code dir="auto">.checkpoint()</code> on the input’s own <code dir="auto">Dataset</code>
+before any projection narrows it, so its output columns are exactly, or a
+superset of, the original read’s columns.</p>
 <p>Deliberately the same non-blocking <code dir="auto">RoleConsistencyVerifier</code>-style
 precedent (<code dir="auto">Conforms</code>/<code dir="auto">Contradicts</code>/<code dir="auto">CannotDetermine</code>) as role-consistency
 and static data-quality checking above, not <code dir="auto">UNVERIFIABLE_WRITE</code>’s
