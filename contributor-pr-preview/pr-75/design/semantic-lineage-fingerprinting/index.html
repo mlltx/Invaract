@@ -1347,6 +1347,30 @@ that isn’t already governed by “is a sink configured.”</p>
 reuses it directly, computing <code dir="auto">TransformationFingerprinter.fingerprint (translated.plan, mutation)</code> immediately alongside <code dir="auto">StructuralVerifier. verify</code>’s own call, only when <code dir="auto">options.computeFingerprint</code> is true. No
 second Spark-plan translation, and no fingerprinting of anything
 <code dir="auto">SparkPlanAdapter</code> hasn’t already turned into IR.</p>
+<p><strong>A checkpoint boundary is disclosed, not silently absorbed, at this same
+call site.</strong> <code dir="auto">docs/SPARK_ADAPTER.md</code>’s “Inputs hidden behind a lineage
+boundary” section describes <code dir="auto">CheckpointLineageTracker</code> — a mechanism
+<code dir="auto">ContractEnforcementRule</code> uses to prove a declared <em>input</em> was genuinely
+read behind a <code dir="auto">.checkpoint()</code> boundary, by observing the real pre-checkpoint
+plan via a <code dir="auto">QueryExecutionListener</code>. Fingerprinting does not get, and does
+not attempt, the equivalent for the transformation graph itself: a
+<code dir="auto">.checkpoint()</code>-produced <code dir="auto">ir.UnknownPlan</code> still canonicalizes exactly per
+§8 (its <code dir="auto">columns</code> excluded from the hash, same as <code dir="auto">description</code> — see that
+section’s own reasoning), so the fingerprint remains <strong>fully stable and
+deterministic for the plan shape actually visible to it</strong>, but it cannot
+reflect whatever real transformation happened upstream of a boundary it
+cannot see through. Reconstructing that would mean the same node-level
+lineage correlation <code dir="auto">CheckpointLineageTracker</code>’s own doc explains is
+infeasible from outside <code dir="auto">Dataset.checkpoint()</code>’s private implementation
+(confirmed empirically, not assumed — see that class’s doc for the RDD-id
+experiment that ruled it out) — genuinely necessary here, unlike for input
+validation, which only needs a per-input membership question the session-
+scoped registry already answers without any node identity at all. Rather
+than leave this undiscovered until a fingerprint is compared with different
+expectations than it can meet, <code dir="auto">ContractEnforcementRule</code> logs a WARN,
+naming the responsible <code dir="auto">UnknownPlan.sourceType</code>(s), whenever
+<code dir="auto">computeFingerprint</code> produces a fingerprint whose plan contains one or more
+checkpoint-shaped <code dir="auto">UnknownPlan</code> nodes.</p>
 <p><code dir="auto">mutation</code> here is not a second, independent extraction: this same branch
 already calls <code dir="auto">RowMutationSupport.classify(plan)</code> once, to feed
 <code dir="auto">RuleVerifier.verify</code>’s DML rule checks (<code dir="auto">merge_condition</code>,
