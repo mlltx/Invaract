@@ -67,7 +67,7 @@ mimaPreviousArtifacts := Set(
 versionScheme := Some("early-semver")
 
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.5.0",
+  "com.invaract" %% "invaract-ir" % "0.6.0",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test"
 )

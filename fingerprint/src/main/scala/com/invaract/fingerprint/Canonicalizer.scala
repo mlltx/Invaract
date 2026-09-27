@@ -374,8 +374,17 @@ object Canonicalizer {
         "Window",
         inputNode :: CTag("PartitionBy", canonicallySorted(partitionNodes)) :: CTag("OrderBy", orderNodes) :: windowNodes
       )
-    case UnknownPlan(_description, sourceType, children) =>
+    case UnknownPlan(_description, sourceType, children, _columns) =>
       // Same description/sourceType split as UnknownExpression above.
+      // `columns` (the unrepresented node's own output column names, added
+      // for StructuralVerifier's per-input lineage-boundary matching - see
+      // ir.UnknownPlan's own doc) is deliberately left out of the
+      // fingerprint the same way `_description` already is: it's metadata
+      // about what this opaque node looks like from the outside, not a
+      // canonicalized fact about the transformation's own logic. Disclosed,
+      // not yet revisited: whether a checkpoint boundary's changed output
+      // shape should itself move the fingerprint is an open question this
+      // change doesn't answer.
       traverseT(children)(canonicalizePlanT(_, scope)).map(nodes => CTag("UnknownPlan", stringLeaf(sourceType) :: nodes))
   }
 
@@ -564,7 +573,7 @@ object Canonicalizer {
         case (None, None)        => None
       }
     case Write(_, input, _, _, _) => tailcall(resolveRefDeepT(ref, input))
-    case UnknownPlan(_, _, _)     => done(None)
+    case UnknownPlan(_, _, _, _)  => done(None)
   }
 
   /** The per-output deep-resolved expression for every output name a
@@ -600,7 +609,7 @@ object Canonicalizer {
         } yield l ++ r
       case Write(_, input, _, _, _) => tailcall(outputsOfT(input))
       case Read(_, _, _)            => done(Nil)
-      case UnknownPlan(_, _, _)     => done(Nil)
+      case UnknownPlan(_, _, _, _)  => done(Nil)
     }
     // Later entries win on a duplicate name, matching Map's own
     // to-Map-from-list convention - a real, well-formed plan does not
