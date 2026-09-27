@@ -688,6 +688,20 @@ object ContractEnforcementRule {
             // transformation happened upstream of the boundary - logged
             // once per check, at WARN, naming the responsible sourceType(s),
             // rather than left for a reader of the hash alone to discover.
+            // checkpointBoundaries/its .nonEmpty guard have real Survived
+            // mutants (confirmed via scoped Stryker4s, not silently
+            // ignored) that this codebase's test suite genuinely cannot
+            // kill today - not because they're equivalent (forcing the
+            // guard to `true` really would log a wrong, spurious WARN when
+            // no boundary exists), but because nothing in this suite
+            // asserts on log output at all, the same "no observable
+            // consequence to the checks this suite actually makes" category
+            // docs/SPARK_ADAPTER.md's "Mutation testing" section already
+            // documents for a StringLiteral mutant on human-readable
+            // message text. Adding log-capture test infrastructure purely
+            // to kill these felt disproportionate to a WARN whose own
+            // content is disclosure, not a decision this method makes -
+            // left here, disclosed, rather than silently unaddressed.
             val checkpointBoundaries = StructuralVerifier.collectUnknownPlans(translated.plan).map(_.sourceType).filter(_.nonEmpty).distinct
             if (checkpointBoundaries.nonEmpty) {
               logger.warn(
