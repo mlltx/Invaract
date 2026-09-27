@@ -24,7 +24,7 @@ flag in the same case class, the identical way).
 
 | Type | Meaning |
 |---|---|
-| `MISSING_INPUT` | A dataset the contract declares as an input was never read by the plan. Not reported when a construct Invaract couldn't fully translate (most commonly a `.checkpoint()` boundary) has output columns matching that specific input's declared schema — an unrelated boundary elsewhere in the plan never excuses a genuinely missing input. See `unverifiableInputs` in the [notification sinks guide](/guides/notification-sinks/#what-an-event-looks-like) for that report-only alternative. |
+| `MISSING_INPUT` | A dataset the contract declares as an input was never read by the plan. Not reported when there's real, per-input evidence the input was read behind a lineage boundary Invaract can no longer see through — most commonly a `.checkpoint()` call: either a construct Invaract couldn't fully translate has output columns matching that specific input's declared schema, or Invaract directly observed that input's own location being read into a `.checkpoint()`/`.localCheckpoint()` earlier in the same job. Either way, an unrelated boundary (or an unrelated checkpoint elsewhere in the job) never excuses a genuinely missing input. See `unverifiableInputs` in the [notification sinks guide](/guides/notification-sinks/#what-an-event-looks-like) for that report-only alternative. |
 | `UNDECLARED_INPUT` | The plan read a dataset the contract doesn't declare as an input. Only checked when `rejectUndeclaredInputs` is enabled. |
 | `MISSING_INPUT_FIELD` | A required input field is absent from the actual input schema. |
 | `UNDECLARED_INPUT_COLUMN` | The actual input schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |

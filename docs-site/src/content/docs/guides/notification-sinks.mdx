@@ -116,12 +116,17 @@ the write on their own; only a `Contradicts` entry does, and only that one also 
 
 `unverifiableInputs` is `[]` for the overwhelming majority of checks, and always on — there's
 no flag to enable it. It's populated when a declared input has no matching read anywhere in
-the checked plan, but a construct Invaract's Spark translator couldn't see through (most
-commonly a `.checkpoint()` call sitting between the real read and the checked write, which
-severs Spark's own analyzed-plan lineage back to it) has output columns matching that
-*specific* input's declared schema — an unrelated `.checkpoint()`/cache elsewhere in the same
-plan, with different columns, never excuses a genuinely missing input (a wrong location, a
-typo, a forgotten read): that still fails as `MISSING_INPUT`. Each entry names the input
+the checked plan, but there's real, per-input evidence the input was read behind a lineage
+boundary — most commonly a `.checkpoint()` call sitting between the real read and the checked
+write, which severs Spark's own analyzed-plan lineage back to it. Two ways that evidence can
+show up: a construct Invaract's Spark translator couldn't see through has output columns
+matching that *specific* input's declared schema, or Invaract directly observed that input's
+own location being read into a `.checkpoint()`/`.localCheckpoint()` earlier in the same job —
+which also covers a checkpoint sitting after a multi-input join with a column-dropping
+`.select()`, where the checkpoint's own output columns no longer match any single input's full
+schema. Either way, an unrelated `.checkpoint()`/cache elsewhere in the same plan or job never
+excuses a genuinely missing input (a wrong location, a typo, a forgotten read): that still
+fails as `MISSING_INPUT`. Each entry names the input
 (`inputName`/`inputLocation`) and the real cause (`unknownNodeTypes`, e.g.
 `["LogicalRDD"]`) — report-only, the same as `dataQuality`/`roleConformance` above: an entry
 here never becomes a `MISSING_INPUT` violation and never blocks the write, since an absence

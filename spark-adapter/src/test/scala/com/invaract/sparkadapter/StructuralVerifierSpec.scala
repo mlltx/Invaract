@@ -353,6 +353,185 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
   }
 
+  test("checkpointObservedLocations alone (no column coverage) still produces UnverifiableInput - the multi-input-join-with-dropped-columns case") {
+    // The exact gap column-overlap matching can't close on its own: a
+    // checkpoint following a join of two inputs with a column-dropping
+    // .select() has an output schema that covers neither input's full
+    // declared field set. Here the UnknownPlan's own columns (order_id,
+    // customer_name) don't cover 'orders' declared fields (id, value) at
+    // all - coveringUnknownPlans alone would report a confident
+    // MISSING_INPUT - but the tracker's real-location signal says
+    // 'orders' was genuinely observed being read into this checkpoint.
+    val contract = realDemoContract() // 'orders' declares id, value at demo/input/sample.csv
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id", "customer_name"))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("order_id", IntegerType),
+      checkpointObservedLocations = Set("demo/input/sample.csv")
+    )
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${result.violations}")
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.inputLocation == "demo/input/sample.csv")
+  }
+
+  test("checkpointObservedLocations without ANY UnknownPlan in the plan does not excuse a missing input - real evidence alone isn't corroboration") {
+    // The tracker's registry is session-wide, not scoped to this write - so
+    // it can never be sufficient on its own. This plan has no lineage
+    // boundary in it at all (no UnknownPlan anywhere), so even though
+    // 'orders' was observed being read into SOME checkpoint elsewhere in
+    // the session, there's no evidence a boundary sits upstream of THIS
+    // write specifically - must still fail closed.
+    val contract = realDemoContract()
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Read(DatasetRef("demo/input/unrelated.csv"))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("id", IntegerType),
+      checkpointObservedLocations = Set("demo/input/sample.csv")
+    )
+
+    assert(
+      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")),
+      s"expected a confident MISSING_INPUT, got violations: ${result.violations}"
+    )
+    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
+  }
+
+  test("checkpointObservedLocations for a DIFFERENT input does not excuse this one - stays per-input even for the real-location signal") {
+    // Same per-input discipline the column-overlap signal already has,
+    // proven for the new signal too: 'lookup' is genuinely missing, and the
+    // tracker only ever observed a completely different input ('orders')
+    // being checkpointed - that must never excuse 'lookup'.
+    val contract = ContractParser.parse(
+      """id: two_input_demo
+        |version: "1.0.0"
+        |inputs:
+        |  - name: orders
+        |    location: demo/input/sample.csv
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |  - name: lookup
+        |    location: demo/input/lookup.csv
+        |    schema:
+        |      fields:
+        |        - name: code
+        |          type: string
+        |          required: true
+        |outputs:
+        |  - name: result
+        |    location: demo/output/result.parquet
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: integer
+        |          required: true
+        |""".stripMargin
+    )
+    val orders = Read(DatasetRef("demo/input/sample.csv"))
+    val checkpointOfSomethingElse = com.invaract.ir.UnknownPlan("LogicalRDD(unrelated)", "LogicalRDD", columns = List("timestamp"))
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Union(List(orders, checkpointOfSomethingElse))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("id", IntegerType),
+      checkpointObservedLocations = Set("demo/input/sample.csv") // 'orders', not 'lookup'
+    )
+
+    assert(!result.passed, "a genuinely missing declared input must still block the write")
+    assert(
+      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/lookup.csv")),
+      s"expected a blocking MISSING_INPUT for 'lookup', got violations: ${result.violations}"
+    )
+    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
+  }
+
+  test("checkpointObservedLocations is matched via locationsMatch's normalized-suffix rule, not raw string equality") {
+    val contract = realDemoContract() // declares demo/input/sample.csv (a relative path)
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id"))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("order_id", IntegerType),
+      // An absolute file: URI ending with the contract's own relative
+      // location - the exact shape CheckpointLineageTracker's real
+      // captures produce, not the bare declared path.
+      checkpointObservedLocations = Set("file:/home/user/Invaract/demo/input/sample.csv")
+    )
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(result.unverifiableInputs.exists(_.inputName == "orders"))
+  }
+
+  test("unknownNodeTypes for a real-location-only match lists every UnknownPlan's sourceType in the plan, since which one it was isn't known") {
+    val contract = realDemoContract()
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.Union(List(
+        com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id")),
+        com.invaract.ir.UnknownPlan("Generate(explode)", "Generate", columns = List("exploded_col"))
+      ))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("order_id", IntegerType),
+      checkpointObservedLocations = Set("demo/input/sample.csv")
+    )
+
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.unknownNodeTypes.sorted == List("Generate", "LogicalRDD"), s"expected both sourceTypes, got: ${entry.unknownNodeTypes}")
+  }
+
+  test("column-overlap coverage is checked before the real-location signal, but either alone is sufficient - not a double count") {
+    // Both signals independently say 'orders' is unverifiable here (the
+    // UnknownPlan's own columns cover it AND the tracker observed it) -
+    // must still produce exactly one UnverifiableInput entry.
+    val contract = realDemoContract()
+    val plan = com.invaract.ir.Write(
+      DatasetRef("demo/output/result.parquet"),
+      com.invaract.ir.UnknownPlan("InMemoryRelation(cached)", "InMemoryRelation", columns = List("id", "value"))
+    )
+
+    val result = StructuralVerifier.verify(
+      contract,
+      plan,
+      inputSchemas = Nil,
+      outputSchema = new StructType().add("id", IntegerType),
+      checkpointObservedLocations = Set("demo/input/sample.csv")
+    )
+
+    assert(result.unverifiableInputs.count(_.inputName == "orders") == 1)
+  }
+
   test("UNDECLARED_INPUT is reported only when rejectUndeclaredInputs is enabled") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()

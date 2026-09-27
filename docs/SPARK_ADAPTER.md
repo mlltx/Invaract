@@ -546,10 +546,71 @@ confidently missing rather than vacuously "always plausible"):
 
 This column-overlap check is a heuristic, not a proof — requiring the
 *full* declared field set to be a subset (not just partial overlap) keeps
-the false-negative window as narrow as a cheap, schema-only check can:
-the common real shape is a `.checkpoint()` on the input's own `Dataset`
-before any projection narrows it, so its output columns are exactly, or a
-superset of, the original read's columns.
+the false-negative window as narrow as a cheap, schema-only check can. But
+it has a real gap of its own: a checkpoint following a **multi-input join
+with a column-dropping `.select()`** (a normal, even encouraged pattern —
+shrinking what gets persisted before a checkpoint) has an output whose
+columns cover *neither* input's full declared field set, so the
+column-overlap check alone reports a false-positive `MISSING_INPUT` for
+both — exactly the case that was still open, disclosed, and unfixed as of
+this section's first version.
+
+### `CheckpointLineageTracker`: real observed lineage, not a column guess
+
+`CheckpointLineageTracker` (a `QueryExecutionListener`, registered once per
+session by `ContractEnforcementRule.forContract` — unconditionally, not
+tied to the notification-sink opt-in `SparkAdapterListener` is) closes that
+gap by observing, rather than guessing. `Dataset.checkpoint()`/
+`.localCheckpoint()` both fire `QueryExecutionListener.onSuccess("checkpoint" |
+"localCheckpoint", qe, _)` — confirmed directly against Spark 3.5.7's real
+bytecode, not assumed — with `qe` being the **real, pre-checkpoint**
+`QueryExecution`: the join, with its original `Read` nodes still intact,
+before Spark's own checkpoint substitution ever erases them. The tracker
+translates that plan through the same `SparkPlanAdapter`/`StructuralVerifier.collectReads`
+pipeline every other read is recognized through, and accumulates every
+real `Read` location it finds into a session-scoped registry.
+
+`StructuralVerifier.verify` then has two independent signals for a
+declared input with no matching `Read`, either sufficient on its own:
+
+1. Column-overlap (above) — the only signal for a non-checkpoint
+   `UnknownPlan` (an unsupported connector shape), and the only one
+   available if the tracker's own asynchronous capture hasn't landed yet
+   (see below).
+2. **Real observed lineage** — the input's own declared location was
+   genuinely read into some checkpoint this session executed, **and** the
+   plan being checked itself contains at least one checkpoint-shaped
+   `UnknownPlan` as corroborating evidence a boundary genuinely sits
+   upstream of *this* write. The second condition is load-bearing, not
+   incidental: without it, an unrelated write's own unrelated checkpoint
+   could excuse a different write's genuinely missing input — the same
+   whole-plan imprecision an earlier version of this fix already had to
+   close once, for the column-overlap check, kept from opening again here.
+
+Why this doesn't try to prove *which* `UnknownPlan` a captured checkpoint
+became: an earlier design attempted exactly that, correlating a captured
+checkpoint execution to the specific node it produces via the underlying
+RDD's `.id`. Confirmed empirically that this doesn't work — the RDD Spark
+actually embeds in the checkpoint's result is created by an internal
+`.map()` call inside `Dataset.checkpoint()`'s own private implementation,
+never exposed to any listener and not reproducible by re-executing the
+captured `QueryExecution` from outside it (a real test showed a different
+RDD id every time). Node-level correlation like that is real lineage
+reconstruction, genuinely necessary for fingerprinting a transformation
+graph (see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md, which does not attempt
+it either, and discloses why). Contract validation only needs a narrower,
+per-input membership question — "was this location read by *some*
+checkpoint this session ran" — answerable without any node identity at
+all, which is what makes the session-scoped registry sufficient here
+without needing to solve that harder problem.
+
+Timing, disclosed rather than hidden: `onSuccess` fires on Spark's
+asynchronous listener-bus thread, confirmed directly (not assumed) to lag
+a few milliseconds behind `.checkpoint()`'s own return to the caller's
+thread. A write checked before that callback has run sees an empty (or
+stale) registry for that specific checkpoint, falling back to the
+column-overlap signal alone for it — the same narrow window that signal's
+own heuristic nature already discloses, not a new one.
 
 Deliberately the same non-blocking `RoleConsistencyVerifier`-style
 precedent (`Conforms`/`Contradicts`/`CannotDetermine`) as role-consistency

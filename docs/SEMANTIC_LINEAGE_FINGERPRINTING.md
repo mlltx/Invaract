@@ -1280,6 +1280,31 @@ verify`'s own call, only when `options.computeFingerprint` is true. No
 second Spark-plan translation, and no fingerprinting of anything
 `SparkPlanAdapter` hasn't already turned into IR.
 
+**A checkpoint boundary is disclosed, not silently absorbed, at this same
+call site.** `docs/SPARK_ADAPTER.md`'s "Inputs hidden behind a lineage
+boundary" section describes `CheckpointLineageTracker` — a mechanism
+`ContractEnforcementRule` uses to prove a declared *input* was genuinely
+read behind a `.checkpoint()` boundary, by observing the real pre-checkpoint
+plan via a `QueryExecutionListener`. Fingerprinting does not get, and does
+not attempt, the equivalent for the transformation graph itself: a
+`.checkpoint()`-produced `ir.UnknownPlan` still canonicalizes exactly per
+§8 (its `columns` excluded from the hash, same as `description` — see that
+section's own reasoning), so the fingerprint remains **fully stable and
+deterministic for the plan shape actually visible to it**, but it cannot
+reflect whatever real transformation happened upstream of a boundary it
+cannot see through. Reconstructing that would mean the same node-level
+lineage correlation `CheckpointLineageTracker`'s own doc explains is
+infeasible from outside `Dataset.checkpoint()`'s private implementation
+(confirmed empirically, not assumed — see that class's doc for the RDD-id
+experiment that ruled it out) — genuinely necessary here, unlike for input
+validation, which only needs a per-input membership question the session-
+scoped registry already answers without any node identity at all. Rather
+than leave this undiscovered until a fingerprint is compared with different
+expectations than it can meet, `ContractEnforcementRule` logs a WARN,
+naming the responsible `UnknownPlan.sourceType`(s), whenever
+`computeFingerprint` produces a fingerprint whose plan contains one or more
+checkpoint-shaped `UnknownPlan` nodes.
+
 `mutation` here is not a second, independent extraction: this same branch
 already calls `RowMutationSupport.classify(plan)` once, to feed
 `RuleVerifier.verify`'s DML rule checks (`merge_condition`,

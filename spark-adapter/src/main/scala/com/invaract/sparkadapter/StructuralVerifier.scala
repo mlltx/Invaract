@@ -582,33 +582,45 @@ object VerificationResult {
   * while a completely unrelated declared input is missing because of a
   * genuine typo/wrong location/forgotten read — that input must still
   * fail loudly. So for each declared input with no matching `Read`,
-  * `verify` looks for an `ir.UnknownPlan` node anywhere in `plan` whose
-  * own `columns` are a superset of that specific input's declared schema
-  * field names (and only when the input actually declares at least one
-  * field — an input with no declared fields has no signal to match
-  * against, and defaults to confidently missing rather than vacuously
-  * "always plausible"). No matching node → `MISSING_INPUT`, blocking the
-  * write, exactly as before this check existed. A matching node → the
-  * same input becomes an `UnverifiableInput` instead — report-only, never
-  * a `Violation`, never blocking — naming just the matching node's own
-  * `ir.UnknownPlan.sourceType`(s) (`unknownNodeTypes`), not every unknown
-  * node anywhere in the plan, so a person reading the result can tell
-  * *why* this specific input's absence isn't proven. This is deliberately
-  * the narrower, non-blocking `RoleConsistencyVerifier`-style precedent
-  * (`Conforms`/`Contradicts`/`CannotDetermine`), not `UNVERIFIABLE_WRITE`'s
-  * fail-closed one: the uncertainty here is about one input's visibility,
-  * not the whole write's meaning, and failing closed on it would only turn
-  * a job that already reads its input just fine into a newly-blocked one —
-  * strictly worse than the false positive it would replace.
+  * `verify` (via `unverifiableEvidenceFor` — see its own doc for the full
+  * two-signal design) looks for real, per-input evidence the input was
+  * read behind a lineage boundary: either an `ir.UnknownPlan` node whose
+  * own output columns happen to cover the input's declared fields (a
+  * heuristic guess from shape alone), or — precisely, not a guess — the
+  * input's own declared location genuinely observed being read into a
+  * `.checkpoint()`/`.localCheckpoint()` this session actually executed
+  * (`CheckpointLineageTracker`, populated from the real pre-checkpoint
+  * plan's own `Read` nodes), combined with this plan itself containing at
+  * least one checkpoint-shaped `UnknownPlan` as corroborating evidence a
+  * boundary genuinely sits upstream of *this* write. No evidence →
+  * `MISSING_INPUT`, blocking the write, exactly as before this check
+  * existed. Evidence → the same input becomes an `UnverifiableInput`
+  * instead — report-only, never a `Violation`, never blocking — naming the
+  * responsible node's own `ir.UnknownPlan.sourceType`(s)
+  * (`unknownNodeTypes`), not every unknown node anywhere in the plan, so a
+  * person reading the result can tell *why* this specific input's absence
+  * isn't proven. This is deliberately the narrower, non-blocking
+  * `RoleConsistencyVerifier`-style precedent (`Conforms`/`Contradicts`/
+  * `CannotDetermine`), not `UNVERIFIABLE_WRITE`'s fail-closed one: the
+  * uncertainty here is about one input's visibility, not the whole write's
+  * meaning, and failing closed on it would only turn a job that already
+  * reads its input just fine into a newly-blocked one — strictly worse
+  * than the false positive it would replace.
   *
-  * The column-overlap check is a heuristic, not a proof — a checkpoint
-  * whose columns happen to coincide with an unrelated missing input's own
-  * declared fields could still, in principle, produce a false negative.
-  * It's a deliberate, disclosed trade-off: requiring the *full* declared
-  * field set to be a subset (not just some overlap) keeps that window
-  * narrow, and matches the common real shape (`.checkpoint()` on the
-  * input's own `Dataset` before any projection narrows it, so its output
-  * columns are exactly, or a superset of, the original read's columns).
+  * The column-overlap signal alone is a heuristic, not a proof — a
+  * checkpoint whose columns happen to coincide with an unrelated missing
+  * input's own declared fields could still, in principle, produce a false
+  * negative. `CheckpointLineageTracker`'s real-location signal exists
+  * specifically to close the gap that heuristic can't: a checkpoint
+  * following a multi-input join with a column-dropping `.select()` (a
+  * normal, even encouraged pattern) has an output whose columns no longer
+  * cover any single input's full declared field set, so the column-overlap
+  * check alone would wrongly report `MISSING_INPUT` for inputs that were
+  * genuinely read. The tracker's own doc covers what real evidence it can
+  * and can't establish (session-scoped, not per-node-correlated — see its
+  * "Why this doesn't try to correlate" section for why that's the right
+  * scope for this check specifically, as opposed to fingerprinting, which
+  * needs true node-level lineage and doesn't get it from this either).
   *
   * ## Visibility
   *
@@ -632,20 +644,18 @@ private[sparkadapter] object StructuralVerifier {
     plan: Plan,
     inputSchemas: List[(String, StructType)],
     outputSchema: StructType,
-    options: VerificationOptions = VerificationOptions()
+    options: VerificationOptions = VerificationOptions(),
+    checkpointObservedLocations: Set[String] = Set.empty
   ): VerificationResult = {
     val actualReads = collectReads(plan)
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
 
     // A declared input with no matching Read node in the plan is normally
-    // confidently missing - but not when some ir.UnknownPlan node's own
-    // columns are a superset of THIS input's declared fields (see
-    // UnverifiableInput's own doc for why it must be checked per input,
-    // not "does an UnknownPlan exist anywhere in the plan": an unrelated
-    // checkpoint elsewhere must never excuse a genuinely wrong/missing
-    // declared input). That covered case is reported as UnverifiableInput
-    // instead - honest uncertainty, not a false-positive MissingInput
-    // violation blocking a job that reads its input just fine.
+    // confidently missing - but not when there's real evidence it was read
+    // behind a lineage boundary this plan can no longer see through (see
+    // unverifiableEvidenceFor's own doc). That covered case is reported as
+    // UnverifiableInput instead - honest uncertainty, not a false-positive
+    // MissingInput violation blocking a job that reads its input just fine.
     val declaredButNotRead = contract.inputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
 
     val (missingInputs, unverifiableInputs) =
@@ -660,8 +670,10 @@ private[sparkadapter] object StructuralVerifier {
       if (declaredButNotRead.isEmpty) (Nil, Nil)
       else {
         val unknownPlans = collectUnknownPlans(plan)
-        val classified = declaredButNotRead.map(input => input -> coveringUnknownPlans(input, unknownPlans))
-        val missing = classified.collect { case (input, covering) if covering.isEmpty =>
+        val classified = declaredButNotRead.map(input =>
+          input -> unverifiableEvidenceFor(input, unknownPlans, checkpointObservedLocations)
+        )
+        val missing = classified.collect { case (input, None) =>
           Violation(
             ViolationType.MissingInput,
             s"declared input '${input.name}' (${input.location}) was not read by this plan",
@@ -670,8 +682,8 @@ private[sparkadapter] object StructuralVerifier {
             location = Some(input.location)
           )
         }
-        val unverifiable = classified.collect { case (input, covering) if covering.nonEmpty =>
-          UnverifiableInput(input.name, input.location, covering.map(_.sourceType).filter(_.nonEmpty).distinct)
+        val unverifiable = classified.collect { case (input, Some(sourceTypes)) =>
+          UnverifiableInput(input.name, input.location, sourceTypes)
         }
         (missing, unverifiable)
       }
@@ -896,8 +908,15 @@ private[sparkadapter] object StructuralVerifier {
 
   /** Every `ir.UnknownPlan` node found anywhere in `plan` — feeds
     * `coveringUnknownPlans`' per-input matching below.
+    *
+    * `private[sparkadapter]`, not `private`: `ContractEnforcementRule`
+    * reuses this directly to decide whether a computed
+    * `TransformationFingerprint` crossed a lineage boundary worth
+    * disclosing (see that call site's own doc) - the same "reuse, don't
+    * re-derive" reasoning `collectReads`'s own widened visibility above
+    * already documents.
     */
-  private def collectUnknownPlans(plan: Plan): List[UnknownPlan] = plan match {
+  private[sparkadapter] def collectUnknownPlans(plan: Plan): List[UnknownPlan] = plan match {
     case u: UnknownPlan => u :: u.children.flatMap(collectUnknownPlans)
     case other          => other.children.flatMap(collectUnknownPlans)
   }
@@ -914,6 +933,54 @@ private[sparkadapter] object StructuralVerifier {
     val declaredFields = input.schema.fields.map(_.name).toSet
     if (declaredFields.isEmpty) Nil
     else unknownPlans.filter(u => declaredFields.subsetOf(u.columns.toSet))
+  }
+
+  /** Whether `input`'s absence from `plan`'s own `Read` nodes might be a
+    * lineage-boundary artifact rather than a genuine miss — `None` means
+    * confidently missing (`MISSING_INPUT`); `Some(sourceTypes)` means
+    * `UnverifiableInput`, naming the unknown node type(s) responsible. Two
+    * independent signals, either sufficient on its own, checked in this
+    * order:
+    *
+    *  1. Column-overlap (`coveringUnknownPlans`) — some `UnknownPlan`'s own
+    *     output columns are a superset of `input`'s declared fields. A
+    *     heuristic guess from the checkpoint's own *output* shape, not
+    *     what actually fed it — breaks the moment a checkpoint follows a
+    *     multi-input join with a column-dropping `.select()`, since no
+    *     single input's full field set survives that projection. Still the
+    *     only signal available for a non-checkpoint `UnknownPlan` (an
+    *     unsupported connector shape has no `CheckpointLineageTracker`
+    *     equivalent), and the only one available if the tracker's own
+    *     asynchronous capture hasn't landed yet by the time this write is
+    *     checked (see that class's own doc on timing).
+    *  2. Real observed lineage (`checkpointObservedLocations`, populated
+    *     by `CheckpointLineageTracker` from the *actual* pre-checkpoint
+    *     plan's own `Read` nodes, never a guess) — `input`'s own declared
+    *     location was genuinely read by some `.checkpoint()`/
+    *     `.localCheckpoint()` this session executed, **and** `plan` itself
+    *     contains at least one checkpoint-shaped `UnknownPlan` as
+    *     corroborating evidence a lineage boundary genuinely sits
+    *     somewhere upstream of *this* write — never "was read by a
+    *     checkpoint somewhere in this session" alone, which would reopen
+    *     the exact whole-plan imprecision this file's own history already
+    *     documents fixing (an unrelated write's own unrelated checkpoint
+    *     must never excuse a different write's genuinely missing input).
+    *
+    * Both signals stay per-input: an unrelated checkpoint or opaque node
+    * can never excuse a different, genuinely missing declared input.
+    */
+  private def unverifiableEvidenceFor(
+    input: Dataset,
+    unknownPlans: List[UnknownPlan],
+    checkpointObservedLocations: Set[String]
+  ): Option[List[String]] = {
+    val columnCovering = coveringUnknownPlans(input, unknownPlans)
+    if (columnCovering.nonEmpty)
+      Some(columnCovering.map(_.sourceType).filter(_.nonEmpty).distinct)
+    else if (unknownPlans.nonEmpty && checkpointObservedLocations.exists(loc => locationsMatch(input.location, loc)))
+      Some(unknownPlans.map(_.sourceType).filter(_.nonEmpty).distinct)
+    else
+      None
   }
 
   // private[sparkadapter], not private: reused by SensitivityLineage to
