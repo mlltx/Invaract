@@ -316,27 +316,22 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
 
 /** One declared input `StructuralVerifier.verify` could not confirm was
   * read, but also could not confidently report as `MissingInput` — the
-  * checked plan contains an `ir.UnknownPlan` node whose own output
-  * `columns` are a superset of this input's declared schema fields, so a
-  * real read of this input specifically may be hidden behind a lineage
-  * boundary the translator couldn't see through, rather than genuinely
-  * absent. The most common real cause is a `.checkpoint()` call sitting
-  * between the read and the checked write: Spark's own analyzed plan no
-  * longer retains the original source(s) read before that point (see
-  * `SparkPlanAdapter`'s `LogicalRDD` case), so `collectReads` can
-  * genuinely find no matching `Read` node even though the input really
-  * was read.
+  * checked plan still contains a lineage boundary (`.checkpoint()` or a
+  * cached relation) that `SparkPlanAdapter` could not resolve back to the
+  * plan it was made from (see `CheckpointRegistry`: an origin the check
+  * rule never saw, an evicted one, or an ambiguous one), so a real read of
+  * this input may be hidden behind it rather than genuinely absent.
+  * Spark's own analyzed plan no longer retains the original source(s) read
+  * before such a boundary, so `collectReads` can find no matching `Read`
+  * node even though the input really was read.
   *
-  * Deliberately narrower than "the plan contains an `UnknownPlan`
-  * *somewhere*": an `UnknownPlan` unrelated to this input (different
-  * columns entirely — a checkpoint of some other, unrelated dataset) must
-  * never excuse a declared input that's genuinely missing because of a
-  * wrong location, a typo, or a job that simply never reads it. A
-  * contract that's actually wrong must still fail loudly even when the
-  * job happens to use `.checkpoint()`/caching for something unrelated
-  * elsewhere in the same plan — see `StructuralVerifier.verify`'s own
-  * "Inputs hidden behind a lineage boundary" doc for the column-overlap
-  * check this class name's matching is built on.
+  * Only *unresolved* boundaries count: a checkpoint whose origin the
+  * registry resolved has its real `Read` nodes spliced back into the plan,
+  * so an input read through it is simply read, and one that isn't is a
+  * plain `MissingInput` — an unrelated, fully-resolved checkpoint elsewhere
+  * in the plan can never excuse a genuinely missing input. Any other
+  * `UnknownPlan` (a node the translator merely has no case for) doesn't
+  * count either: it is not evidence a *read* was hidden.
   *
   * Report-only, the same `Conforms`/`CannotDetermine`-style convention
   * `RoleConformanceCheckResult` already uses for "verification declined to
@@ -350,13 +345,11 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
   * rather than the plan itself.
   *
   * @param unknownNodeTypes the distinct `ir.UnknownPlan.sourceType` values
-  *   of specifically the node(s) whose `columns` plausibly cover this
-  *   input, in the order first encountered — named directly (e.g.
-  *   `"LogicalRDD"`) rather than folded into a generic "something was
-  *   unrecognized" message, so a person reading a report can immediately
-  *   tell *why* this input's absence isn't proven. Never includes an
-  *   unrelated `UnknownPlan` elsewhere in the plan whose columns don't
-  *   overlap with this input's declared fields.
+  *   of the unresolved boundary node(s) in the plan, in the order first
+  *   encountered (e.g. `"LogicalRDD"`) — named directly rather than folded
+  *   into a generic "something was unrecognized" message, so a person
+  *   reading a report can immediately tell *why* this input's absence isn't
+  *   proven.
   */
 case class UnverifiableInput(inputName: String, inputLocation: String, unknownNodeTypes: List[String]) {
   def toMap: Map[String, Any] =
@@ -590,66 +583,33 @@ object VerificationResult {
   * ## Inputs hidden behind a lineage boundary
   *
   * A declared input with no matching `Read` node anywhere in `plan` is
-  * usually genuinely missing — `MISSING_INPUT`. But "no matching `Read`
-  * node found" is not always the same claim as "never read": a
-  * `.checkpoint()` call sitting between the real read and the checked write
-  * erases Spark's own analyzed-plan lineage back to it (`SparkPlanAdapter`'s
-  * `LogicalRDD` case produces an `ir.UnknownPlan` for exactly this reason —
-  * see its own doc, which also confirms directly, rather than assumes, that
-  * a bare `.cache()`/`.persist()` alone does *not* reach this method's
-  * caller this way — `ContractEnforcementRule`'s check rule fires before
-  * Spark's own cache substitution ever happens; `InMemoryRelation`'s own
-  * case exists for translation completeness, not because a plain `.cache()`
-  * reaches here in practice), so a job that reads its declared input
-  * perfectly correctly can still show no `Read` node for it by the time
-  * this method sees the plan.
+  * usually genuinely missing — `MISSING_INPUT`. But a `.checkpoint()` call
+  * sitting between the real read and the checked write erases Spark's own
+  * analyzed-plan lineage back to it (`LogicalRDD` is a leaf that retains no
+  * `LogicalPlan`). `SparkPlanAdapter` handles this *before* `verify` ever
+  * runs: given a `CheckpointRegistry`, it resolves each `LogicalRDD` back to
+  * the pre-checkpoint plan the check rule saw when that Dataset was
+  * created, and splices it in — so the plan `verify` receives already
+  * contains the real `Read` nodes, and every check below (missing,
+  * undeclared, schema, catalog, lineage, fingerprint) simply works.
   *
-  * `verify` distinguishes the two **per input**, not for the plan as a
-  * whole — this matters: "the plan contains *some* `UnknownPlan`
-  * somewhere" is not, on its own, evidence about any *particular* missing
-  * input. A job can perfectly innocently `.checkpoint()` one dataset
-  * while a completely unrelated declared input is missing because of a
-  * genuine typo/wrong location/forgotten read — that input must still
-  * fail loudly. So for each declared input with no matching `Read`,
-  * `verify` (via `unverifiableEvidenceFor` — see its own doc for the full
-  * two-signal design) looks for real, per-input evidence the input was
-  * read behind a lineage boundary: either an `ir.UnknownPlan` node whose
-  * own output columns happen to cover the input's declared fields (a
-  * heuristic guess from shape alone), or — precisely, not a guess — the
-  * input's own declared location genuinely observed being read into a
-  * `.checkpoint()`/`.localCheckpoint()` this session actually executed
-  * (`CheckpointLineageTracker`, populated from the real pre-checkpoint
-  * plan's own `Read` nodes), combined with this plan itself containing at
-  * least one checkpoint-shaped `UnknownPlan` as corroborating evidence a
-  * boundary genuinely sits upstream of *this* write. No evidence →
-  * `MISSING_INPUT`, blocking the write, exactly as before this check
-  * existed. Evidence → the same input becomes an `UnverifiableInput`
-  * instead — report-only, never a `Violation`, never blocking — naming the
-  * responsible node's own `ir.UnknownPlan.sourceType`(s)
-  * (`unknownNodeTypes`), not every unknown node anywhere in the plan, so a
-  * person reading the result can tell *why* this specific input's absence
-  * isn't proven. This is deliberately the narrower, non-blocking
+  * What reaches `verify` unresolved is what the registry could not resolve
+  * (an origin the rule never saw, an evicted one, or several plans reading
+  * *different* sources sharing the boundary's output columns) and any
+  * `InMemoryRelation`. For those, "no matching `Read`" is not the same claim
+  * as "never read", so a declared input that is unread *and* has an
+  * unresolved boundary somewhere in the plan is reported as an
+  * `UnverifiableInput` instead of `MISSING_INPUT` — report-only, never a
+  * `Violation`, naming the boundary's `ir.UnknownPlan.sourceType`
+  * (`unknownNodeTypes`). This is deliberately the narrower, non-blocking
   * `RoleConsistencyVerifier`-style precedent (`Conforms`/`Contradicts`/
   * `CannotDetermine`), not `UNVERIFIABLE_WRITE`'s fail-closed one: the
-  * uncertainty here is about one input's visibility, not the whole write's
-  * meaning, and failing closed on it would only turn a job that already
-  * reads its input just fine into a newly-blocked one — strictly worse
-  * than the false positive it would replace.
-  *
-  * The column-overlap signal alone is a heuristic, not a proof — a
-  * checkpoint whose columns happen to coincide with an unrelated missing
-  * input's own declared fields could still, in principle, produce a false
-  * negative. `CheckpointLineageTracker`'s real-location signal exists
-  * specifically to close the gap that heuristic can't: a checkpoint
-  * following a multi-input join with a column-dropping `.select()` (a
-  * normal, even encouraged pattern) has an output whose columns no longer
-  * cover any single input's full declared field set, so the column-overlap
-  * check alone would wrongly report `MISSING_INPUT` for inputs that were
-  * genuinely read. The tracker's own doc covers what real evidence it can
-  * and can't establish (session-scoped, not per-node-correlated — see its
-  * "Why this doesn't try to correlate" section for why that's the right
-  * scope for this check specifically, as opposed to fingerprinting, which
-  * needs true node-level lineage and doesn't get it from this either).
+  * uncertainty is about one input's visibility, not the whole write's
+  * meaning, and failing closed would only turn a job that reads its input
+  * just fine into a newly-blocked one. With no unresolved boundary, an
+  * unread input is `MISSING_INPUT`, blocking, exactly as before any of this
+  * existed — even if the job checkpoints something unrelated (that
+  * checkpoint resolves, and its reads are visible).
   *
   * ## Visibility
   *
@@ -673,8 +633,7 @@ private[sparkadapter] object StructuralVerifier {
     plan: Plan,
     inputSchemas: List[(String, StructType)],
     outputSchema: StructType,
-    options: VerificationOptions = VerificationOptions(),
-    checkpointObservedLocations: Set[String] = Set.empty
+    options: VerificationOptions = VerificationOptions()
   ): VerificationResult = {
     val actualReads = collectReads(plan)
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
@@ -705,7 +664,7 @@ private[sparkadapter] object StructuralVerifier {
       // lazy: only walked when some declared input really is unread.
       lazy val unknownPlans = collectUnknownPlans(plan)
       val classified = declaredButNotRead.map(input =>
-        input -> unverifiableEvidenceFor(input, unknownPlans, checkpointObservedLocations)
+        input -> unverifiableEvidenceFor(unknownPlans)
       )
       val missing = classified.collect { case (input, None) =>
         Violation(
@@ -971,7 +930,7 @@ private[sparkadapter] object StructuralVerifier {
   }
 
   /** Every `ir.UnknownPlan` node found anywhere in `plan` — feeds
-    * `coveringUnknownPlans`' per-input matching below.
+    * `unverifiableEvidenceFor`.
     *
     * `private[sparkadapter]`, not `private`: `ContractEnforcementRule`
     * reuses this directly to decide whether a computed
@@ -985,66 +944,16 @@ private[sparkadapter] object StructuralVerifier {
     case other          => other.children.flatMap(collectUnknownPlans)
   }
 
-  /** The `unknownPlans` entries whose own `columns` are a superset of
-    * `input`'s declared schema field names — see `UnverifiableInput`'s own
-    * doc for why a declared input's absence is only excused by a
-    * *specific* matching `UnknownPlan`, never by "some UnknownPlan exists
-    * somewhere in this plan" regardless of what it actually is. An input
-    * declaring no fields at all has no signal to match against and never
-    * matches anything here, rather than vacuously matching everything.
+  /** `Some(sourceTypes)` when `unknownPlans` contains an unresolved lineage
+    * boundary (see `CheckpointRegistry.BoundarySourceTypes`) - the only
+    * thing that makes an unread input unverifiable rather than missing;
+    * `None` (confidently missing) otherwise. The evidence is about the
+    * plan, not the individual input: an unresolved boundary hides *every*
+    * read made before it, so any unread input might be behind it.
     */
-  private def coveringUnknownPlans(input: Dataset, unknownPlans: List[UnknownPlan]): List[UnknownPlan] = {
-    val declaredFields = input.schema.fields.map(_.name).toSet
-    if (declaredFields.isEmpty) Nil
-    else unknownPlans.filter(u => declaredFields.subsetOf(u.columns.toSet))
-  }
-
-  /** Whether `input`'s absence from `plan`'s own `Read` nodes might be a
-    * lineage-boundary artifact rather than a genuine miss — `None` means
-    * confidently missing (`MISSING_INPUT`); `Some(sourceTypes)` means
-    * `UnverifiableInput`, naming the unknown node type(s) responsible. Two
-    * independent signals, either sufficient on its own, checked in this
-    * order:
-    *
-    *  1. Column-overlap (`coveringUnknownPlans`) — some `UnknownPlan`'s own
-    *     output columns are a superset of `input`'s declared fields. A
-    *     heuristic guess from the checkpoint's own *output* shape, not
-    *     what actually fed it — breaks the moment a checkpoint follows a
-    *     multi-input join with a column-dropping `.select()`, since no
-    *     single input's full field set survives that projection. Still the
-    *     only signal available for a non-checkpoint `UnknownPlan` (an
-    *     unsupported connector shape has no `CheckpointLineageTracker`
-    *     equivalent), and the only one available if the tracker's own
-    *     asynchronous capture hasn't landed yet by the time this write is
-    *     checked (see that class's own doc on timing).
-    *  2. Real observed lineage (`checkpointObservedLocations`, populated
-    *     by `CheckpointLineageTracker` from the *actual* pre-checkpoint
-    *     plan's own `Read` nodes, never a guess) — `input`'s own declared
-    *     location was genuinely read by some `.checkpoint()`/
-    *     `.localCheckpoint()` this session executed, **and** `plan` itself
-    *     contains at least one checkpoint-shaped `UnknownPlan` as
-    *     corroborating evidence a lineage boundary genuinely sits
-    *     somewhere upstream of *this* write — never "was read by a
-    *     checkpoint somewhere in this session" alone, which would reopen
-    *     the exact whole-plan imprecision this file's own history already
-    *     documents fixing (an unrelated write's own unrelated checkpoint
-    *     must never excuse a different write's genuinely missing input).
-    *
-    * Both signals stay per-input: an unrelated checkpoint or opaque node
-    * can never excuse a different, genuinely missing declared input.
-    */
-  private def unverifiableEvidenceFor(
-    input: Dataset,
-    unknownPlans: List[UnknownPlan],
-    checkpointObservedLocations: Set[String]
-  ): Option[List[String]] = {
-    val columnCovering = coveringUnknownPlans(input, unknownPlans)
-    if (columnCovering.nonEmpty)
-      Some(columnCovering.map(_.sourceType).filter(_.nonEmpty).distinct)
-    else if (unknownPlans.nonEmpty && checkpointObservedLocations.exists(loc => locationsMatch(input.location, loc)))
-      Some(unknownPlans.map(_.sourceType).filter(_.nonEmpty).distinct)
-    else
-      None
+  private def unverifiableEvidenceFor(unknownPlans: List[UnknownPlan]): Option[List[String]] = {
+    val boundaries = unknownPlans.map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
+    if (boundaries.isEmpty) None else Some(boundaries)
   }
 
   // private[sparkadapter], not private: reused by SensitivityLineage to

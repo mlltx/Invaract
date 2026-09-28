@@ -92,15 +92,4 @@ class PlanSpec extends AnyFunSuite {
     val input = Read(DatasetRef("raw.orders"))
     assert(Limit(input, 10).children == List(input))
   }
-
-  // -- UnknownPlan.columns -------------------------------------------------
-
-  test("UnknownPlan.columns defaults to Nil when a front-end doesn't supply it") {
-    assert(UnknownPlan("Generate(explode)", sourceType = "Generate").columns.isEmpty)
-  }
-
-  test("UnknownPlan.columns carries through whatever column names a front-end could determine") {
-    val unknown = UnknownPlan("InMemoryRelation(cached, 2 column(s))", sourceType = "InMemoryRelation", columns = List("id", "value"))
-    assert(unknown.columns == List("id", "value"))
-  }
 }

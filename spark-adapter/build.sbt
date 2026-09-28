@@ -899,7 +899,7 @@ excludeDependencies ++= Seq(
 // exactly, the same invariant this module's mimaPreviousArtifacts
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.6.0",
+  "com.invaract" %% "invaract-ir" % "0.5.0",
   "com.invaract" %% "invaract-contract" % "0.12.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
@@ -908,7 +908,7 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.4.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.3.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.10.0.jar"

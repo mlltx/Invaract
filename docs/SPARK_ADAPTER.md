@@ -497,12 +497,9 @@ output checks use, so both halves always agree). It then scopes every per-input 
 - `ContractViolationException`'s "what the contract expects" section prints each output's
   `derivedFrom` set.
 
-This also narrows what the checkpoint evidence below can excuse: only the write's own scoped
-inputs are ever candidates for `UnverifiableInput`. Two unrelated checkpointed writes in one
-session can no longer excuse an input neither output is derived from, because that input is
-simply not in scope for either. What remains — and is unchanged — is the disclosed limit that
-*within* one write's scoped inputs, the session-scoped registry can't tell which checkpoint fed
-which write (see `CheckpointLineageTracker`).
+This also narrows what an unresolved checkpoint boundary (below) can excuse: only the write's own
+scoped inputs are ever candidates for `UnverifiableInput`, so a boundary in one output's plan can
+never mask an input only the *other* output is derived from.
 
 `derivedFrom` is contract content, not an engine knob, so it needs no extra `--conf` to attach
 — a platform team edits the contract the job is already pointed at
@@ -553,121 +550,78 @@ might hand it a post-cache-substitution plan (e.g. one taken from
 `SparkPlanAdapterSpec` — but it is not how this false positive actually
 manifests through the enforcement path.
 
-`SparkPlanAdapter` translates `InMemoryRelation`/`LogicalRDD` to an
-`ir.UnknownPlan` (`ir.Plan`'s existing "opaque, couldn't-fully-translate"
-placeholder — see its own doc), named specifically (`"InMemoryRelation"`/
-`"LogicalRDD"`, not a bare Catalyst class name) rather than left to the
-generic unrecognized-node fallback, purely so a person reading the result
-can tell *why*. It also carries the unrepresented node's own output
-`columns` (`ir.UnknownPlan.columns`, populated from Catalyst's `.output` —
-every real `LogicalPlan` node has one), since a coarse "does *some*
-`UnknownPlan` exist anywhere in this plan" signal is dangerously
-under-specified on its own: a job innocently checkpointing one dataset
-must never excuse a *completely unrelated* declared input that's missing
-because of a wrong location, a typo, or a job that simply forgot to read
-it — that must still fail loudly. So `StructuralVerifier.verify` checks
-**per declared input**, not for the plan as a whole: for each unmatched
-input, it looks for an `ir.UnknownPlan` node whose own `columns` are a
-superset of that specific input's declared schema field names (and only
-when the input actually declares at least one field — an input with no
-declared fields has no signal to match against, and defaults to
-confidently missing rather than vacuously "always plausible"):
+### `CheckpointRegistry`: seeing through a checkpoint
 
-- No `UnknownPlan` node's columns cover this input → unchanged: a
-  confident `MISSING_INPUT` violation, blocking the write, exactly as
-  before this fix — even if a wholly unrelated `UnknownPlan` (different
-  columns) exists elsewhere in the same plan.
-- A covering `UnknownPlan` node exists → this input becomes an
-  `UnverifiableInput` instead (`inputName`, `inputLocation`,
-  `unknownNodeTypes` — the distinct `ir.UnknownPlan.sourceType`s of
-  specifically the matching node(s), not every unknown node in the plan) —
-  report-only, never a `Violation`, never blocking, collected on
-  `VerificationResult.unverifiableInputs`.
+Rather than reporting a checkpoint as unknowable and then guessing around it, `ContractEnforcementRule`
+resolves it. Two facts make that possible (both confirmed against a real Spark 3.5.7 session, not
+assumed):
 
-This column-overlap check is a heuristic, not a proof — requiring the
-*full* declared field set to be a subset (not just partial overlap) keeps
-the false-negative window as narrow as a cheap, schema-only check can. But
-it has a real gap of its own: a checkpoint following a **multi-input join
-with a column-dropping `.select()`** (a normal, even encouraged pattern —
-shrinking what gets persisted before a checkpoint) has an output whose
-columns cover *neither* input's full declared field set, so the
-column-overlap check alone reports a false-positive `MISSING_INPUT` for
-both — exactly the case that was still open, disclosed, and unfixed as of
-this section's first version.
+1. `Dataset.checkpoint()`/`.localCheckpoint()` builds its result as a `LogicalRDD` whose `output` is
+   the *original* Dataset's own analyzed output attributes — the same `exprId`s, unchanged, including
+   through a chained second checkpoint. The same `LogicalRDD` instance then flows unchanged into every
+   plan later built from that Dataset (`.filter`, `.select`, a SQL view).
+2. The check rule runs on every plan Spark analyzes, **synchronously, at the moment each Dataset is
+   created**. So it sees the pre-checkpoint plan — with its real `Read` nodes — before `.checkpoint()`
+   is called, and sees the checkpointed Dataset (a bare `LogicalRDD`) the instant `.checkpoint()`
+   returns.
 
-### `CheckpointLineageTracker`: real observed lineage, not a column guess
+`CheckpointRegistry` (one per session, created by `forContract`) uses them in three steps:
+`record` remembers each analyzed plan under its output attribute ids; `bind`, on first sight of a
+bare `LogicalRDD`, snapshots the plan recorded under its ids *at that moment* — the plan just
+checkpointed — and ties it to that leaf instance (weakly: it lives exactly as long as the
+checkpointed Dataset); `substitute` replaces every bound `LogicalRDD` in a plan with its snapshot,
+recursively for chained checkpoints. This happens on the *Catalyst* plan, before translation, so the
+result is structurally the plan the job would have had with no checkpoint at all: contract
+verification sees the real `Read` nodes (a missing input is simply missing, an undeclared read is
+simply undeclared, schema/catalog/lineage checks all apply), and a fingerprint computed across the
+checkpoint is **identical to the un-checkpointed job's** — the fingerprint-side gap
+docs/SEMANTIC_LINEAGE_FINGERPRINTING.md used to disclose is closed for every resolved checkpoint.
 
-`CheckpointLineageTracker` (a `QueryExecutionListener`, registered once per
-session by `ContractEnforcementRule.forContract` — unconditionally, not
-tied to the notification-sink opt-in `SparkAdapterListener` is) closes that
-gap by observing, rather than guessing. `Dataset.checkpoint()`/
-`.localCheckpoint()` both fire `QueryExecutionListener.onSuccess("checkpoint" |
-"localCheckpoint", qe, _)` — confirmed directly against Spark 3.5.7's real
-bytecode, not assumed — with `qe` being the **real, pre-checkpoint**
-`QueryExecution`: the join, with its original `Read` nodes still intact,
-before Spark's own checkpoint substitution ever erases them. The tracker
-translates that plan through the same `SparkPlanAdapter`/`StructuralVerifier.collectReads`
-pipeline every other read is recognized through, and accumulates every
-real `Read` location it finds into a session-scoped registry.
+There is no listener and nothing asynchronous, so — unlike an earlier design that captured
+checkpoints from a `QueryExecutionListener`, which fires on Spark's listener-bus thread a few
+milliseconds *after* `.checkpoint()` returns — there is no timing window: a write checked
+immediately after `.checkpoint()` resolves the same as one checked a minute later. The evidence is
+also per-checkpoint rather than session-wide: only checkpoints inside the plan being checked are
+ever resolved, so one write's checkpoint can never excuse another write's missing input.
 
-`StructuralVerifier.verify` then has two independent signals for a
-declared input with no matching `Read`, either sufficient on its own:
+**What it cannot resolve** (each stays an opaque `ir.UnknownPlan` named `"LogicalRDD"`, with a
+`Diagnostic`, exactly as before the registry existed):
 
-1. Column-overlap (above) — the only signal for a non-checkpoint
-   `UnknownPlan` (an unsupported connector shape), and the only one
-   available if the tracker's own asynchronous capture hasn't landed yet
-   (see below).
-2. **Real observed lineage** — the input's own declared location was
-   genuinely read into some checkpoint this session executed, **and** the
-   plan being checked itself contains at least one checkpoint-shaped
-   `UnknownPlan` as corroborating evidence a boundary genuinely sits
-   upstream of *this* write. The second condition is load-bearing, not
-   incidental: without it, an unrelated write's own unrelated checkpoint
-   could excuse a different write's genuinely missing input — the same
-   whole-plan imprecision an earlier version of this fix already had to
-   close once, for the column-overlap check, kept from opening again here.
+- A checkpoint whose creation the rule never observed — the rule must have been installed when the
+  Dataset was made. A copy Spark makes with fresh attribute ids (the right side of a self-join of a
+  checkpointed Dataset) is unresolved too.
+- An origin the registry evicted before the checkpoint was created (bounded LRU, 256 entries by
+  default) or whose plan was reclaimed under memory pressure (plans are held by `SoftReference`,
+  because a Catalyst plan keeps its relations — and a file index's listing — alive).
+- Plans sharing output ids while reading *different* datasets (`join` then `select` back to one
+  side's columns, alongside a plain read of that side): which was checkpointed is ambiguous, so it is
+  refused rather than guessed. When they read the *same* datasets (a `.filter` of a dataset), the most
+  recent is used and a `CheckpointResolution` diagnostic says so — the fingerprint's WARN log
+  discloses it.
+- A `LogicalRDD` inside a node that keeps its query outside `children` (Delta's row-level DML
+  commands).
+- Every `InMemoryRelation` (a bare `.cache()` doesn't reach the check rule anyway — see above).
 
-Why this doesn't try to prove *which* `UnknownPlan` a captured checkpoint
-became: an earlier design attempted exactly that, correlating a captured
-checkpoint execution to the specific node it produces via the underlying
-RDD's `.id`. Confirmed empirically that this doesn't work — the RDD Spark
-actually embeds in the checkpoint's result is created by an internal
-`.map()` call inside `Dataset.checkpoint()`'s own private implementation,
-never exposed to any listener and not reproducible by re-executing the
-captured `QueryExecution` from outside it (a real test showed a different
-RDD id every time). Node-level correlation like that is real lineage
-reconstruction, genuinely necessary for fingerprinting a transformation
-graph (see docs/SEMANTIC_LINEAGE_FINGERPRINTING.md, which does not attempt
-it either, and discloses why). Contract validation only needs a narrower,
-per-input membership question — "was this location read by *some*
-checkpoint this session ran" — answerable without any node identity at
-all, which is what makes the session-scoped registry sufficient here
-without needing to solve that harder problem.
+**What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
+"never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
+unresolved boundary (`LogicalRDD`/`InMemoryRelation`) somewhere in the plan is reported as an
+`UnverifiableInput` (`inputName`, `inputLocation`, `unknownNodeTypes` — the distinct boundary
+`sourceType`s) instead of `MISSING_INPUT` — report-only, never a `Violation`, never blocking,
+collected on `VerificationResult.unverifiableInputs`. With **no** unresolved boundary, an unread input
+is a blocking `MISSING_INPUT`, exactly as before — including when the job checkpoints something
+unrelated (that checkpoint resolves, and its reads are visible). A node the translator merely has no
+case for (`Generate`, …) is not a lineage boundary and excuses nothing. This is deliberately the
+non-blocking `RoleConsistencyVerifier`-style precedent (`Conforms`/`Contradicts`/`CannotDetermine`),
+not `UNVERIFIABLE_WRITE`'s fail-closed one: the uncertainty is about one input's visibility, not the
+whole write's meaning, and failing closed would only turn a job that already reads its input just
+fine into a newly-blocked one.
 
-Timing, disclosed rather than hidden: `onSuccess` fires on Spark's
-asynchronous listener-bus thread, confirmed directly (not assumed) to lag
-a few milliseconds behind `.checkpoint()`'s own return to the caller's
-thread. A write checked before that callback has run sees an empty (or
-stale) registry for that specific checkpoint, falling back to the
-column-overlap signal alone for it — the same narrow window that signal's
-own heuristic nature already discloses, not a new one.
-
-Deliberately the same non-blocking `RoleConsistencyVerifier`-style
-precedent (`Conforms`/`Contradicts`/`CannotDetermine`) as role-consistency
-and static data-quality checking above, not `UNVERIFIABLE_WRITE`'s
-fail-closed one: the uncertainty is about one input's visibility, not the
-whole write's meaning, and failing closed on it would only turn a job that
-already reads its input just fine into a newly-blocked one.
-
-**Always on, no `VerificationOptions` flag** — unlike `dataQuality`/
-`roleConformance` above, this isn't new opt-in instrumentation layered on
-top of an existing check; it's the honest half of `MISSING_INPUT`'s own
-always-on check, so gating it behind a flag would mean the false positive
-it fixes still fires by default. `ContractEnforcementRule.publishValidation`
-carries `VerificationResult.unverifiableInputs` straight through to
-`notification.ContractValidationEvent.unverifiableInputs`, reaching every
-configured sink, PASS or FAILED alike, the same as `dataQuality`/
-`roleConformance`/`fingerprints`.
+**Always on, no `VerificationOptions` flag** — this isn't new opt-in instrumentation layered on top of
+an existing check; it's the honest half of `MISSING_INPUT`'s own always-on check, so gating it behind
+a flag would mean the false positive it fixes still fires by default.
+`ContractEnforcementRule.publishValidation` carries `VerificationResult.unverifiableInputs` straight
+through to `notification.ContractValidationEvent.unverifiableInputs`, reaching every configured sink,
+PASS or FAILED alike, the same as `dataQuality`/`roleConformance`/`fingerprints`.
 
 ## Diagnostics: plan extraction examples
 

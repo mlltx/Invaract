@@ -87,13 +87,13 @@ object ContractEnforcementRule {
     * feature attachable purely via `spark-submit --conf`, with no change
     * to the caller's own code.
     *
-    * Also registers one `CheckpointLineageTracker` on `session` -
-    * unconditionally, not tied to a notification sink the way
-    * `SparkAdapterListener` is, since observing real checkpoint lineage is
-    * core structural-verification behavior every installation gets, not an
-    * optional add-on. See that class's own doc for what it captures and
-    * why, and `StructuralVerifier.verify`'s doc for how `verifyOrThrow`
-    * below uses it.
+    * Also creates one `CheckpointRegistry` for the session: this rule sees
+    * every plan Spark analyzes, so it records each one's output attribute
+    * ids against its translation, and `SparkPlanAdapter` uses that to see
+    * through a later `.checkpoint()` boundary (a `LogicalRDD` carrying the
+    * same ids) back to the real reads and transformation - see that
+    * class's own doc. Nothing is registered with Spark and nothing is
+    * asynchronous, so there is no timing window.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     session => {
@@ -101,8 +101,8 @@ object ContractEnforcementRule {
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, None, None)
-      val checkpointTracker = installCheckpointTracker(session)
-      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None, checkpointTracker = Some(checkpointTracker))
+      val checkpointRegistry = new CheckpointRegistry
+      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None, checkpointRegistry = Some(checkpointRegistry))
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -129,16 +129,10 @@ object ContractEnforcementRule {
       val resolvedOptions = resolveVerificationOptions(options, session)
       val applicationId = Some(session.sparkContext.applicationId)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
-      val checkpointTracker = installCheckpointTracker(session)
+      val checkpointRegistry = new CheckpointRegistry
       (plan: LogicalPlan) =>
-        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointTracker = Some(checkpointTracker))
+        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry))
     }
-
-  private def installCheckpointTracker(session: SparkSession): CheckpointLineageTracker = {
-    val tracker = new CheckpointLineageTracker
-    session.listenerManager.register(tracker)
-    tracker
-  }
 
   /** Spark configuration key naming an `id=location` `.properties` file
     * (the same shape `StaticMapLocationResolver.fromPropertiesFile` reads)
@@ -544,13 +538,26 @@ object ContractEnforcementRule {
     */
   private[sparkadapter] def verifyOrThrow(
       contract: Contract,
-      plan: LogicalPlan,
+      analyzedPlan: LogicalPlan,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
       applicationId: Option[String] = None,
-      checkpointTracker: Option[CheckpointLineageTracker] = None
+      checkpointRegistry: Option[CheckpointRegistry] = None
   ): Unit = {
-    val translated = SparkPlanAdapter.translate(plan)
+    // Every analyzed plan is offered to the registry - not just writes: a
+    // plan that is later checkpointed is a plain query Dataset, seen here
+    // long before any write (see CheckpointRegistry's class doc). A bare
+    // checkpointed Dataset is bound to its origin the moment it first
+    // appears; each resolvable `.checkpoint()` boundary in `analyzedPlan` is
+    // then replaced by the plan it was made from, so everything below -
+    // reads, schemas, lineage, fingerprint - works on the real
+    // transformation.
+    checkpointRegistry.foreach(_.bind(analyzedPlan))
+    val substitution = checkpointRegistry.map(_.substitute(analyzedPlan))
+    val plan = substitution.map(_.plan).getOrElse(analyzedPlan)
+    val translatedRaw = SparkPlanAdapter.translate(plan)
+    val translated = substitution.fold(translatedRaw)(s => translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ s.diagnostics))
+    checkpointRegistry.foreach(_.record(plan, translated.plan))
     translated.plan match {
       case _: com.invaract.ir.Write =>
         // Every check below assumes a *structurally sound* contract -
@@ -616,9 +623,8 @@ object ContractEnforcementRule {
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
         val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
-        val checkpointObservedLocations = checkpointTracker.map(_.observedLocations).getOrElse(Set.empty[String])
         val structuralResult =
-          StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options, checkpointObservedLocations)
+          StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
         // classifier over the same `plan` (see its class doc for why it
@@ -676,43 +682,30 @@ object ContractEnforcementRule {
             val mutation = rowMutationClassification.collect {
               case RowMutationSupport.Classification.Extracted(_, m) => m
             }
-            // Disclosed, not silently absorbed: Canonicalizer's own doc
-            // explains why a checkpoint-shaped UnknownPlan's `columns` are
-            // deliberately left out of the hash (metadata about the opaque
-            // node's shape, not a canonicalized fact about the
-            // transformation's own logic) - what it can't do instead is
-            // reconstruct the REAL lineage a `.checkpoint()` boundary erases
-            // the way CheckpointLineageTracker now can for contract
-            // validation (see that class's own doc for why node-level
-            // correlation isn't attempted there either - it's genuinely
-            // needed here, for fingerprinting, unlike for input validation).
-            // So a fingerprint computed across such a boundary is still
-            // fully stable and deterministic (the same plan always hashes
-            // the same way), but it cannot reflect whatever real
-            // transformation happened upstream of the boundary - logged
-            // once per check, at WARN, naming the responsible sourceType(s),
-            // rather than left for a reader of the hash alone to discover.
-            // checkpointBoundaries/its .nonEmpty guard have real Survived
-            // mutants (confirmed via scoped Stryker4s, not silently
-            // ignored) that this codebase's test suite genuinely cannot
-            // kill today - not because they're equivalent (forcing the
-            // guard to `true` really would log a wrong, spurious WARN when
-            // no boundary exists), but because nothing in this suite
-            // asserts on log output at all, the same "no observable
-            // consequence to the checks this suite actually makes" category
-            // docs/SPARK_ADAPTER.md's "Mutation testing" section already
-            // documents for a StringLiteral mutant on human-readable
-            // message text. Adding log-capture test infrastructure purely
-            // to kill these felt disproportionate to a WARN whose own
-            // content is disclosure, not a decision this method makes -
-            // left here, disclosed, rather than silently unaddressed.
-            val checkpointBoundaries = StructuralVerifier.collectUnknownPlans(translated.plan).map(_.sourceType).filter(_.nonEmpty).distinct
-            if (checkpointBoundaries.nonEmpty) {
+            // Disclosed, not silently absorbed. A resolved checkpoint boundary
+            // is fingerprinted as the real transformation it stands for
+            // (CheckpointRegistry splices the pre-checkpoint plan in), so it
+            // needs no caveat. Two cases still do: a boundary that stayed
+            // unresolved (origin never seen / evicted / ambiguous), which the
+            // fingerprint can only see as an opaque node, and a resolution
+            // that had to pick the most recent of several same-source plans
+            // (the CheckpointResolution diagnostic). Either way the hash is
+            // still fully stable and deterministic for this exact plan - it
+            // just may not reflect what happened upstream of the boundary -
+            // so it is logged once per check, at WARN, rather than left for
+            // a reader of the hash alone to discover. (Nothing in this suite
+            // asserts on log output, so this call is covered only by the
+            // fingerprint-determinism tests, not by an assertion on the
+            // message itself.)
+            val unresolvedBoundaries = StructuralVerifier.collectUnknownPlans(translated.plan)
+              .map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
+            val assumedResolutions = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType)
+            if (unresolvedBoundaries.nonEmpty || assumedResolutions.nonEmpty) {
               logger.warn(
-                "computeFingerprint: this transformation's plan contains a lineage boundary this engine cannot see " +
-                  s"through (${checkpointBoundaries.mkString(", ")}, e.g. a .checkpoint() call) - the computed fingerprint " +
-                  "is still fully stable and deterministic for this exact plan shape, but cannot reflect whatever real " +
-                  "transformation happened upstream of that boundary."
+                "computeFingerprint: this transformation's fingerprint is stable and deterministic for this exact plan " +
+                  "but may not reflect everything upstream of a .checkpoint()/cache boundary" +
+                  (if (unresolvedBoundaries.isEmpty) "" else s"; unresolved boundary: ${unresolvedBoundaries.mkString(", ")}") +
+                  (if (assumedResolutions.isEmpty) "" else s"; ${assumedResolutions.map(_.message).distinct.mkString(" / ")}")
               )
             }
             Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))

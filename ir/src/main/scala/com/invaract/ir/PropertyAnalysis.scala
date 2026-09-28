@@ -80,7 +80,7 @@ object PropertyAnalysis {
     case Sort(input, _)           => tailcall(definingExprT(ref, input))
     case Limit(input, _, _)       => tailcall(definingExprT(ref, input))
     case Write(_, input, _, _, _) => tailcall(definingExprT(ref, input))
-    case Aggregate(_, _, _) | Window(_, _, _, _) | Union(_) | Join(_, _, _, _) | Read(_, _, _) | UnknownPlan(_, _, _, _) => done(None)
+    case Aggregate(_, _, _) | Window(_, _, _, _) | Union(_) | Join(_, _, _, _) | Read(_, _, _) | UnknownPlan(_, _, _) => done(None)
   }
 
   /** Resolves a single, already-extracted `Expr` into its `ColumnPropertyState`
@@ -154,7 +154,7 @@ object PropertyAnalysis {
     // A bare Read declares no output list of its own — nothing to trace
     // until something downstream projects it (mirrors Lineage exactly).
     case Read(_, _, _)        => done(Nil)
-    case UnknownPlan(_, _, _, _) => done(Nil)
+    case UnknownPlan(_, _, _) => done(Nil)
   }
 
   /** Whether a `JoinType` preserves the left/right side's own proven facts
@@ -426,7 +426,7 @@ object PropertyAnalysis {
 
     case Write(_, input, _, _, _) => tailcall(resolveInScopeT(ref, input, axioms))
 
-    case UnknownPlan(_, _, _, _) => done(None)
+    case UnknownPlan(_, _, _) => done(None)
   }
 
   private def combineNotNullAll(states: List[ColumnPropertyState]): NullabilityFact =

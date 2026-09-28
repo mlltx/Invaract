@@ -101,6 +101,6 @@ object PlanPrinter {
       val o = if (orderBy.nonEmpty) s"ORDER BY ${orderBy.map(so => renderExpr(so.expr)).mkString(", ")}" else ""
       val spec = List(p, o).filter(_.nonEmpty).mkString(" ")
       s"Window($spec)"
-    case UnknownPlan(description, _, _, _) => s"UnknownPlan($description)"
+    case UnknownPlan(description, _, _) => s"UnknownPlan($description)"
   }
 }

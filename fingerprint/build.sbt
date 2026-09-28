@@ -1,5 +1,5 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.4.0"
+ThisBuild / version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -35,7 +35,7 @@ organization := "com.invaract"
 // for a local `sbt mimaReportBinaryIssues` run and can no longer break CI
 // by going stale.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.3.0")
+  "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
 )
 
 // The 0.2.0 -> 0.3.0 bump (this file's version above): NOT a MiMa break -
@@ -60,25 +60,6 @@ mimaPreviousArtifacts := Set(
 // POM declares differs, even with zero code change, precisely so two
 // different dependency graphs can never collide under one coordinate like
 // this.
-//
-// The 0.3.0 -> 0.4.0 bump (this file's version above): the exact same
-// reason as the 0.2.0 -> 0.3.0 bump immediately above, tripped over again -
-// this file's own `invaract-ir` dependency below moved 0.5.0 -> 0.6.0
-// (ir's `UnknownPlan` gaining a `columns` field, for the per-input
-// MISSING_INPUT/UnverifiableInput fix), and that dependency bump was
-// initially made WITHOUT bumping this file's own version, exactly the
-// mistake this comment already warned about. Confirmed the hard way, again:
-// CI's `api-compatibility` job publishes base-ref's own `fingerprint`
-// (still pinning `ir % 0.5.0` on the base branch) and PR-head's `fingerprint`
-// (pinning `ir % 0.6.0`) to the same shared local Ivy cache; under the
-// unchanged "0.3.0" coordinate the two POMs clobbered each other, and
-// base-ref's own `spark-adapter` build - which resolves both `ir % 0.5.0`
-// directly and `fingerprint % 0.3.0` transitively - ended up seeing
-// whichever `fingerprint` POM published last, producing a spurious
-// `found version conflict(s) in library dependencies` failure in
-// `api-compatibility` before MiMa itself ever ran. Not a MiMa break in this
-// module's own compiled classes/public API; the fix is the same as last
-// time: give the changed dependency graph its own coordinate.
 
 // Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
 // spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
@@ -86,7 +67,7 @@ mimaPreviousArtifacts := Set(
 versionScheme := Some("early-semver")
 
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.6.0",
+  "com.invaract" %% "invaract-ir" % "0.5.0",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test"
 )
@@ -113,7 +94,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.4.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.3.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the

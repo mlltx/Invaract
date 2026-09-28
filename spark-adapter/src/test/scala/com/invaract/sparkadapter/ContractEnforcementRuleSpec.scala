@@ -41,17 +41,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // failure on its own.
   private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
-  // Registered once, on the one shared session every test in this suite
-  // uses - the same "one tracker per session, for its whole lifetime"
-  // wiring forContract does for real (see that method's own doc). Its
-  // observedLocations accumulate across every test that ever calls
-  // .checkpoint(), harmlessly: StructuralVerifier.verify only ever treats
-  // an observed location as evidence when the plan it's CURRENTLY checking
-  // also contains its own checkpoint-shaped UnknownPlan (see
-  // unverifiableEvidenceFor's own doc) - an unrelated earlier test's
-  // checkpoint can no more excuse a different test's missing input than an
-  // unrelated checkpoint within the same write could.
-  private val checkpointTracker = new CheckpointLineageTracker
+  // One per shared session, the same "one registry for the session's whole
+  // lifetime" wiring forContract does for real (see that method's own doc).
+  // Entries accumulate across tests harmlessly: a checkpoint only ever
+  // resolves to a plan recorded under its own output attribute ids, which
+  // are unique per Dataset.
+  private val checkpointRegistry = new CheckpointRegistry
 
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invaract-enforcement-test")
@@ -76,13 +71,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan
           activeContract.foreach(c =>
-            ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink, checkpointTracker = Some(checkpointTracker))
+            ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink, checkpointRegistry = Some(checkpointRegistry))
           )
         }
       }
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
-    spark.listenerManager.register(checkpointTracker)
   }
 
   override def afterAll(): Unit = spark.stop()
@@ -306,22 +300,18 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val event = events.last
     assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
     assert(!event.violations.exists(_.violationType == ViolationType.MissingInput))
-    val entry = event.unverifiableInputs.find(_.inputName == "raw")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'raw', got: ${event.unverifiableInputs}"))
-    assert(entry.unknownNodeTypes.contains("LogicalRDD"), s"expected LogicalRDD among ${entry.unknownNodeTypes}")
+    // Resolved, not merely excused: the checkpoint's real pre-image was
+    // spliced back in, so 'raw' was simply read.
+    assert(event.unverifiableInputs.isEmpty, s"expected the checkpoint to resolve, got: ${event.unverifiableInputs}")
   }
 
-  // The gap the column-overlap heuristic above can't close on its own: a
-  // checkpoint following a JOIN of two declared inputs, with a
+  // A checkpoint following a JOIN of two declared inputs, with a
   // column-dropping .select() before it (a normal, even encouraged pattern
-  // - shrinking what gets persisted). The checkpoint's own output columns
-  // (order_id, name) cover neither input's full declared field set once
-  // customer_id/amount/state are projected away, so the column-overlap
-  // check alone would report a confident, false-positive MISSING_INPUT for
-  // BOTH declared inputs even though both were genuinely read.
-  // CheckpointLineageTracker closes this by observing the REAL
-  // pre-checkpoint plan's own Read nodes (both orders and customers) via a
-  // real QueryExecutionListener callback, not a guess from output shape.
+  // - shrinking what gets persisted): the checkpoint's own output columns
+  // (order_id, name) cover neither input's full declared field set, so
+  // nothing about its *shape* identifies what fed it. CheckpointRegistry
+  // resolves it by attribute id instead - synchronously, so the write is
+  // checked immediately after .checkpoint() with no waiting.
   test("PASS: both inputs of a multi-input join survive a column-dropping .select() + .checkpoint() boundary, not falsely reported as MISSING_INPUT") {
     val ordersPath = scratchDir.resolve("join_checkpoint_orders.csv").toString
     val customersPath = scratchDir.resolve("join_checkpoint_customers.csv").toString
@@ -388,14 +378,6 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       val joined = orders.join(customers, "customer_id").select(orders("order_id"), customers("name"))
       val checkpointed = joined.checkpoint(true)
 
-      // Give CheckpointLineageTracker's own asynchronous listener callback
-      // a chance to observe this checkpoint's real pre-image plan before
-      // the write below is checked - see that class's own doc on timing.
-      eventually(timeout(Span(5, Seconds))) {
-        assert(checkpointTracker.observedLocations.exists(_.contains("join_checkpoint_orders.csv")))
-        assert(checkpointTracker.observedLocations.exists(_.contains("join_checkpoint_customers.csv")))
-      }
-
       checkpointed.write.mode("overwrite").parquet(outputPath) // must not throw
     }
 
@@ -406,8 +388,73 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val event = events.last
     assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
     assert(!event.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${event.violations}")
-    assert(event.unverifiableInputs.exists(_.inputName == "orders"), s"expected an UnverifiableInput for 'orders', got: ${event.unverifiableInputs}")
-    assert(event.unverifiableInputs.exists(_.inputName == "customers"), s"expected an UnverifiableInput for 'customers', got: ${event.unverifiableInputs}")
+    assert(event.unverifiableInputs.isEmpty, s"both inputs should be plainly read through the resolved checkpoint, got: ${event.unverifiableInputs}")
+  }
+
+  test("FAIL: a genuinely missing input is still blocked even when the job checkpoints (and reads) another input - a resolved checkpoint excuses nothing") {
+    val realPath = scratchDir.resolve("precise_real.csv").toString
+    val missingPath = scratchDir.resolve("precise_never_read.csv").toString
+    val outputPath = scratchDir.resolve("precise_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(realPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |  - name: never_read
+         |    location: $missingPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("precise_checkpoints").toString)
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+          .write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.map(_.location) == List(Some(missingPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty)
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("PASS with UnverifiableInput: a checkpoint whose origin the rule never saw stays opaque, and the unread input is reported unverifiable, not missing") {
+    val inputPath = scratchDir.resolve("unseen_origin.csv").toString
+    val outputPath = scratchDir.resolve("unseen_origin_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: raw
+         |    location: $inputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("unseen_checkpoints").toString)
+    // Created while NO contract is active, so the check rule never records the origin.
+    val checkpointed = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+    withContract(yaml, sink = Some(sink)) {
+      checkpointed.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.map(_.inputName) == List("raw"))
+    assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
   }
 
   // Output-to-input lineage (Dataset.derivedFrom), end to end through the
@@ -833,26 +880,16 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(fp1.outputs("r") == fp2.outputs("r"))
   }
 
-  // The fingerprint side of the same gap CheckpointLineageTracker closes
-  // for contract validation: computeFingerprint doesn't get - and doesn't
-  // attempt - real lineage reconstruction across a .checkpoint() boundary
-  // (see ContractEnforcementRule's own doc at its computeFingerprint call
-  // site, and Canonicalizer's UnknownPlan case, for why node-level
-  // correlation is genuinely needed here, unlike for input validation, and
-  // why this module still doesn't attempt it). What it must still do is
-  // stay fully stable and deterministic for the plan shape it CAN see -
-  // proven here the same way the rand() test above proves determinism
-  // elsewhere: two separate analyses of the identical checkpointed code
-  // must fingerprint identically. The WARN-level caveat this same call site
-  // logs when a checkpoint boundary is present has no assertable log-
-  // capture test in this suite (no precedent for one here), but fires
-  // during this real run regardless, proving it can't itself throw or
-  // otherwise disrupt a passing write.
-  test("computeFingerprint = true: a checkpoint boundary still fingerprints stably and deterministically, twice, across separate analyses") {
+  // The fingerprint side of the same mechanism: a checkpoint CheckpointRegistry
+  // resolves is fingerprinted as the real transformation it stands for, so a
+  // job's fingerprint doesn't change just because it checkpoints. Two runs of
+  // identical code must still fingerprint identically (deterministic), and
+  // the checkpointed and un-checkpointed variants must agree with each other.
+  test("computeFingerprint = true: a job fingerprints identically with and without a (resolved) checkpoint, and deterministically across runs") {
     val outputPath = scratchDir.resolve("checkpoint_fp.parquet").toString
     spark.sparkContext.setCheckpointDir(scratchDir.resolve("checkpoint_fp_checkpoints").toString)
 
-    def fingerprintAcrossCheckpoint(): com.invaract.fingerprint.TransformationFingerprint = {
+    def fingerprintJob(checkpoint: Boolean): com.invaract.fingerprint.TransformationFingerprint = {
       val yaml =
         s"""id: enforcement_demo
            |version: "1.0.0"
@@ -870,7 +907,8 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
            |""".stripMargin
       val sink = new TestNotificationSink
       withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
-        val checkpointed = spark.range(5).checkpoint(true)
+        val base = spark.range(5)
+        val checkpointed = if (checkpoint) base.checkpoint(true) else base
         val df = checkpointed.withColumn("doubled", col("id") * 2)
         df.write.mode("overwrite").parquet(outputPath) // must not throw
       }
@@ -878,10 +916,12 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
     }
 
-    val fp1 = fingerprintAcrossCheckpoint()
-    val fp2 = fingerprintAcrossCheckpoint()
-    assert(fp1.overall == fp2.overall, "a checkpoint boundary must fingerprint identically across separate analyses of the identical code")
-    assert(fp1.outputs("doubled") == fp2.outputs("doubled"))
+    val withCheckpoint1 = fingerprintJob(checkpoint = true)
+    val withCheckpoint2 = fingerprintJob(checkpoint = true)
+    val without = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint1.overall == withCheckpoint2.overall, "identical code must fingerprint identically across separate analyses")
+    assert(withCheckpoint1.outputs("doubled") == withCheckpoint2.outputs("doubled"))
+    assert(withCheckpoint1.overall == without.overall, "resolving the checkpoint must make it invisible to the fingerprint")
   }
 
   // A real, confirmed false NEGATIVE, now fixed by

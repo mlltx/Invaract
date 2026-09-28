@@ -293,8 +293,8 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = SparkPlanAdapter.translate(checkpointed.queryExecution.analyzed)
 
     result.plan match {
-      case UnknownPlan(_, "LogicalRDD", _, columns) => assert(columns == List("id", "value"), s"expected the checkpointed relation's own columns, got $columns")
-      case other                                    => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+      case UnknownPlan(_, "LogicalRDD", _) => succeed
+      case other                           => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
     }
     assert(result.diagnostics.exists(_.message.toLowerCase.contains("checkpoint")), s"expected a checkpoint-mentioning diagnostic, got ${result.diagnostics}")
   }
@@ -324,10 +324,6 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     val unknown = findUnknown(result.plan).getOrElse(fail(s"expected an InMemoryRelation-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}"))
     assert(unknown.sourceType == "InMemoryRelation")
-    // The cached relation's own full columns (id, value), not the outer
-    // .select(col("id"))'s narrower projection - the InMemoryRelation node
-    // substitutes for the cached DataFrame itself, upstream of that select.
-    assert(unknown.columns == List("id", "value"), s"expected the cached relation's own columns, got ${unknown.columns}")
     assert(result.diagnostics.exists(_.message.toLowerCase.contains("cache")), s"expected a cache-mentioning diagnostic, got ${result.diagnostics}")
   }
 

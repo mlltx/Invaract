@@ -191,13 +191,5 @@ case class Window(
   * @param children any sub-plans the front-end could still translate even
   *   though it couldn't interpret this node itself — so unsupported
   *   structure never hides understood structure nested beneath it.
-  * @param columns the unrepresented node's own output column names, when
-  *   the front-end could determine them (every real Catalyst `LogicalPlan`
-  *   exposes `.output`, so a Spark front-end can always populate this) —
-  *   `Nil` when genuinely unknown. Lets a consumer reason about *which*
-  *   upstream dataset this opaque node could plausibly be standing in for
-  *   (e.g. `StructuralVerifier` deciding whether a declared input's
-  *   absence is hidden behind exactly this boundary, or is unrelated to
-  *   it) without needing this IR to carry a full schema representation.
   */
-case class UnknownPlan(description: String, sourceType: String = "", children: List[Plan] = Nil, columns: List[String] = Nil) extends Plan
+case class UnknownPlan(description: String, sourceType: String = "", children: List[Plan] = Nil) extends Plan

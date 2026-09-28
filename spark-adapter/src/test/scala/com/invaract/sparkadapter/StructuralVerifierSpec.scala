@@ -94,27 +94,29 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
   }
 
-  test("UNVERIFIABLE_INPUT (not MISSING_INPUT): the plan contains an UnknownPlan whose columns cover the declared input, so its absence can't be confidently proven") {
-    val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    // Stand in for what SparkPlanAdapter's real InMemoryRelation case
-    // produces where the declared input's Read would otherwise sit (see
-    // that file's own doc for the real trigger, .checkpoint(), and why a
-    // bare .cache() doesn't reach ContractEnforcementRule this way):
-    // collectReads finds no Read node here, but the UnknownPlan's own
-    // columns (id, value) cover 'orders' declared fields exactly, so its
-    // absence isn't proof of anything.
-    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
-      case _: Read =>
-        com.invaract.ir.UnknownPlan("InMemoryRelation(cached relation, 2 column(s))", "InMemoryRelation", columns = List("id", "value"))
-      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
+  // --- Inputs behind an UNRESOLVED lineage boundary -------------------------
+  //
+  // A resolved checkpoint never reaches StructuralVerifier as an UnknownPlan
+  // (SparkPlanAdapter splices the real pre-checkpoint plan in - see
+  // CheckpointRegistry and its specs). What is left for verify is a boundary
+  // that stayed unresolved, and only those excuse an unread input.
+
+  /** The demo plan with its base `Read` replaced by `replacement` (recursing through the nested Projects). */
+  private def demoPlanWithBaseRead(outputDf: org.apache.spark.sql.DataFrame, replacement: com.invaract.ir.Plan) = {
+    def rewrite(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => replacement
+      case proj: com.invaract.ir.Project => proj.copy(input = rewrite(proj.input))
       case other                         => other
     }
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
-    )
+    com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), rewrite(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan))
+  }
+
+  private def boundary(sourceType: String) = com.invaract.ir.UnknownPlan(s"$sourceType(unresolved)", sourceType)
+
+  test("UNVERIFIABLE_INPUT (not MISSING_INPUT): an unread input with an unresolved checkpoint boundary in the plan can't be confidently reported missing") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val plan = demoPlanWithBaseRead(outputDf, boundary("LogicalRDD"))
 
     val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
@@ -122,414 +124,71 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     val entry = result.unverifiableInputs.find(_.inputName == "orders")
       .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
     assert(entry.inputLocation == "demo/input/sample.csv")
-    assert(entry.unknownNodeTypes == List("InMemoryRelation"))
+    assert(entry.unknownNodeTypes == List("LogicalRDD"))
+    // Report-only: never a Violation, never affects `passed`.
+    assert(result.passed, s"expected PASSED, got: ${result.violations}")
   }
 
-  test("an UnverifiableInput entry never becomes a Violation and never fails the check on its own") {
+  test("an unresolved cached-relation boundary (InMemoryRelation) is a lineage boundary too") {
     val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
-      case _: Read =>
-        com.invaract.ir.UnknownPlan("LogicalRDD(checkpointed relation, 2 column(s))", "LogicalRDD", columns = List("id", "value"))
-      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
-      case other                         => other
-    }
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
-
-    assert(result.passed, s"expected PASSED (an unverifiable input alone must not block the write), got violations: ${result.violations}")
-    assert(result.unverifiableInputs.nonEmpty)
+    val outputDf = realDemoOutput(realDemoInput())
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("InMemoryRelation")), Nil, outputDf.schema)
+    assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("InMemoryRelation")))
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
   }
 
-  test("an input that IS actually read produces neither MISSING_INPUT nor UnverifiableInput, even when an unrelated UnknownPlan sits elsewhere in the plan") {
+  test("an input that IS actually read produces neither MISSING_INPUT nor UnverifiableInput, even with an unresolved boundary elsewhere in the plan") {
     val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
+    val outputDf = realDemoOutput(realDemoInput())
     val realPlan = SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan
-    // Graft an unrelated UnknownPlan (different columns entirely) alongside
-    // the real, fully-resolved read: an UnknownPlan exists somewhere in the
-    // plan, but the declared input itself was genuinely read, so neither a
-    // violation nor a report-only entry should appear for it.
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(realPlan, com.invaract.ir.UnknownPlan("Generate(explode)", "Generate", columns = List("exploded_col"))))
-    )
+    val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), com.invaract.ir.Union(List(realPlan, boundary("LogicalRDD"))))
 
     val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
+    assert(result.unverifiableInputs.isEmpty)
   }
 
-  test("a genuinely missing declared input still produces a blocking MISSING_INPUT even when an UNRELATED UnknownPlan exists elsewhere in the plan") {
-    // The exact false-negative risk an earlier, whole-plan-only version of
-    // this check had: "does an UnknownPlan exist ANYWHERE in the plan" is
-    // not evidence about any PARTICULAR missing input. A job innocently
-    // checkpointing/caching one dataset must never excuse a completely
-    // unrelated declared input that's missing because of a typo, a wrong
-    // location, or a job that simply never reads it - that must still fail
-    // closed. Two declared inputs here: 'orders' (genuinely read) and a
-    // second, 'lookup', that's declared but never read at all and whose
-    // fields (id, value) don't remotely resemble the plan's unrelated
-    // checkpoint's own columns.
-    val contract = ContractParser.parse(
-      """id: two_input_demo
-        |version: "1.0.0"
-        |inputs:
-        |  - name: orders
-        |    location: demo/input/sample.csv
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: integer
-        |          required: true
-        |  - name: lookup
-        |    location: demo/input/lookup.csv
-        |    schema:
-        |      fields:
-        |        - name: code
-        |          type: string
-        |          required: true
-        |outputs:
-        |  - name: result
-        |    location: demo/output/result.parquet
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: integer
-        |          required: true
-        |""".stripMargin
-    )
-    val orders = Read(DatasetRef("demo/input/sample.csv"))
-    // An unrelated checkpoint of some third dataset, sharing no column
-    // names at all with 'lookup's declared 'code' field.
-    val unrelatedCheckpoint = com.invaract.ir.UnknownPlan("LogicalRDD(unrelated)", "LogicalRDD", columns = List("timestamp", "batch_id"))
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(orders, unrelatedCheckpoint))
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = new StructType().add("id", IntegerType))
-
-    assert(!result.passed, "a genuinely missing declared input must still block the write")
-    assert(
-      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/lookup.csv")),
-      s"expected a blocking MISSING_INPUT for 'lookup', got violations: ${result.violations}"
-    )
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries (the checkpoint's columns don't cover 'lookup'), got: ${result.unverifiableInputs}")
-  }
-
-  test("unknownNodeTypes lists only the node(s) whose columns actually cover this input, not every UnknownPlan in the plan") {
+  test("an unread input with NO lineage boundary in the plan is still a blocking MISSING_INPUT, even when an unsupported-node UnknownPlan is present") {
+    // 'Generate' is a node the translator merely has no case for - not
+    // evidence that a *read* is hidden behind it.
     val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
-      case _: Read =>
-        com.invaract.ir.UnknownPlan("InMemoryRelation(cached relation, 2 column(s))", "InMemoryRelation", columns = List("id", "value"))
-      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
-      case other                         => other
-    }
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(
-        rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan),
-        // Unrelated: different columns entirely, must not be attributed to 'orders'.
-        com.invaract.ir.UnknownPlan("Generate(explode)", "Generate", columns = List("exploded_col"))
-      ))
-    )
+    val outputDf = realDemoOutput(realDemoInput())
+    val plan = demoPlanWithBaseRead(outputDf, com.invaract.ir.UnknownPlan("Generate(explode)", "Generate"))
 
     val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
-    val entry = result.unverifiableInputs.find(_.inputName == "orders")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
-    assert(entry.unknownNodeTypes == List("InMemoryRelation"), s"expected only the matching node's sourceType, got ${entry.unknownNodeTypes}")
+    assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
+    assert(result.unverifiableInputs.isEmpty)
   }
 
-  test("unknownNodeTypes deduplicates a sourceType repeated at multiple points in the plan") {
+  test("a blank sourceType is not a lineage boundary") {
     val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(
-        com.invaract.ir.UnknownPlan("InMemoryRelation(a)", "InMemoryRelation", columns = List("id", "value")),
-        com.invaract.ir.UnknownPlan("InMemoryRelation(b)", "InMemoryRelation", columns = List("id", "value"))
-      ))
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
-
-    val entry = result.unverifiableInputs.find(_.inputName == "orders")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
-    assert(entry.unknownNodeTypes == List("InMemoryRelation"))
+    val outputDf = realDemoOutput(realDemoInput())
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("")), Nil, outputDf.schema)
+    assert(result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(result.unverifiableInputs.isEmpty)
   }
 
-  test("a blank UnknownPlan.sourceType contributes nothing to unknownNodeTypes, rather than an empty string entry") {
+  test("unknownNodeTypes lists each distinct boundary type once, in first-seen order, and omits non-boundary unknown nodes") {
     val contract = realDemoContract()
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
-      case _: Read =>
-        com.invaract.ir.UnknownPlan("some construct with no known sourceType", columns = List("id", "value"))
-      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
-      case other                         => other
-    }
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
-
-    val entry = result.unverifiableInputs.find(_.inputName == "orders")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
-    assert(entry.unknownNodeTypes.isEmpty)
+    val outputDf = realDemoOutput(realDemoInput())
+    val replacement = com.invaract.ir.Union(List(
+      boundary("LogicalRDD"),
+      boundary("InMemoryRelation"),
+      boundary("LogicalRDD"),
+      com.invaract.ir.UnknownPlan("Generate(explode)", "Generate")
+    ))
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, replacement), Nil, outputDf.schema)
+    assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("LogicalRDD", "InMemoryRelation")))
   }
 
-  test("a partial column match is not enough - the UnknownPlan's columns must be a full superset of the declared fields") {
-    val contract = realDemoContract() // 'orders' declares both id and value
-    val inputDf = realDemoInput()
-    val outputDf = realDemoOutput(inputDf)
-    def rewriteBaseRead(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
-      // Only 'id', missing 'value' - a real checkpoint that dropped a
-      // declared column before checkpointing (e.g. a .select("id") first)
-      // is not plausibly this input if a REQUIRED declared field is
-      // outright absent from what it retains.
-      case _: Read                       => com.invaract.ir.UnknownPlan("InMemoryRelation(narrowed)", "InMemoryRelation", columns = List("id"))
-      case proj: com.invaract.ir.Project => proj.copy(input = rewriteBaseRead(proj.input))
-      case other                         => other
-    }
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
-
-    assert(
-      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")),
-      s"expected a confident MISSING_INPUT (partial column overlap isn't enough), got violations: ${result.violations}"
-    )
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
-  }
-
-  test("a declared input with no schema fields at all never matches an UnknownPlan, defaulting to confidently missing") {
-    val contract = ContractParser.parse(
-      """id: no_fields_demo
-        |version: "1.0.0"
-        |inputs:
-        |  - name: orders
-        |    location: demo/input/sample.csv
-        |    schema:
-        |      fields: []
-        |outputs:
-        |  - name: result
-        |    location: demo/output/result.parquet
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: integer
-        |          required: true
-        |""".stripMargin
-    )
-    // An UnknownPlan with arbitrary columns - since the declared input has
-    // no fields to compare against, this must never vacuously "match".
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.UnknownPlan("LogicalRDD(anything)", "LogicalRDD", columns = List("id", "value", "anything_at_all"))
-    )
-
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = new StructType().add("id", IntegerType))
-
-    assert(
-      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")),
-      s"expected a confident MISSING_INPUT, got violations: ${result.violations}"
-    )
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
-  }
-
-  test("checkpointObservedLocations alone (no column coverage) still produces UnverifiableInput - the multi-input-join-with-dropped-columns case") {
-    // The exact gap column-overlap matching can't close on its own: a
-    // checkpoint following a join of two inputs with a column-dropping
-    // .select() has an output schema that covers neither input's full
-    // declared field set. Here the UnknownPlan's own columns (order_id,
-    // customer_name) don't cover 'orders' declared fields (id, value) at
-    // all - coveringUnknownPlans alone would report a confident
-    // MISSING_INPUT - but the tracker's real-location signal says
-    // 'orders' was genuinely observed being read into this checkpoint.
-    val contract = realDemoContract() // 'orders' declares id, value at demo/input/sample.csv
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id", "customer_name"))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("order_id", IntegerType),
-      checkpointObservedLocations = Set("demo/input/sample.csv")
-    )
-
-    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${result.violations}")
-    val entry = result.unverifiableInputs.find(_.inputName == "orders")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
-    assert(entry.inputLocation == "demo/input/sample.csv")
-  }
-
-  test("checkpointObservedLocations without ANY UnknownPlan in the plan does not excuse a missing input - real evidence alone isn't corroboration") {
-    // The tracker's registry is session-wide, not scoped to this write - so
-    // it can never be sufficient on its own. This plan has no lineage
-    // boundary in it at all (no UnknownPlan anywhere), so even though
-    // 'orders' was observed being read into SOME checkpoint elsewhere in
-    // the session, there's no evidence a boundary sits upstream of THIS
-    // write specifically - must still fail closed.
-    val contract = realDemoContract()
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Read(DatasetRef("demo/input/unrelated.csv"))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("id", IntegerType),
-      checkpointObservedLocations = Set("demo/input/sample.csv")
-    )
-
-    assert(
-      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")),
-      s"expected a confident MISSING_INPUT, got violations: ${result.violations}"
-    )
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
-  }
-
-  test("checkpointObservedLocations for a DIFFERENT input does not excuse this one - stays per-input even for the real-location signal") {
-    // Same per-input discipline the column-overlap signal already has,
-    // proven for the new signal too: 'lookup' is genuinely missing, and the
-    // tracker only ever observed a completely different input ('orders')
-    // being checkpointed - that must never excuse 'lookup'.
-    val contract = ContractParser.parse(
-      """id: two_input_demo
-        |version: "1.0.0"
-        |inputs:
-        |  - name: orders
-        |    location: demo/input/sample.csv
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: integer
-        |          required: true
-        |  - name: lookup
-        |    location: demo/input/lookup.csv
-        |    schema:
-        |      fields:
-        |        - name: code
-        |          type: string
-        |          required: true
-        |outputs:
-        |  - name: result
-        |    location: demo/output/result.parquet
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: integer
-        |          required: true
-        |""".stripMargin
-    )
-    val orders = Read(DatasetRef("demo/input/sample.csv"))
-    val checkpointOfSomethingElse = com.invaract.ir.UnknownPlan("LogicalRDD(unrelated)", "LogicalRDD", columns = List("timestamp"))
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(orders, checkpointOfSomethingElse))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("id", IntegerType),
-      checkpointObservedLocations = Set("demo/input/sample.csv") // 'orders', not 'lookup'
-    )
-
-    assert(!result.passed, "a genuinely missing declared input must still block the write")
-    assert(
-      result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/lookup.csv")),
-      s"expected a blocking MISSING_INPUT for 'lookup', got violations: ${result.violations}"
-    )
-    assert(result.unverifiableInputs.isEmpty, s"expected no UnverifiableInput entries, got: ${result.unverifiableInputs}")
-  }
-
-  test("checkpointObservedLocations is matched via locationsMatch's normalized-suffix rule, not raw string equality") {
-    val contract = realDemoContract() // declares demo/input/sample.csv (a relative path)
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id"))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("order_id", IntegerType),
-      // An absolute file: URI ending with the contract's own relative
-      // location - the exact shape CheckpointLineageTracker's real
-      // captures produce, not the bare declared path.
-      checkpointObservedLocations = Set("file:/home/user/Invaract/demo/input/sample.csv")
-    )
-
+  test("with an unresolved boundary in the plan, EVERY unread scoped input is unverifiable - the boundary hides all earlier reads") {
+    val contract = lineageContract(None, None) // inputs a, b, c; two outputs, no derivedFrom
+    val plan = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), boundary("LogicalRDD"))
+    val result = StructuralVerifier.verify(contract, plan, Nil, new StructType().add("id", IntegerType))
+    assert(result.unverifiableInputs.map(_.inputName) == List("a", "b", "c"))
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
-    assert(result.unverifiableInputs.exists(_.inputName == "orders"))
-  }
-
-  test("unknownNodeTypes for a real-location-only match lists every UnknownPlan's sourceType in the plan, since which one it was isn't known") {
-    val contract = realDemoContract()
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.Union(List(
-        com.invaract.ir.UnknownPlan("LogicalRDD(post-join checkpoint)", "LogicalRDD", columns = List("order_id")),
-        com.invaract.ir.UnknownPlan("Generate(explode)", "Generate", columns = List("exploded_col"))
-      ))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("order_id", IntegerType),
-      checkpointObservedLocations = Set("demo/input/sample.csv")
-    )
-
-    val entry = result.unverifiableInputs.find(_.inputName == "orders")
-      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
-    assert(entry.unknownNodeTypes.sorted == List("Generate", "LogicalRDD"), s"expected both sourceTypes, got: ${entry.unknownNodeTypes}")
-  }
-
-  test("column-overlap coverage is checked before the real-location signal, but either alone is sufficient - not a double count") {
-    // Both signals independently say 'orders' is unverifiable here (the
-    // UnknownPlan's own columns cover it AND the tracker observed it) -
-    // must still produce exactly one UnverifiableInput entry.
-    val contract = realDemoContract()
-    val plan = com.invaract.ir.Write(
-      DatasetRef("demo/output/result.parquet"),
-      com.invaract.ir.UnknownPlan("InMemoryRelation(cached)", "InMemoryRelation", columns = List("id", "value"))
-    )
-
-    val result = StructuralVerifier.verify(
-      contract,
-      plan,
-      inputSchemas = Nil,
-      outputSchema = new StructType().add("id", IntegerType),
-      checkpointObservedLocations = Set("demo/input/sample.csv")
-    )
-
-    assert(result.unverifiableInputs.count(_.inputName == "orders") == 1)
   }
 
   test("UNDECLARED_INPUT is reported only when rejectUndeclaredInputs is enabled") {
@@ -1812,9 +1471,8 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   private def verifyLineage(
     contract: com.invaract.contract.Contract,
     plan: com.invaract.ir.Write,
-    options: VerificationOptions = VerificationOptions(),
-    checkpointObservedLocations: Set[String] = Set.empty
-  ) = StructuralVerifier.verify(contract, plan, Nil, idOnly, options, checkpointObservedLocations)
+    options: VerificationOptions = VerificationOptions()
+  ) = StructuralVerifier.verify(contract, plan, Nil, idOnly, options)
 
   test("derivedFrom: read 3 inputs, out1 uses two and out2 uses one - each write passes without reading the inputs it isn't derived from") {
     val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
@@ -1928,37 +1586,16 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.passed, result.violations.toString)
   }
 
-  test("derivedFrom scopes the checkpoint-lineage evidence too: a location observed in the session cannot excuse an input this output isn't derived from") {
-    // Session registry says a, b and c were all read into checkpoints, and
-    // out1's plan has a checkpoint boundary - but out1 is only derived from
-    // a, so c is simply not this write's business: no MISSING_INPUT AND no
-    // UnverifiableInput for it. Only what out1 itself is derived from and
-    // can't see is classified.
+  test("derivedFrom scopes the unresolved-boundary evidence too: only this output's own inputs are ever classified") {
+    // out1 is derived from a and b only. Its plan has an unresolved
+    // boundary, so a and b are unverifiable - but c belongs to out2 and is
+    // simply not this write's business: neither MISSING_INPUT nor
+    // UnverifiableInput for it.
     val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
-    val plan = com.invaract.ir.Write(
-      DatasetRef("gold/out1.parquet"),
-      com.invaract.ir.UnknownPlan("LogicalRDD(checkpoint)", "LogicalRDD", columns = List("id"))
-    )
-    val result = verifyLineage(
-      contract,
-      plan,
-      checkpointObservedLocations = Set("bronze/a.parquet", "bronze/b.parquet", "bronze/c.parquet")
-    )
+    val plan = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), com.invaract.ir.UnknownPlan("LogicalRDD(unresolved)", "LogicalRDD"))
+    val result = verifyLineage(contract, plan)
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
     assert(result.unverifiableInputs.map(_.inputName).toSet == Set("a", "b"))
-  }
-
-  test("derivedFrom + checkpoint evidence: an input listed for this output but observed only in the session registry, with no boundary in this plan, is still a real MISSING_INPUT") {
-    // out1 lists b, b was read into some checkpoint elsewhere in the
-    // session, but out1's own plan is a plain read of a with no lineage
-    // boundary at all - the registry alone is never corroboration.
-    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
-    val result = verifyLineage(
-      contract,
-      writeReading("out1", "a"),
-      checkpointObservedLocations = Set("bronze/b.parquet")
-    )
-    assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.message.contains("'b'")))
   }
 
   test("derivedFrom: a multi-output write matching no declared output keeps every input in scope (its own OUTPUT_LOCATION_MISMATCH already reports the real problem)") {

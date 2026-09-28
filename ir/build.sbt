@@ -9,20 +9,11 @@ name := "invaract-ir"
 // docs/VERSIONING.md's FAQ calls for bumping the MINOR digit (not MAJOR,
 // pinned at 0 until 1.0.0) to signal a deliberate break - the same
 // convention the 0.1.0 -> 0.2.0 rebrand itself used.
-// The real, deliberate break motivating the 0.5.0 -> 0.6.0 bump: UnknownPlan
-// gained a fourth constructor parameter (columns: List[String], defaulting
-// to Nil) - see StructuralVerifier's "Inputs hidden behind a lineage
-// boundary" doc for why: a coarse "does an UnknownPlan exist anywhere in
-// the plan" signal isn't enough to decide whether a specific declared
-// input's absence is excused, so UnknownPlan now carries its own output
-// columns to let a caller check per-input overlap instead. Same
-// unavoidable case-class apply/copy/constructor-arity break every other
-// bump in this file documents.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.6.0"
+ThisBuild / version := "0.5.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -91,7 +82,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.6.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.5.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -172,18 +163,4 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.ColumnPropertyState.this")
-)
-
-// The real, deliberate break motivating the 0.5.0 -> 0.6.0 bump above:
-// UnknownPlan gained a fourth constructor parameter (columns) - confirmed
-// against the 0.5.0 baseline via a real `sbt mimaReportBinaryIssues` run,
-// filters copied verbatim from its own suggested exclude lines. Load-bearing
-// for this PR's own api-compatibility check (base-ref doesn't carry the
-// bump yet) and become inert, matching nothing, once base-ref's own version
-// reaches 0.6.0 or later - no future PR needs to remove them.
-mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.UnknownPlan.apply"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.UnknownPlan.copy"),
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.ir.UnknownPlan.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.ir.UnknownPlan$")
 )
