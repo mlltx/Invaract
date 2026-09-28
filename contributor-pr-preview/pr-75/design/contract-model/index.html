@@ -455,19 +455,7 @@ call, rather than stopping at the first:</p>
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-<table><thead><tr><th>Check</th><th>Severity</th></tr></thead><tbody><tr><td>Empty/missing <code dir="auto">id</code></td><td>Error</td></tr><tr><td><code dir="auto">id</code> doesn’t match <code dir="auto">^[a-zA-Z][a-zA-Z0-9_.-]*$</code></td><td>Warning</td></tr><tr><td>No <code dir="auto">outputs</code> declared</td><td>Error</td></tr><tr><td>Empty/missing dataset <code dir="auto">name</code> or <code dir="auto">location</code></td><td>Error</td></tr><tr><td>Duplicate dataset name within <code dir="auto">inputs</code> or <code dir="auto">outputs</code></td><td>Error</td></tr><tr><td>Schema with zero fields</td><td>Error</td></tr><tr><td>Duplicate field name within a schema (including nested <code dir="auto">properties</code>)</td><td>Error</td></tr><tr><td>Empty field <code dir="auto">name</code> or <code dir="auto">type</code></td><td>Error</td></tr><tr><td>Field <code dir="auto">type</code> not in the known-types set (and not a struct)</td><td>Warning</td></tr><tr><td>Field marked both <code dir="auto">required</code> and <code dir="auto">nullable</code></td><td>Warning</td></tr><tr><td><code dir="auto">catalog.required: false</code> with an identity sub-field still declared</td><td>Warning</td></tr><tr><td>Field constraint (<code dir="auto">equals</code>/<code dir="auto">oneOf</code>/<code dir="auto">range</code>) with malformed/missing properties for its shape</td><td>Error</td></tr><tr><td>Field constraint’s value type disagrees with the field’s own declared <code dir="auto">type</code> (e.g. an <code dir="auto">equals</code> string value on a numeric field)</td><td>Warning</td></tr><tr><td><code dir="auto">derivedFrom</code> on an output naming an input the contract doesn’t declare</td><td>Error</td></tr><tr><td><code dir="auto">derivedFrom</code> listing the same input twice on one output</td><td>Warning</td></tr><tr><td><code dir="auto">derivedFrom</code> declared on an <em>input</em> dataset (meaningless there)</td><td>Warning</td></tr><tr><td>Every output declares <code dir="auto">derivedFrom</code>, yet a declared input appears in none of them</td><td>Warning</td></tr><tr><td>Rule with empty <code dir="auto">type</code></td><td>Error</td></tr></tbody></table>
+<table><thead><tr><th>Check</th><th>Severity</th></tr></thead><tbody><tr><td>Empty/missing <code dir="auto">id</code></td><td>Error</td></tr><tr><td><code dir="auto">id</code> doesn’t match <code dir="auto">^[a-zA-Z][a-zA-Z0-9_.-]*$</code></td><td>Warning</td></tr><tr><td>No <code dir="auto">outputs</code> declared</td><td>Error</td></tr><tr><td>Empty/missing dataset <code dir="auto">name</code> or <code dir="auto">location</code></td><td>Error</td></tr><tr><td>Duplicate dataset name within <code dir="auto">inputs</code> or <code dir="auto">outputs</code></td><td>Error</td></tr><tr><td>Schema with zero fields</td><td>Error</td></tr><tr><td>Duplicate field name within a schema (including nested <code dir="auto">properties</code>)</td><td>Error</td></tr><tr><td>Empty field <code dir="auto">name</code> or <code dir="auto">type</code></td><td>Error</td></tr><tr><td>Field <code dir="auto">type</code> not in the known-types set (and not a struct)</td><td>Warning</td></tr><tr><td>Field marked both <code dir="auto">required</code> and <code dir="auto">nullable</code></td><td>Warning</td></tr><tr><td><code dir="auto">catalog.required: false</code> with an identity sub-field still declared</td><td>Warning</td></tr><tr><td>Field constraint (<code dir="auto">equals</code>/<code dir="auto">oneOf</code>/<code dir="auto">range</code>) with malformed/missing properties for its shape</td><td>Error</td></tr><tr><td>Field constraint’s value type disagrees with the field’s own declared <code dir="auto">type</code> (e.g. an <code dir="auto">equals</code> string value on a numeric field)</td><td>Warning</td></tr><tr><td><code dir="auto">derivedFrom</code> on an output naming an input the contract doesn’t declare</td><td>Error</td></tr><tr><td>Rule with empty <code dir="auto">type</code></td><td>Error</td></tr></tbody></table>
 <p>Validation recurses into nested struct fields (<code dir="auto">properties</code>), so a warning on
 a deeply nested field reports its full dotted path (e.g.
 <code dir="auto">outputs[0].schema.address.zip</code>).</p>
@@ -822,9 +810,8 @@ The mapping is a <em>declaration the verifier enforces</em>, not a suggestion �
 <code dir="auto">Read</code> node in the plan is a structural fact about which datasets were composed
 into the write, so “this output reads exactly these inputs” is checkable.</p>
 <p><code dir="auto">ContractValidator</code> rejects a name that isn’t a declared input (an Error —
-silently dropping it would turn “needs X” into “needs nothing”), and warns on
-a duplicate, on <code dir="auto">derivedFrom</code> set on an input, and on an input no output lists
-when every output declares <code dir="auto">derivedFrom</code>. <code dir="auto">ContractCompatibility</code> compares each
+silently dropping it would turn “needs X” into “needs nothing”); <code dir="auto">derivedFrom</code>
+on an <em>input</em> is simply ignored. <code dir="auto">ContractCompatibility</code> compares each
 output’s <em>effective</em> input set (so spelling out the full list where it was
 implicit is not a change) and treats any real difference as Breaking. The JSON
 Schema documents the key too.</p>
