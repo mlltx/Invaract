@@ -101,8 +101,7 @@ object ContractEnforcementRule {
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, None, None)
-      val checkpointTracker = new CheckpointLineageTracker
-      session.listenerManager.register(checkpointTracker)
+      val checkpointTracker = installCheckpointTracker(session)
       (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None, checkpointTracker = Some(checkpointTracker))
     }
 
@@ -130,11 +129,16 @@ object ContractEnforcementRule {
       val resolvedOptions = resolveVerificationOptions(options, session)
       val applicationId = Some(session.sparkContext.applicationId)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
-      val checkpointTracker = new CheckpointLineageTracker
-      session.listenerManager.register(checkpointTracker)
+      val checkpointTracker = installCheckpointTracker(session)
       (plan: LogicalPlan) =>
         verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointTracker = Some(checkpointTracker))
     }
+
+  private def installCheckpointTracker(session: SparkSession): CheckpointLineageTracker = {
+    val tracker = new CheckpointLineageTracker
+    session.listenerManager.register(tracker)
+    tracker
+  }
 
   /** Spark configuration key naming an `id=location` `.properties` file
     * (the same shape `StaticMapLocationResolver.fromPropertiesFile` reads)

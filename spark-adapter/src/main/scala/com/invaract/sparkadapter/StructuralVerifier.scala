@@ -682,16 +682,14 @@ private[sparkadapter] object StructuralVerifier {
     // Which declared inputs THIS write is expected to draw on: everything
     // the contract declares, unless the output this write lands on says
     // otherwise via `derivedFrom` (see the "Which inputs a write is checked
-    // against" class doc). Resolved the same way the output checks below
-    // resolve `expectedOutputOpt` - a single-output contract's only output
-    // regardless of location, a multi-output one's location match - so both
-    // halves of this method always agree on which output a write is
-    // "for". A plan with no Write (or a multi-output write matching no
-    // declared output) has no output to scope by and keeps every input.
+    // against" class doc). The output is resolved by the same
+    // `expectedOutputFor` the output checks below use, so both halves always
+    // agree on which output a write is "for". A plan with no Write (or a
+    // multi-output write matching no declared output) has no output to
+    // scope by and keeps every input.
     val scopedOutput: Option[Dataset] = plan match {
-      case Write(dataset, _, _, _, _) =>
-        if (contract.outputs.size == 1) Some(contract.outputs.head) else matchOutput(contract.outputs, dataset.location)
-      case _ => None
+      case Write(dataset, _, _, _, _) => expectedOutputFor(contract.outputs, dataset.location)
+      case _                          => None
     }
     val scopedInputs: List[Dataset] = scopedOutput.map(contract.inputsFor).getOrElse(contract.inputs)
 
@@ -703,38 +701,29 @@ private[sparkadapter] object StructuralVerifier {
     // MissingInput violation blocking a job that reads its input just fine.
     val declaredButNotRead = scopedInputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
 
-    val (missingInputs, unverifiableInputs) =
-      // Genuinely equivalent mutant, confirmed via scoped Stryker4s: forcing
-      // this condition to `false` still produces (Nil, Nil) whenever
-      // declaredButNotRead really is empty, since the classification below
-      // only ever operates on declaredButNotRead's own elements - mapping
-      // an empty list is Nil either way, so no test could ever observe a
-      // difference. Kept as an explicit branch anyway, for the same reason
-      // "empty / confidently missing / unverifiable" reads as three
-      // distinct cases, not two.
-      if (declaredButNotRead.isEmpty) (Nil, Nil)
-      else {
-        val unknownPlans = collectUnknownPlans(plan)
-        val classified = declaredButNotRead.map(input =>
-          input -> unverifiableEvidenceFor(input, unknownPlans, checkpointObservedLocations)
+    val (missingInputs, unverifiableInputs) = {
+      // lazy: only walked when some declared input really is unread.
+      lazy val unknownPlans = collectUnknownPlans(plan)
+      val classified = declaredButNotRead.map(input =>
+        input -> unverifiableEvidenceFor(input, unknownPlans, checkpointObservedLocations)
+      )
+      val missing = classified.collect { case (input, None) =>
+        Violation(
+          ViolationType.MissingInput,
+          s"declared input '${input.name}' (${input.location}) was not read by this plan",
+          remediation =
+            s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed." +
+              (if (scopedOutput.exists(_.derivedFrom.isEmpty) && contract.outputs.size > 1)
+                 s" If '${input.name}' feeds only some of this contract's outputs, list the inputs each output is built from in that output's 'derivedFrom' instead."
+               else ""),
+          location = Some(input.location)
         )
-        val missing = classified.collect { case (input, None) =>
-          Violation(
-            ViolationType.MissingInput,
-            s"declared input '${input.name}' (${input.location}) was not read by this plan",
-            remediation =
-              s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed." +
-                (if (scopedOutput.exists(_.derivedFrom.isEmpty) && contract.outputs.size > 1)
-                   s" If '${input.name}' feeds only some of this contract's outputs, list the inputs each output is built from in that output's 'derivedFrom' instead."
-                 else ""),
-            location = Some(input.location)
-          )
-        }
-        val unverifiable = classified.collect { case (input, Some(sourceTypes)) =>
-          UnverifiableInput(input.name, input.location, sourceTypes)
-        }
-        (missing, unverifiable)
       }
+      val unverifiable = classified.collect { case (input, Some(sourceTypes)) =>
+        UnverifiableInput(input.name, input.location, sourceTypes)
+      }
+      (missing, unverifiable)
+    }
 
     val undeclaredInputs =
       if (options.rejectUndeclaredInputs)
@@ -813,8 +802,7 @@ private[sparkadapter] object StructuralVerifier {
         // to: if the write's location doesn't identify which declared
         // output it belongs to, there is no non-ambiguous output left to
         // check the rest against.
-        val expectedOutputOpt: Option[Dataset] =
-          if (contract.outputs.size == 1) Some(contract.outputs.head) else matched
+        val expectedOutputOpt: Option[Dataset] = expectedOutputFor(contract.outputs, dataset.location)
 
         val locationViolation = matched match {
           case Some(_) => Nil
@@ -962,6 +950,14 @@ private[sparkadapter] object StructuralVerifier {
     * (see `verify`'s "Multi-output contracts" doc) - `outputs` is a `List`,
     * not a `Set`, specifically so this stays deterministic.
     */
+  /** The declared output a write to `actualLocation` is checked against: a
+    * single-output contract's only output regardless of location (its
+    * location mismatch is reported in addition to, not instead of, every
+    * other check), otherwise whichever declared output matches by location.
+    */
+  private def expectedOutputFor(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
+    if (outputs.size == 1) Some(outputs.head) else matchOutput(outputs, actualLocation)
+
   private def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
     outputs.find(o => locationsMatch(o.location, actualLocation))
 

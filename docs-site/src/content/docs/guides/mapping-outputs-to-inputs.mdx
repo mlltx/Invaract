@@ -77,9 +77,7 @@ governs more than one write. When a multi-output contract without `derivedFrom` 
 <Aside type="note" title="Validation catches typos">
 A name in `derivedFrom` that isn't one of the contract's inputs is a validation **error**, not
 something silently ignored — dropping it would quietly turn "this output needs X" into "this
-output needs nothing". Listing an input twice, declaring `derivedFrom` on an input (where it
-means nothing), and — when *every* output declares `derivedFrom` — declaring an input that no
-output lists, are validation warnings.
+output needs nothing". (`derivedFrom` on an *input* means nothing and is ignored.)
 </Aside>
 
 ## Versioning

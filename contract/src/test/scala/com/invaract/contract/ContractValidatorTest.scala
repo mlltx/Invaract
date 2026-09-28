@@ -695,15 +695,14 @@ class ContractValidatorTest extends AnyFunSuite {
 
   private def lineageContract(
     inputNames: List[String],
-    outputs: List[(String, Option[List[String]])],
-    inputDerivedFrom: Option[List[String]] = None
+    outputs: List[(String, Option[List[String]])]
   ): Contract = {
     val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
     Contract(
       id = "lineage",
       version = ContractVersion(1, 0, 0),
       status = "active",
-      inputs = inputNames.map(n => Dataset(n, s"bronze.$n", None, schema, derivedFrom = inputDerivedFrom)),
+      inputs = inputNames.map(n => Dataset(n, s"bronze.$n", None, schema)),
       outputs = outputs.map { case (n, df) => Dataset(n, s"gold.$n", None, schema, derivedFrom = df) },
       rules = Nil,
       extensions = Map.empty
@@ -725,10 +724,9 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(error.message.contains("a, b"))
   }
 
-  test("validate reports an unknown derivedFrom name once, even if listed twice, and notes the duplicate separately") {
+  test("validate reports an unknown derivedFrom name once, even if listed twice") {
     val result = ContractValidator.validate(lineageContract(List("a"), List("o1" -> Some(List("typo", "typo", "a")))))
     assert(result.errors.count(_.path == "outputs[0].derivedFrom") == 1)
-    assert(result.warnings.exists(w => w.path == "outputs[0].derivedFrom" && w.message.contains("'typo' more than once")))
   }
 
   test("validate says 'none' for declared inputs when an output is derivedFrom something but the contract declares no inputs") {
@@ -736,25 +734,4 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.errors.exists(_.message.contains("declared inputs: none")))
   }
 
-  test("validate warns (not errors) when an input declares derivedFrom, since it is meaningless there") {
-    val result = ContractValidator.validate(lineageContract(List("a"), List("o1" -> None), inputDerivedFrom = Some(List("x"))))
-    assert(result.isValid)
-    assert(result.warnings.exists(w => w.path == "inputs[0].derivedFrom" && w.message.contains("only meaningful on an output")))
-  }
-
-  test("validate warns about an input no output lists only when EVERY output declares derivedFrom") {
-    val fullyMapped = ContractValidator.validate(lineageContract(List("a", "b"), List("o1" -> Some(List("a")), "o2" -> Some(Nil))))
-    assert(fullyMapped.isValid)
-    assert(fullyMapped.warnings.exists(w => w.path == "inputs" && w.message.contains("'b' is not listed")))
-    assert(!fullyMapped.warnings.exists(_.message.contains("'a' is not listed")))
-
-    // One output leaves derivedFrom unset -> it's assumed to draw on every input, so no input is orphaned.
-    val partiallyMapped = ContractValidator.validate(lineageContract(List("a", "b"), List("o1" -> Some(List("a")), "o2" -> None)))
-    assert(!partiallyMapped.warnings.exists(_.message.contains("is not listed")))
-  }
-
-  test("validate does not warn about orphaned inputs when no output declares derivedFrom at all") {
-    val result = ContractValidator.validate(lineageContract(List("a", "b"), List("o1" -> None)))
-    assert(result.issues.isEmpty, result.issues.toString)
-  }
 }

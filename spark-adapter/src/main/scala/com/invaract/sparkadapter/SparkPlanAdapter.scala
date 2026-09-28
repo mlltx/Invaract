@@ -726,7 +726,7 @@ private[sparkadapter] object SparkPlanAdapter {
       // diagnostic/description names the real cause - "a cached/persisted
       // relation" or "a checkpointed/RDD-backed relation" - instead of a
       // bare Catalyst class name a user hitting this has no reason to
-      // recognize. See `ir.Plan.containsUnknownPlan` and
+      // recognize. See
       // `StructuralVerifier`'s own "Inputs hidden behind a lineage
       // boundary" section for what this means for verification: a
       // declared input that was genuinely read before this boundary but

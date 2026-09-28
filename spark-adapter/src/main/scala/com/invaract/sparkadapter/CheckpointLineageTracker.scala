@@ -88,14 +88,7 @@ private[sparkadapter] class CheckpointLineageTracker extends QueryExecutionListe
     if (funcName == "checkpoint" || funcName == "localCheckpoint") {
       val preCheckpointPlan = SparkPlanAdapter.translate(qe.analyzed).plan
       val locations = StructuralVerifier.collectReads(preCheckpointPlan).map(_.dataset.location).toSet
-      // Genuinely equivalent mutant, confirmed via scoped Stryker4s: forcing
-      // this condition to `true` still leaves _observedLocations unchanged
-      // whenever locations really is empty (e.g. spark.range(5).checkpoint(),
-      // a synthetic dataset with no file-backed Read at all) - `set ++
-      // Set.empty` is a no-op either way, so no test could ever observe a
-      // difference. Kept as an explicit guard anyway, to skip an unneeded
-      // @volatile write when there's nothing to add.
-      if (locations.nonEmpty) _observedLocations = _observedLocations ++ locations
+      _observedLocations = _observedLocations ++ locations
     } // else some other action (count, collect, schema inference, ...) - not this tracker's concern
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = ()

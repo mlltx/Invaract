@@ -314,9 +314,6 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | Field constraint (`equals`/`oneOf`/`range`) with malformed/missing properties for its shape | Error |
 | Field constraint's value type disagrees with the field's own declared `type` (e.g. an `equals` string value on a numeric field) | Warning |
 | `derivedFrom` on an output naming an input the contract doesn't declare | Error |
-| `derivedFrom` listing the same input twice on one output | Warning |
-| `derivedFrom` declared on an *input* dataset (meaningless there) | Warning |
-| Every output declares `derivedFrom`, yet a declared input appears in none of them | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on
@@ -649,9 +646,8 @@ The mapping is a *declaration the verifier enforces*, not a suggestion — a
 into the write, so "this output reads exactly these inputs" is checkable.
 
 `ContractValidator` rejects a name that isn't a declared input (an Error —
-silently dropping it would turn "needs X" into "needs nothing"), and warns on
-a duplicate, on `derivedFrom` set on an input, and on an input no output lists
-when every output declares `derivedFrom`. `ContractCompatibility` compares each
+silently dropping it would turn "needs X" into "needs nothing"); `derivedFrom`
+on an *input* is simply ignored. `ContractCompatibility` compares each
 output's *effective* input set (so spelling out the full list where it was
 implicit is not a change) and treats any real difference as Breaking. The JSON
 Schema documents the key too.
