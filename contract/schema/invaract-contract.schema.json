@@ -85,6 +85,11 @@
           "enum": ["DATA_ASSET", "SOURCE", "CONTROL"],
           "description": "Optional declared semantic role (com.invaract.contract.DatasetType), matched case-insensitively by ContractParser though only the canonical uppercase form is listed here: DATA_ASSET (a governed, shareable data product this contract may itself produce or consume), SOURCE (data entering this contract's pipeline from outside its own responsibility - never valid as this contract's own output; ContractValidator warns if declared there), or CONTROL (data used to operate/control processing rather than being the business data produced, e.g. a processing calendar or watermark). A closed three-value set for the initial implementation - an unrecognized value is a ContractParser hard failure, unlike the open-vocabulary `format` above. Whether declaring this is mandatory is an organizational choice, not enforced here: see com.invaract.contract.PolicyType.RequireDatasetType."
         },
+        "derivedFrom": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional, meaningful only on an output: the names of this contract's declared `inputs` this output is derived from. Absent means the original assumption - derived from ALL declared inputs; present scopes spark-adapter's per-write input checks (MISSING_INPUT, UNDECLARED_INPUT) to just these inputs whenever a write to this output is checked, so a contract governing several writes can say e.g. 'orders_summary uses orders and customers, audit_log uses only events'. An empty list means derived from no declared input. Many-to-many: an input may appear under several outputs. A name matching no declared input is a ContractValidator Error - not enforceable by this schema, since it needs the sibling `inputs` list."
+        },
         "schema": { "$ref": "#/$defs/schema" }
       }
     },

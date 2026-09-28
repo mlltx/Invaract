@@ -900,7 +900,7 @@ excludeDependencies ++= Seq(
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-ir" % "0.6.0",
-  "com.invaract" %% "invaract-contract" % "0.11.0",
+  "com.invaract" %% "invaract-contract" % "0.12.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
   // that document's §14. Same real Maven-resolvable-dependency reasoning

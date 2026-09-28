@@ -50,8 +50,8 @@ object ContractCompatibility {
       else Nil
 
     val changes = idChange ++
-      diffDatasets("outputs", previous.outputs, next.outputs) ++
-      diffDatasets("inputs", previous.inputs, next.inputs)
+      diffDatasets("outputs", previous.outputs, next.outputs, previous.inputs.map(_.name), next.inputs.map(_.name)) ++
+      diffDatasets("inputs", previous.inputs, next.inputs, previous.inputs.map(_.name), next.inputs.map(_.name))
 
     CompatibilityReport(changes)
   }
@@ -115,7 +115,13 @@ object ContractCompatibility {
     removed ++ added ++ common
   }
 
-  private def diffDatasets(kind: String, previous: List[Dataset], next: List[Dataset]): List[CompatibilityChange] =
+  private def diffDatasets(
+    kind: String,
+    previous: List[Dataset],
+    next: List[Dataset],
+    previousInputNames: List[String],
+    nextInputNames: List[String]
+  ): List[CompatibilityChange] =
     diffByName(previous, next)(
       name = _.name,
       onRemoved = (n, _) =>
@@ -144,9 +150,48 @@ object ContractCompatibility {
           diffOptionalConstraint(s"$kind.$n.format", "format", prevDs.format, nextDs.format) ++
           diffOptionalConstraint(s"$kind.$n.saveMode", "saveMode", prevDs.saveMode, nextDs.saveMode) ++
           diffCatalog(s"$kind.$n.catalog", prevDs.catalog, nextDs.catalog) ++
-          diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
+          diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema) ++
+          (if (kind == "outputs") diffDerivedFrom(s"$kind.$n.derivedFrom", prevDs, nextDs, previousInputNames, nextInputNames)
+           else Nil)
       }
     )
+
+  /** Compares the set of inputs an output is *effectively* derived from —
+    * `derivedFrom` when declared, otherwise every input its own contract
+    * declares (see `Dataset.derivedFrom`) — rather than the raw `Option`, so
+    * spelling out the full input list where it was previously left implicit
+    * (or vice versa) is correctly a non-change. Any real difference is
+    * BREAKING: a newly required input turns an existing producer that never
+    * read it into a `MISSING_INPUT`, and a newly excluded one turns its
+    * existing read into an `UNDECLARED_INPUT` (under
+    * `rejectUndeclaredInputs`) — both change what a valid write must look
+    * like, the same "a new constraint a real write must match" reasoning
+    * `diffOptionalConstraint` uses.
+    */
+  private def diffDerivedFrom(
+    path: String,
+    previous: Dataset,
+    next: Dataset,
+    previousInputNames: List[String],
+    nextInputNames: List[String]
+  ): List[CompatibilityChange] = {
+    val prevEffective = previous.derivedFrom.map(_.toSet).getOrElse(previousInputNames.toSet)
+    val nextEffective = next.derivedFrom.map(_.toSet).getOrElse(nextInputNames.toSet)
+    // Both unset: nothing about the mapping itself changed, so a difference
+    // in the two effective sets can only come from an input being
+    // added/removed - already classified on its own (Minor/Breaking) by the
+    // inputs diff, and unchanged by this feature.
+    if ((previous.derivedFrom.isEmpty && next.derivedFrom.isEmpty) || prevEffective == nextEffective) Nil
+    else {
+      val added = (nextEffective -- prevEffective).toList.sorted
+      val removed = (prevEffective -- nextEffective).toList.sorted
+      val detail = List(
+        if (added.nonEmpty) Some(s"now derived from ${added.map(n => s"'$n'").mkString(", ")}") else None,
+        if (removed.nonEmpty) Some(s"no longer derived from ${removed.map(n => s"'$n'").mkString(", ")}") else None
+      ).flatten.mkString("; ")
+      List(CompatibilityChange(CompatibilityLevel.Breaking, path, s"Output's input lineage changed: $detail"))
+    }
+  }
 
   /** `format`/`saveMode` are both "declaring this at all is a new
     * constraint a real write must match" fields (`StructuralVerifier`

@@ -558,6 +558,35 @@ object VerificationResult {
   * see its own doc); `verify` picks whichever matches first when that
   * happens, and doesn't special-case it further.
   *
+  * ## Which inputs a write is checked against
+  *
+  * A contract's `inputs` and `outputs` are two flat lists, so a contract
+  * governing several writes needs some way to say which inputs each
+  * output is built from — a job can read three datasets and use two for
+  * one output and one for another, and requiring every write to read every
+  * input would reject exactly that. `Dataset.derivedFrom` on an output
+  * (see its own doc) is that mapping, and `verify` scopes every per-input
+  * check to `Contract.inputsFor(<the output this write lands on>)`:
+  *
+  *   - `MISSING_INPUT` (and the unverifiable-input classification below)
+  *     is only considered for the scoped inputs, so an input an output
+  *     doesn't derive from is never required of a write to it.
+  *   - Under `rejectUndeclaredInputs`, a read of a declared input that is
+  *     *not* in the scoped set is an `UNDECLARED_INPUT` (worded as "declared
+  *     by this contract but not a source of output X") — the mapping is a
+  *     real claim about the output's sources, and a plan's `Read` nodes are
+  *     a structural fact about which datasets were composed into the write,
+  *     so this is enforceable rather than advisory.
+  *   - An output without `derivedFrom` keeps the original behavior exactly:
+  *     every declared input is expected. So does a plan with no `Write`, and
+  *     a multi-output write matching no declared output (which already
+  *     reports `OUTPUT_LOCATION_MISMATCH` on its own).
+  *
+  * Scoping also narrows what the checkpoint-lineage evidence below can
+  * excuse: only the write's own scoped inputs are ever candidates for
+  * `UnverifiableInput`, so a checkpoint elsewhere in the session can no
+  * longer mask a missing input the *other* output was never meant to read.
+  *
   * ## Inputs hidden behind a lineage boundary
   *
   * A declared input with no matching `Read` node anywhere in `plan` is
@@ -650,13 +679,29 @@ private[sparkadapter] object StructuralVerifier {
     val actualReads = collectReads(plan)
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
 
+    // Which declared inputs THIS write is expected to draw on: everything
+    // the contract declares, unless the output this write lands on says
+    // otherwise via `derivedFrom` (see the "Which inputs a write is checked
+    // against" class doc). Resolved the same way the output checks below
+    // resolve `expectedOutputOpt` - a single-output contract's only output
+    // regardless of location, a multi-output one's location match - so both
+    // halves of this method always agree on which output a write is
+    // "for". A plan with no Write (or a multi-output write matching no
+    // declared output) has no output to scope by and keeps every input.
+    val scopedOutput: Option[Dataset] = plan match {
+      case Write(dataset, _, _, _, _) =>
+        if (contract.outputs.size == 1) Some(contract.outputs.head) else matchOutput(contract.outputs, dataset.location)
+      case _ => None
+    }
+    val scopedInputs: List[Dataset] = scopedOutput.map(contract.inputsFor).getOrElse(contract.inputs)
+
     // A declared input with no matching Read node in the plan is normally
     // confidently missing - but not when there's real evidence it was read
     // behind a lineage boundary this plan can no longer see through (see
     // unverifiableEvidenceFor's own doc). That covered case is reported as
     // UnverifiableInput instead - honest uncertainty, not a false-positive
     // MissingInput violation blocking a job that reads its input just fine.
-    val declaredButNotRead = contract.inputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
+    val declaredButNotRead = scopedInputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
 
     val (missingInputs, unverifiableInputs) =
       // Genuinely equivalent mutant, confirmed via scoped Stryker4s: forcing
@@ -678,7 +723,10 @@ private[sparkadapter] object StructuralVerifier {
             ViolationType.MissingInput,
             s"declared input '${input.name}' (${input.location}) was not read by this plan",
             remediation =
-              s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed.",
+              s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed." +
+                (if (scopedOutput.exists(_.derivedFrom.isEmpty) && contract.outputs.size > 1)
+                   s" If '${input.name}' feeds only some of this contract's outputs, list the inputs each output is built from in that output's 'derivedFrom' instead."
+                 else ""),
             location = Some(input.location)
           )
         }
@@ -691,15 +739,35 @@ private[sparkadapter] object StructuralVerifier {
     val undeclaredInputs =
       if (options.rejectUndeclaredInputs)
         actualReadLocations
-          .filterNot(loc => contract.inputs.exists(input => locationsMatch(input.location, loc)))
-          .map(loc =>
-            Violation(
-              ViolationType.UndeclaredInput,
-              s"plan reads '$loc' which is not declared as a contract input",
-              remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
-              location = Some(loc)
-            )
-          )
+          .filterNot(loc => scopedInputs.exists(input => locationsMatch(input.location, loc)))
+          .map { loc =>
+            // A read that IS a declared contract input, just not one the
+            // write's own output is derivedFrom, is a different mistake
+            // from a wholly undeclared read: the fix is to the mapping
+            // (or the transformation), not to add another input.
+            val notThisOutputsInput = for {
+              declared <- contract.inputs.find(input => locationsMatch(input.location, loc))
+              output   <- scopedOutput
+            } yield (declared, output)
+            notThisOutputsInput match {
+              case Some((declared, output)) =>
+                Violation(
+                  ViolationType.UndeclaredInput,
+                  s"plan reads '$loc' (input '${declared.name}'), which this contract declares but not as a source of " +
+                    s"output '${output.name}' (its derivedFrom lists ${output.derivedFrom.filter(_.nonEmpty).map(_.map(n => s"'$n'").mkString(", ")).getOrElse("no inputs")})",
+                  remediation =
+                    s"Add '${declared.name}' to output '${output.name}''s derivedFrom if it is genuinely one of its sources, or remove this read from the transformation.",
+                  location = Some(loc)
+                )
+              case None =>
+                Violation(
+                  ViolationType.UndeclaredInput,
+                  s"plan reads '$loc' which is not declared as a contract input",
+                  remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
+                  location = Some(loc)
+                )
+            }
+          }
       else Nil
 
     val inputSchemaViolations = contract.inputs.flatMap { input =>

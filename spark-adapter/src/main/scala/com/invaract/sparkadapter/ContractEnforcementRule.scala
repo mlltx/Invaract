@@ -912,7 +912,12 @@ object ContractEnforcementRule {
       sb.append(s"  input  '${input.name}' at ${input.location}: ${describeFields(input.schema.fields)}\n")
     }
     contract.outputs.foreach { output =>
-      sb.append(s"  output '${output.name}' at ${output.location}: ${describeFields(output.schema.fields)}\n")
+      val lineage = output.derivedFrom match {
+        case None                         => ""
+        case Some(names) if names.isEmpty => " (derived from no declared input)"
+        case Some(names)                  => s" (derived from ${names.mkString(", ")})"
+      }
+      sb.append(s"  output '${output.name}' at ${output.location}$lineage: ${describeFields(output.schema.fields)}\n")
     }
 
     sb.append("\nWhat the plan contains:\n")

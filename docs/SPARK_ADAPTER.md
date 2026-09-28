@@ -469,6 +469,46 @@ straight through to `notification.ContractValidationEvent.roleConformance`
 — reaches every configured sink, PASS or FAILED alike, the same as
 `dataQuality`/`fingerprints` above.
 
+## Which inputs a write is checked against (`derivedFrom`)
+
+Each write a contract governs is verified independently, and `StructuralVerifier.verify`
+first resolves which declared output that write lands on — a single-output contract's only
+output, or for a multi-output contract the one whose `location` matches (the same rule its
+output checks use, so both halves always agree). It then scopes every per-input check to
+`Contract.inputsFor(thatOutput)`:
+
+| Output's `derivedFrom` | Inputs checked for a write to it |
+|---|---|
+| absent | every declared input (the original behavior) |
+| `[a, b]` | only `a` and `b` |
+| `[]` | none |
+
+- `MISSING_INPUT`, and the `unverifiableInputs` classification below, apply only to the
+  scoped inputs — so a write to `audit_log` is never required to have read an input only
+  `orders_summary` is built from.
+- Under `rejectUndeclaredInputs`, a read of a declared input *outside* the scoped set is an
+  `UNDECLARED_INPUT` worded as "declared by this contract but not a source of output X", with a
+  remediation pointing at the output's `derivedFrom`. A read of a location the contract doesn't
+  declare at all keeps its original wording.
+- A plan with no `Write`, and a multi-output write matching no declared output, keep every
+  input in scope (the latter already reports `OUTPUT_LOCATION_MISMATCH`).
+- A multi-output contract *without* `derivedFrom` still requires every input of every write;
+  its `MISSING_INPUT` remediation now says so and points at `derivedFrom`.
+- `ContractViolationException`'s "what the contract expects" section prints each output's
+  `derivedFrom` set.
+
+This also narrows what the checkpoint evidence below can excuse: only the write's own scoped
+inputs are ever candidates for `UnverifiableInput`. Two unrelated checkpointed writes in one
+session can no longer excuse an input neither output is derived from, because that input is
+simply not in scope for either. What remains — and is unchanged — is the disclosed limit that
+*within* one write's scoped inputs, the session-scoped registry can't tell which checkpoint fed
+which write (see `CheckpointLineageTracker`).
+
+`derivedFrom` is contract content, not an engine knob, so it needs no extra `--conf` to attach
+— a platform team edits the contract the job is already pointed at
+(`spark.invaract.contract`), and `spark.invaract.rejectUndeclaredInputs` already governs the
+stricter half.
+
 ## Inputs hidden behind a lineage boundary (`unverifiableInputs`)
 
 `StructuralVerifier.verify`'s `MISSING_INPUT` check has always assumed that

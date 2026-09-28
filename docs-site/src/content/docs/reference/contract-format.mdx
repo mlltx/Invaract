@@ -72,6 +72,7 @@ extensions:
 | `catalog` | no | Expected data-catalog registration — see [Catalog registration](#catalog-registration) below. Meaningful for both inputs and outputs. |
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked against a real write. An [organizational policy](/guides/enforcing-organizational-policy/) can require every dataset to declare one. |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`, matched case-insensitively. A closed set: any other value is rejected when the contract is parsed. See [Declare Input and Output Types](/guides/declaring-input-and-output-types/). |
+| `derivedFrom` | no | Outputs only: the `name`s of the contract's `inputs` this output is built from. Absent means "all of them" (the default, and the only behavior before this key existed); a list scopes every input check for a write to *this* output to just those inputs. `[]` means derived from no declared input. A name that isn't a declared input is a validation error. See [Map Outputs to Their Inputs](/guides/mapping-outputs-to-inputs/). |
 | `schema.fields` | yes | List of fields (at least one). |
 
 ## Field fields

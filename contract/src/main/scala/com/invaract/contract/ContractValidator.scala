@@ -108,6 +108,8 @@ object ContractValidator {
       )
     }
 
+    issues ++= validateDerivedFrom(contract)
+
     contract.rules.zipWithIndex.foreach { case (rule, idx) =>
       if (rule.ruleType.trim.isEmpty) {
         issues += ValidationIssue(ValidationSeverity.Error, s"rules[$idx]", "Rule type must not be empty")
@@ -159,6 +161,67 @@ object ContractValidator {
     }
 
     ValidationResult(issues.result())
+  }
+
+  /** Checks the output-to-input mapping (`Dataset.derivedFrom`).
+    *
+    *   - A name that matches no declared input is an Error: it can never be
+    *     satisfied, and silently dropping it would quietly turn "this output
+    *     needs X" into "this output needs nothing", the opposite of what a
+    *     typo'd name almost certainly meant.
+    *   - A name listed twice on one output is a Warning (harmless, but
+    *     probably a copy-paste slip).
+    *   - `derivedFrom` on an *input* is a Warning: it has no meaning there
+    *     and would otherwise be silently ignored.
+    *   - When *every* output declares `derivedFrom`, a declared input no
+    *     output lists is a Warning: the mapping is fully explicit, so an
+    *     input feeding nothing is either dead weight or a forgotten entry.
+    *     Not raised when any output leaves `derivedFrom` unset, since that
+    *     output is then assumed to draw on every input (see `Dataset`).
+    */
+  private def validateDerivedFrom(contract: Contract): List[ValidationIssue] = {
+    val issues = List.newBuilder[ValidationIssue]
+    val inputNames = contract.inputs.map(_.name).toSet
+
+    contract.inputs.zipWithIndex.foreach { case (input, idx) =>
+      if (input.derivedFrom.isDefined) {
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          s"inputs[$idx].derivedFrom",
+          s"Input dataset '${input.name}' declares derivedFrom, which is only meaningful on an output and will be ignored"
+        )
+      }
+    }
+
+    contract.outputs.zipWithIndex.foreach { case (output, idx) =>
+      output.derivedFrom.foreach { names =>
+        val path = s"outputs[$idx].derivedFrom"
+        names.filterNot(inputNames.contains).distinct.foreach { name =>
+          issues += ValidationIssue(
+            ValidationSeverity.Error,
+            path,
+            s"Output '${output.name}' is derivedFrom '$name', which is not a declared input " +
+              s"(declared inputs: ${if (inputNames.isEmpty) "none" else contract.inputs.map(_.name).mkString(", ")})"
+          )
+        }
+        duplicateNames(names).foreach { name =>
+          issues += ValidationIssue(ValidationSeverity.Warning, path, s"Output '${output.name}' lists input '$name' more than once in derivedFrom")
+        }
+      }
+    }
+
+    if (contract.outputs.nonEmpty && contract.outputs.forall(_.derivedFrom.isDefined)) {
+      val mapped = contract.outputs.flatMap(_.derivedFrom.getOrElse(Nil)).toSet
+      contract.inputs.map(_.name).filterNot(mapped.contains).distinct.foreach { name =>
+        issues += ValidationIssue(
+          ValidationSeverity.Warning,
+          "inputs",
+          s"Input '$name' is not listed in any output's derivedFrom, so no output is derived from it"
+        )
+      }
+    }
+
+    issues.result()
   }
 
   private def validateDataset(path: String, dataset: Dataset): List[ValidationIssue] = {

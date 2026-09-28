@@ -107,6 +107,7 @@ Each dataset (`inputs[]` / `outputs[]`) has:
 | `catalog` | no | Expected data-catalog registration — see `CatalogRequirement` below. Unlike `saveMode`, meaningful for both inputs and outputs. Omitted entirely (the default) means no check at all. |
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked by `RuleVerifier`/`StructuralVerifier`. An organizational policy can require every dataset to declare one (`require_dataset_description` — see "Organizational Policy" below). |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`. Matched case-insensitively; any other value is a `ContractParser` hard failure (a closed three-value set, unlike `format`'s open vocabulary). Absent by default — see "Input and Output Types" below for the full model, including how an organizational policy can make it mandatory. |
+| `derivedFrom` | no | Outputs only: the `name`s of the contract's declared `inputs` this output is built from — see "Output-to-input lineage" below. Absent (the default) means every declared input; `[]` means none. |
 | `schema.fields` | yes | List of fields (at least one). |
 
 A dataset's `catalog` block, when present:
@@ -312,6 +313,10 @@ result.warnings   // Unrecognized types, required+nullable both true, ...
 | `catalog.required: false` with an identity sub-field still declared | Warning |
 | Field constraint (`equals`/`oneOf`/`range`) with malformed/missing properties for its shape | Error |
 | Field constraint's value type disagrees with the field's own declared `type` (e.g. an `equals` string value on a numeric field) | Warning |
+| `derivedFrom` on an output naming an input the contract doesn't declare | Error |
+| `derivedFrom` listing the same input twice on one output | Warning |
+| `derivedFrom` declared on an *input* dataset (meaningless there) | Warning |
+| Every output declares `derivedFrom`, yet a declared input appears in none of them | Warning |
 | Rule with empty `type` | Error |
 
 Validation recurses into nested struct fields (`properties`), so a warning on
@@ -352,6 +357,7 @@ report.changes          // every detected change, each tagged with a level and p
 | Catalog block removed, or relaxed to `required: false` | Not flagged (loosening) |
 | Catalog block added with `required: false` (informational only) | Not flagged |
 | `description` added, changed, or removed | Not flagged (never a constraint) |
+| An output's effective input set (`derivedFrom`, or every declared input when unset) changed | Breaking |
 
 `format`/`saveMode`/`catalog` all follow the same asymmetric philosophy the
 schema checks above already use: `StructuralVerifier` only ever compares one
@@ -603,6 +609,56 @@ empty) can only happen in `spark-adapter`, which is where
 `customRuleTypes` entry via `CustomRuleVerifierFactory.tryResolve` — the
 same "fail loudly, at validation time, before any write is checked"
 treatment `OrgPolicyValidator`'s equivalent eager resolution gets.
+
+## Output-to-input lineage (`derivedFrom`)
+
+`inputs` and `outputs` are two flat lists, so a contract governing several
+writes (`outputs.size > 1`) originally had no way to say *which inputs feed
+which output* — and `spark-adapter`'s per-write `MISSING_INPUT` check could
+only assume every write reads every declared input. That is wrong for a job
+that reads three datasets and builds one output from two of them and another
+from the third, and no single fixed assumption is right for every job.
+
+`Dataset.derivedFrom: Option[List[String]]` (YAML key `derivedFrom`) is the
+mapping, declared on the *output* and naming inputs by `Dataset.name`:
+
+```yaml
+outputs:
+  - name: orders_summary
+    location: gold.orders_summary
+    derivedFrom: [orders, customers]
+  - name: audit_log
+    location: gold.audit_log
+    derivedFrom: [events]
+```
+
+- **Absent (`None`, the default)** — the output is built from *all* declared
+  inputs, exactly the pre-existing behavior; every contract written before
+  this field existed is unchanged.
+- **`[a, b]`** — built from those inputs. `Contract.inputsFor(output)` returns
+  them, and `StructuralVerifier` scopes a write to that output to just those
+  (`MISSING_INPUT`, unverifiable-input classification, and — under
+  `rejectUndeclaredInputs` — `UNDECLARED_INPUT` for a read of a declared input
+  outside the list). See docs/SPARK_ADAPTER.md's "Which inputs a write is
+  checked against."
+- **`[]`** — built from no declared input.
+
+Many-to-many falls out naturally: an input may appear under several outputs.
+The mapping is a *declaration the verifier enforces*, not a suggestion — a
+`Read` node in the plan is a structural fact about which datasets were composed
+into the write, so "this output reads exactly these inputs" is checkable.
+
+`ContractValidator` rejects a name that isn't a declared input (an Error —
+silently dropping it would turn "needs X" into "needs nothing"), and warns on
+a duplicate, on `derivedFrom` set on an input, and on an input no output lists
+when every output declares `derivedFrom`. `ContractCompatibility` compares each
+output's *effective* input set (so spelling out the full list where it was
+implicit is not a change) and treats any real difference as Breaking. The JSON
+Schema documents the key too.
+
+`Dataset` gained this as a ninth, trailing, defaulted constructor parameter —
+a deliberate MiMa break (`contract` 0.11.0 → 0.12.0), the same shape as
+`datasetType`'s.
 
 ## Input and Output Types
 

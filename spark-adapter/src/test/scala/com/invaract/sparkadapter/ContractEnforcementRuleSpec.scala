@@ -410,6 +410,134 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.unverifiableInputs.exists(_.inputName == "customers"), s"expected an UnverifiableInput for 'customers', got: ${event.unverifiableInputs}")
   }
 
+  // Output-to-input lineage (Dataset.derivedFrom), end to end through the
+  // real installed check rule: ONE job reads three datasets (a, b, c),
+  // writes out1 from a+b and out2 from c alone. Without derivedFrom, a
+  // contract with both outputs could only assume every write reads every
+  // input - so out2's write (never touching a or b) would be rejected with a
+  // false-positive MISSING_INPUT for both.
+  private def lineageYaml(paths: Map[String, String], out1Path: String, out2Path: String, out1Derived: String, out2Derived: String): String = {
+    def input(name: String): String =
+      s"""  - name: $name
+         |    location: ${paths(name)}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+    s"""id: lineage_demo
+       |version: "1.0.0"
+       |inputs:
+       |${input("a")}${input("b")}${input("c")}outputs:
+       |  - name: out1
+       |    location: $out1Path$out1Derived
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: integer
+       |          required: true
+       |          nullable: true
+       |  - name: out2
+       |    location: $out2Path$out2Derived
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: integer
+       |          required: true
+       |          nullable: true
+       |""".stripMargin
+  }
+
+  private def lineageFixture(prefix: String): (Map[String, String], String, String) = {
+    val paths = List("a", "b", "c").map { n =>
+      val path = scratchDir.resolve(s"${prefix}_$n.csv").toString
+      Files.write(java.nio.file.Paths.get(path), "id\n1\n2\n".getBytes)
+      n -> path
+    }.toMap
+    (paths, scratchDir.resolve(s"${prefix}_out1.parquet").toString, scratchDir.resolve(s"${prefix}_out2.parquet").toString)
+  }
+
+  private def readCsv(path: String) = spark.read.option("header", "true").option("inferSchema", "true").csv(path)
+
+  test("PASS: one job reads three inputs, writes out1 from two and out2 from one - each write checked only against its own derivedFrom inputs") {
+    val (paths, out1, out2) = lineageFixture("lineage_pass")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    withContract(yaml) {
+      val a = readCsv(paths("a")).withColumnRenamed("id", "a_id")
+      val b = readCsv(paths("b")).withColumnRenamed("id", "b_id")
+      val c = readCsv(paths("c"))
+      a.join(b, a("a_id") === b("b_id")).select(a("a_id").as("id")).write.mode("overwrite").parquet(out1) // must not throw
+      c.write.mode("overwrite").parquet(out2) // must not throw: never reads a or b
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(out1)))
+    assert(Files.exists(java.nio.file.Paths.get(out2)))
+  }
+
+  test("FAIL: without derivedFrom, the same job is rejected - out2's write never reads a or b, and the message points at derivedFrom") {
+    val (paths, out1, out2) = lineageFixture("lineage_unmapped")
+    val yaml = lineageYaml(paths, out1, out2, "", "")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("c")).write.mode("overwrite").parquet(out2)
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.size == 2, ex.result.violations.toString)
+    assert(missing.forall(_.remediation.contains("'derivedFrom'")))
+    assert(!Files.exists(java.nio.file.Paths.get(out2)), "the write must be blocked")
+  }
+
+  test("FAIL: a write that skips an input its OWN output is derivedFrom is still rejected with MISSING_INPUT for exactly that input") {
+    val (paths, out1, out2) = lineageFixture("lineage_skips")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("a")).write.mode("overwrite").parquet(out1) // out1 is derivedFrom a AND b
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.map(_.location) == List(Some(paths("b"))), ex.result.violations.toString)
+    assert(!Files.exists(java.nio.file.Paths.get(out1)))
+  }
+
+  test("FAIL under rejectUndeclaredInputs: out2 reading input a, which the contract declares but not for out2, is UNDECLARED_INPUT") {
+    val (paths, out1, out2) = lineageFixture("lineage_extra")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    val ex = withContract(yaml, options = VerificationOptions(rejectUndeclaredInputs = true)) {
+      intercept[ContractViolationException] {
+        readCsv(paths("c")).union(readCsv(paths("a"))).write.mode("overwrite").parquet(out2)
+      }
+    }
+
+    val undeclared = ex.result.violations.filter(_.violationType == ViolationType.UndeclaredInput)
+    assert(undeclared.size == 1, ex.result.violations.toString)
+    assert(undeclared.head.message.contains("input 'a'") && undeclared.head.message.contains("output 'out2'"))
+    assert(!Files.exists(java.nio.file.Paths.get(out2)))
+  }
+
+  test("ContractViolationException's 'what the contract expects' shows each output's derivedFrom inputs") {
+    val (paths, out1, out2) = lineageFixture("lineage_explain")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: []")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("a")).write.mode("overwrite").parquet(out1)
+      }
+    }
+
+    assert(ex.getMessage.contains("output 'out1' at " + out1 + " (derived from a, b)"), ex.getMessage)
+    assert(ex.getMessage.contains("output 'out2' at " + out2 + " (derived from no declared input)"), ex.getMessage)
+  }
+
   // com.invaract.sparkadapter.location - resolving a contract's ref://<id>
   // locations from Spark configuration (spark.invaract.locationMap), so a
   // platform invoking spark-submit can attach this without the job's own
