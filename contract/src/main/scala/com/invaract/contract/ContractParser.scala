@@ -120,6 +120,10 @@ object ContractParser {
     dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
     dataset.description.foreach(m.put("description", _))
     dataset.datasetType.foreach(t => m.put("type", t.name))
+    // An explicit empty list is meaningful ("derived from no declared
+    // input"), unlike an absent key ("derived from all of them"), so this
+    // is written whenever it's defined, not only when non-empty.
+    dataset.derivedFrom.foreach(names => m.put("derivedFrom", names.asJava))
     m
   }
 
@@ -215,12 +219,17 @@ object ContractParser {
     val catalog = parseCatalog(raw, context)
     val description = optString(raw, "description")
     val datasetType = optString(raw, "type").map(parseDatasetType(_, context))
+    // Absent key -> None (derived from every declared input); a present
+    // key -> Some, including `derivedFrom: []` -> Some(Nil). optStringList
+    // alone can't tell those two apart (both yield Nil), so presence is
+    // decided separately first.
+    val derivedFrom = optValue(raw, "derivedFrom").map(_ => optStringList(raw, "derivedFrom", context))
     val schemaRaw = raw.getOrElse(
       "schema",
       throw new ContractParseException(s"Missing 'schema' in $context")
     )
     val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
-    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType)
+    Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom)
   }
 
   /** Parses a dataset's optional `type:` key — a closed three-value enum

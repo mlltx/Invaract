@@ -94,6 +94,103 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
   }
 
+  // --- Inputs behind an UNRESOLVED lineage boundary -------------------------
+  //
+  // A resolved checkpoint never reaches StructuralVerifier as an UnknownPlan
+  // (SparkPlanAdapter splices the real pre-checkpoint plan in - see
+  // CheckpointRegistry and its specs). What is left for verify is a boundary
+  // that stayed unresolved, and only those excuse an unread input.
+
+  /** The demo plan with its base `Read` replaced by `replacement` (recursing through the nested Projects). */
+  private def demoPlanWithBaseRead(outputDf: org.apache.spark.sql.DataFrame, replacement: com.invaract.ir.Plan) = {
+    def rewrite(p: com.invaract.ir.Plan): com.invaract.ir.Plan = p match {
+      case _: Read                       => replacement
+      case proj: com.invaract.ir.Project => proj.copy(input = rewrite(proj.input))
+      case other                         => other
+    }
+    com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), rewrite(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan))
+  }
+
+  private def boundary(sourceType: String) = com.invaract.ir.UnknownPlan(s"$sourceType(unresolved)", sourceType)
+
+  test("UNVERIFIABLE_INPUT (not MISSING_INPUT): an unread input with an unresolved checkpoint boundary in the plan can't be confidently reported missing") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val plan = demoPlanWithBaseRead(outputDf, boundary("LogicalRDD"))
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${result.violations}")
+    val entry = result.unverifiableInputs.find(_.inputName == "orders")
+      .getOrElse(fail(s"expected an UnverifiableInput for 'orders', got: ${result.unverifiableInputs}"))
+    assert(entry.inputLocation == "demo/input/sample.csv")
+    assert(entry.unknownNodeTypes == List("LogicalRDD"))
+    // Report-only: never a Violation, never affects `passed`.
+    assert(result.passed, s"expected PASSED, got: ${result.violations}")
+  }
+
+  test("an unresolved cached-relation boundary (InMemoryRelation) is a lineage boundary too") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("InMemoryRelation")), Nil, outputDf.schema)
+    assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("InMemoryRelation")))
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
+  }
+
+  test("an input that IS actually read produces neither MISSING_INPUT nor UnverifiableInput, even with an unresolved boundary elsewhere in the plan") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val realPlan = SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan
+    val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), com.invaract.ir.Union(List(realPlan, boundary("LogicalRDD"))))
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(result.unverifiableInputs.isEmpty)
+  }
+
+  test("an unread input with NO lineage boundary in the plan is still a blocking MISSING_INPUT, even when an unsupported-node UnknownPlan is present") {
+    // 'Generate' is a node the translator merely has no case for - not
+    // evidence that a *read* is hidden behind it.
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val plan = demoPlanWithBaseRead(outputDf, com.invaract.ir.UnknownPlan("Generate(explode)", "Generate"))
+
+    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+
+    assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
+    assert(result.unverifiableInputs.isEmpty)
+  }
+
+  test("a blank sourceType is not a lineage boundary") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("")), Nil, outputDf.schema)
+    assert(result.violations.exists(_.violationType == ViolationType.MissingInput))
+    assert(result.unverifiableInputs.isEmpty)
+  }
+
+  test("unknownNodeTypes lists each distinct boundary type once, in first-seen order, and omits non-boundary unknown nodes") {
+    val contract = realDemoContract()
+    val outputDf = realDemoOutput(realDemoInput())
+    val replacement = com.invaract.ir.Union(List(
+      boundary("LogicalRDD"),
+      boundary("InMemoryRelation"),
+      boundary("LogicalRDD"),
+      com.invaract.ir.UnknownPlan("Generate(explode)", "Generate")
+    ))
+    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, replacement), Nil, outputDf.schema)
+    assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("LogicalRDD", "InMemoryRelation")))
+  }
+
+  test("with an unresolved boundary in the plan, EVERY unread scoped input is unverifiable - the boundary hides all earlier reads") {
+    val contract = lineageContract(None, None) // inputs a, b, c; two outputs, no derivedFrom
+    val plan = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), boundary("LogicalRDD"))
+    val result = StructuralVerifier.verify(contract, plan, Nil, new StructType().add("id", IntegerType))
+    assert(result.unverifiableInputs.map(_.inputName) == List("a", "b", "c"))
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
+  }
+
   test("UNDECLARED_INPUT is reported only when rejectUndeclaredInputs is enabled") {
     val contract = realDemoContract()
     val inputDf = realDemoInput()
@@ -1311,4 +1408,230 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
   // validating one is ContractEnforcementRule's responsibility, not this
   // method's, the same single-responsibility split every other caller of
   // this method (StateChangingCallSupport's tests included) already relies on.
+
+  // --- Output-to-input lineage: Dataset.derivedFrom scopes which declared
+  // inputs a write is checked against - see StructuralVerifier's "Which
+  // inputs a write is checked against" doc. The scenario throughout: a job
+  // reads THREE datasets (a, b, c), uses a+b for output 'out1' and only c
+  // for output 'out2'.
+
+  private def lineageContract(
+    out1DerivedFrom: Option[List[String]],
+    out2DerivedFrom: Option[List[String]]
+  ): com.invaract.contract.Contract = {
+    def derivedYaml(df: Option[List[String]]): String =
+      df.map(names => s"\n    derivedFrom: [${names.mkString(", ")}]").getOrElse("")
+    def input(name: String): String =
+      s"""  - name: $name
+         |    location: bronze/$name.parquet
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |""".stripMargin
+    ContractParser.parse(
+      s"""id: lineage_demo
+         |version: "1.0.0"
+         |inputs:
+         |${input("a")}${input("b")}${input("c")}outputs:
+         |  - name: out1
+         |    location: gold/out1.parquet${derivedYaml(out1DerivedFrom)}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |  - name: out2
+         |    location: gold/out2.parquet${derivedYaml(out2DerivedFrom)}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |""".stripMargin
+    )
+  }
+
+  private def readOf(name: String): Read = Read(DatasetRef(s"bronze/$name.parquet"))
+
+  /** A write of `out` reading exactly the named inputs (joined together when more than one). */
+  private def writeReading(out: String, inputs: String*): com.invaract.ir.Write = {
+    val joined = inputs.map(readOf(_): com.invaract.ir.Plan).reduce((l, r) =>
+      com.invaract.ir.Join(l, r, com.invaract.ir.JoinType.Inner)
+    )
+    com.invaract.ir.Write(
+      DatasetRef(s"gold/$out.parquet"),
+      com.invaract.ir.Project(
+        joined,
+        List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id"))))
+      )
+    )
+  }
+
+  private val idOnly = new StructType().add("id", IntegerType)
+
+  private def verifyLineage(
+    contract: com.invaract.contract.Contract,
+    plan: com.invaract.ir.Write,
+    options: VerificationOptions = VerificationOptions()
+  ) = StructuralVerifier.verify(contract, plan, Nil, idOnly, options)
+
+  test("derivedFrom: read 3 inputs, out1 uses two and out2 uses one - each write passes without reading the inputs it isn't derived from") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+
+    val first = verifyLineage(contract, writeReading("out1", "a", "b"))
+    assert(first.passed, s"out1 reads exactly a+b, got: ${first.violations}")
+
+    val second = verifyLineage(contract, writeReading("out2", "c"))
+    assert(second.passed, s"out2 reads exactly c, got: ${second.violations}")
+  }
+
+  test("derivedFrom: many-to-many - an input may feed several outputs") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("b", "c")))
+    assert(verifyLineage(contract, writeReading("out1", "a", "b")).passed)
+    assert(verifyLineage(contract, writeReading("out2", "b", "c")).passed)
+  }
+
+  test("derivedFrom: an input the write's OWN output derives from is still required - MISSING_INPUT names it") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+
+    val result = verifyLineage(contract, writeReading("out1", "a")) // forgot b
+
+    val missing = result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.size == 1, s"only b should be missing, got: ${result.violations}")
+    assert(missing.head.message.contains("'b'"))
+    // An output that declares derivedFrom already knows exactly which inputs feed it, so no nudge to add one.
+    assert(!missing.head.remediation.contains("derivedFrom"))
+  }
+
+  test("derivedFrom: an input another output derives from is NOT required of this write, even though the contract declares it") {
+    val contract = lineageContract(Some(List("a")), Some(List("c")))
+    val result = verifyLineage(contract, writeReading("out1", "a"))
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
+    assert(result.unverifiableInputs.isEmpty)
+  }
+
+  test("derivedFrom: without it, a multi-output contract still requires every input of every write - and the remediation points at derivedFrom") {
+    val contract = lineageContract(None, None) // the original, pre-mapping behavior
+    val result = verifyLineage(contract, writeReading("out2", "c"))
+
+    val missing = result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.map(_.location) == List(Some("bronze/a.parquet"), Some("bronze/b.parquet")))
+    assert(missing.forall(_.remediation.contains("'derivedFrom'")), missing.map(_.remediation).toString)
+  }
+
+  test("derivedFrom: an output that omits it keeps requiring every input even when a sibling output declares it") {
+    val contract = lineageContract(Some(List("a", "b")), None)
+    assert(verifyLineage(contract, writeReading("out1", "a", "b")).passed)
+    val result = verifyLineage(contract, writeReading("out2", "c"))
+    assert(result.violations.count(_.violationType == ViolationType.MissingInput) == 2) // a and b
+  }
+
+  test("derivedFrom: a single-output contract's remediation does not nudge toward derivedFrom") {
+    val contract = realDemoContract()
+    val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), Read(DatasetRef("demo/input/other.csv")))
+    val result = StructuralVerifier.verify(contract, plan, Nil, new StructType().add("id", IntegerType))
+    val missing = result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.nonEmpty)
+    assert(!missing.exists(_.remediation.contains("derivedFrom")))
+  }
+
+  test("derivedFrom: an empty list means the output needs no declared input, and any declared input read is UNDECLARED under rejectUndeclaredInputs") {
+    val contract = lineageContract(Some(Nil), Some(List("c")))
+    val noReads = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), com.invaract.ir.Project(
+      com.invaract.ir.UnknownPlan("literal rows", "LocalRelation"), Nil))
+    assert(!verifyLineage(contract, noReads).violations.exists(_.violationType == ViolationType.MissingInput))
+
+    val reads = verifyLineage(contract, writeReading("out1", "a"), VerificationOptions(rejectUndeclaredInputs = true))
+    val undeclared = reads.violations.filter(_.violationType == ViolationType.UndeclaredInput)
+    assert(undeclared.size == 1)
+    assert(undeclared.head.message.contains("input 'a'"))
+    assert(undeclared.head.message.contains("output 'out1'"))
+    assert(undeclared.head.message.contains("no inputs"))
+  }
+
+  test("derivedFrom: under rejectUndeclaredInputs, reading a declared input outside the output's derivedFrom is UNDECLARED_INPUT naming both") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+
+    val result = verifyLineage(contract, writeReading("out2", "c", "a"), VerificationOptions(rejectUndeclaredInputs = true))
+
+    val undeclared = result.violations.filter(_.violationType == ViolationType.UndeclaredInput)
+    assert(undeclared.size == 1, result.violations.toString)
+    assert(undeclared.head.location.contains("bronze/a.parquet"))
+    assert(undeclared.head.message.contains("input 'a'"))
+    assert(undeclared.head.message.contains("output 'out2'"))
+    assert(undeclared.head.message.contains("derivedFrom lists 'c'"))
+    assert(undeclared.head.remediation.contains("Add 'a' to output 'out2''s derivedFrom"))
+  }
+
+  test("derivedFrom: a read outside the derivedFrom set is NOT flagged unless rejectUndeclaredInputs is on") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+    val result = verifyLineage(contract, writeReading("out2", "c", "a"))
+    assert(!result.violations.exists(_.violationType == ViolationType.UndeclaredInput))
+  }
+
+  test("derivedFrom: a wholly undeclared read keeps the original wording, not the derivedFrom one") {
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+    val plan = com.invaract.ir.Write(
+      DatasetRef("gold/out2.parquet"),
+      com.invaract.ir.Join(readOf("c"), Read(DatasetRef("bronze/stranger.parquet")), com.invaract.ir.JoinType.Inner)
+    )
+    val result = verifyLineage(contract, plan, VerificationOptions(rejectUndeclaredInputs = true))
+    val undeclared = result.violations.filter(_.violationType == ViolationType.UndeclaredInput)
+    assert(undeclared.map(_.message) == List("plan reads 'bronze/stranger.parquet' which is not declared as a contract input"))
+    assert(undeclared.head.remediation.startsWith("Declare 'bronze/stranger.parquet' as an input"))
+  }
+
+  test("derivedFrom: without a mapping, every declared input read is fine under rejectUndeclaredInputs - unchanged behavior") {
+    val contract = lineageContract(None, None)
+    val result = verifyLineage(contract, writeReading("out1", "a", "b", "c"), VerificationOptions(rejectUndeclaredInputs = true))
+    assert(result.passed, result.violations.toString)
+  }
+
+  test("derivedFrom scopes the unresolved-boundary evidence too: only this output's own inputs are ever classified") {
+    // out1 is derived from a and b only. Its plan has an unresolved
+    // boundary, so a and b are unverifiable - but c belongs to out2 and is
+    // simply not this write's business: neither MISSING_INPUT nor
+    // UnverifiableInput for it.
+    val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
+    val plan = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), com.invaract.ir.UnknownPlan("LogicalRDD(unresolved)", "LogicalRDD"))
+    val result = verifyLineage(contract, plan)
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
+    assert(result.unverifiableInputs.map(_.inputName).toSet == Set("a", "b"))
+  }
+
+  test("derivedFrom: a multi-output write matching no declared output keeps every input in scope (its own OUTPUT_LOCATION_MISMATCH already reports the real problem)") {
+    val contract = lineageContract(Some(List("a")), Some(List("c")))
+    val plan = com.invaract.ir.Write(DatasetRef("gold/unknown.parquet"), readOf("a"))
+    val result = verifyLineage(contract, plan)
+    assert(result.violations.exists(_.violationType == ViolationType.OutputLocationMismatch))
+    assert(result.violations.count(_.violationType == ViolationType.MissingInput) == 2) // b and c: all inputs still in scope
+  }
+
+  test("derivedFrom: a plan with no Write keeps every input in scope") {
+    val contract = lineageContract(Some(List("a")), Some(List("c")))
+    val result = StructuralVerifier.verify(contract, readOf("a"), Nil, idOnly)
+    assert(result.violations.count(_.violationType == ViolationType.MissingInput) == 2) // b and c
+  }
+
+  test("derivedFrom: a single-output contract is scoped by its only output regardless of the write's location") {
+    val contract = ContractParser.parse(
+      """id: single
+        |version: "1.0.0"
+        |inputs:
+        |  - name: a
+        |    location: bronze/a.parquet
+        |    schema: {fields: [{name: id, type: integer}]}
+        |  - name: b
+        |    location: bronze/b.parquet
+        |    schema: {fields: [{name: id, type: integer}]}
+        |outputs:
+        |  - name: only
+        |    location: gold/only.parquet
+        |    derivedFrom: [a]
+        |    schema: {fields: [{name: id, type: integer}]}
+        |""".stripMargin
+    )
+    val plan = com.invaract.ir.Write(DatasetRef("somewhere/else.parquet"), readOf("a"))
+    val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
+    assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
+  }
 }

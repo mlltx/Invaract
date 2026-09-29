@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter.notification
 
 import com.invaract.contract.DatasetType
-import com.invaract.sparkadapter.{DataQualityCheckResult, DataQualityVerdict, RoleConformanceCheckResult, RoleConformanceVerdict, Violation}
+import com.invaract.sparkadapter.{DataQualityCheckResult, DataQualityVerdict, RoleConformanceCheckResult, RoleConformanceVerdict, UnverifiableInput, Violation}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -135,6 +135,26 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"dataset\": \"processing_calendar\""))
     assert(json.contains("\"datasetType\": \"CONTROL\""))
     assert(json.contains("\"verdict\": \"Conforms\""))
+  }
+
+  test("toJson for ContractValidationEvent renders unverifiableInputs, Nil as [] and populated entries via UnverifiableInput.toMap") {
+    val withoutUnverifiableInputs = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
+    assert(NotificationJson.toJson(withoutUnverifiableInputs).contains("\"unverifiableInputs\": []"))
+
+    val withUnverifiableInputs = ContractValidationEvent(
+      "demo@1.0.0",
+      "PASSED",
+      Nil,
+      0L,
+      Map.empty,
+      unverifiableInputs = List(
+        UnverifiableInput("raw", "demo/input/sample.csv", List("InMemoryRelation"))
+      )
+    )
+    val json = NotificationJson.toJson(withUnverifiableInputs)
+    assert(json.contains("\"inputName\": \"raw\""))
+    assert(json.contains("\"inputLocation\": \"demo/input/sample.csv\""))
+    assert(json.contains("\"InMemoryRelation\""))
   }
 
   test("toJson for WriteEvent includes location/format/saveMode/schema/contract, with None fields as null") {

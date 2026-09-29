@@ -42,7 +42,12 @@ name := "invaract-contract"
 // etc.) correctly saw "0.3.0" - confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it, not
 // assumed.
-ThisBuild / version := "0.11.0"
+// 0.11.0 -> 0.12.0: Dataset gained a ninth constructor parameter,
+// derivedFrom (see docs/CONTRACT_MODEL.md's "Output-to-input lineage"
+// section) - the same shape of break as datasetType's 0.9.0 -> 0.10.0 bump
+// above. Also bumped for the Ivy-cache coordinate-collision reason the
+// 0.8.0 -> 0.9.0 note above documents.
+ThisBuild / version := "0.12.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -118,7 +123,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.11.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.12.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
@@ -239,6 +244,14 @@ import com.typesafe.tools.mima.core._
 // existing org-policy document is unaffected), same reasoning as every
 // filter above. Same "becomes inert once base-ref reaches 0.11.0 or
 // later" property.
+//
+// The real, deliberate break motivating the 0.11.0 -> 0.12.0 bump above:
+// Dataset gained a ninth constructor parameter, derivedFrom (see
+// docs/CONTRACT_MODEL.md's "Output-to-input lineage" section) - an
+// optional, additive field (defaults to None, every existing contract
+// document is unaffected). Covered by the same Dataset.apply/copy/this/
+// Dataset$ filters below as datasetType's own break, which match by name
+// regardless of baseline version.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.contract.Contract.copy"),

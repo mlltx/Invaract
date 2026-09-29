@@ -3730,7 +3730,10 @@ first written: one field's value compared against *another field on the same row
       pages.
 - [x] **API compatibility**: `contract` (0.9.0 → 0.10.0: `Dataset` gained
       an eighth constructor parameter; 0.10.0 → 0.11.0: `OrgPolicy` gained
-      a sixth constructor parameter, `typeGuarantees`, for Phase 6 below)
+      a sixth constructor parameter, `typeGuarantees`, for Phase 6 below;
+      0.11.0 → 0.12.0: `Dataset` gained a ninth constructor parameter,
+      `derivedFrom`, the optional output-to-input lineage mapping for
+      multi-output contracts)
       and `spark-adapter` (0.7.0 → 0.8.0:
       `VerificationOptions`/`VerificationResult`/`notification.ContractValidationEvent`
       each gained a new trailing parameter) bumped with matching

@@ -71,7 +71,12 @@ private[sparkadapter] object ContractInference {
       location = normalizeLocation(writeInfo.location),
       format = writeInfo.format,
       schema = schemaOf(writeInfo.outputSchema),
-      saveMode = writeInfo.saveMode
+      saveMode = writeInfo.saveMode,
+      // Every input this write was observed reading - stated explicitly, so
+      // that when this draft is merged into a multi-output contract each
+      // output keeps naming only the inputs that feed it (see
+      // Dataset.derivedFrom), instead of silently becoming "all inputs".
+      derivedFrom = Some(inputs.map(_.name))
     )
     Contract(
       id = InferredId,

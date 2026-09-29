@@ -469,6 +469,160 @@ straight through to `notification.ContractValidationEvent.roleConformance`
 — reaches every configured sink, PASS or FAILED alike, the same as
 `dataQuality`/`fingerprints` above.
 
+## Which inputs a write is checked against (`derivedFrom`)
+
+Each write a contract governs is verified independently, and `StructuralVerifier.verify`
+first resolves which declared output that write lands on — a single-output contract's only
+output, or for a multi-output contract the one whose `location` matches (the same rule its
+output checks use, so both halves always agree). It then scopes every per-input check to
+`Contract.inputsFor(thatOutput)`:
+
+| Output's `derivedFrom` | Inputs checked for a write to it |
+|---|---|
+| absent | every declared input (the original behavior) |
+| `[a, b]` | only `a` and `b` |
+| `[]` | none |
+
+- `MISSING_INPUT`, and the `unverifiableInputs` classification below, apply only to the
+  scoped inputs — so a write to `audit_log` is never required to have read an input only
+  `orders_summary` is built from.
+- Under `rejectUndeclaredInputs`, a read of a declared input *outside* the scoped set is an
+  `UNDECLARED_INPUT` worded as "declared by this contract but not a source of output X", with a
+  remediation pointing at the output's `derivedFrom`. A read of a location the contract doesn't
+  declare at all keeps its original wording.
+- A plan with no `Write`, and a multi-output write matching no declared output, keep every
+  input in scope (the latter already reports `OUTPUT_LOCATION_MISMATCH`).
+- A multi-output contract *without* `derivedFrom` still requires every input of every write;
+  its `MISSING_INPUT` remediation now says so and points at `derivedFrom`.
+- `ContractViolationException`'s "what the contract expects" section prints each output's
+  `derivedFrom` set.
+
+This also narrows what an unresolved checkpoint boundary (below) can excuse: only the write's own
+scoped inputs are ever candidates for `UnverifiableInput`, so a boundary in one output's plan can
+never mask an input only the *other* output is derived from.
+
+`derivedFrom` is contract content, not an engine knob, so it needs no extra `--conf` to attach
+— a platform team edits the contract the job is already pointed at
+(`spark.invaract.contract`), and `spark.invaract.rejectUndeclaredInputs` already governs the
+stricter half.
+
+## Inputs hidden behind a lineage boundary (`unverifiableInputs`)
+
+`StructuralVerifier.verify`'s `MISSING_INPUT` check has always assumed that
+"no matching `Read` node anywhere in the translated plan" proves a declared
+input was never read. A real gap in that assumption: a `.checkpoint()` call
+sitting between the real read and the checked write erases Spark's own
+analyzed-plan lineage back to it. `LogicalRDD` (`.checkpoint()`, or a
+`Dataset` built directly from an RDD) is a Catalyst `LeafNode` — confirmed
+directly against Spark 3.5.7's real class files (`javap`), not assumed —
+with no retained `LogicalPlan` at all past that point (its own `rdd` field
+is a raw `RDD[InternalRow]`, a structurally different representation this
+`LogicalPlan`-only translator has no way to walk). Before this fix, a job
+like:
+
+```scala
+val orders = spark.read.csv("demo/input/sample.csv") // the declared input
+val checkpointed = orders.checkpoint()
+checkpointed.withColumn(...).write.parquet(outputPath) // the checked write
+```
+
+would be rejected with a false-positive `MISSING_INPUT` for `orders`, even
+though the job plainly read it — `SparkPlanAdapter.translate` sees a
+`LogicalRDD` where the original `Read` used to be (`.checkpoint()` eagerly
+rebuilds the returned `Dataset`'s own analyzed plan this way, before any
+later action's analysis even begins — confirmed against a real checked
+plan, captured via `ContractEnforcementRuleSpec`'s own test), and the old
+`missingInputs` computation had no way to tell "genuinely never read" apart
+from "read, but the read is no longer visible from here."
+
+A bare `.cache()`/`.persist()` does **not** reach `ContractEnforcementRule`
+this way, despite `InMemoryRelation` (the Catalyst node Spark substitutes
+for a cached subtree) sharing the identical `LeafNode`/no-retained-`LogicalPlan`
+shape as `LogicalRDD` — confirmed directly, not assumed: `injectCheckRule`
+fires during Spark's own `checkAnalysis`, which runs strictly *before*
+`QueryExecution.withCachedData` ever performs that substitution, so the
+plan `ContractEnforcementRule` actually checks still shows the original
+`Read` even after a real `.cache().count()`. `SparkPlanAdapter` still
+translates a real `InMemoryRelation` to the same `ir.UnknownPlan` shape —
+for translation completeness/robustness against any other caller that
+might hand it a post-cache-substitution plan (e.g. one taken from
+`.queryExecution.optimizedPlan`), covered directly in
+`SparkPlanAdapterSpec` — but it is not how this false positive actually
+manifests through the enforcement path.
+
+### `CheckpointRegistry`: seeing through a checkpoint
+
+Rather than reporting a checkpoint as unknowable and then guessing around it, `ContractEnforcementRule`
+resolves it. Two facts make that possible (both confirmed against a real Spark 3.5.7 session, not
+assumed):
+
+1. `Dataset.checkpoint()`/`.localCheckpoint()` builds its result as a `LogicalRDD` whose `output` is
+   the *original* Dataset's own analyzed output attributes — the same `exprId`s, unchanged, including
+   through a chained second checkpoint. The same `LogicalRDD` instance then flows unchanged into every
+   plan later built from that Dataset (`.filter`, `.select`, a SQL view).
+2. The check rule runs on every plan Spark analyzes, **synchronously, at the moment each Dataset is
+   created**. So it sees the pre-checkpoint plan — with its real `Read` nodes — before `.checkpoint()`
+   is called, and sees the checkpointed Dataset (a bare `LogicalRDD`) the instant `.checkpoint()`
+   returns.
+
+`CheckpointRegistry` (one per session, created by `forContract`) uses them in three steps:
+`record` remembers each analyzed plan under its output attribute ids; `bind`, on first sight of a
+bare `LogicalRDD`, snapshots the plan recorded under its ids *at that moment* — the plan just
+checkpointed — and ties it to that leaf instance (weakly: it lives exactly as long as the
+checkpointed Dataset); `substitute` replaces every bound `LogicalRDD` in a plan with its snapshot,
+recursively for chained checkpoints. This happens on the *Catalyst* plan, before translation, so the
+result is structurally the plan the job would have had with no checkpoint at all: contract
+verification sees the real `Read` nodes (a missing input is simply missing, an undeclared read is
+simply undeclared, schema/catalog/lineage checks all apply), and a fingerprint computed across the
+checkpoint is **identical to the un-checkpointed job's** — the fingerprint-side gap
+docs/SEMANTIC_LINEAGE_FINGERPRINTING.md used to disclose is closed for every resolved checkpoint.
+
+There is no listener and nothing asynchronous, so — unlike an earlier design that captured
+checkpoints from a `QueryExecutionListener`, which fires on Spark's listener-bus thread a few
+milliseconds *after* `.checkpoint()` returns — there is no timing window: a write checked
+immediately after `.checkpoint()` resolves the same as one checked a minute later. The evidence is
+also per-checkpoint rather than session-wide: only checkpoints inside the plan being checked are
+ever resolved, so one write's checkpoint can never excuse another write's missing input.
+
+**What it cannot resolve** (each stays an opaque `ir.UnknownPlan` named `"LogicalRDD"`, with a
+`Diagnostic`, exactly as before the registry existed):
+
+- A checkpoint whose creation the rule never observed — the rule must have been installed when the
+  Dataset was made. A copy Spark makes with fresh attribute ids (the right side of a self-join of a
+  checkpointed Dataset) is unresolved too.
+- An origin the registry evicted before the checkpoint was created (bounded LRU, 256 entries by
+  default) or whose plan was reclaimed under memory pressure (plans are held by `SoftReference`,
+  because a Catalyst plan keeps its relations — and a file index's listing — alive).
+- Plans sharing output ids while reading *different* datasets (`join` then `select` back to one
+  side's columns, alongside a plain read of that side): which was checkpointed is ambiguous, so it is
+  refused rather than guessed. When they read the *same* datasets (a `.filter` of a dataset), the most
+  recent is used and a `CheckpointResolution` diagnostic says so — the fingerprint's WARN log
+  discloses it.
+- A `LogicalRDD` inside a node that keeps its query outside `children` (Delta's row-level DML
+  commands).
+- Every `InMemoryRelation` (a bare `.cache()` doesn't reach the check rule anyway — see above).
+
+**What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
+"never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
+unresolved boundary (`LogicalRDD`/`InMemoryRelation`) somewhere in the plan is reported as an
+`UnverifiableInput` (`inputName`, `inputLocation`, `unknownNodeTypes` — the distinct boundary
+`sourceType`s) instead of `MISSING_INPUT` — report-only, never a `Violation`, never blocking,
+collected on `VerificationResult.unverifiableInputs`. With **no** unresolved boundary, an unread input
+is a blocking `MISSING_INPUT`, exactly as before — including when the job checkpoints something
+unrelated (that checkpoint resolves, and its reads are visible). A node the translator merely has no
+case for (`Generate`, …) is not a lineage boundary and excuses nothing. This is deliberately the
+non-blocking `RoleConsistencyVerifier`-style precedent (`Conforms`/`Contradicts`/`CannotDetermine`),
+not `UNVERIFIABLE_WRITE`'s fail-closed one: the uncertainty is about one input's visibility, not the
+whole write's meaning, and failing closed would only turn a job that already reads its input just
+fine into a newly-blocked one.
+
+**Always on, no `VerificationOptions` flag** — this isn't new opt-in instrumentation layered on top of
+an existing check; it's the honest half of `MISSING_INPUT`'s own always-on check, so gating it behind
+a flag would mean the false positive it fixes still fires by default.
+`ContractEnforcementRule.publishValidation` carries `VerificationResult.unverifiableInputs` straight
+through to `notification.ContractValidationEvent.unverifiableInputs`, reaching every configured sink,
+PASS or FAILED alike, the same as `dataQuality`/`roleConformance`/`fingerprints`.
+
 ## Diagnostics: plan extraction examples
 
 From `SparkPlanAdapterSpec` (all run against real Spark, not mocked):
@@ -932,6 +1086,17 @@ contract is loaded at all, and the inferred contract is printed via
 `ContractParser.write` (the new inverse of `ContractParser.parse`/
 `parseFile`) instead of being enforced. See docs-site's "Dry-run mode"
 guide for the user-facing walkthrough.
+
+**Checkpoints and lineage.** `dryRun` builds its own `CheckpointRegistry`
+(one per session, exactly as `forContract` does), so a write downstream of a
+`.checkpoint()` infers the inputs it really read before the checkpoint rather
+than an empty contract. Each inferred output also sets `derivedFrom` to the
+names of exactly the inputs that write read — `Some(Nil)` for a write that
+read none — so several drafts merged into one multi-output contract keep
+per-output lineage instead of silently becoming "every input feeds every
+output" (see "Which inputs a write is checked against" above). Inferred input
+names are positional per write (`input`, `input_1`, `input_2`, ...), so merging
+drafts still means reconciling those names by hand.
 
 **Structure only, never business rules.** `rules` is always empty on an
 inferred contract — there is no way to observe "this MERGE must always

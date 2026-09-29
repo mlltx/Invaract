@@ -17,6 +17,8 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.types.StructType
+import org.slf4j.LoggerFactory
+import scala.util.control.NonFatal
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -73,6 +75,7 @@ class ContractViolationException(val result: VerificationResult, message: String
   * imposes no overhead or risk of false rejection on non-write queries.
   */
 object ContractEnforcementRule {
+  private val logger = LoggerFactory.getLogger(ContractEnforcementRule.getClass)
 
   /** Builds a Spark check rule (pass to
     * `SparkSession.Builder.withExtensions(_.injectCheckRule(...))`) that
@@ -84,6 +87,14 @@ object ContractEnforcementRule {
     * see `resolveContractLocations`'s doc for why this is what makes the
     * feature attachable purely via `spark-submit --conf`, with no change
     * to the caller's own code.
+    *
+    * Also creates one `CheckpointRegistry` for the session: this rule sees
+    * every plan Spark analyzes, so it records each one's output attribute
+    * ids against its translation, and `SparkPlanAdapter` uses that to see
+    * through a later `.checkpoint()` boundary (a `LogicalRDD` carrying the
+    * same ids) back to the real reads and transformation - see that
+    * class's own doc. Nothing is registered with Spark and nothing is
+    * asynchronous, so there is no timing window.
     */
   def forContract(contract: Contract, options: VerificationOptions = VerificationOptions()): SparkSession => LogicalPlan => Unit =
     session => {
@@ -91,7 +102,8 @@ object ContractEnforcementRule {
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, None, None)
-      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None)
+      val checkpointRegistry = new CheckpointRegistry
+      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, None, checkpointRegistry = Some(checkpointRegistry))
     }
 
   /** Same as `forContract(contract, options)`, but additionally publishes a
@@ -118,7 +130,9 @@ object ContractEnforcementRule {
       val resolvedOptions = resolveVerificationOptions(options, session)
       val applicationId = Some(session.sparkContext.applicationId)
       val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
-      (plan: LogicalPlan) => verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId)
+      val checkpointRegistry = new CheckpointRegistry
+      (plan: LogicalPlan) =>
+        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry))
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -467,7 +481,8 @@ object ContractEnforcementRule {
   def dryRun(onInferred: Contract => Unit): SparkSession => LogicalPlan => Unit =
     session => {
       VersionCompatibilityGuard.check(session)
-      (plan: LogicalPlan) => inferOrIgnore(plan, onInferred)
+      val checkpointRegistry = new CheckpointRegistry
+      (plan: LogicalPlan) => inferOrIgnore(plan, onInferred, Some(checkpointRegistry))
     }
 
   /** Every recognized *read* shape's location/schema extraction, in one
@@ -519,18 +534,65 @@ object ContractEnforcementRule {
         writeQuery.toList.flatMap(_.collect(recognizedRead))
     ).distinct.toList
 
+  /** The registry is a best-effort aid: it can only ever turn an unresolved
+    * boundary into a resolved one, so a failure inside it (a pathologically
+    * deep plan overflowing the stack, an unexpected Catalyst shape) must
+    * degrade to "not resolved" - the behavior with no registry at all - and
+    * never fail the job's own query analysis.
+    */
+  private def resolveCheckpoints(
+      registry: Option[CheckpointRegistry],
+      analyzedPlan: LogicalPlan
+  ): (LogicalPlan, List[Diagnostic]) =
+    registry match {
+      case None => (analyzedPlan, Nil)
+      case Some(r) =>
+        failSafe("resolve", (analyzedPlan, List.empty[Diagnostic])) {
+          r.bind(analyzedPlan)
+          val substitution = r.substitute(analyzedPlan)
+          (substitution.plan, substitution.diagnostics)
+        }
+    }
+
+  private def recordCheckpointOrigin(registry: Option[CheckpointRegistry], plan: LogicalPlan, translated: com.invaract.ir.Plan): Unit =
+    registry.foreach(r => failSafe("record", ())(r.record(plan, translated)))
+
+  private def failSafe[A](what: String, fallback: A)(body: => A): A =
+    try body
+    catch {
+      case NonFatal(e) => degraded(what, e, fallback)
+      case e: StackOverflowError => degraded(what, e, fallback)
+    }
+
+  private def degraded[A](what: String, e: Throwable, fallback: A): A = {
+    logger.warn(s"CheckpointRegistry could not $what .checkpoint() boundaries; treating them as opaque: $e")
+    fallback
+  }
+
   /** The check logic itself, exposed directly for tests and for callers
     * that want to verify without going through `SparkSession` construction
     * (`forContract` is a thin adapter to the shape `injectCheckRule` wants).
     */
   private[sparkadapter] def verifyOrThrow(
       contract: Contract,
-      plan: LogicalPlan,
+      analyzedPlan: LogicalPlan,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None
+      applicationId: Option[String] = None,
+      checkpointRegistry: Option[CheckpointRegistry] = None
   ): Unit = {
-    val translated = SparkPlanAdapter.translate(plan)
+    // Every analyzed plan is offered to the registry - not just writes: a
+    // plan that is later checkpointed is a plain query Dataset, seen here
+    // long before any write (see CheckpointRegistry's class doc). A bare
+    // checkpointed Dataset is bound to its origin the moment it first
+    // appears; each resolvable `.checkpoint()` boundary in `analyzedPlan` is
+    // then replaced by the plan it was made from, so everything below -
+    // reads, schemas, lineage, fingerprint - works on the real
+    // transformation.
+    val (plan, resolutionDiagnostics) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
+    val translatedRaw = SparkPlanAdapter.translate(plan)
+    val translated = translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
+    recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
       case _: com.invaract.ir.Write =>
         // Every check below assumes a *structurally sound* contract -
@@ -596,7 +658,8 @@ object ContractEnforcementRule {
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
         val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
-        val structuralResult = StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+        val structuralResult =
+          StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
         // classifier over the same `plan` (see its class doc for why it
@@ -654,6 +717,32 @@ object ContractEnforcementRule {
             val mutation = rowMutationClassification.collect {
               case RowMutationSupport.Classification.Extracted(_, m) => m
             }
+            // Disclosed, not silently absorbed. A resolved checkpoint boundary
+            // is fingerprinted as the real transformation it stands for
+            // (CheckpointRegistry splices the pre-checkpoint plan in), so it
+            // needs no caveat. Two cases still do: a boundary that stayed
+            // unresolved (origin never seen / evicted / ambiguous), which the
+            // fingerprint can only see as an opaque node, and a resolution
+            // that had to pick the most recent of several same-source plans
+            // (the CheckpointResolution diagnostic). Either way the hash is
+            // still fully stable and deterministic for this exact plan - it
+            // just may not reflect what happened upstream of the boundary -
+            // so it is logged once per check, at WARN, rather than left for
+            // a reader of the hash alone to discover. (Nothing in this suite
+            // asserts on log output, so this call is covered only by the
+            // fingerprint-determinism tests, not by an assertion on the
+            // message itself.)
+            val unresolvedBoundaries = StructuralVerifier.collectUnknownPlans(translated.plan)
+              .map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
+            val assumedResolutions = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType)
+            if (unresolvedBoundaries.nonEmpty || assumedResolutions.nonEmpty) {
+              logger.warn(
+                "computeFingerprint: this transformation's fingerprint is stable and deterministic for this exact plan " +
+                  "but may not reflect everything upstream of a .checkpoint()/cache boundary" +
+                  (if (unresolvedBoundaries.isEmpty) "" else s"; unresolved boundary: ${unresolvedBoundaries.mkString(", ")}") +
+                  (if (assumedResolutions.isEmpty) "" else s"; ${assumedResolutions.map(_.message).distinct.mkString(" / ")}")
+              )
+            }
             Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
           } else None
         // See VerificationOptions.staticDataQuality's own doc and
@@ -678,7 +767,8 @@ object ContractEnforcementRule {
           structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
           fingerprints,
           dataQualityResults,
-          roleConformanceResults
+          roleConformanceResults,
+          structuralResult.unverifiableInputs
         )
         publishValidation(contract, result, sink, applicationId)
         if (!result.passed) {
@@ -749,13 +839,23 @@ object ContractEnforcementRule {
     * `ContractInference`'s own doc for why this observation is surfaced as
     * a description, never a declared `datasetType`.
     */
-  private[sparkadapter] def inferOrIgnore(plan: LogicalPlan, onInferred: Contract => Unit): Unit =
+  private[sparkadapter] def inferOrIgnore(
+      analyzedPlan: LogicalPlan,
+      onInferred: Contract => Unit,
+      checkpointRegistry: Option[CheckpointRegistry] = None
+  ): Unit = {
+    // The same checkpoint resolution real enforcement does (see verifyOrThrow),
+    // so a write downstream of a `.checkpoint()` infers the inputs it really
+    // read rather than an empty contract.
+    val (plan, _) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
+    lazy val translated = SparkPlanAdapter.translate(plan)
+    checkpointRegistry.foreach(_ => recordCheckpointOrigin(checkpointRegistry, plan, translated.plan))
     WriteCommandSupport.combined.lift(plan) match {
       case Some(writeInfo) =>
-        val translated = SparkPlanAdapter.translate(plan)
         onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query)), translated.plan))
       case None => () // not a recognized write - nothing to infer a contract from
     }
+  }
 
   /** Throws if `contract` itself is structurally unsound per
     * `ContractValidator` (e.g. no declared outputs) - the same check every
@@ -832,7 +932,8 @@ object ContractEnforcementRule {
           applicationId = applicationId,
           fingerprints = result.fingerprints,
           dataQuality = result.dataQuality,
-          roleConformance = result.roleConformance
+          roleConformance = result.roleConformance,
+          unverifiableInputs = result.unverifiableInputs
         )
       )
     }
@@ -853,7 +954,12 @@ object ContractEnforcementRule {
       sb.append(s"  input  '${input.name}' at ${input.location}: ${describeFields(input.schema.fields)}\n")
     }
     contract.outputs.foreach { output =>
-      sb.append(s"  output '${output.name}' at ${output.location}: ${describeFields(output.schema.fields)}\n")
+      val lineage = output.derivedFrom match {
+        case None                         => ""
+        case Some(names) if names.isEmpty => " (derived from no declared input)"
+        case Some(names)                  => s" (derived from ${names.mkString(", ")})"
+      }
+      sb.append(s"  output '${output.name}' at ${output.location}$lineage: ${describeFields(output.schema.fields)}\n")
     }
 
     sb.append("\nWhat the plan contains:\n")

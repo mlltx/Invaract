@@ -35,6 +35,7 @@ report.changes        // every detected change, each tagged with a level and a p
 | Field changed optional → required | Breaking |
 | Field changed nullable → non-nullable | Breaking |
 | Contract `id` changed | Breaking |
+| The inputs an output is built from (`derivedFrom`, or every input when unset) changed | Breaking |
 
 ## Verify a version bump matches its scope
 

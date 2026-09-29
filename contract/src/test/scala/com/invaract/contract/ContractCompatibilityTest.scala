@@ -264,4 +264,76 @@ class ContractCompatibilityTest extends AnyFunSuite {
     val report = ContractCompatibility.diff(v1, undescribed)
     assert(!report.changes.exists(_.path.endsWith(".description")))
   }
+
+  // --- Dataset.derivedFrom (output -> input lineage) ---------------------------
+
+  private def lineage(inputNames: List[String], derivedFrom: Option[List[String]]): Contract = {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    Contract(
+      id = "lineage",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = inputNames.map(n => Dataset(n, s"bronze.$n", None, schema)),
+      outputs = List(Dataset("out", "gold.out", None, schema, derivedFrom = derivedFrom)),
+      rules = Nil,
+      extensions = Map.empty
+    )
+  }
+
+  test("diff flags a newly required derivedFrom input as BREAKING") {
+    val report = ContractCompatibility.diff(
+      lineage(List("a", "b"), Some(List("a"))),
+      lineage(List("a", "b"), Some(List("a", "b")))
+    )
+    val change = report.breakingChanges.find(_.path == "outputs.out.derivedFrom").get
+    assert(change.description.contains("now derived from 'b'"))
+    assert(!change.description.contains("no longer"))
+  }
+
+  test("diff flags a dropped derivedFrom input as BREAKING") {
+    val report = ContractCompatibility.diff(
+      lineage(List("a", "b"), Some(List("a", "b"))),
+      lineage(List("a", "b"), Some(List("a")))
+    )
+    val change = report.breakingChanges.find(_.path == "outputs.out.derivedFrom").get
+    assert(change.description.contains("no longer derived from 'b'"))
+    assert(!change.description.contains("now derived from"))
+  }
+
+  test("diff reports both directions in one change when derivedFrom swaps one input for another") {
+    val report = ContractCompatibility.diff(
+      lineage(List("a", "b"), Some(List("a"))),
+      lineage(List("a", "b"), Some(List("b")))
+    )
+    val change = report.breakingChanges.find(_.path == "outputs.out.derivedFrom").get
+    assert(change.description.contains("now derived from 'b'; no longer derived from 'a'"))
+  }
+
+  test("diff treats an unset derivedFrom as 'every declared input', so spelling that out is not a change") {
+    val implicitAll = lineage(List("a", "b"), None)
+    val explicitAll = lineage(List("a", "b"), Some(List("b", "a")))
+    assert(ContractCompatibility.diff(implicitAll, explicitAll).changes.isEmpty)
+    assert(ContractCompatibility.diff(explicitAll, implicitAll).changes.isEmpty)
+  }
+
+  test("diff flags narrowing an implicit 'all inputs' output to a subset, and widening back") {
+    val implicitAll = lineage(List("a", "b"), None)
+    val narrowed = lineage(List("a", "b"), Some(List("a")))
+    assert(ContractCompatibility.diff(implicitAll, narrowed).breakingChanges.exists(_.path == "outputs.out.derivedFrom"))
+    assert(ContractCompatibility.diff(narrowed, implicitAll).breakingChanges.exists(_.path == "outputs.out.derivedFrom"))
+  }
+
+  test("diff does not add a derivedFrom change when neither side declares one, even as an input is added") {
+    val report = ContractCompatibility.diff(lineage(List("a"), None), lineage(List("a", "b"), None))
+    assert(!report.changes.exists(_.path.endsWith("derivedFrom")))
+    assert(report.requiredLevel == CompatibilityLevel.Minor) // just the new input, exactly as before this feature
+  }
+
+  test("diff ignores derivedFrom set on an input dataset") {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    val base = lineage(List("a"), None)
+    val withInputDerivedFrom = base.copy(inputs = base.inputs.map(_.copy(derivedFrom = Some(List("x")))))
+    assert(ContractCompatibility.diff(base, withInputDerivedFrom).changes.isEmpty)
+    assert(schema.fields.nonEmpty)
+  }
 }

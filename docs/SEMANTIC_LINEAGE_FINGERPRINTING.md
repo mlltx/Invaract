@@ -1280,6 +1280,28 @@ verify`'s own call, only when `options.computeFingerprint` is true. No
 second Spark-plan translation, and no fingerprinting of anything
 `SparkPlanAdapter` hasn't already turned into IR.
 
+**A checkpoint boundary is resolved where it can be, and disclosed where it can't, at this same
+call site.** `docs/SPARK_ADAPTER.md`'s "`CheckpointRegistry`: seeing through a checkpoint" section
+describes how `ContractEnforcementRule` replaces each `.checkpoint()` boundary (`LogicalRDD`) in the
+Catalyst plan with the plan it was made from — recorded synchronously, at the moment the pre-checkpoint
+Dataset was created, and matched by attribute id — *before* `SparkPlanAdapter.translate` runs. So
+`translated.plan` is structurally the plan the job would have had with no checkpoint at all, and the
+fingerprint computed from it is **identical to the un-checkpointed job's** — a checkpoint stops being
+something the fingerprint has to caveat. (Node-level correlation through the checkpoint's RDD, which an
+earlier iteration of this design concluded was infeasible, was never needed: the output attribute ids
+Spark preserves across `.checkpoint()` are the key.)
+
+What still cannot be resolved stays an opaque `ir.UnknownPlan` that canonicalizes exactly per §8 (its
+`description` excluded from the hash), so the fingerprint remains **fully stable and deterministic for
+the plan shape actually visible to it**, but cannot reflect whatever real transformation happened
+upstream of that boundary: a checkpoint whose creation the rule never observed, an origin evicted from
+the bounded registry, or an ambiguous origin (see that section for the full list). A resolution that had
+to pick the most recent of several same-source plans sharing the boundary's output columns is used but
+flagged. Rather than leave either undiscovered until a fingerprint is compared with different
+expectations than it can meet, `ContractEnforcementRule` logs a WARN — naming any unresolved
+`UnknownPlan.sourceType`(s) and any such assumed resolution — whenever `computeFingerprint` produces a
+fingerprint that crossed one.
+
 `mutation` here is not a second, independent extraction: this same branch
 already calls `RowMutationSupport.classify(plan)` once, to feed
 `RuleVerifier.verify`'s DML rule checks (`merge_condition`,

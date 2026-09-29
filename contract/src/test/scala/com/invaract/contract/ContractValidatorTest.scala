@@ -690,4 +690,48 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.isValid, "this is a warning, not an error")
     assert(result.warnings.exists(_.message.contains("will not be checked")))
   }
+
+  // --- Dataset.derivedFrom (output -> input lineage) ---------------------------
+
+  private def lineageContract(
+    inputNames: List[String],
+    outputs: List[(String, Option[List[String]])]
+  ): Contract = {
+    val schema = Schema(List(Field("id", "string", required = true, nullable = false)))
+    Contract(
+      id = "lineage",
+      version = ContractVersion(1, 0, 0),
+      status = "active",
+      inputs = inputNames.map(n => Dataset(n, s"bronze.$n", None, schema)),
+      outputs = outputs.map { case (n, df) => Dataset(n, s"gold.$n", None, schema, derivedFrom = df) },
+      rules = Nil,
+      extensions = Map.empty
+    )
+  }
+
+  test("validate accepts a fully-mapped multi-output contract with no issues") {
+    val result = ContractValidator.validate(
+      lineageContract(List("a", "b", "c"), List("o1" -> Some(List("a", "b")), "o2" -> Some(List("c"))))
+    )
+    assert(result.issues.isEmpty, result.issues.toString)
+  }
+
+  test("validate rejects a derivedFrom naming an input the contract doesn't declare, naming the declared ones") {
+    val result = ContractValidator.validate(lineageContract(List("a", "b"), List("o1" -> Some(List("a", "typo")))))
+    assert(!result.isValid)
+    val error = result.errors.find(_.path == "outputs[0].derivedFrom").get
+    assert(error.message.contains("'typo'"))
+    assert(error.message.contains("a, b"))
+  }
+
+  test("validate reports an unknown derivedFrom name once, even if listed twice") {
+    val result = ContractValidator.validate(lineageContract(List("a"), List("o1" -> Some(List("typo", "typo", "a")))))
+    assert(result.errors.count(_.path == "outputs[0].derivedFrom") == 1)
+  }
+
+  test("validate says 'none' for declared inputs when an output is derivedFrom something but the contract declares no inputs") {
+    val result = ContractValidator.validate(lineageContract(Nil, List("o1" -> Some(List("a")))))
+    assert(result.errors.exists(_.message.contains("declared inputs: none")))
+  }
+
 }

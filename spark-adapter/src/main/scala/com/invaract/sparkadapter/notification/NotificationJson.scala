@@ -37,7 +37,8 @@ object NotificationJson {
         "applicationId" -> e.applicationId,
         "fingerprints" -> e.fingerprints.map(_.toMap),
         "dataQuality" -> e.dataQuality.map(_.toMap),
-        "roleConformance" -> e.roleConformance.map(_.toMap)
+        "roleConformance" -> e.roleConformance.map(_.toMap),
+        "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap)
       )
     case e: WriteEvent =>
       Map(

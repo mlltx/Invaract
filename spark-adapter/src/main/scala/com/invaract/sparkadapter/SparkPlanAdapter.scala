@@ -58,10 +58,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
+import org.apache.spark.sql.execution.columnar.InMemoryRelation
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.sources.{BaseRelation, DataSourceRegister}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -706,6 +708,87 @@ private[sparkadapter] object SparkPlanAdapter {
         translatePlan(r.child)
       case r: RepartitionByExpression =>
         translatePlan(r.child)
+
+      // `.cache()`/`.persist()` and `.checkpoint()` both genuinely sever
+      // lineage in Spark's own analyzed plan, not merely something this
+      // translator hasn't special-cased yet - confirmed directly against
+      // Spark 3.5.7's real class files (javap), not assumed: both
+      // InMemoryRelation and LogicalRDD extend Catalyst's LeafNode (so
+      // `.children` is always `Nil` - there is no original Read/Filter/...
+      // chain left anywhere reachable from the analyzed LogicalPlan once
+      // either happens), and neither retains a `LogicalPlan` at all -
+      // InMemoryRelation.cacheBuilder.cachedPlan and LogicalRDD's own `rdd`
+      // field are a *physical* SparkPlan and a raw RDD[InternalRow]
+      // respectively, a structurally different representation this
+      // LogicalPlan-only translator has no way to walk. Matched explicitly
+      // (rather than left to the generic fallback below, which would
+      // produce the identical ir.UnknownPlan shape) purely so the
+      // diagnostic/description names the real cause - "a cached/persisted
+      // relation" or "a checkpointed relation" - instead of a
+      // bare Catalyst class name a user hitting this has no reason to
+      // recognize. `ContractEnforcementRule` first replaces every
+      // `LogicalRDD` it can resolve with the plan it was made from (see
+      // `CheckpointRegistry`), so what reaches this case is a boundary that
+      // could not be resolved (and every `InMemoryRelation`): an opaque
+      // `UnknownPlan`, whose meaning for verification is governed by
+      // `StructuralVerifier`'s "Inputs hidden behind a lineage boundary"
+      // section - a declared input that was genuinely read before an
+      // unresolved boundary must never be confidently reported as
+      // MISSING_INPUT.
+      //
+      // Confirmed directly (not assumed) which of the two actually reaches
+      // `ContractEnforcementRule` this way, since that matters for how
+      // exploitable this gap really is: `injectCheckRule` fires during
+      // Spark's own `checkAnalysis`, which runs strictly BEFORE
+      // `QueryExecution.withCachedData` ever substitutes a cached subtree
+      // with `InMemoryRelation` - a real captured checked plan, built from
+      // `.cache().count()` then a later write, still showed the *original*
+      // `Relation ... csv` node, not `InMemoryRelation`. So a bare
+      // `.cache()`/`.persist()` alone never actually reaches
+      // `ContractEnforcementRule` with `InMemoryRelation` in the plan -
+      // this case exists for translation completeness/robustness (any
+      // other real or future caller of `translate` - a diagnostic tool, a
+      // future refactor - could still hand it a post-cache-substitution
+      // plan, e.g. one taken from `.queryExecution.optimizedPlan`), covered
+      // directly in `SparkPlanAdapterSpec` rather than via
+      // `ContractEnforcementRule`. `.checkpoint()` is different: it
+      // eagerly rebuilds the *returned Dataset's own* analyzed plan as a
+      // `LogicalRDD` immediately, before any later action's analysis even
+      // begins, so it genuinely does reach `ContractEnforcementRule` this
+      // way - confirmed the same way (a real captured checked plan showed
+      // `LogicalRDD [...]` directly in place of the original Read) and
+      // exercised end-to-end in `ContractEnforcementRuleSpec`.
+      case imr: InMemoryRelation =>
+        report(
+          "InMemoryRelation",
+          "A .cache()/.persist() call sits upstream of this point - Spark's own analyzed plan no longer retains " +
+            "the original source(s) read before caching; Invaract cannot see past this boundary"
+        )
+        ir.UnknownPlan(s"InMemoryRelation(cached/persisted relation, ${imr.output.size} column(s))", "InMemoryRelation")
+
+      // Only an RDD that has actually been checkpointed hides an upstream
+      // transformation. A `LogicalRDD` over a plain RDD (`createDataFrame(rdd)`,
+      // `rdd.toDF`, a `foreachBatch` micro-batch) has NO lineage to hide - it
+      // IS the source - so it must not be reported as a lineage boundary: a
+      // declared input missing next to it is then a real MISSING_INPUT, not an
+      // "unverifiable" one. (A lazy `.checkpoint(eager = false)` is not
+      // `isCheckpointed` until it has been materialized, so it is treated the
+      // conservative, blocking way until then.)
+      case lrdd: LogicalRDD if lrdd.rdd.isCheckpointed =>
+        report(
+          "LogicalRDD",
+          "A .checkpoint() call sits upstream of this point - Spark's own analyzed plan no longer retains the " +
+            "original source(s) read before it; Invaract cannot see past this boundary"
+        )
+        ir.UnknownPlan(s"LogicalRDD(checkpointed relation, ${lrdd.output.size} column(s))", "LogicalRDD")
+
+      case lrdd: LogicalRDD =>
+        report(
+          "RDDRelation",
+          "This Dataset is backed directly by an RDD (createDataFrame(rdd), rdd.toDF, ...); Invaract cannot see " +
+            "what the RDD was computed from"
+        )
+        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", "RDDRelation")
 
       case other =>
         val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"

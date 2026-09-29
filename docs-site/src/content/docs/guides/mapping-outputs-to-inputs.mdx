@@ -1,0 +1,94 @@
+---
+title: Map Outputs to Their Inputs
+description: Tell Invaract which of a contract's inputs each output is built from, so one contract can govern a job that writes several outputs from different inputs.
+sidebar:
+  order: 2.2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A contract lists its `inputs` and its `outputs` as two separate lists. On their own, they say
+nothing about *which input feeds which output*, so for a contract that declares several
+outputs Invaract can only assume the worst case: every write must read **every** declared
+input. That is wrong for a job that, say, reads three datasets and builds one output from two
+of them and another from the third — the second write never touches the first two inputs, and
+would be rejected with a `MISSING_INPUT` for each.
+
+`derivedFrom` on an output is how you say which inputs it is built from.
+
+## Declare it
+
+```yaml
+inputs:
+  - name: orders
+    location: bronze.orders
+    schema: { fields: [{ name: order_id, type: string }] }
+  - name: customers
+    location: bronze.customers
+    schema: { fields: [{ name: customer_id, type: string }] }
+  - name: events
+    location: bronze.events
+    schema: { fields: [{ name: event_id, type: string }] }
+outputs:
+  - name: orders_summary
+    location: gold.orders_summary
+    derivedFrom: [orders, customers]
+    schema: { fields: [{ name: order_id, type: string }] }
+  - name: audit_log
+    location: gold.audit_log
+    derivedFrom: [events]
+    schema: { fields: [{ name: event_id, type: string }] }
+```
+
+The names are the `name`s of the contract's own `inputs`. The mapping is many-to-many: an
+input can appear under several outputs, and an output can list as many inputs as it needs.
+
+## What it changes
+
+Each write a contract governs is checked on its own. When that write lands on an output that
+declares `derivedFrom`, Invaract checks it against **only that output's inputs**:
+
+| Situation | Result |
+|---|---|
+| The write reads every input its output lists | Passes the input checks. |
+| The write skips an input its output lists | `MISSING_INPUT` for exactly that input. |
+| The write never reads an input that only a *different* output lists | Nothing — it is not expected here. |
+| The write reads a declared input its output does **not** list, and [`rejectUndeclaredInputs`](/guides/installing-the-enforcement-rule/) is on | `UNDECLARED_INPUT`, naming the input and the output. |
+
+For example, if `audit_log` were written by a job that also read `bronze.orders`, and
+`rejectUndeclaredInputs` is enabled, the write is rejected with:
+
+```text
+plan reads 'bronze.orders' (input 'orders'), which this contract declares but not as a source of output 'audit_log' (its derivedFrom lists 'events')
+```
+
+## Leaving it out, and `[]`
+
+| You write | It means |
+|---|---|
+| no `derivedFrom` | The output is built from **all** declared inputs — exactly how contracts behaved before this key existed. Nothing changes for an existing contract. |
+| `derivedFrom: [a, b]` | Built from `a` and `b`; other declared inputs are not expected of this write. |
+| `derivedFrom: []` | Built from **no** declared input (for example, generated rows). Any declared input the write reads is an `UNDECLARED_INPUT` under `rejectUndeclaredInputs`. |
+
+A single-output contract does not need `derivedFrom`; it only becomes useful once a contract
+governs more than one write. When a multi-output contract without `derivedFrom` reports a
+`MISSING_INPUT`, the remediation now points you here.
+
+<Aside type="note" title="Validation catches typos">
+A name in `derivedFrom` that isn't one of the contract's inputs is a validation **error**, not
+something silently ignored — dropping it would quietly turn "this output needs X" into "this
+output needs nothing". (`derivedFrom` on an *input* means nothing and is ignored.)
+</Aside>
+
+## Versioning
+
+Changing which inputs an output is built from changes what a valid write must look like, so
+[`ContractCompatibility`](/guides/checking-contract-compatibility/) classifies it as a
+**breaking** change. It compares the inputs an output is *effectively* built from — spelling
+out the full input list where it was previously implied is not a change.
+
+## No code change needed to turn it on
+
+`derivedFrom` lives in the contract file itself, so a platform team can enable it against a job
+whose source they don't own by editing the contract that job is pointed at — the same
+`--conf spark.invaract.contract=...` route every other contract change takes.

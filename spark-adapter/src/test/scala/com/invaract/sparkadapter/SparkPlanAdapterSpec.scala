@@ -279,6 +279,71 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(unknown.sourceType.nonEmpty, "UnknownPlan should carry the Catalyst class name as sourceType")
   }
 
+  test("translates a real .checkpoint() boundary as an UnknownPlan naming LogicalRDD, with a diagnostic explaining why") {
+    val checkpointDir = Files.createTempDirectory("invaract-spark-adapter-checkpoint")
+    spark.sparkContext.setCheckpointDir(checkpointDir.toString)
+    // .checkpoint() eagerly rebuilds the returned Dataset's own analyzed
+    // plan as a LogicalRDD immediately - unlike .cache() below, this
+    // reaches .queryExecution.analyzed directly, with no separate
+    // substitution step needed (see SparkPlanAdapter's own
+    // InMemoryRelation/LogicalRDD doc, confirmed against a real captured
+    // ContractEnforcementRule-checked plan in ContractEnforcementRuleSpec).
+    val checkpointed = readSample().checkpoint()
+
+    val result = SparkPlanAdapter.translate(checkpointed.queryExecution.analyzed)
+
+    result.plan match {
+      case UnknownPlan(_, "LogicalRDD", _) => succeed
+      case other                           => fail(s"expected a LogicalRDD-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}")
+    }
+    assert(result.diagnostics.exists(_.message.toLowerCase.contains("checkpoint")), s"expected a checkpoint-mentioning diagnostic, got ${result.diagnostics}")
+  }
+
+  test("only a genuinely checkpointed LogicalRDD is a lineage boundary: local checkpoints are, RDD-backed and lazy-unmaterialized ones are not") {
+    spark.sparkContext.setCheckpointDir(Files.createTempDirectory("invaract-spark-adapter-checkpoint-kinds").toString)
+    def sourceTypeOf(df: org.apache.spark.sql.DataFrame): String = SparkPlanAdapter.translate(df.queryExecution.analyzed).plan match {
+      case UnknownPlan(_, sourceType, _) => sourceType
+      case other                          => fail(s"expected an UnknownPlan, got ${PlanPrinter.render(other)}")
+    }
+    val rdd = spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1L)))
+    val schema = org.apache.spark.sql.types.StructType(Seq(org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.LongType)))
+
+    assert(sourceTypeOf(spark.range(3).checkpoint(true).toDF()) == "LogicalRDD")
+    assert(sourceTypeOf(spark.range(3).localCheckpoint(true).toDF()) == "LogicalRDD")
+    // no lineage to hide: the RDD IS the source
+    assert(sourceTypeOf(spark.createDataFrame(rdd, schema)) == "RDDRelation")
+    // not yet materialized -> not yet checkpointed: the conservative (blocking) reading
+    assert(sourceTypeOf(spark.range(3).checkpoint(false).toDF()) == "RDDRelation")
+  }
+
+  test("translates a real, cache-substituted relation as an UnknownPlan naming InMemoryRelation, with a diagnostic explaining why") {
+    // Unlike .checkpoint() above, a bare .cache() does NOT change what
+    // .queryExecution.analyzed reports for a later query - Spark only
+    // substitutes InMemoryRelation in via QueryExecution.withCachedData,
+    // confirmed to run strictly after checkAnalysis (where
+    // ContractEnforcementRule's own check rule fires - see
+    // ContractEnforcementRuleSpec's real .cache() case, which shows the
+    // checked plan still contains the *original* relation, not
+    // InMemoryRelation). This test exercises SparkPlanAdapter.translate
+    // directly against a real, genuinely-substituted plan the way another
+    // caller (or a future one) could still hand it one - not via
+    // ContractEnforcementRule, which never does for a bare .cache().
+    val cached = readSample().cache()
+    cached.count() // force real materialization, not just plan-level registration
+    val downstream = cached.select(col("id"))
+    val substituted = downstream.queryExecution.withCachedData
+
+    val result = SparkPlanAdapter.translate(substituted)
+
+    def findUnknown(plan: Plan): Option[UnknownPlan] = plan match {
+      case u: UnknownPlan => Some(u)
+      case other          => other.children.flatMap(findUnknown).headOption
+    }
+    val unknown = findUnknown(result.plan).getOrElse(fail(s"expected an InMemoryRelation-sourced UnknownPlan, got ${PlanPrinter.render(result.plan)}"))
+    assert(unknown.sourceType == "InMemoryRelation")
+    assert(result.diagnostics.exists(_.message.toLowerCase.contains("cache")), s"expected a cache-mentioning diagnostic, got ${result.diagnostics}")
+  }
+
   test("translates Sort, capturing direction and null ordering") {
     val df = readSample()
     val sorted = df.orderBy(col("value").desc_nulls_last)

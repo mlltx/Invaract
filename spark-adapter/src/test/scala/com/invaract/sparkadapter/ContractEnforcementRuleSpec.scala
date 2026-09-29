@@ -12,7 +12,9 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{DateType, TimestampType}
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.concurrent.Eventually._
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.time.{Seconds, Span}
 
 import java.nio.file.{Files, Path}
 
@@ -39,6 +41,13 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
   // failure on its own.
   private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
+  // One per shared session, the same "one registry for the session's whole
+  // lifetime" wiring forContract does for real (see that method's own doc).
+  // Entries accumulate across tests harmlessly: a checkpoint only ever
+  // resolves to a plan recorded under its own output attribute ids, which
+  // are unique per Dataset.
+  private val checkpointRegistry = new CheckpointRegistry
+
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invaract-enforcement-test")
 
@@ -61,7 +70,9 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan
-          activeContract.foreach(c => ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink))
+          activeContract.foreach(c =>
+            ContractEnforcementRule.verifyOrThrow(c, plan, activeOptions, activeSink, checkpointRegistry = Some(checkpointRegistry))
+          )
         }
       }
       .getOrCreate()
@@ -218,6 +229,405 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  // A real Spark .checkpoint() call between reading a declared input and
+  // the checked write. Confirmed directly (not assumed) which of
+  // .cache()/.checkpoint() actually reaches ContractEnforcementRule this
+  // way: injectCheckRule fires during Spark's own checkAnalysis, which
+  // happens BEFORE QueryExecution.withCachedData ever substitutes a cached
+  // subtree with InMemoryRelation - so a bare .cache()/.persist() alone
+  // never actually shows InMemoryRelation to this check rule; captured a
+  // real checked plan's tree to confirm (still `Relation ... csv`, not
+  // InMemoryRelation, after .cache().count()). .checkpoint() is different:
+  // it eagerly rebuilds the returned Dataset's own analyzed plan as a
+  // LogicalRDD immediately, before any later action's analysis even
+  // begins, so it genuinely reaches the check rule this way - confirmed
+  // the same way (a captured real checked plan showing `LogicalRDD [...]`
+  // in place of the original Read). Proves the fix end-to-end against a
+  // real SparkSession, real checkpointing, and a real published
+  // notification event - not just the hand-constructed ir.Plan trees
+  // StructuralVerifierSpec exercises the same StructuralVerifier logic
+  // against. SparkPlanAdapterSpec separately covers InMemoryRelation
+  // translation directly (bypassing ContractEnforcementRule, the same way
+  // a caller other than it could still hand SparkPlanAdapter a
+  // post-cache-substitution plan).
+  test("PASS: a declared input read through a real .checkpoint() boundary is not falsely reported as MISSING_INPUT") {
+    val inputPath = scratchDir.resolve("cache_input.csv").toString
+    val outputPath = scratchDir.resolve("cache_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id,value\n1,10\n2,20\n".getBytes)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: raw
+         |    location: $inputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |        - name: doubled
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("checkpoints").toString)
+    withContract(yaml, sink = Some(sink)) {
+      val raw = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath)
+      val checkpointed = raw.checkpoint()
+      val df = checkpointed.withColumn("doubled", col("id") * 2)
+      df.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)), "the write must not be blocked by a false-positive MISSING_INPUT")
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty, "expected at least one ContractValidationEvent")
+    val event = events.last
+    assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
+    assert(!event.violations.exists(_.violationType == ViolationType.MissingInput))
+    // Resolved, not merely excused: the checkpoint's real pre-image was
+    // spliced back in, so 'raw' was simply read.
+    assert(event.unverifiableInputs.isEmpty, s"expected the checkpoint to resolve, got: ${event.unverifiableInputs}")
+  }
+
+  // A checkpoint following a JOIN of two declared inputs, with a
+  // column-dropping .select() before it (a normal, even encouraged pattern
+  // - shrinking what gets persisted): the checkpoint's own output columns
+  // (order_id, name) cover neither input's full declared field set, so
+  // nothing about its *shape* identifies what fed it. CheckpointRegistry
+  // resolves it by attribute id instead - synchronously, so the write is
+  // checked immediately after .checkpoint() with no waiting.
+  test("PASS: both inputs of a multi-input join survive a column-dropping .select() + .checkpoint() boundary, not falsely reported as MISSING_INPUT") {
+    val ordersPath = scratchDir.resolve("join_checkpoint_orders.csv").toString
+    val customersPath = scratchDir.resolve("join_checkpoint_customers.csv").toString
+    val outputPath = scratchDir.resolve("join_checkpoint_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(ordersPath), "order_id,customer_id,amount\n1,a,100\n2,b,200\n".getBytes)
+    Files.write(java.nio.file.Paths.get(customersPath), "customer_id,name,state\na,Alice,NY\nb,Bob,CA\n".getBytes)
+
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: $ordersPath
+         |    schema:
+         |      fields:
+         |        - name: order_id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |        - name: customer_id
+         |          type: string
+         |          required: true
+         |          nullable: true
+         |        - name: amount
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |  - name: customers
+         |    location: $customersPath
+         |    schema:
+         |      fields:
+         |        - name: customer_id
+         |          type: string
+         |          required: true
+         |          nullable: true
+         |        - name: name
+         |          type: string
+         |          required: true
+         |          nullable: true
+         |        - name: state
+         |          type: string
+         |          required: true
+         |          nullable: true
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema:
+         |      fields:
+         |        - name: order_id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |        - name: name
+         |          type: string
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("join_checkpoints").toString)
+    withContract(yaml, sink = Some(sink)) {
+      val orders = spark.read.option("header", "true").option("inferSchema", "true").csv(ordersPath)
+      val customers = spark.read.option("header", "true").option("inferSchema", "true").csv(customersPath)
+      val joined = orders.join(customers, "customer_id").select(orders("order_id"), customers("name"))
+      val checkpointed = joined.checkpoint(true)
+
+      checkpointed.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)), "the write must not be blocked by a false-positive MISSING_INPUT")
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    assert(events.nonEmpty, "expected at least one ContractValidationEvent")
+    val event = events.last
+    assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
+    assert(!event.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${event.violations}")
+    assert(event.unverifiableInputs.isEmpty, s"both inputs should be plainly read through the resolved checkpoint, got: ${event.unverifiableInputs}")
+  }
+
+  test("FAIL: a genuinely missing input is still blocked even when the job checkpoints (and reads) another input - a resolved checkpoint excuses nothing") {
+    val realPath = scratchDir.resolve("precise_real.csv").toString
+    val missingPath = scratchDir.resolve("precise_never_read.csv").toString
+    val outputPath = scratchDir.resolve("precise_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(realPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |  - name: never_read
+         |    location: $missingPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("precise_checkpoints").toString)
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+          .write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.map(_.location) == List(Some(missingPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty)
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("PASS with UnverifiableInput: a checkpoint whose origin the rule never saw stays opaque, and the unread input is reported unverifiable, not missing") {
+    val inputPath = scratchDir.resolve("unseen_origin.csv").toString
+    val outputPath = scratchDir.resolve("unseen_origin_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: raw
+         |    location: $inputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("unseen_checkpoints").toString)
+    // Created while NO contract is active, so the check rule never records the origin.
+    val checkpointed = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+    withContract(yaml, sink = Some(sink)) {
+      checkpointed.write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.map(_.inputName) == List("raw"))
+    assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
+  }
+
+  test("MISSING_INPUT: a DataFrame built directly from a plain RDD is NOT a lineage boundary - an unread declared input still blocks") {
+    val missingPath = scratchDir.resolve("rdd_never_read.csv").toString
+    val outputPath = scratchDir.resolve("rdd_sourced_output.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: never_read
+         |    location: $missingPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+    val rdd = spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1), org.apache.spark.sql.Row(2)))
+    val fromRdd = spark.createDataFrame(rdd, org.apache.spark.sql.types.StructType(Seq(org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.IntegerType))))
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException](fromRdd.write.mode("overwrite").parquet(outputPath))
+    }
+
+    assert(ex.result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains(missingPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, "an RDD-backed relation hides no upstream lineage")
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("a failure inside the CheckpointRegistry degrades to 'not resolved' with a WARN - it never fails the job's own analysis") {
+    val throwing = new CheckpointRegistry {
+      override def bind(plan: LogicalPlan): Unit = throw new IllegalStateException("bind boom")
+      override def record(plan: LogicalPlan, translated: com.invaract.ir.Plan): Unit = throw new StackOverflowError("record boom")
+    }
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", scratchDir.resolve("failsafe.parquet").toString))
+
+    val (_, warnings) = enforcementRuleWarnings {
+      // a plain query is not a write, so the only thing that can throw here is the registry
+      ContractEnforcementRule.verifyOrThrow(contract, spark.range(3).queryExecution.analyzed, VerificationOptions(), checkpointRegistry = Some(throwing))
+    }
+
+    val registryWarnings = warnings.filter(_.contains("CheckpointRegistry could not"))
+    assert(registryWarnings.size == 2, warnings.toString)
+    assert(registryWarnings.exists(w => w.contains("resolve") && w.contains("bind boom")), registryWarnings.toString)
+    assert(registryWarnings.exists(w => w.contains("record") && w.contains("record boom")), registryWarnings.toString)
+  }
+
+  // Output-to-input lineage (Dataset.derivedFrom), end to end through the
+  // real installed check rule: ONE job reads three datasets (a, b, c),
+  // writes out1 from a+b and out2 from c alone. Without derivedFrom, a
+  // contract with both outputs could only assume every write reads every
+  // input - so out2's write (never touching a or b) would be rejected with a
+  // false-positive MISSING_INPUT for both.
+  private def lineageYaml(paths: Map[String, String], out1Path: String, out2Path: String, out1Derived: String, out2Derived: String): String = {
+    def input(name: String): String =
+      s"""  - name: $name
+         |    location: ${paths(name)}
+         |    schema:
+         |      fields:
+         |        - name: id
+         |          type: integer
+         |          required: true
+         |          nullable: true
+         |""".stripMargin
+    s"""id: lineage_demo
+       |version: "1.0.0"
+       |inputs:
+       |${input("a")}${input("b")}${input("c")}outputs:
+       |  - name: out1
+       |    location: $out1Path$out1Derived
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: integer
+       |          required: true
+       |          nullable: true
+       |  - name: out2
+       |    location: $out2Path$out2Derived
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: integer
+       |          required: true
+       |          nullable: true
+       |""".stripMargin
+  }
+
+  private def lineageFixture(prefix: String): (Map[String, String], String, String) = {
+    val paths = List("a", "b", "c").map { n =>
+      val path = scratchDir.resolve(s"${prefix}_$n.csv").toString
+      Files.write(java.nio.file.Paths.get(path), "id\n1\n2\n".getBytes)
+      n -> path
+    }.toMap
+    (paths, scratchDir.resolve(s"${prefix}_out1.parquet").toString, scratchDir.resolve(s"${prefix}_out2.parquet").toString)
+  }
+
+  private def readCsv(path: String) = spark.read.option("header", "true").option("inferSchema", "true").csv(path)
+
+  test("PASS: one job reads three inputs, writes out1 from two and out2 from one - each write checked only against its own derivedFrom inputs") {
+    val (paths, out1, out2) = lineageFixture("lineage_pass")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    withContract(yaml) {
+      val a = readCsv(paths("a")).withColumnRenamed("id", "a_id")
+      val b = readCsv(paths("b")).withColumnRenamed("id", "b_id")
+      val c = readCsv(paths("c"))
+      a.join(b, a("a_id") === b("b_id")).select(a("a_id").as("id")).write.mode("overwrite").parquet(out1) // must not throw
+      c.write.mode("overwrite").parquet(out2) // must not throw: never reads a or b
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(out1)))
+    assert(Files.exists(java.nio.file.Paths.get(out2)))
+  }
+
+  test("FAIL: without derivedFrom, the same job is rejected - out2's write never reads a or b, and the message points at derivedFrom") {
+    val (paths, out1, out2) = lineageFixture("lineage_unmapped")
+    val yaml = lineageYaml(paths, out1, out2, "", "")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("c")).write.mode("overwrite").parquet(out2)
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.size == 2, ex.result.violations.toString)
+    assert(missing.forall(_.remediation.contains("'derivedFrom'")))
+    assert(!Files.exists(java.nio.file.Paths.get(out2)), "the write must be blocked")
+  }
+
+  test("FAIL: a write that skips an input its OWN output is derivedFrom is still rejected with MISSING_INPUT for exactly that input") {
+    val (paths, out1, out2) = lineageFixture("lineage_skips")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("a")).write.mode("overwrite").parquet(out1) // out1 is derivedFrom a AND b
+      }
+    }
+
+    val missing = ex.result.violations.filter(_.violationType == ViolationType.MissingInput)
+    assert(missing.map(_.location) == List(Some(paths("b"))), ex.result.violations.toString)
+    assert(!Files.exists(java.nio.file.Paths.get(out1)))
+  }
+
+  test("FAIL under rejectUndeclaredInputs: out2 reading input a, which the contract declares but not for out2, is UNDECLARED_INPUT") {
+    val (paths, out1, out2) = lineageFixture("lineage_extra")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: [c]")
+
+    val ex = withContract(yaml, options = VerificationOptions(rejectUndeclaredInputs = true)) {
+      intercept[ContractViolationException] {
+        readCsv(paths("c")).union(readCsv(paths("a"))).write.mode("overwrite").parquet(out2)
+      }
+    }
+
+    val undeclared = ex.result.violations.filter(_.violationType == ViolationType.UndeclaredInput)
+    assert(undeclared.size == 1, ex.result.violations.toString)
+    assert(undeclared.head.message.contains("input 'a'") && undeclared.head.message.contains("output 'out2'"))
+    assert(!Files.exists(java.nio.file.Paths.get(out2)))
+  }
+
+  test("ContractViolationException's 'what the contract expects' shows each output's derivedFrom inputs") {
+    val (paths, out1, out2) = lineageFixture("lineage_explain")
+    val yaml = lineageYaml(paths, out1, out2, "\n    derivedFrom: [a, b]", "\n    derivedFrom: []")
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        readCsv(paths("a")).write.mode("overwrite").parquet(out1)
+      }
+    }
+
+    assert(ex.getMessage.contains("output 'out1' at " + out1 + " (derived from a, b)"), ex.getMessage)
+    assert(ex.getMessage.contains("output 'out2' at " + out2 + " (derived from no declared input)"), ex.getMessage)
   }
 
   // com.invaract.sparkadapter.location - resolving a contract's ref://<id>
@@ -513,6 +923,150 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val fp2 = fingerprintOfRandColumn()
     assert(fp1.overall == fp2.overall, "rand()'s analyzer-assigned seed must never leak into the fingerprint")
     assert(fp1.outputs("r") == fp2.outputs("r"))
+  }
+
+  // The fingerprint side of the same mechanism: a checkpoint CheckpointRegistry
+  // resolves is fingerprinted as the real transformation it stands for, so a
+  // job's fingerprint doesn't change just because it checkpoints. Two runs of
+  // identical code must still fingerprint identically (deterministic), and
+  // the checkpointed and un-checkpointed variants must agree with each other.
+  test("computeFingerprint = true: a job fingerprints identically with and without a (resolved) checkpoint, and deterministically across runs") {
+    val outputPath = scratchDir.resolve("checkpoint_fp.parquet").toString
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("checkpoint_fp_checkpoints").toString)
+
+    def fingerprintJob(checkpoint: Boolean): com.invaract.fingerprint.TransformationFingerprint = {
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: $outputPath
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: true
+           |        - name: doubled
+           |          type: long
+           |          required: true
+           |""".stripMargin
+      val sink = new TestNotificationSink
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val base = spark.range(5)
+        val checkpointed = if (checkpoint) base.checkpoint(true) else base
+        val df = checkpointed.withColumn("doubled", col("id") * 2)
+        df.write.mode("overwrite").parquet(outputPath) // must not throw
+      }
+      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
+    }
+
+    val withCheckpoint1 = fingerprintJob(checkpoint = true)
+    val withCheckpoint2 = fingerprintJob(checkpoint = true)
+    val without = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint1.overall == withCheckpoint2.overall, "identical code must fingerprint identically across separate analyses")
+    assert(withCheckpoint1.outputs("doubled") == withCheckpoint2.outputs("doubled"))
+    assert(withCheckpoint1.overall == without.overall, "resolving the checkpoint must make it invisible to the fingerprint")
+  }
+
+  /** Runs `body`, capturing every WARN-or-worse message `ContractEnforcementRule` logs while it runs.
+    * This suite raises Spark's log level to ERROR, so a dedicated logger config for just that logger is
+    * installed for the duration (and removed afterwards) rather than relying on the ambient level.
+    */
+  private def enforcementRuleWarnings[T](body: => T): (T, List[String]) = {
+    import org.apache.logging.log4j.{Level, LogManager}
+    import org.apache.logging.log4j.core.{LogEvent, LoggerContext}
+    import org.apache.logging.log4j.core.appender.AbstractAppender
+    import org.apache.logging.log4j.core.config.{LoggerConfig, Property}
+
+    val captured = new java.util.concurrent.CopyOnWriteArrayList[String]()
+    val context = LogManager.getContext(false).asInstanceOf[LoggerContext]
+    val config = context.getConfiguration
+    val loggerName = ContractEnforcementRule.getClass.getName
+    val appender = new AbstractAppender("enforcement-rule-warnings", null, null, true, Property.EMPTY_ARRAY) {
+      override def append(event: LogEvent): Unit = captured.add(event.getMessage.getFormattedMessage)
+    }
+    appender.start()
+    val loggerConfig = new LoggerConfig(loggerName, Level.WARN, false)
+    loggerConfig.addAppender(appender, null, null)
+    config.addLogger(loggerName, loggerConfig)
+    context.updateLoggers()
+    try {
+      val result = body
+      (result, captured.toArray.toList.map(_.toString))
+    } finally {
+      config.removeLogger(loggerName)
+      appender.stop()
+      context.updateLoggers()
+    }
+  }
+
+  private def fingerprintingWarnings(warnings: List[String]): List[String] = warnings.filter(_.startsWith("computeFingerprint:"))
+
+  private def fingerprintedRangeWrite(outputName: String)(dataset: => org.apache.spark.sql.DataFrame): (List[String], Boolean) = {
+    val outputPath = scratchDir.resolve(outputName).toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+    val (_, warnings) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        dataset.withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath) // must not throw
+      }
+    }
+    val fingerprinted = sink.events
+      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .lastOption.exists(_.fingerprints.isDefined)
+    (fingerprintingWarnings(warnings), fingerprinted)
+  }
+
+  test("computeFingerprint = true: a fingerprint that crosses an UNRESOLVED checkpoint boundary logs a WARN naming it, and the write still passes") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_unresolved_checkpoints").toString)
+    // Created while NO contract is active, so the check rule never sees its origin and can't resolve it.
+    val unseenOrigin = spark.range(5).checkpoint(true).toDF()
+
+    val (warnings, fingerprinted) = fingerprintedRangeWrite("fp_warn_unresolved.parquet")(unseenOrigin)
+
+    assert(fingerprinted, "the write passes and still carries a fingerprint")
+    assert(warnings.size == 1, warnings.toString)
+    assert(warnings.head.contains("unresolved boundary: LogicalRDD"), warnings.head)
+    assert(warnings.head.contains("stable and deterministic"), warnings.head)
+    assert(!warnings.head.contains("most recently created"), "no assumed resolution was involved")
+  }
+
+  test("computeFingerprint = true: a resolution that had to pick the most recent of several same-source plans is disclosed in the WARN") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_assumed_checkpoints").toString)
+    val outputPath = scratchDir.resolve("fp_warn_assumed.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+    val (_, captured) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val base = spark.range(5)
+        val filtered = base.filter(col("id") > 0) // a filter shares its input's output attribute ids
+        filtered.checkpoint(true).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+    val warnings = fingerprintingWarnings(captured)
+    val fingerprinted = sink.events
+      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .lastOption.exists(_.fingerprints.isDefined)
+
+    assert(fingerprinted)
+    assert(warnings.size == 1, warnings.toString)
+    assert(warnings.head.contains("most recently created of several plans"), warnings.head)
+    assert(!warnings.head.contains("unresolved boundary"), "the boundary was resolved - only the assumption is disclosed")
+  }
+
+  test("computeFingerprint = true: a fingerprint that crossed nothing unresolved logs no WARN at all") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_none_checkpoints").toString)
+    val outputPath = scratchDir.resolve("fp_warn_none.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val (_, captured) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true)) {
+        // A cleanly resolved checkpoint, and a plain job with none.
+        spark.range(5).checkpoint(true).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+        spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+    assert(fingerprintingWarnings(captured).isEmpty, captured.toString)
   }
 
   // A real, confirmed false NEGATIVE, now fixed by

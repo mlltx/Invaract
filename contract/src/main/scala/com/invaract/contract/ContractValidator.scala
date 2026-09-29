@@ -108,6 +108,8 @@ object ContractValidator {
       )
     }
 
+    issues ++= validateDerivedFrom(contract)
+
     contract.rules.zipWithIndex.foreach { case (rule, idx) =>
       if (rule.ruleType.trim.isEmpty) {
         issues += ValidationIssue(ValidationSeverity.Error, s"rules[$idx]", "Rule type must not be empty")
@@ -159,6 +161,25 @@ object ContractValidator {
     }
 
     ValidationResult(issues.result())
+  }
+
+  /** Checks the output-to-input mapping (`Dataset.derivedFrom`): a name that
+    * matches no declared input is an Error - it can never be satisfied, and
+    * silently dropping it would quietly turn "this output needs X" into
+    * "this output needs nothing", the opposite of what a typo'd name almost
+    * certainly meant.
+    */
+  private def validateDerivedFrom(contract: Contract): List[ValidationIssue] = {
+    val inputNames = contract.inputs.map(_.name)
+    for {
+      (output, idx) <- contract.outputs.zipWithIndex
+      name          <- output.derivedFrom.getOrElse(Nil).filterNot(inputNames.contains).distinct
+    } yield ValidationIssue(
+      ValidationSeverity.Error,
+      s"outputs[$idx].derivedFrom",
+      s"Output '${output.name}' is derivedFrom '$name', which is not a declared input " +
+        s"(declared inputs: ${if (inputNames.isEmpty) "none" else inputNames.mkString(", ")})"
+    )
   }
 
   private def validateDataset(path: String, dataset: Dataset): List[ValidationIssue] = {

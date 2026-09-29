@@ -98,6 +98,11 @@ declare `type: DATA_ASSET`/`SOURCE`/`CONTROL` to say what it *represents* — a 
 data product, an external source, or pipeline control data — see [Declare Input and
 Output Types](/guides/declaring-input-and-output-types/).
 
+If the contract declares more than one output, an output can also say which of the contract's
+inputs it is built from with `derivedFrom: [input_name, ...]`. Without it, every write is
+expected to read every declared input — see [Map Outputs to Their
+Inputs](/guides/mapping-outputs-to-inputs/).
+
 ## Field semantics
 
 | Key | Default | Meaning |

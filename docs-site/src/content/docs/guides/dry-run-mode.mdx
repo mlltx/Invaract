@@ -84,7 +84,16 @@ intend before treating it as a finished document.
          required: true
          nullable: false
      saveMode: overwrite
+     derivedFrom:
+     - input
    ```
+
+   `derivedFrom` names exactly the inputs this write was observed reading, so when you
+   later merge several inferred drafts into one multi-output contract, each output keeps
+   naming only the inputs that feed it (see
+   [Map Outputs to Their Inputs](/guides/mapping-outputs-to-inputs/)). A write that read
+   nothing gets `derivedFrom: []`. Inferred input names are positional per write
+   (`input`, `input_1`, `input_2`, ...), so reconcile them by hand when you merge.
 
    `location` is the absolute `file:`-scheme-stripped path Spark actually reported for this
    run (see [Contract Format](/reference/contract-format/)'s "Location matching") — replace
@@ -108,7 +117,7 @@ way [installing the enforcement rule itself](/guides/installing-the-enforcement-
 spark-submit \
   --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
   --conf spark.invaract.dryRun=true \
-  --jars invaract-spark-adapter-0.9.0.jar \
+  --jars invaract-spark-adapter-0.10.0.jar \
   my-job.jar
 ```
 
@@ -139,6 +148,15 @@ unrecognized write shape produces nothing. If your job performs more than one wr
 callback fires once per recognized write — capture the one you want by overwriting a
 mutable cell, the same way [the explicit-code example](/guides/calling-invaract-explicitly/#infer-a-contract-with-a-custom-callback)
 does.
+
+## Checkpoints
+
+If your job calls `.checkpoint()` between reading and writing, dry-run mode sees through
+it the same way real enforcement does (see `MISSING_INPUT` in
+[Violation Types](/reference/violation-types/)): the inferred contract names the inputs read *before* the checkpoint, not an empty
+list. The checkpointed Dataset has to have been created while the rule was installed — a
+checkpoint made before the session had the extension can't be resolved, and its upstream
+inputs won't appear in the draft.
 
 ## What it doesn't do
 

@@ -36,6 +36,10 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
   // an inferred contract is actually usable, not just plausible-looking.
   private val capturedPlans = scala.collection.mutable.ListBuffer.empty[LogicalPlan]
 
+  // The registry `dryRun` itself creates per session, so a `.checkpoint()` in
+  // a test resolves exactly as it does in a real dry-run.
+  private val checkpointRegistry = new CheckpointRegistry
+
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invaract-inference-test")
 
@@ -48,7 +52,7 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
       .withExtensions { ext =>
         ext.injectCheckRule { _ => (plan: LogicalPlan) =>
           capturedPlans += plan
-          ContractEnforcementRule.inferOrIgnore(plan, c => inferred += c)
+          ContractEnforcementRule.inferOrIgnore(plan, c => inferred += c, Some(checkpointRegistry))
         }
       }
       .getOrCreate()
@@ -220,6 +224,46 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     spark.range(5).withColumn("doubled", col("id") * 2).count() // triggers analyzed plans, but no write
 
     assert(inferred.isEmpty, "a count() with no write must not produce an inferred contract")
+  }
+
+  test("the inferred output names exactly the inputs its write read (derivedFrom), so merged drafts keep per-output lineage") {
+    val leftPath = scratchDir.resolve("infer_lineage_left.parquet").toString
+    val rightPath = scratchDir.resolve("infer_lineage_right.parquet").toString
+    spark.range(3).write.mode("overwrite").parquet(leftPath)
+    spark.range(3).write.mode("overwrite").parquet(rightPath)
+
+    val single = lastInferredAfter {
+      spark.read.parquet(leftPath).write.mode("overwrite").parquet(scratchDir.resolve("infer_lineage_single.parquet").toString)
+    }
+    assert(single.outputs.head.derivedFrom == Some(List("input")))
+
+    val two = lastInferredAfter {
+      spark.read.parquet(leftPath).crossJoin(spark.read.parquet(rightPath).withColumnRenamed("id", "r"))
+        .write.mode("overwrite").parquet(scratchDir.resolve("infer_lineage_two.parquet").toString)
+    }
+    assert(two.outputs.head.derivedFrom == Some(List("input_1", "input_2")))
+    assert(two.outputs.head.derivedFrom.get.forall(name => two.input(name).isDefined))
+
+    val none = lastInferredAfter {
+      spark.range(3).write.mode("overwrite").parquet(scratchDir.resolve("infer_lineage_none.parquet").toString)
+    }
+    assert(none.outputs.head.derivedFrom == Some(Nil), "a write that read nothing is derived from no input - not 'all inputs'")
+    assert(ContractParser.parse(ContractParser.write(none)).outputs.head.derivedFrom == Some(Nil))
+  }
+
+  test("dry-run sees through a .checkpoint(): the inferred contract names the inputs read BEFORE the checkpoint") {
+    val inputPath = scratchDir.resolve("infer_ckpt_source.parquet").toString
+    val outputPath = scratchDir.resolve("infer_ckpt_output.parquet").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(inputPath)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("infer_ckpt_dir").toString)
+
+    val contract = lastInferredAfter {
+      spark.read.parquet(inputPath).select("id").checkpoint(true).write.mode("overwrite").parquet(outputPath)
+    }
+
+    assert(contract.inputs.size == 1, contract.inputs.toString)
+    assert(sameLocation(contract.inputs.head.location, inputPath), contract.inputs.head.location)
+    assert(contract.outputs.head.derivedFrom == Some(List("input")))
   }
 
   test("an inferred contract round-trips through ContractParser.write/parse and passes real enforcement of the write it came from") {

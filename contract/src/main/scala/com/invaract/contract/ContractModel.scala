@@ -371,6 +371,23 @@ object DatasetType {
   *   to keep this addition binary-compatible with existing compiled callers
   *   — see the API Compatibility Requirement's own worked example for why
   *   a new case-class field belongs at the end, not the middle.
+  * @param derivedFrom optional, meaningful only on an *output*: the names
+  *   (`Dataset.name`) of the contract's declared `inputs` this output is
+  *   derived from. A contract's `inputs`/`outputs` are otherwise two flat
+  *   lists with no relationship between them, so a contract governing
+  *   several writes (`outputs.size > 1`) could only ever assume every
+  *   declared input feeds every declared output — wrong for a job that
+  *   reads three datasets and uses two for one output and one for another.
+  *   `None` (the default, and what every existing contract has) keeps
+  *   exactly that original assumption: the output is derived from *all*
+  *   declared inputs. `Some(names)` scopes `spark-adapter`'s per-write
+  *   input checks (`MISSING_INPUT`, `UNDECLARED_INPUT`, unverifiable-input
+  *   reporting) to just those inputs whenever a write to *this* output is
+  *   checked; `Some(Nil)` states the output is derived from no declared
+  *   input at all. Many-to-many is expressed naturally: one input may
+  *   appear in several outputs' lists, and one output may list several
+  *   inputs. Appended last for the same binary-compatibility reason
+  *   `datasetType` above was.
   */
 case class Dataset(
   name: String,
@@ -380,7 +397,8 @@ case class Dataset(
   saveMode: Option[String] = None,
   catalog: Option[CatalogRequirement] = None,
   description: Option[String] = None,
-  datasetType: Option[DatasetType] = None
+  datasetType: Option[DatasetType] = None,
+  derivedFrom: Option[List[String]] = None
 )
 
 /** Rule types Invaract itself knows how to interpret during verification
@@ -572,4 +590,16 @@ case class Contract(
 ) {
   def input(name: String): Option[Dataset] = inputs.find(_.name == name)
   def output(name: String): Option[Dataset] = outputs.find(_.name == name)
+
+  /** The declared inputs a write to `output` is expected to draw on:
+    * every declared input when `output.derivedFrom` is `None` (the
+    * original, pre-mapping assumption), otherwise only the inputs whose
+    * name it lists. A name in `derivedFrom` matching no declared input is
+    * simply absent from the result — `ContractValidator` is what reports
+    * that as an authoring error.
+    */
+  def inputsFor(output: Dataset): List[Dataset] = output.derivedFrom match {
+    case None        => inputs
+    case Some(names) => inputs.filter(input => names.contains(input.name))
+  }
 }

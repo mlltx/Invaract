@@ -5,7 +5,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.contract.{CatalogRequirement, Contract, Dataset, DatasetType, Field => ContractField}
 import com.invaract.fingerprint.TransformationFingerprint
-import com.invaract.ir.{CatalogIdentity, Plan, Read, Write}
+import com.invaract.ir.{CatalogIdentity, Plan, Read, UnknownPlan, Write}
 
 import org.apache.spark.sql.types.StructType
 
@@ -314,6 +314,48 @@ case class DataQualityCheckResult(field: String, constraint: String, verdict: Da
   def toMap: Map[String, Any] = Map("field" -> field, "constraint" -> constraint, "verdict" -> verdict.toString)
 }
 
+/** One declared input `StructuralVerifier.verify` could not confirm was
+  * read, but also could not confidently report as `MissingInput` — the
+  * checked plan still contains a lineage boundary (`.checkpoint()` or a
+  * cached relation) that `SparkPlanAdapter` could not resolve back to the
+  * plan it was made from (see `CheckpointRegistry`: an origin the check
+  * rule never saw, an evicted one, or an ambiguous one), so a real read of
+  * this input may be hidden behind it rather than genuinely absent.
+  * Spark's own analyzed plan no longer retains the original source(s) read
+  * before such a boundary, so `collectReads` can find no matching `Read`
+  * node even though the input really was read.
+  *
+  * Only *unresolved* boundaries count: a checkpoint whose origin the
+  * registry resolved has its real `Read` nodes spliced back into the plan,
+  * so an input read through it is simply read, and one that isn't is a
+  * plain `MissingInput` — an unrelated, fully-resolved checkpoint elsewhere
+  * in the plan can never excuse a genuinely missing input. Any other
+  * `UnknownPlan` (a node the translator merely has no case for) doesn't
+  * count either: it is not evidence a *read* was hidden.
+  *
+  * Report-only, the same `Conforms`/`CannotDetermine`-style convention
+  * `RoleConformanceCheckResult` already uses for "verification declined to
+  * assert a fact it can't actually prove": an `UnverifiableInput` entry
+  * never becomes a `Violation` and never affects `passed`. Blocking a write
+  * on an absence this analysis cannot actually confirm would be a false
+  * positive, not a caught defect — the same reasoning `ir.UnknownPlan`'s own
+  * doc already establishes ("the rest of the tree stays inspectable... an
+  * unsupported construct must always be visible in the model, never
+  * silently dropped") applied one level up, to a *consumer* of the plan
+  * rather than the plan itself.
+  *
+  * @param unknownNodeTypes the distinct `ir.UnknownPlan.sourceType` values
+  *   of the unresolved boundary node(s) in the plan, in the order first
+  *   encountered (e.g. `"LogicalRDD"`) — named directly rather than folded
+  *   into a generic "something was unrecognized" message, so a person
+  *   reading a report can immediately tell *why* this input's absence isn't
+  *   proven.
+  */
+case class UnverifiableInput(inputName: String, inputLocation: String, unknownNodeTypes: List[String]) {
+  def toMap: Map[String, Any] =
+    Map("inputName" -> inputName, "inputLocation" -> inputLocation, "unknownNodeTypes" -> unknownNodeTypes)
+}
+
 /** The two "unexpected X can be rejected" toggles from the check list —
   * off by default, matching how most contract/schema tooling treats an
   * unlisted extra column: permitted unless a caller opts into strict mode.
@@ -382,6 +424,15 @@ case class VerificationOptions(
   * `ViolationType.RoleConsistencyViolation`'s own doc). Report-only
   * otherwise: a `Conforms`/`CannotDetermine` entry here never affects
   * `passed`.
+  *
+  * `unverifiableInputs` is always populated when applicable — unlike
+  * `dataQuality`/`roleConformance` above, there is no `VerificationOptions`
+  * flag gating it, since this isn't new opt-in instrumentation: it's the
+  * honest half of `MissingInput`'s own always-on check (see
+  * `UnverifiableInput`'s own doc for why a declared input the checked plan
+  * couldn't confirm reading sometimes can't be confidently reported as
+  * missing either). Report-only: an entry here never becomes a `Violation`
+  * and never affects `passed`.
   */
 case class VerificationResult(
   status: String,
@@ -389,7 +440,8 @@ case class VerificationResult(
   violations: List[Violation],
   fingerprints: Option[TransformationFingerprint] = None,
   dataQuality: List[DataQualityCheckResult] = Nil,
-  roleConformance: List[RoleConformanceCheckResult] = Nil
+  roleConformance: List[RoleConformanceCheckResult] = Nil,
+  unverifiableInputs: List[UnverifiableInput] = Nil
 ) {
   def passed: Boolean = status == "PASSED"
 }
@@ -400,7 +452,8 @@ object VerificationResult {
       violations: List[Violation],
       fingerprints: Option[TransformationFingerprint] = None,
       dataQuality: List[DataQualityCheckResult] = Nil,
-      roleConformance: List[RoleConformanceCheckResult] = Nil
+      roleConformance: List[RoleConformanceCheckResult] = Nil,
+      unverifiableInputs: List[UnverifiableInput] = Nil
   ): VerificationResult =
     VerificationResult(
       if (violations.isEmpty) "PASSED" else "FAILED",
@@ -408,7 +461,8 @@ object VerificationResult {
       violations,
       fingerprints,
       dataQuality,
-      roleConformance
+      roleConformance,
+      unverifiableInputs
     )
 }
 
@@ -497,6 +551,66 @@ object VerificationResult {
   * see its own doc); `verify` picks whichever matches first when that
   * happens, and doesn't special-case it further.
   *
+  * ## Which inputs a write is checked against
+  *
+  * A contract's `inputs` and `outputs` are two flat lists, so a contract
+  * governing several writes needs some way to say which inputs each
+  * output is built from — a job can read three datasets and use two for
+  * one output and one for another, and requiring every write to read every
+  * input would reject exactly that. `Dataset.derivedFrom` on an output
+  * (see its own doc) is that mapping, and `verify` scopes every per-input
+  * check to `Contract.inputsFor(<the output this write lands on>)`:
+  *
+  *   - `MISSING_INPUT` (and the unverifiable-input classification below)
+  *     is only considered for the scoped inputs, so an input an output
+  *     doesn't derive from is never required of a write to it.
+  *   - Under `rejectUndeclaredInputs`, a read of a declared input that is
+  *     *not* in the scoped set is an `UNDECLARED_INPUT` (worded as "declared
+  *     by this contract but not a source of output X") — the mapping is a
+  *     real claim about the output's sources, and a plan's `Read` nodes are
+  *     a structural fact about which datasets were composed into the write,
+  *     so this is enforceable rather than advisory.
+  *   - An output without `derivedFrom` keeps the original behavior exactly:
+  *     every declared input is expected. So does a plan with no `Write`, and
+  *     a multi-output write matching no declared output (which already
+  *     reports `OUTPUT_LOCATION_MISMATCH` on its own).
+  *
+  * Scoping also narrows what the checkpoint-lineage evidence below can
+  * excuse: only the write's own scoped inputs are ever candidates for
+  * `UnverifiableInput`, so a checkpoint elsewhere in the session can no
+  * longer mask a missing input the *other* output was never meant to read.
+  *
+  * ## Inputs hidden behind a lineage boundary
+  *
+  * A declared input with no matching `Read` node anywhere in `plan` is
+  * usually genuinely missing — `MISSING_INPUT`. But a `.checkpoint()` call
+  * sitting between the real read and the checked write erases Spark's own
+  * analyzed-plan lineage back to it (`LogicalRDD` is a leaf that retains no
+  * `LogicalPlan`). `SparkPlanAdapter` handles this *before* `verify` ever
+  * runs: given a `CheckpointRegistry`, it resolves each `LogicalRDD` back to
+  * the pre-checkpoint plan the check rule saw when that Dataset was
+  * created, and splices it in — so the plan `verify` receives already
+  * contains the real `Read` nodes, and every check below (missing,
+  * undeclared, schema, catalog, lineage, fingerprint) simply works.
+  *
+  * What reaches `verify` unresolved is what the registry could not resolve
+  * (an origin the rule never saw, an evicted one, or several plans reading
+  * *different* sources sharing the boundary's output columns) and any
+  * `InMemoryRelation`. For those, "no matching `Read`" is not the same claim
+  * as "never read", so a declared input that is unread *and* has an
+  * unresolved boundary somewhere in the plan is reported as an
+  * `UnverifiableInput` instead of `MISSING_INPUT` — report-only, never a
+  * `Violation`, naming the boundary's `ir.UnknownPlan.sourceType`
+  * (`unknownNodeTypes`). This is deliberately the narrower, non-blocking
+  * `RoleConsistencyVerifier`-style precedent (`Conforms`/`Contradicts`/
+  * `CannotDetermine`), not `UNVERIFIABLE_WRITE`'s fail-closed one: the
+  * uncertainty is about one input's visibility, not the whole write's
+  * meaning, and failing closed would only turn a job that reads its input
+  * just fine into a newly-blocked one. With no unresolved boundary, an
+  * unread input is `MISSING_INPUT`, blocking, exactly as before any of this
+  * existed — even if the job checkpoints something unrelated (that
+  * checkpoint resolves, and its reads are visible).
+  *
   * ## Visibility
   *
   * `private[sparkadapter]`: nothing outside this module calls `verify`
@@ -524,30 +638,84 @@ private[sparkadapter] object StructuralVerifier {
     val actualReads = collectReads(plan)
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
 
-    val missingInputs = contract.inputs
-      .filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
-      .map(input =>
+    // Which declared inputs THIS write is expected to draw on: everything
+    // the contract declares, unless the output this write lands on says
+    // otherwise via `derivedFrom` (see the "Which inputs a write is checked
+    // against" class doc). The output is resolved by the same
+    // `expectedOutputFor` the output checks below use, so both halves always
+    // agree on which output a write is "for". A plan with no Write (or a
+    // multi-output write matching no declared output) has no output to
+    // scope by and keeps every input.
+    val scopedOutput: Option[Dataset] = plan match {
+      case Write(dataset, _, _, _, _) => expectedOutputFor(contract.outputs, dataset.location)
+      case _                          => None
+    }
+    val scopedInputs: List[Dataset] = scopedOutput.map(contract.inputsFor).getOrElse(contract.inputs)
+
+    // A declared input with no matching Read node in the plan is normally
+    // confidently missing - but not when there's real evidence it was read
+    // behind a lineage boundary this plan can no longer see through (see
+    // unverifiableEvidenceFor's own doc). That covered case is reported as
+    // UnverifiableInput instead - honest uncertainty, not a false-positive
+    // MissingInput violation blocking a job that reads its input just fine.
+    val declaredButNotRead = scopedInputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
+
+    val (missingInputs, unverifiableInputs) = {
+      // lazy: only walked when some declared input really is unread.
+      lazy val unknownPlans = collectUnknownPlans(plan)
+      val classified = declaredButNotRead.map(input =>
+        input -> unverifiableEvidenceFor(unknownPlans)
+      )
+      val missing = classified.collect { case (input, None) =>
         Violation(
           ViolationType.MissingInput,
           s"declared input '${input.name}' (${input.location}) was not read by this plan",
           remediation =
-            s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed.",
+            s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed." +
+              (if (scopedOutput.exists(_.derivedFrom.isEmpty) && contract.outputs.size > 1)
+                 s" If '${input.name}' feeds only some of this contract's outputs, list the inputs each output is built from in that output's 'derivedFrom' instead."
+               else ""),
           location = Some(input.location)
         )
-      )
+      }
+      val unverifiable = classified.collect { case (input, Some(sourceTypes)) =>
+        UnverifiableInput(input.name, input.location, sourceTypes)
+      }
+      (missing, unverifiable)
+    }
 
     val undeclaredInputs =
       if (options.rejectUndeclaredInputs)
         actualReadLocations
-          .filterNot(loc => contract.inputs.exists(input => locationsMatch(input.location, loc)))
-          .map(loc =>
-            Violation(
-              ViolationType.UndeclaredInput,
-              s"plan reads '$loc' which is not declared as a contract input",
-              remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
-              location = Some(loc)
-            )
-          )
+          .filterNot(loc => scopedInputs.exists(input => locationsMatch(input.location, loc)))
+          .map { loc =>
+            // A read that IS a declared contract input, just not one the
+            // write's own output is derivedFrom, is a different mistake
+            // from a wholly undeclared read: the fix is to the mapping
+            // (or the transformation), not to add another input.
+            val notThisOutputsInput = for {
+              declared <- contract.inputs.find(input => locationsMatch(input.location, loc))
+              output   <- scopedOutput
+            } yield (declared, output)
+            notThisOutputsInput match {
+              case Some((declared, output)) =>
+                Violation(
+                  ViolationType.UndeclaredInput,
+                  s"plan reads '$loc' (input '${declared.name}'), which this contract declares but not as a source of " +
+                    s"output '${output.name}' (its derivedFrom lists ${output.derivedFrom.filter(_.nonEmpty).map(_.map(n => s"'$n'").mkString(", ")).getOrElse("no inputs")})",
+                  remediation =
+                    s"Add '${declared.name}' to output '${output.name}''s derivedFrom if it is genuinely one of its sources, or remove this read from the transformation.",
+                  location = Some(loc)
+                )
+              case None =>
+                Violation(
+                  ViolationType.UndeclaredInput,
+                  s"plan reads '$loc' which is not declared as a contract input",
+                  remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
+                  location = Some(loc)
+                )
+            }
+          }
       else Nil
 
     val inputSchemaViolations = contract.inputs.flatMap { input =>
@@ -593,8 +761,7 @@ private[sparkadapter] object StructuralVerifier {
         // to: if the write's location doesn't identify which declared
         // output it belongs to, there is no non-ambiguous output left to
         // check the rest against.
-        val expectedOutputOpt: Option[Dataset] =
-          if (contract.outputs.size == 1) Some(contract.outputs.head) else matched
+        val expectedOutputOpt: Option[Dataset] = expectedOutputFor(contract.outputs, dataset.location)
 
         val locationViolation = matched match {
           case Some(_) => Nil
@@ -687,7 +854,7 @@ private[sparkadapter] object StructuralVerifier {
       missingInputs ++ undeclaredInputs ++ inputSchemaViolations ++ inputCatalogViolations ++
         outputExistenceViolations ++ outputSchemaViolations
 
-    VerificationResult.of(s"${contract.id}@${contract.version}", violations)
+    VerificationResult.of(s"${contract.id}@${contract.version}", violations, unverifiableInputs = unverifiableInputs)
   }
 
   /** For state-changing, non-write operations that still result in a
@@ -742,6 +909,14 @@ private[sparkadapter] object StructuralVerifier {
     * (see `verify`'s "Multi-output contracts" doc) - `outputs` is a `List`,
     * not a `Set`, specifically so this stays deterministic.
     */
+  /** The declared output a write to `actualLocation` is checked against: a
+    * single-output contract's only output regardless of location (its
+    * location mismatch is reported in addition to, not instead of, every
+    * other check), otherwise whichever declared output matches by location.
+    */
+  private def expectedOutputFor(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
+    if (outputs.size == 1) Some(outputs.head) else matchOutput(outputs, actualLocation)
+
   private def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
     outputs.find(o => locationsMatch(o.location, actualLocation))
 
@@ -752,6 +927,33 @@ private[sparkadapter] object StructuralVerifier {
   private[sparkadapter] def collectReads(plan: Plan): List[Read] = plan match {
     case r: Read => List(r)
     case other    => other.children.flatMap(collectReads)
+  }
+
+  /** Every `ir.UnknownPlan` node found anywhere in `plan` — feeds
+    * `unverifiableEvidenceFor`.
+    *
+    * `private[sparkadapter]`, not `private`: `ContractEnforcementRule`
+    * reuses this directly to decide whether a computed
+    * `TransformationFingerprint` crossed a lineage boundary worth
+    * disclosing (see that call site's own doc) - the same "reuse, don't
+    * re-derive" reasoning `collectReads`'s own widened visibility above
+    * already documents.
+    */
+  private[sparkadapter] def collectUnknownPlans(plan: Plan): List[UnknownPlan] = plan match {
+    case u: UnknownPlan => u :: u.children.flatMap(collectUnknownPlans)
+    case other          => other.children.flatMap(collectUnknownPlans)
+  }
+
+  /** `Some(sourceTypes)` when `unknownPlans` contains an unresolved lineage
+    * boundary (see `CheckpointRegistry.BoundarySourceTypes`) - the only
+    * thing that makes an unread input unverifiable rather than missing;
+    * `None` (confidently missing) otherwise. The evidence is about the
+    * plan, not the individual input: an unresolved boundary hides *every*
+    * read made before it, so any unread input might be behind it.
+    */
+  private def unverifiableEvidenceFor(unknownPlans: List[UnknownPlan]): Option[List[String]] = {
+    val boundaries = unknownPlans.map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
+    if (boundaries.isEmpty) None else Some(boundaries)
   }
 
   // private[sparkadapter], not private: reused by SensitivityLineage to

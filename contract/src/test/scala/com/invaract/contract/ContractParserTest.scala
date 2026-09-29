@@ -1345,4 +1345,65 @@ class ContractParserTest extends AnyFunSuite {
     val written = ContractParser.write(ContractParser.parse(yaml))
     assert(!written.contains("constraints"))
   }
+
+  // --- Dataset.derivedFrom (output -> input lineage) ---------------------------
+
+  test("derivedFrom is None on every dataset that doesn't declare it") {
+    val contract = ContractParser.parseFile(new java.io.File("src/test/resources/fixtures/customer_orders_v1.yaml"))
+    assert(contract.inputs.forall(_.derivedFrom.isEmpty))
+    assert(contract.outputs.forall(_.derivedFrom.isEmpty))
+  }
+
+  test("derivedFrom parses as an ordered list of input names, in both flow and block YAML list syntax") {
+    val contract = ContractParser.parseFile(new java.io.File("src/test/resources/fixtures/output_derived_from.yaml"))
+    assert(contract.output("orders_summary").get.derivedFrom.contains(List("orders", "customers")))
+    assert(contract.output("audit_log").get.derivedFrom.contains(List("events")))
+  }
+
+  test("an explicit empty derivedFrom list parses as Some(Nil), distinct from an absent key") {
+    val yaml =
+      """id: c
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    derivedFrom: []
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    assert(ContractParser.parse(yaml).output("out").get.derivedFrom.contains(Nil))
+  }
+
+  test("a derivedFrom that isn't a list of strings is a parse error") {
+    val notAList =
+      """id: c
+        |version: "1.0.0"
+        |outputs:
+        |  - name: out
+        |    location: gold.out
+        |    derivedFrom: orders
+        |    schema:
+        |      fields:
+        |        - name: id
+        |          type: string
+        |""".stripMargin
+    intercept[ContractParseException](ContractParser.parse(notAList))
+
+    val nonStringItem = notAList.replace("derivedFrom: orders", "derivedFrom: [{a: b}]")
+    intercept[ContractParseException](ContractParser.parse(nonStringItem))
+  }
+
+  test("write/parse round-trips derivedFrom, including an explicit empty list, and omits it when unset") {
+    val original = ContractParser.parseFile(new java.io.File("src/test/resources/fixtures/output_derived_from.yaml"))
+    assert(ContractParser.parse(ContractParser.write(original)) == original)
+
+    val emptyList = original.copy(outputs = original.outputs.map(_.copy(derivedFrom = Some(Nil))))
+    val emptyRoundTripped = ContractParser.parse(ContractParser.write(emptyList))
+    assert(emptyRoundTripped.outputs.forall(_.derivedFrom.contains(Nil)))
+
+    val unset = original.copy(outputs = original.outputs.map(_.copy(derivedFrom = None)))
+    assert(!ContractParser.write(unset).contains("derivedFrom"))
+  }
 }

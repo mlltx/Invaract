@@ -51,7 +51,8 @@ object ContractCompatibility {
 
     val changes = idChange ++
       diffDatasets("outputs", previous.outputs, next.outputs) ++
-      diffDatasets("inputs", previous.inputs, next.inputs)
+      diffDatasets("inputs", previous.inputs, next.inputs) ++
+      diffDerivedFrom(previous, next)
 
     CompatibilityReport(changes)
   }
@@ -147,6 +148,40 @@ object ContractCompatibility {
           diffSchema(s"$kind.$n.schema", prevDs.schema, nextDs.schema)
       }
     )
+
+  /** Compares the set of inputs an output is *effectively* derived from —
+    * `derivedFrom` when declared, otherwise every input its own contract
+    * declares (see `Dataset.derivedFrom`) — rather than the raw `Option`, so
+    * spelling out the full input list where it was previously left implicit
+    * (or vice versa) is correctly a non-change. Any real difference is
+    * BREAKING: a newly required input turns an existing producer that never
+    * read it into a `MISSING_INPUT`, and a newly excluded one turns its
+    * existing read into an `UNDECLARED_INPUT` (under
+    * `rejectUndeclaredInputs`) — both change what a valid write must look
+    * like, the same "a new constraint a real write must match" reasoning
+    * `diffOptionalConstraint` uses.
+    */
+  private def diffDerivedFrom(previous: Contract, next: Contract): List[CompatibilityChange] =
+    for {
+      prevOutput <- previous.outputs.sortBy(_.name)
+      nextOutput <- next.outputs.find(_.name == prevOutput.name).toList
+      // Both unset: nothing about the mapping itself changed, so any
+      // difference in the effective sets could only come from an input
+      // being added/removed - already classified on its own (Minor/
+      // Breaking) by the inputs diff, and unchanged by this feature.
+      if prevOutput.derivedFrom.isDefined || nextOutput.derivedFrom.isDefined
+      prevSet = previous.inputsFor(prevOutput).map(_.name).toSet
+      nextSet = next.inputsFor(nextOutput).map(_.name).toSet
+      if prevSet != nextSet
+    } yield {
+      val added = (nextSet -- prevSet).toList.sorted
+      val removed = (prevSet -- nextSet).toList.sorted
+      val detail = List(
+        if (added.nonEmpty) Some(s"now derived from ${added.map(n => s"'$n'").mkString(", ")}") else None,
+        if (removed.nonEmpty) Some(s"no longer derived from ${removed.map(n => s"'$n'").mkString(", ")}") else None
+      ).flatten.mkString("; ")
+      CompatibilityChange(CompatibilityLevel.Breaking, s"outputs.${prevOutput.name}.derivedFrom", s"Output's input lineage changed: $detail")
+    }
 
   /** `format`/`saveMode` are both "declaring this at all is a new
     * constraint a real write must match" fields (`StructuralVerifier`

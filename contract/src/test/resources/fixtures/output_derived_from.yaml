@@ -1,0 +1,38 @@
+id: multi_output_lineage
+version: "1.0.0"
+status: active
+inputs:
+  - name: orders
+    location: bronze.orders
+    schema:
+      fields:
+        - name: order_id
+          type: string
+  - name: customers
+    location: bronze.customers
+    schema:
+      fields:
+        - name: customer_id
+          type: string
+  - name: events
+    location: bronze.events
+    schema:
+      fields:
+        - name: event_id
+          type: string
+outputs:
+  - name: orders_summary
+    location: gold.orders_summary
+    derivedFrom: [orders, customers]
+    schema:
+      fields:
+        - name: order_id
+          type: string
+  - name: audit_log
+    location: gold.audit_log
+    derivedFrom:
+      - events
+    schema:
+      fields:
+        - name: event_id
+          type: string
