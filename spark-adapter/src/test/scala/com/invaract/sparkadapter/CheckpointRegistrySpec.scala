@@ -165,6 +165,17 @@ class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(viaSecond.diagnostics.exists(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType), viaSecond.diagnostics.toString)
   }
 
+  test("a checkpoint is bound at FIRST sight: seeing its bare leaf again after a later checkpoint reused its ids does not re-snapshot") {
+    val registry = new CheckpointRegistry
+    val first = checkpointed(registry, joinedSelect())
+    val second = see(registry, see(registry, first.filter(col("order_id") > 0)).checkpoint(true)) // same ids as `first`, records the filter
+    see(registry, first) // the rule sees `first`'s bare leaf again; the newest plan under its ids is now the filter's
+
+    def hasFilter(p: ir.Plan): Boolean = p.isInstanceOf[ir.Filter] || p.children.exists(hasFilter)
+    assert(!hasFilter(translate(registry, first).plan), "first was checkpointed from the unfiltered plan")
+    assert(hasFilter(translate(registry, second).plan))
+  }
+
   test("two plans with the same output columns reading DIFFERENT sources make the origin ambiguous - left unresolved, never guessed") {
     val registry = new CheckpointRegistry
     val orders = see(registry, read(ordersPath))
