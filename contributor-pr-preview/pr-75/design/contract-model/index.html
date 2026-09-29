@@ -872,6 +872,10 @@ carries a short, honest observation: whether the input was seen
 contributing to a produced output column, or only ever referenced inside a
 <code dir="auto">Filter</code>/<code dir="auto">Join</code> condition — a hint for the human reviewing the generated
 contract, never a declared classification.</p>
+<p>Each inferred output also carries an explicit <code dir="auto">derivedFrom</code> listing exactly
+the inputs its write was observed reading (an empty list when it read none),
+so the draft is already correct when merged into a multi-output contract
+(see “Output-to-input lineage”).</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="basic-conformance-checks">Basic conformance checks</h3><a class="sl-anchor-link" href="#basic-conformance-checks"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Basic conformance checks”</span></a></div>
 <p>Two of the mechanically-verifiable checks the spec calls for already exist,
 type-agnostically, in <code dir="auto">StructuralVerifier</code>: <code dir="auto">ViolationType.MissingInput</code>
