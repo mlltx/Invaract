@@ -616,9 +616,37 @@ ever resolved, so one write's checkpoint can never excuse another write's missin
   refused rather than guessed. When they read the *same* datasets (a `.filter` of a dataset), the most
   recent is used and a `CheckpointResolution` diagnostic says so — the fingerprint's WARN log
   discloses it.
-- A `LogicalRDD` inside a node that keeps its query outside `children` (Delta's row-level DML
-  commands).
+- A `LogicalRDD` inside a node that keeps its query outside `children`: Delta's row-level DML
+  commands, and — measured against real writes, not assumed — the *outer* command of a
+  `SaveIntoDataSourceCommand` write (`.format("delta").save(...)` and other data-source `.save()`s),
+  of a CTAS-style `CreateDataSourceTableAsSelectCommand` (`saveAsTable`/`writeTo(...).create()` to a
+  new table, SQL `CREATE TABLE ... AS SELECT`) and of a `ReplaceTableAsSelect`. For the last two the
+  write runs an *inner* `InsertIntoHadoopFsRelationCommand`/`OverwriteByExpression` whose query is a
+  child, and that plan is resolved (and checked, so a genuinely missing input still blocks there); for
+  `SaveIntoDataSourceCommand` nothing is. `substitute` walks `children` only, so rebuilding these
+  commands with a substituted query is a known, unfixed gap.
 - Every `InMemoryRelation` (a bare `.cache()` doesn't reach the check rule anyway — see above).
+
+**`SparkAdapterListener.lastWrite` sees through a checkpoint too.** A `WriteEvent` describes the write
+itself (location, format, schema, metrics, versions) and carries no lineage, so a `.checkpoint()`
+upstream never touched it; `lastWrite` (the `TranslationResult` behind `demo/output/report.json`'s IR)
+is the one place the listener exposes a translated plan, and translating `qe.analyzed` alone shows a
+checkpoint as an opaque `LogicalRDD` while the `ContractValidationEvent` for the same write was built
+from the resolved plan. The listener runs on the async listener bus and is built with no arguments, so
+it cannot call the rule's registry; instead the rule tags the analyzed root plan it just verified (or,
+in dry-run, inferred from) with its translation — a Catalyst `TreeNodeTag` holding the translation *and
+the plan it was made for* — and `onSuccess` reads it back off `qe.analyzed`, the same instance.
+Deterministic (the rule runs synchronously during analysis, strictly before execution) and per-plan (the
+tag lives and dies with the plan: no session lookup, no shared or global state, no new conf key, no
+change to how the listener is constructed or registered). Confirmed empirically against real writes that
+the listener receives the very instance the rule saw for every shape it treats as a write —
+`.parquet`/`.csv`, `saveAsTable`, `insertInto`, SQL `INSERT`/CTAS, Delta `.save`/`saveAsTable` — and that a
+CTAS reaches it as two distinct analyzed plans (outer and inner), each tagged for itself. Catalyst
+copies tags onto plans derived by a transformation, so the lookup only accepts a tag whose recorded
+plan is `eq` the plan asked about; anything else, and any plan the rule never saw (no rule installed,
+another session), is a miss and falls back to `SparkPlanAdapter.translate(qe.analyzed)` — the previous
+behavior. Whatever the rule translated is what `lastWrite` reports, including for the write roots
+listed above whose checkpoint the rule itself cannot resolve.
 
 **What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
 "never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
@@ -1163,7 +1191,9 @@ above.**
   means the write never executed.
 - `WriteEvent` — published by `SparkAdapterListener`'s `onSuccess`, the
   same post-execution observation point `demo/output/report.json`'s
-  `transformationIR` section already uses. This is "the write actually
+  `transformationIR` section already uses. It describes the write itself and
+  carries no lineage; `lastWrite` is where the listener exposes a translated
+  plan (see "`SparkAdapterListener.lastWrite` sees through a checkpoint too"). This is "the write actually
   completed," strictly later than (and independent of) the check above —
   a write `ContractEnforcementRule` rejects never reaches this event,
   since Spark never executes it.

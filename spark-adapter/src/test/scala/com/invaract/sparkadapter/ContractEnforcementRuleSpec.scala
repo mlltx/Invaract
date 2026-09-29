@@ -540,6 +540,114 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
   }
 
+  // SparkAdapterListener.lastWrite is the one place a listener exposes a translated
+  // plan (a WriteEvent carries no lineage). It must describe the same, resolved plan
+  // the ContractValidationEvent for that write was built from.
+  private def onlyWritesTo(name: String)(r: TranslationResult): Boolean =
+    r.plan match {
+      case w: com.invaract.ir.Write => w.dataset.location.contains(name)
+      case _ => false
+    }
+
+  private def checkpointContractYaml(inputPath: String, outputPath: String) =
+    s"""id: enforcement_demo
+       |version: "1.0.0"
+       |inputs:
+       |  - name: raw
+       |    location: $inputPath
+       |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+       |outputs:
+       |  - name: out
+       |    location: $outputPath
+       |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+       |""".stripMargin
+
+  test("read, checkpoint, write: lastWrite shows the real Read (no LogicalRDD), agreeing with the ContractValidationEvent") {
+    val inputPath = scratchDir.resolve("lw_resolved_in.csv").toString
+    val outputPath = scratchDir.resolve("lw_resolved_out.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_resolved_ckpt").toString)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None)
+    spark.listenerManager.register(listener)
+    try {
+      withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+          .write.mode("overwrite").parquet(outputPath)
+      }
+
+      val translation = eventually(timeout(Span(5, Seconds))) {
+        listener.lastWrite.filter(onlyWritesTo("lw_resolved_out")).getOrElse(fail("listener has not captured the write yet"))
+      }
+      assert(StructuralVerifier.collectReads(translation.plan).map(_.dataset.location.split('/').last) == List("lw_resolved_in.csv"))
+      assert(StructuralVerifier.collectUnknownPlans(translation.plan).isEmpty, com.invaract.ir.PlanPrinter.render(translation.plan))
+      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      assert(validation.status == "PASSED" && validation.unverifiableInputs.isEmpty, validation.toString)
+    } finally spark.listenerManager.unregister(listener)
+  }
+
+  test("read, checkpoint, write with a checkpoint the rule never saw: lastWrite keeps the opaque LogicalRDD, matching the event's UnverifiableInput") {
+    val inputPath = scratchDir.resolve("lw_unseen_in.csv").toString
+    val outputPath = scratchDir.resolve("lw_unseen_out.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_unseen_ckpt").toString)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None)
+    spark.listenerManager.register(listener)
+    try {
+      val checkpointed = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true) // no contract active
+      withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+        checkpointed.write.mode("overwrite").parquet(outputPath)
+      }
+
+      val translation = eventually(timeout(Span(5, Seconds))) {
+        listener.lastWrite.filter(onlyWritesTo("lw_unseen_out")).getOrElse(fail("listener has not captured the write yet"))
+      }
+      assert(StructuralVerifier.collectUnknownPlans(translation.plan).map(_.sourceType) == List("LogicalRDD"))
+      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      assert(validation.unverifiableInputs.map(_.inputName) == List("raw"))
+    } finally spark.listenerManager.unregister(listener)
+  }
+
+  // A CTAS-style write reaches the listener as TWO analyzed plans - the outer
+  // CreateDataSourceTableAsSelectCommand and the InsertIntoHadoopFsRelationCommand it runs -
+  // both seen by the rule during analysis. Each carries its own stashed translation.
+  test("a CTAS-style .saveAsTable() after a checkpoint: the listener reports, for EACH write plan it receives, exactly what the rule translated") {
+    val inputPath = scratchDir.resolve("lw_ctas_in.csv").toString
+    val outputPath = scratchDir.resolve("lw_ctas_out").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_ctas_ckpt").toString)
+    val seen = new java.util.concurrent.CopyOnWriteArrayList[(LogicalPlan, TranslationResult)]()
+    val listener = new org.apache.spark.sql.util.QueryExecutionListener {
+      override def onSuccess(funcName: String, qe: org.apache.spark.sql.execution.QueryExecution, durationNs: Long): Unit =
+        if (WriteCommandSupport.combined.isDefinedAt(qe.analyzed)) seen.add((qe.analyzed, SparkAdapterListener.translationFor(qe.analyzed)))
+      override def onFailure(funcName: String, qe: org.apache.spark.sql.execution.QueryExecution, exception: Exception): Unit = ()
+    }
+    spark.listenerManager.register(listener)
+    try {
+      withContract(checkpointContractYaml(inputPath, outputPath)) {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+          .write.option("path", outputPath).mode("overwrite").saveAsTable("lw_ctas_tbl")
+      }
+
+      val writes = eventually(timeout(Span(5, Seconds))) {
+        val w = seen.toArray.toList.asInstanceOf[List[(LogicalPlan, TranslationResult)]].filter(_._2.plan.toString.contains("lw_ctas_out"))
+        assert(w.map(_._1.getClass.getSimpleName).toSet.size >= 2, s"expected the outer and inner write callbacks, got ${w.map(_._1.getClass.getSimpleName)}")
+        w
+      }
+      writes.foreach { case (analyzed, reported) =>
+        // Each plan is described by what the rule itself saw for it - never by a translation of
+        // some other plan (the outer and inner write are different analyzed plans).
+        val ruleView = SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan)
+        assert(reported.plan == ruleView.plan, analyzed.getClass.getSimpleName)
+      }
+      val inner = writes.filter(_._1.getClass.getSimpleName == "InsertIntoHadoopFsRelationCommand")
+      assert(inner.nonEmpty && inner.forall { case (_, t) =>
+        StructuralVerifier.collectReads(t.plan).size == 1 && StructuralVerifier.collectUnknownPlans(t.plan).isEmpty
+      }, "the inner write's query is a child, so its checkpoint is resolved")
+    } finally spark.listenerManager.unregister(listener)
+  }
+
   test("MISSING_INPUT: a DataFrame built directly from a plain RDD is NOT a lineage boundary - an unread declared input still blocks") {
     val missingPath = scratchDir.resolve("rdd_never_read.csv").toString
     val outputPath = scratchDir.resolve("rdd_sourced_output.parquet").toString

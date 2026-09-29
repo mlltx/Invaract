@@ -7,6 +7,8 @@ import com.invaract.contract.{Contract, Dataset, DatasetType}
 import com.invaract.sparkadapter.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.connector.catalog.{Table => V2Table}
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.util.QueryExecutionListener
@@ -31,6 +33,25 @@ import org.apache.spark.sql.util.QueryExecutionListener
   * successfully" signal, so a `WriteEvent` published from here means the
   * output genuinely exists on disk — see `ContractValidationEvent`'s own
   * doc for the contrasting, earlier moment it represents.
+  *
+  * ## `lastWrite` and `.checkpoint()`
+  *
+  * A `WriteEvent` describes the write itself (location, format, schema,
+  * metrics) and carries no lineage, so a `.checkpoint()` upstream doesn't
+  * touch it. `lastWrite` is the one place this listener exposes a
+  * translated plan, and translating `qe.analyzed` alone would show a
+  * checkpoint as an opaque `LogicalRDD` - while the `ContractEnforcementRule`
+  * that ran at analysis time (and knows what each checkpoint was made from,
+  * see `CheckpointRegistry`) already translated the resolved plan. So the
+  * rule attaches that translation to the very plan it verified (a Catalyst
+  * `TreeNodeTag`, see `SparkAdapterListener.stash`) and `onSuccess` reads it
+  * back off `qe.analyzed`, the same object. Nothing is shared between this
+  * listener and the rule, no session lookup or global state is involved
+  * (the value lives and dies with the plan), and it is deterministic: the
+  * rule runs synchronously during analysis, strictly before the write
+  * executes. With no rule installed (or the plan never seen by it) there is
+  * no tag and `lastWrite` is `SparkPlanAdapter.translate(qe.analyzed)`, as
+  * before.
   */
 class SparkAdapterListener(
     sink: Option[NotificationSink],
@@ -99,7 +120,7 @@ class SparkAdapterListener(
   // exactly as before.
   override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit =
     WriteCommandSupport.combined.lift(qe.analyzed).foreach { info =>
-      _lastWrite = Some(SparkPlanAdapter.translate(qe.analyzed))
+      _lastWrite = Some(SparkAdapterListener.translationFor(qe.analyzed))
       sink.foreach { s =>
         // rowCount/bytesWritten/fileCount come from Spark's own SQLMetrics
         // on the executed plan - confirmed empirically (not assumed)
@@ -144,6 +165,29 @@ class SparkAdapterListener(
 }
 
 private[sparkadapter] object SparkAdapterListener {
+
+  /** A translation, and the plan it was made for. Catalyst copies a node's tags
+    * onto plans derived from it by a transformation, so a tag alone could be
+    * found on a plan it does not describe; carrying the plan lets `translationFor`
+    * accept it only on the exact instance it was attached to.
+    */
+  private final case class Stashed(plan: LogicalPlan, translation: TranslationResult)
+
+  private val StashedTranslation = new TreeNodeTag[Stashed]("invaract.stashedTranslation")
+
+  /** Called by `ContractEnforcementRule` with the analyzed plan it just verified
+    * (or inferred from) and the translation it used - the one taken *after*
+    * checkpoint resolution.
+    */
+  private[sparkadapter] def stash(analyzed: LogicalPlan, translation: TranslationResult): Unit =
+    analyzed.setTagValue(StashedTranslation, Stashed(analyzed, translation))
+
+  /** What the rule translated `analyzed` to, if it did and `analyzed` is the very
+    * plan it saw; otherwise a fresh translation of `analyzed` itself.
+    */
+  private[sparkadapter] def translationFor(analyzed: LogicalPlan): TranslationResult =
+    analyzed.getTagValue(StashedTranslation).filter(_.plan eq analyzed).map(_.translation)
+      .getOrElse(SparkPlanAdapter.translate(analyzed))
 
   /** `DeltaLog.forTable(session, path).snapshot.version` via reflection -
     * this module has no compile-time dependency on Delta (`delta-spark` is

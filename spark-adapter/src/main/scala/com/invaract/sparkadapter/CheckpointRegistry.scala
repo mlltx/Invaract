@@ -98,9 +98,13 @@ import java.lang.ref.SoftReference
   *    never-seen origin (a Dataset created before the rule was installed, or
   *    in another session) stays unresolved - the same fail-safe as before
   *    this registry existed.
-  *  - Substitution walks the plan's own tree, so a `LogicalRDD` hidden inside
-  *    a node that keeps its query outside `children` (Delta's row-level DML
-  *    commands) is not reached and stays unresolved.
+  *  - Substitution walks the plan's own tree (`children`), so a `LogicalRDD`
+  *    inside a node that keeps its query outside it is not reached and stays
+  *    unresolved: Delta's row-level DML commands, and the outer command of a
+  *    `SaveIntoDataSourceCommand` (`.format("delta").save(...)`), of a
+  *    CTAS-style `CreateDataSourceTableAsSelectCommand` and of a
+  *    `ReplaceTableAsSelect` (checked against real writes; a CTAS/RTAS's inner
+  *    write, whose query is a child, does resolve).
   *  - Per rule instance, i.e. per session state: a cloned session builds its
   *    own rule and starts empty.
   */

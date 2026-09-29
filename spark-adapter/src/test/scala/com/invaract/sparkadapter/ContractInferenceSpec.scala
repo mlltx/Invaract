@@ -266,6 +266,27 @@ class ContractInferenceSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(contract.outputs.head.derivedFrom == Some(List("input")))
   }
 
+  test("dry-run: SparkAdapterListener.lastWrite's translation sees through a .checkpoint() too") {
+    val inputPath = scratchDir.resolve("infer_lastwrite_source.parquet").toString
+    val outputPath = scratchDir.resolve("infer_lastwrite_output.parquet").toString
+    spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(inputPath)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("infer_lastwrite_dir").toString)
+    capturedPlans.clear()
+
+    lastInferredAfter {
+      spark.read.parquet(inputPath).select("id").checkpoint(true).write.mode("overwrite").parquet(outputPath)
+    }
+    val writePlan = capturedPlans.filter(p => WriteCommandSupport.combined.isDefinedAt(p)).last
+
+    val translation = SparkAdapterListener.translationFor(writePlan)
+    assert(StructuralVerifier.collectReads(translation.plan).size == 1, com.invaract.ir.PlanPrinter.render(translation.plan))
+    assert(StructuralVerifier.collectUnknownPlans(translation.plan).isEmpty)
+    assert(
+      StructuralVerifier.collectUnknownPlans(SparkPlanAdapter.translate(writePlan).plan).map(_.sourceType) == List("LogicalRDD"),
+      "precondition: the unresolved analyzed plan alone does show the boundary"
+    )
+  }
+
   test("an inferred contract round-trips through ContractParser.write/parse and passes real enforcement of the write it came from") {
     val outputPath = scratchDir.resolve("infer_roundtrip.parquet").toString
     capturedPlans.clear()
