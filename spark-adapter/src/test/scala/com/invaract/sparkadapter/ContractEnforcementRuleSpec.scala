@@ -609,14 +609,18 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     } finally spark.listenerManager.unregister(listener)
   }
 
-  // A CTAS-style write reaches the listener as TWO analyzed plans - the outer
-  // CreateDataSourceTableAsSelectCommand and the InsertIntoHadoopFsRelationCommand it runs -
-  // both seen by the rule during analysis. Each carries its own stashed translation.
-  test("a CTAS-style .saveAsTable() after a checkpoint: the listener reports, for EACH write plan it receives, exactly what the rule translated") {
-    val inputPath = scratchDir.resolve("lw_ctas_in.csv").toString
-    val outputPath = scratchDir.resolve("lw_ctas_out").toString
+  // Runs `write` (a checkpointed read) under an active contract and returns every write plan the
+  // listener receives, each with what the listener reports for it. A CTAS/RTAS-style write reaches
+  // it as TWO analyzed plans (the outer command and the write it runs) - both seen by the rule.
+  // Waits until the listener has been handed every plan class in `expectedRoots`: its callbacks
+  // arrive asynchronously, in no guaranteed order.
+  private def writesSeenAfterCheckpoint(label: String, outputName: String, expectedRoots: Set[String], declaredOutput: Option[String] = None)(
+      write: (org.apache.spark.sql.DataFrame, String) => Unit
+  ): List[(LogicalPlan, TranslationResult)] = {
+    val inputPath = scratchDir.resolve(s"${label}_in.csv").toString
+    val outputPath = scratchDir.resolve(outputName).toString
     Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
-    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_ctas_ckpt").toString)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve(s"${label}_ckpt").toString)
     val seen = new java.util.concurrent.CopyOnWriteArrayList[(LogicalPlan, TranslationResult)]()
     val listener = new org.apache.spark.sql.util.QueryExecutionListener {
       override def onSuccess(funcName: String, qe: org.apache.spark.sql.execution.QueryExecution, durationNs: Long): Unit =
@@ -625,27 +629,132 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     spark.listenerManager.register(listener)
     try {
-      withContract(checkpointContractYaml(inputPath, outputPath)) {
-        spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
-          .write.option("path", outputPath).mode("overwrite").saveAsTable("lw_ctas_tbl")
+      withContract(checkpointContractYaml(inputPath, declaredOutput.getOrElse(outputPath))) {
+        write(spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true), outputPath)
       }
-
-      val writes = eventually(timeout(Span(5, Seconds))) {
-        val w = seen.toArray.toList.asInstanceOf[List[(LogicalPlan, TranslationResult)]].filter(_._2.plan.toString.contains("lw_ctas_out"))
-        assert(w.map(_._1.getClass.getSimpleName).toSet.size >= 2, s"expected the outer and inner write callbacks, got ${w.map(_._1.getClass.getSimpleName)}")
+      eventually(timeout(Span(5, Seconds))) {
+        val w = seen.toArray.toList.asInstanceOf[List[(LogicalPlan, TranslationResult)]].filter(_._2.plan.toString.contains(declaredOutput.getOrElse(outputName)))
+        assert(expectedRoots.subsetOf(w.map(_._1.getClass.getSimpleName).toSet), s"the listener has only seen ${w.map(_._1.getClass.getSimpleName)} of $expectedRoots so far")
         w
       }
-      writes.foreach { case (analyzed, reported) =>
-        // Each plan is described by what the rule itself saw for it - never by a translation of
-        // some other plan (the outer and inner write are different analyzed plans).
-        val ruleView = SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan)
-        assert(reported.plan == ruleView.plan, analyzed.getClass.getSimpleName)
-      }
-      val inner = writes.filter(_._1.getClass.getSimpleName == "InsertIntoHadoopFsRelationCommand")
-      assert(inner.nonEmpty && inner.forall { case (_, t) =>
-        StructuralVerifier.collectReads(t.plan).size == 1 && StructuralVerifier.collectUnknownPlans(t.plan).isEmpty
-      }, "the inner write's query is a child, so its checkpoint is resolved")
     } finally spark.listenerManager.unregister(listener)
+  }
+
+  private def assertEveryWritePlanResolved(writes: List[(LogicalPlan, TranslationResult)]): Unit =
+    writes.foreach { case (analyzed, reported) =>
+      val root = analyzed.getClass.getSimpleName
+      assert(StructuralVerifier.collectReads(reported.plan).size == 1, s"$root: ${com.invaract.ir.PlanPrinter.render(reported.plan)}")
+      assert(StructuralVerifier.collectUnknownPlans(reported.plan).isEmpty, root)
+      // ... and it is exactly what the rule itself saw for that plan.
+      assert(reported.plan == SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan).plan, root)
+    }
+
+  test("a CTAS-style .saveAsTable() after a checkpoint: BOTH write plans (outer CreateDataSourceTableAsSelectCommand, inner insert) are resolved") {
+    val writes = writesSeenAfterCheckpoint("lw_ctas", "lw_ctas_out", Set("CreateDataSourceTableAsSelectCommand", "InsertIntoHadoopFsRelationCommand")) { (df, out) =>
+      df.write.option("path", out).mode("overwrite").saveAsTable("lw_ctas_tbl")
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  test("a .format(\"delta\").save() after a checkpoint (SaveIntoDataSourceCommand): the write plan is resolved") {
+    val writes = writesSeenAfterCheckpoint("lw_delta_save", "lw_delta_save_out", Set("SaveIntoDataSourceCommand")) { (df, out) =>
+      df.write.format("delta").mode("overwrite").save(out)
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  test("a Delta .saveAsTable() overwrite after a checkpoint (ReplaceTableAsSelect): BOTH write plans are resolved") {
+    val writes = writesSeenAfterCheckpoint(
+      "lw_delta_rtas", "lw_delta_rtas_out", Set("ReplaceTableAsSelect", "OverwriteByExpression"), Some("spark_catalog.default.lw_delta_rtas_tbl")
+    ) { (df, out) =>
+      df.write.format("delta").option("path", out).mode("overwrite").saveAsTable("lw_delta_rtas_tbl")
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  private val deltaSaveInputSchema = "{fields: [{name: id, type: integer, nullable: true}]}"
+
+  test("PASS: a declared input read, checkpointed, then written with .format(\"delta\").save() is found - nothing unverifiable") {
+    val inputPath = scratchDir.resolve("delta_ck_in.csv").toString
+    val outputPath = scratchDir.resolve("delta_ck_out").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_ck_ckpt").toString)
+    val sink = new TestNotificationSink
+
+    withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+      spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+        .write.format("delta").mode("overwrite").save(outputPath) // must not throw
+    }
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
+  }
+
+  test("FAIL: a typo'd input is BLOCKED for a checkpointed .format(\"delta\").save() - it used to be a report-only UnverifiableInput") {
+    val realPath = scratchDir.resolve("delta_typo_real.csv").toString
+    val typoPath = scratchDir.resolve("delta_typo_never_read.csv").toString
+    val outputPath = scratchDir.resolve("delta_typo_out").toString
+    Files.write(java.nio.file.Paths.get(realPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: $deltaSaveInputSchema
+         |  - name: typo
+         |    location: $typoPath
+         |    schema: $deltaSaveInputSchema
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: $deltaSaveInputSchema
+         |""".stripMargin
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_typo_ckpt").toString)
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+          .write.format("delta").mode("overwrite").save(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.filter(_.violationType == ViolationType.MissingInput).map(_.location) == List(Some(typoPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, ex.result.unverifiableInputs.toString)
+  }
+
+  test("computeFingerprint = true: a checkpointed .format(\"delta\").save() fingerprints like the un-checkpointed one, with no fingerprint warning") {
+    val outputPath = scratchDir.resolve("delta_fp_out").toString
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_fp_ckpt").toString)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: long, required: true}, {name: doubled, type: long, required: true}]}
+         |""".stripMargin
+
+    def fingerprintJob(checkpoint: Boolean): (com.invaract.fingerprint.TransformationFingerprint, List[String]) = {
+      val sink = new TestNotificationSink
+      val (_, warnings) = enforcementRuleWarnings {
+        withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+          val base = spark.range(5)
+          (if (checkpoint) base.checkpoint(true) else base).withColumn("doubled", col("id") * 2)
+            .write.format("delta").mode("overwrite").save(outputPath)
+        }
+      }
+      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
+      (fp, fingerprintingWarnings(warnings))
+    }
+
+    val (withCheckpoint, warnings) = fingerprintJob(checkpoint = true)
+    val (without, _) = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint.overall == without.overall)
+    assert(withCheckpoint.outputs == without.outputs)
+    assert(warnings.isEmpty, warnings.toString)
   }
 
   test("MISSING_INPUT: a DataFrame built directly from a plain RDD is NOT a lineage boundary - an unread declared input still blocks") {

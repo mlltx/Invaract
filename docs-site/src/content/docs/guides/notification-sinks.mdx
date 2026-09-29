@@ -125,9 +125,7 @@ declared input read before a checkpoint is therefore simply *read*: no violation
 in the checked plan **and** the plan still contains a boundary Invaract could not resolve
 — a checkpoint created before the enforcement rule was installed, one whose origin was
 evicted from Invaract's bounded memory of recent plans, one whose origin is ambiguous, a
-cached relation, or a write issued through `.format(...).save(...)` (Delta, for example),
-whose plan Invaract cannot look inside. (A `saveAsTable` to a new table runs an inner write
-that *is* resolved and checked, so a genuinely missing input still fails there.) An unrelated checkpoint elsewhere in the plan or job never excuses a
+cached relation, or a Delta `MERGE` whose source is the checkpointed Dataset. An unrelated checkpoint elsewhere in the plan or job never excuses a
 genuinely missing input (a wrong location, a typo, a forgotten read): that still fails as
 `MISSING_INPUT`. Each entry names the input
 (`inputName`/`inputLocation`) and the boundary (`unknownNodeTypes`, e.g.

@@ -11,6 +11,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{Join, JoinHint, LogicalPlan}
 import org.apache.spark.sql.execution.LogicalRDD
 
 import java.lang.ref.SoftReference
+import scala.util.control.NonFatal
 
 /** Sees through a `.checkpoint()` boundary synchronously, so verification and
   * fingerprinting both work on the real transformation instead of an opaque
@@ -98,13 +99,13 @@ import java.lang.ref.SoftReference
   *    never-seen origin (a Dataset created before the rule was installed, or
   *    in another session) stays unresolved - the same fail-safe as before
   *    this registry existed.
-  *  - Substitution walks the plan's own tree (`children`), so a `LogicalRDD`
-  *    inside a node that keeps its query outside it is not reached and stays
-  *    unresolved: Delta's row-level DML commands, and the outer command of a
-  *    `SaveIntoDataSourceCommand` (`.format("delta").save(...)`), of a
-  *    CTAS-style `CreateDataSourceTableAsSelectCommand` and of a
-  *    `ReplaceTableAsSelect` (checked against real writes; a CTAS/RTAS's inner
-  *    write, whose query is a child, does resolve).
+  *  - Substitution walks `children`, plus the query a command holds as an
+  *    inner child (`innerChildren`): `SaveIntoDataSourceCommand`
+  *    (`.format("delta").save(...)`), the outer command of a CTAS, and
+  *    `ReplaceTableAsSelect` are rebuilt with their resolved query. A node
+  *    that keeps a query somewhere else still stays unresolved - Delta's
+  *    row-level DML commands, or any command that cannot be copied with a
+  *    replaced argument.
   *  - Per rule instance, i.e. per session state: a cloned session builds its
   *    own rule and starts empty.
   */
@@ -214,6 +215,9 @@ private[sparkadapter] class CheckpointRegistry(
             (resolved, leaf.output.zip(resolved.output))
           case None => (leaf, Nil)
         }
+      // A command that holds its query outside `children` (see `withSubstitutedQuery`).
+      case node if node.innerChildren.exists(_.isInstanceOf[LogicalPlan]) =>
+        (withSubstitutedQuery(node, q => go(q, inProgress)), Nil)
     }
     val result = go(plan, Set.empty)
     Substitution(result, diagnostics.toList.distinct)
@@ -234,6 +238,25 @@ private[sparkadapter] object CheckpointRegistry {
   private def idsOf(plan: LogicalPlan): List[Long] = plan.output.map(_.exprId.id).toList
 
   private def shapeOf(plan: LogicalPlan) = plan.output.map(a => (a.name, a.dataType))
+
+  /** `node` with each plan it exposes as an inner child (`innerChildren`, not
+    * `children`) replaced by `substitute` of it - how a write command that
+    * carries its query as a field, not a child (`SaveIntoDataSourceCommand`,
+    * the outer command of a CTAS, `ReplaceTableAsSelect` once analysed), gets
+    * its checkpoints resolved. A rebuilt copy of the command replaces it only
+    * when a substitution actually changed something, so a node with nothing
+    * to resolve is never touched; and one that cannot be copied this way is
+    * left as it was, i.e. unresolved.
+    */
+  private def withSubstitutedQuery(node: LogicalPlan, substitute: LogicalPlan => LogicalPlan): LogicalPlan = {
+    val changed = node.innerChildren.collect { case q: LogicalPlan => q -> substitute(q) }.filter { case (q, r) => q != r }
+    if (changed.isEmpty) node
+    else
+      try node.makeCopy(node.productIterator.map { arg =>
+        changed.collectFirst { case (q, r) if q eq arg.asInstanceOf[AnyRef] => r }.getOrElse(arg).asInstanceOf[AnyRef]
+      }.toArray)
+      catch { case NonFatal(_) => node }
+  }
 
   /** `plan` with a fresh attribute id for everything it defines - what Spark's own
     * analyzer makes of the right side of a self-join. Uses the analyzer's own rule

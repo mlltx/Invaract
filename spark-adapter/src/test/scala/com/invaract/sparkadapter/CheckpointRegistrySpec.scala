@@ -17,7 +17,29 @@ import java.nio.file.{Files, Path}
   * checkpointed Dataset's plan (its `LogicalRDD` keeps the origin's output
   * attribute ids).
   */
+object CheckpointRegistrySpec {
+  import org.apache.spark.sql.catalyst.expressions.Attribute
+  import org.apache.spark.sql.catalyst.plans.QueryPlan
+  import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan}
+
+  /** A command-like node holding its query as an inner child, not a child (the shape of
+    * `SaveIntoDataSourceCommand`/a CTAS's outer command).
+    */
+  case class QueryHolder(query: LogicalPlan) extends LeafNode {
+    override def output: Seq[Attribute] = Nil
+    override def innerChildren: Seq[QueryPlan[_]] = Seq(query)
+  }
+
+  /** Same, but `makeCopy` cannot rebuild it from `productIterator` (a second parameter list). */
+  case class UncopyableHolder(query: LogicalPlan)(val extra: Int) extends LeafNode {
+    override def output: Seq[Attribute] = Nil
+    override def innerChildren: Seq[QueryPlan[_]] = Seq(query)
+  }
+}
+
 class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
+  import CheckpointRegistrySpec._
+
   private var spark: SparkSession = _
   private var dir: Path = _
   private var ordersPath: String = _
@@ -413,6 +435,57 @@ class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(readCount(result.plan) == 3 && unknownsOf(result.plan).isEmpty, ir.PlanPrinter.render(result.plan))
     assert(result.diagnostics.count(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType) == 1, result.diagnostics.toString)
+  }
+
+  // ---- commands that carry their query as an inner child, not a child ----
+
+  private def analyzedPlan(df: DataFrame) = df.queryExecution.analyzed
+  private def leaves(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan) =
+    plan.collect { case l: org.apache.spark.sql.execution.LogicalRDD => l }
+
+  test("a command holding its query as an inner child is rebuilt with the checkpoint in that query resolved") {
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect())
+
+    val result = registry.substitute(QueryHolder(analyzedPlan(ck))).plan
+
+    assert(result.isInstanceOf[QueryHolder])
+    val query = result.asInstanceOf[QueryHolder].query
+    assert(leaves(query).isEmpty, query.toString)
+    assert(readsOf(SparkPlanAdapter.translate(query).plan).size == 2)
+  }
+
+  test("a command whose inner query has nothing to resolve is returned untouched (the very same instance)") {
+    val registry = new CheckpointRegistry
+    val holder = QueryHolder(analyzedPlan(see(registry, read(ordersPath))))
+    assert(registry.substitute(holder).plan eq holder)
+  }
+
+  test("a command whose inner query holds an UNRESOLVABLE checkpoint is returned untouched too") {
+    val registry = new CheckpointRegistry
+    val holder = QueryHolder(analyzedPlan(see(registry, joinedSelect().checkpoint(true)))) // origin never seen
+    assert(registry.substitute(holder).plan eq holder)
+  }
+
+  test("a command that cannot be copied with a replaced query is left as it was - unresolved, never an exception") {
+    val registry = new CheckpointRegistry
+    val holder = UncopyableHolder(analyzedPlan(checkpointed(registry, joinedSelect())))(1)
+
+    val result = registry.substitute(holder)
+
+    assert(result.plan eq holder)
+    assert(leaves(holder.query).size == 1)
+  }
+
+  test("a self-join copy of a checkpoint inside a command's inner query is renewed like any other") {
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect())
+
+    val query = registry.substitute(QueryHolder(analyzedPlan(see(registry, selfJoin(ck))))).plan.asInstanceOf[QueryHolder].query
+
+    assert(readCount(SparkPlanAdapter.translate(query).plan) == 4)
+    val ids = logicalRelationIds(query)
+    assert(ids.distinct.size == ids.size, "each side's reads keep distinct attribute ids")
   }
 
   test("a self-join of a checkpoint the registry never saw CREATED stays opaque on both sides") {

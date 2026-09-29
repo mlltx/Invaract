@@ -570,7 +570,12 @@ assumed):
 bare `LogicalRDD`, snapshots the plan recorded under its ids *at that moment* — the plan just
 checkpointed — and ties it to that checkpoint's `rdd`, by identity (weakly: it lives exactly as long as the
 checkpointed Dataset); `substitute` replaces every bound `LogicalRDD` in a plan with its snapshot,
-recursively for chained checkpoints. This happens on the *Catalyst* plan, before translation, so the
+recursively for chained checkpoints - and, for a write command that carries its query as an inner child
+rather than a child (`SaveIntoDataSourceCommand`, i.e. `.format("delta").save(...)`; the outer command of a
+CTAS-style `saveAsTable`/`writeTo(...).create()`/SQL `CREATE TABLE ... AS SELECT`; `ReplaceTableAsSelect`,
+whose children go empty once analysed), in that query too, by rebuilding the command with the resolved
+query (`makeCopy`) — only when something was actually substituted, and a command that cannot be copied
+this way is left as it was, unresolved. This happens on the *Catalyst* plan, before translation, so the
 result is structurally the plan the job would have had with no checkpoint at all: contract
 verification sees the real `Read` nodes (a missing input is simply missing, an undeclared read is
 simply undeclared, schema/catalog/lineage checks all apply), and a fingerprint computed across the
@@ -616,15 +621,9 @@ ever resolved, so one write's checkpoint can never excuse another write's missin
   refused rather than guessed. When they read the *same* datasets (a `.filter` of a dataset), the most
   recent is used and a `CheckpointResolution` diagnostic says so — the fingerprint's WARN log
   discloses it.
-- A `LogicalRDD` inside a node that keeps its query outside `children`: Delta's row-level DML
-  commands, and — measured against real writes, not assumed — the *outer* command of a
-  `SaveIntoDataSourceCommand` write (`.format("delta").save(...)` and other data-source `.save()`s),
-  of a CTAS-style `CreateDataSourceTableAsSelectCommand` (`saveAsTable`/`writeTo(...).create()` to a
-  new table, SQL `CREATE TABLE ... AS SELECT`) and of a `ReplaceTableAsSelect`. For the last two the
-  write runs an *inner* `InsertIntoHadoopFsRelationCommand`/`OverwriteByExpression` whose query is a
-  child, and that plan is resolved (and checked, so a genuinely missing input still blocks there); for
-  `SaveIntoDataSourceCommand` nothing is. `substitute` walks `children` only, so rebuilding these
-  commands with a substituted query is a known, unfixed gap.
+- A `LogicalRDD` in a Delta row-level DML command (`MERGE`'s source, measured: a `MERGE` whose source is
+  a checkpointed Dataset stays an opaque `LogicalRDD`). These commands keep their plans somewhere
+  `substitute` does not look and are not rebuilt.
 - Every `InMemoryRelation` (a bare `.cache()` doesn't reach the check rule anyway — see above).
 
 **`SparkAdapterListener.lastWrite` sees through a checkpoint too.** A `WriteEvent` describes the write
@@ -645,8 +644,7 @@ CTAS reaches it as two distinct analyzed plans (outer and inner), each tagged fo
 copies tags onto plans derived by a transformation, so the lookup only accepts a tag whose recorded
 plan is `eq` the plan asked about; anything else, and any plan the rule never saw (no rule installed,
 another session), is a miss and falls back to `SparkPlanAdapter.translate(qe.analyzed)` — the previous
-behavior. Whatever the rule translated is what `lastWrite` reports, including for the write roots
-listed above whose checkpoint the rule itself cannot resolve.
+behavior. Whatever the rule translated is what `lastWrite` reports, so it can never disagree with the event about lineage.
 
 **What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
 "never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
