@@ -18,6 +18,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.types.StructType
 import org.slf4j.LoggerFactory
+import scala.util.control.NonFatal
 
 /** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
   * its contract, before Spark executes it. `result` carries the full
@@ -480,7 +481,8 @@ object ContractEnforcementRule {
   def dryRun(onInferred: Contract => Unit): SparkSession => LogicalPlan => Unit =
     session => {
       VersionCompatibilityGuard.check(session)
-      (plan: LogicalPlan) => inferOrIgnore(plan, onInferred)
+      val checkpointRegistry = new CheckpointRegistry
+      (plan: LogicalPlan) => inferOrIgnore(plan, onInferred, Some(checkpointRegistry))
     }
 
   /** Every recognized *read* shape's location/schema extraction, in one
@@ -532,6 +534,41 @@ object ContractEnforcementRule {
         writeQuery.toList.flatMap(_.collect(recognizedRead))
     ).distinct.toList
 
+  /** The registry is a best-effort aid: it can only ever turn an unresolved
+    * boundary into a resolved one, so a failure inside it (a pathologically
+    * deep plan overflowing the stack, an unexpected Catalyst shape) must
+    * degrade to "not resolved" - the behavior with no registry at all - and
+    * never fail the job's own query analysis.
+    */
+  private def resolveCheckpoints(
+      registry: Option[CheckpointRegistry],
+      analyzedPlan: LogicalPlan
+  ): (LogicalPlan, List[Diagnostic]) =
+    registry match {
+      case None => (analyzedPlan, Nil)
+      case Some(r) =>
+        failSafe("resolve", (analyzedPlan, List.empty[Diagnostic])) {
+          r.bind(analyzedPlan)
+          val substitution = r.substitute(analyzedPlan)
+          (substitution.plan, substitution.diagnostics)
+        }
+    }
+
+  private def recordCheckpointOrigin(registry: Option[CheckpointRegistry], plan: LogicalPlan, translated: com.invaract.ir.Plan): Unit =
+    registry.foreach(r => failSafe("record", ())(r.record(plan, translated)))
+
+  private def failSafe[A](what: String, fallback: A)(body: => A): A =
+    try body
+    catch {
+      case NonFatal(e) => degraded(what, e, fallback)
+      case e: StackOverflowError => degraded(what, e, fallback)
+    }
+
+  private def degraded[A](what: String, e: Throwable, fallback: A): A = {
+    logger.warn(s"CheckpointRegistry could not $what .checkpoint() boundaries; treating them as opaque: $e")
+    fallback
+  }
+
   /** The check logic itself, exposed directly for tests and for callers
     * that want to verify without going through `SparkSession` construction
     * (`forContract` is a thin adapter to the shape `injectCheckRule` wants).
@@ -552,12 +589,10 @@ object ContractEnforcementRule {
     // then replaced by the plan it was made from, so everything below -
     // reads, schemas, lineage, fingerprint - works on the real
     // transformation.
-    checkpointRegistry.foreach(_.bind(analyzedPlan))
-    val substitution = checkpointRegistry.map(_.substitute(analyzedPlan))
-    val plan = substitution.map(_.plan).getOrElse(analyzedPlan)
+    val (plan, resolutionDiagnostics) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
     val translatedRaw = SparkPlanAdapter.translate(plan)
-    val translated = substitution.fold(translatedRaw)(s => translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ s.diagnostics))
-    checkpointRegistry.foreach(_.record(plan, translated.plan))
+    val translated = translatedRaw.copy(diagnostics = translatedRaw.diagnostics ++ resolutionDiagnostics)
+    recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
       case _: com.invaract.ir.Write =>
         // Every check below assumes a *structurally sound* contract -
@@ -804,13 +839,23 @@ object ContractEnforcementRule {
     * `ContractInference`'s own doc for why this observation is surfaced as
     * a description, never a declared `datasetType`.
     */
-  private[sparkadapter] def inferOrIgnore(plan: LogicalPlan, onInferred: Contract => Unit): Unit =
+  private[sparkadapter] def inferOrIgnore(
+      analyzedPlan: LogicalPlan,
+      onInferred: Contract => Unit,
+      checkpointRegistry: Option[CheckpointRegistry] = None
+  ): Unit = {
+    // The same checkpoint resolution real enforcement does (see verifyOrThrow),
+    // so a write downstream of a `.checkpoint()` infers the inputs it really
+    // read rather than an empty contract.
+    val (plan, _) = resolveCheckpoints(checkpointRegistry, analyzedPlan)
+    lazy val translated = SparkPlanAdapter.translate(plan)
+    checkpointRegistry.foreach(_ => recordCheckpointOrigin(checkpointRegistry, plan, translated.plan))
     WriteCommandSupport.combined.lift(plan) match {
       case Some(writeInfo) =>
-        val translated = SparkPlanAdapter.translate(plan)
         onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query)), translated.plan))
       case None => () // not a recognized write - nothing to infer a contract from
     }
+  }
 
   /** Throws if `contract` itself is structurally unsound per
     * `ContractValidator` (e.g. no declared outputs) - the same check every

@@ -457,6 +457,51 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
   }
 
+  test("MISSING_INPUT: a DataFrame built directly from a plain RDD is NOT a lineage boundary - an unread declared input still blocks") {
+    val missingPath = scratchDir.resolve("rdd_never_read.csv").toString
+    val outputPath = scratchDir.resolve("rdd_sourced_output.parquet").toString
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: never_read
+         |    location: $missingPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+         |""".stripMargin
+    val rdd = spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1), org.apache.spark.sql.Row(2)))
+    val fromRdd = spark.createDataFrame(rdd, org.apache.spark.sql.types.StructType(Seq(org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.IntegerType))))
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException](fromRdd.write.mode("overwrite").parquet(outputPath))
+    }
+
+    assert(ex.result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains(missingPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, "an RDD-backed relation hides no upstream lineage")
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
+  test("a failure inside the CheckpointRegistry degrades to 'not resolved' with a WARN - it never fails the job's own analysis") {
+    val throwing = new CheckpointRegistry {
+      override def bind(plan: LogicalPlan): Unit = throw new IllegalStateException("bind boom")
+      override def record(plan: LogicalPlan, translated: com.invaract.ir.Plan): Unit = throw new StackOverflowError("record boom")
+    }
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", scratchDir.resolve("failsafe.parquet").toString))
+
+    val (_, warnings) = enforcementRuleWarnings {
+      // a plain query is not a write, so the only thing that can throw here is the registry
+      ContractEnforcementRule.verifyOrThrow(contract, spark.range(3).queryExecution.analyzed, VerificationOptions(), checkpointRegistry = Some(throwing))
+    }
+
+    val registryWarnings = warnings.filter(_.contains("CheckpointRegistry could not"))
+    assert(registryWarnings.size == 2, warnings.toString)
+    assert(registryWarnings.exists(w => w.contains("resolve") && w.contains("bind boom")), registryWarnings.toString)
+    assert(registryWarnings.exists(w => w.contains("record") && w.contains("record boom")), registryWarnings.toString)
+  }
+
   // Output-to-input lineage (Dataset.derivedFrom), end to end through the
   // real installed check rule: ONE job reads three datasets (a, b, c),
   // writes out1 from a+b and out2 from c alone. Without derivedFrom, a

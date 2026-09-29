@@ -724,7 +724,7 @@ private[sparkadapter] object SparkPlanAdapter {
       // (rather than left to the generic fallback below, which would
       // produce the identical ir.UnknownPlan shape) purely so the
       // diagnostic/description names the real cause - "a cached/persisted
-      // relation" or "a checkpointed/RDD-backed relation" - instead of a
+      // relation" or "a checkpointed relation" - instead of a
       // bare Catalyst class name a user hitting this has no reason to
       // recognize. `ContractEnforcementRule` first replaces every
       // `LogicalRDD` it can resolve with the plan it was made from (see
@@ -766,14 +766,29 @@ private[sparkadapter] object SparkPlanAdapter {
         )
         ir.UnknownPlan(s"InMemoryRelation(cached/persisted relation, ${imr.output.size} column(s))", "InMemoryRelation")
 
-      case lrdd: LogicalRDD =>
+      // Only an RDD that has actually been checkpointed hides an upstream
+      // transformation. A `LogicalRDD` over a plain RDD (`createDataFrame(rdd)`,
+      // `rdd.toDF`, a `foreachBatch` micro-batch) has NO lineage to hide - it
+      // IS the source - so it must not be reported as a lineage boundary: a
+      // declared input missing next to it is then a real MISSING_INPUT, not an
+      // "unverifiable" one. (A lazy `.checkpoint(eager = false)` is not
+      // `isCheckpointed` until it has been materialized, so it is treated the
+      // conservative, blocking way until then.)
+      case lrdd: LogicalRDD if lrdd.rdd.isCheckpointed =>
         report(
           "LogicalRDD",
-          "A .checkpoint() call (or a Dataset constructed directly from an RDD) sits upstream of this point - " +
-            "Spark's own analyzed plan no longer retains the original source(s) read before it; Invaract cannot " +
-            "see past this boundary"
+          "A .checkpoint() call sits upstream of this point - Spark's own analyzed plan no longer retains the " +
+            "original source(s) read before it; Invaract cannot see past this boundary"
         )
-        ir.UnknownPlan(s"LogicalRDD(checkpointed/RDD-backed relation, ${lrdd.output.size} column(s))", "LogicalRDD")
+        ir.UnknownPlan(s"LogicalRDD(checkpointed relation, ${lrdd.output.size} column(s))", "LogicalRDD")
+
+      case lrdd: LogicalRDD =>
+        report(
+          "RDDRelation",
+          "This Dataset is backed directly by an RDD (createDataFrame(rdd), rdd.toDF, ...); Invaract cannot see " +
+            "what the RDD was computed from"
+        )
+        ir.UnknownPlan(s"RDDRelation(RDD-backed relation, ${lrdd.output.size} column(s))", "RDDRelation")
 
       case other =>
         val description = s"${other.getClass.getSimpleName}: ${safeSimpleString(other)}"

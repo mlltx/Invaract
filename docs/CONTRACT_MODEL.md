@@ -732,6 +732,11 @@ contributing to a produced output column, or only ever referenced inside a
 `Filter`/`Join` condition — a hint for the human reviewing the generated
 contract, never a declared classification.
 
+Each inferred output also carries an explicit `derivedFrom` listing exactly
+the inputs its write was observed reading (an empty list when it read none),
+so the draft is already correct when merged into a multi-output contract
+(see "Output-to-input lineage").
+
 ### Basic conformance checks
 
 Two of the mechanically-verifiable checks the spec calls for already exist,

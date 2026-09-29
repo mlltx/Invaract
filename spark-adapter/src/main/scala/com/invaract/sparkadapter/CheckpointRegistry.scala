@@ -68,19 +68,26 @@ import java.lang.ref.SoftReference
   *    (the rule must have been installed when the Dataset was made). A copy
   *    Spark makes with fresh attribute ids - the right side of a self-join
   *    of a checkpointed Dataset - is unresolved too.
-  *  - Bounded (LRU, `maxEntries`), and the plans are held by `SoftReference`
-  *    (a Catalyst plan keeps its relations - and a file index's listing - alive,
-  *    which must not be pinned in a long-lived session): an evicted,
-  *    collected or never-seen origin (a Dataset created before the rule was
-  *    installed, or in another session) stays unresolved — the same
-  *    fail-safe as before this registry existed.
+  *  - Bounded (LRU, `maxEntries`; origins over `maxPlanNodes` are not
+  *    recorded at all, since a checkpoint exists to cut a lineage too big to
+  *    carry). The LRU holds plans by `SoftReference` (a Catalyst plan keeps its
+  *    relations - and a file index's listing - alive, which must not be pinned
+  *    in a long-lived session); a checkpoint's own snapshot, taken when it is
+  *    created, holds its origin strongly for exactly as long as the
+  *    checkpointed Dataset lives. An evicted, collected, oversized or
+  *    never-seen origin (a Dataset created before the rule was installed, or
+  *    in another session) stays unresolved - the same fail-safe as before
+  *    this registry existed.
   *  - Substitution walks the plan's own tree, so a `LogicalRDD` hidden inside
   *    a node that keeps its query outside `children` (Delta's row-level DML
   *    commands) is not reached and stays unresolved.
   *  - Per rule instance, i.e. per session state: a cloned session builds its
   *    own rule and starts empty.
   */
-private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = CheckpointRegistry.DefaultMaxEntries) {
+private[sparkadapter] class CheckpointRegistry(
+  maxEntries: Int = CheckpointRegistry.DefaultMaxEntries,
+  maxPlanNodes: Int = CheckpointRegistry.DefaultMaxPlanNodes
+) {
   import CheckpointRegistry._
 
   private val entries = new java.util.LinkedHashMap[List[Long], Entry](16, 0.75f, true) {
@@ -89,8 +96,10 @@ private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = Checkpoin
 
   // Keyed by the LogicalRDD leaf itself (structural equality includes its
   // `rdd`, so two checkpoints never collide), weakly: a snapshot dies with
-  // the checkpointed Dataset that owns the leaf.
-  private val bound = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[LogicalRDD, Entry]())
+  // the checkpointed Dataset that owns the leaf. The snapshot holds its plan
+  // STRONGLY (unlike the LRU above): resolving a checkpoint must not depend on
+  // when the garbage collector happens to run.
+  private val bound = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[LogicalRDD, Bound]())
 
   /** Called with every analyzed plan the rule sees, *before* `substitute`: when
     * `plan` is a bare `LogicalRDD` - the Dataset `.checkpoint()` just returned -
@@ -98,7 +107,12 @@ private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = Checkpoin
     */
   def bind(plan: LogicalPlan): Unit = plan match {
     case leaf: LogicalRDD =>
-      if (!bound.containsKey(leaf)) lookup(leaf).foreach(entry => bound.put(leaf, entry))
+      if (!bound.containsKey(leaf)) {
+        for {
+          entry <- lookup(leaf)
+          origin <- Option(entry.plan.get) // an origin already collected is simply never resolved
+        } bound.put(leaf, Bound(origin, entry.readsAmbiguous, entry.shapeAmbiguous))
+      }
     case _ => ()
   }
 
@@ -114,7 +128,12 @@ private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = Checkpoin
     // FROM that checkpoint, never the pre-image it would have to resolve to:
     // recording it could only be followed back into itself.
     val derivedFromItself = plan.exists { case leaf: LogicalRDD => idsOf(leaf) == key; case _ => false }
-    if (!derivedFromItself) {
+    // A checkpoint exists to CUT a lineage that has grown too large to carry
+    // (iterative jobs); splicing an ever-growing origin back in on every round
+    // would make each check cost proportional to the whole history. An origin
+    // over the cap is not recorded, so the checkpoint made from it stays an
+    // unresolved boundary - the fail-safe outcome, not a wrong one.
+    if (!derivedFromItself && withinNodeCap(plan)) {
       if (key.nonEmpty) {
         val reads = StructuralVerifier.collectReads(translated).map(_.dataset.location).toSet
         entries.synchronized {
@@ -148,26 +167,22 @@ private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = Checkpoin
     def go(p: LogicalPlan, inProgress: Set[List[Long]]): LogicalPlan = p.transformUp {
       case leaf: LogicalRDD if !inProgress.contains(idsOf(leaf)) =>
         Option(bound.get(leaf)) match {
-          case Some(entry) if entry.readsAmbiguous =>
+          case Some(snapshot) if snapshot.readsAmbiguous =>
             diagnostics += Diagnostic(
               "LogicalRDD",
               "Several plans reading different sources share this .checkpoint() boundary's output columns, so its " +
                 "origin could not be determined"
             )
             leaf
-          case Some(entry) =>
-            Option(entry.plan.get) match {
-              case None => leaf // collected under memory pressure
-              case Some(preImage) =>
-                if (entry.shapeAmbiguous)
-                  diagnostics += Diagnostic(
-                    ResolutionDiagnosticType,
-                    "A .checkpoint() boundary was resolved to the most recently created of several plans sharing its " +
-                      "output columns and reading the same sources; the transformation between those sources and this " +
-                      "point is assumed to be that plan's"
-                  )
-                go(preImage, inProgress + idsOf(leaf))
-            }
+          case Some(snapshot) =>
+            if (snapshot.shapeAmbiguous)
+              diagnostics += Diagnostic(
+                ResolutionDiagnosticType,
+                "A .checkpoint() boundary was resolved to the most recently created of several plans sharing its " +
+                  "output columns and reading the same sources; the transformation between those sources and this " +
+                  "point is assumed to be that plan's"
+              )
+            go(snapshot.plan, inProgress + idsOf(leaf))
           case None => leaf
         }
     }
@@ -176,12 +191,24 @@ private[sparkadapter] final class CheckpointRegistry(maxEntries: Int = Checkpoin
   }
 
   private def lookup(leaf: LogicalRDD): Option[Entry] = entries.synchronized(Option(entries.get(idsOf(leaf))))
+
+  private def withinNodeCap(plan: LogicalPlan): Boolean = {
+    var count = 0
+    plan.foreach(_ => count += 1)
+    count <= maxPlanNodes
+  }
 }
 
 private[sparkadapter] object CheckpointRegistry {
   val DefaultMaxEntries = 256
 
   private def idsOf(plan: LogicalPlan): List[Long] = plan.output.map(_.exprId.id).toList
+
+  /** The most plan nodes an origin may have to be recorded (and so resolved). */
+  val DefaultMaxPlanNodes = 5000
+
+  /** A checkpointed Dataset's snapshot: its origin plan, held strongly. */
+  private final case class Bound(plan: LogicalPlan, readsAmbiguous: Boolean, shapeAmbiguous: Boolean)
 
   private final case class Entry(
     plan: SoftReference[LogicalPlan],

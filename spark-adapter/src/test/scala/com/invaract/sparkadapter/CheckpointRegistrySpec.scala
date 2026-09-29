@@ -233,6 +233,19 @@ class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(readsOf(translate(registry, ck).plan).size == 1)
   }
 
+  test("an origin over the node cap is not recorded, so a checkpoint made from it stays an opaque boundary") {
+    val small = new CheckpointRegistry(maxPlanNodes = 3)
+    val base = read(ordersPath)
+    val fits = checkpointed(small, base) // Relation + (no-op) == within the cap
+    assert(unknownsOf(translate(small, fits).plan).isEmpty, "a plan within the cap resolves")
+
+    val big = new CheckpointRegistry(maxPlanNodes = 3)
+    val tooBig = checkpointed(big, base.filter(col("amount") > 0).filter(col("amount") > 1).select("order_id", "amount"))
+    val result = translate(big, tooBig)
+    assert(unknownsOf(result.plan).map(_.sourceType) == List("LogicalRDD"), ir.PlanPrinter.render(result.plan))
+    assert(readsOf(result.plan).isEmpty)
+  }
+
   test("a plan with no output attributes is not recorded and does not disturb the registry") {
     val registry = new CheckpointRegistry
     val df = see(registry, read(ordersPath))

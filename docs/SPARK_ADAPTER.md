@@ -1087,6 +1087,17 @@ contract is loaded at all, and the inferred contract is printed via
 `parseFile`) instead of being enforced. See docs-site's "Dry-run mode"
 guide for the user-facing walkthrough.
 
+**Checkpoints and lineage.** `dryRun` builds its own `CheckpointRegistry`
+(one per session, exactly as `forContract` does), so a write downstream of a
+`.checkpoint()` infers the inputs it really read before the checkpoint rather
+than an empty contract. Each inferred output also sets `derivedFrom` to the
+names of exactly the inputs that write read — `Some(Nil)` for a write that
+read none — so several drafts merged into one multi-output contract keep
+per-output lineage instead of silently becoming "every input feeds every
+output" (see "Which inputs a write is checked against" above). Inferred input
+names are positional per write (`input`, `input_1`, `input_2`, ...), so merging
+drafts still means reconciling those names by hand.
+
 **Structure only, never business rules.** `rules` is always empty on an
 inferred contract — there is no way to observe "this MERGE must always
 match on customer_id" from watching one execution, the way `RuleType`'s

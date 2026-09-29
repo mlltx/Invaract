@@ -299,6 +299,23 @@ class SparkPlanAdapterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.diagnostics.exists(_.message.toLowerCase.contains("checkpoint")), s"expected a checkpoint-mentioning diagnostic, got ${result.diagnostics}")
   }
 
+  test("only a genuinely checkpointed LogicalRDD is a lineage boundary: local checkpoints are, RDD-backed and lazy-unmaterialized ones are not") {
+    spark.sparkContext.setCheckpointDir(Files.createTempDirectory("invaract-spark-adapter-checkpoint-kinds").toString)
+    def sourceTypeOf(df: org.apache.spark.sql.DataFrame): String = SparkPlanAdapter.translate(df.queryExecution.analyzed).plan match {
+      case UnknownPlan(_, sourceType, _) => sourceType
+      case other                          => fail(s"expected an UnknownPlan, got ${PlanPrinter.render(other)}")
+    }
+    val rdd = spark.sparkContext.parallelize(Seq(org.apache.spark.sql.Row(1L)))
+    val schema = org.apache.spark.sql.types.StructType(Seq(org.apache.spark.sql.types.StructField("id", org.apache.spark.sql.types.LongType)))
+
+    assert(sourceTypeOf(spark.range(3).checkpoint(true).toDF()) == "LogicalRDD")
+    assert(sourceTypeOf(spark.range(3).localCheckpoint(true).toDF()) == "LogicalRDD")
+    // no lineage to hide: the RDD IS the source
+    assert(sourceTypeOf(spark.createDataFrame(rdd, schema)) == "RDDRelation")
+    // not yet materialized -> not yet checkpointed: the conservative (blocking) reading
+    assert(sourceTypeOf(spark.range(3).checkpoint(false).toDF()) == "RDDRelation")
+  }
+
   test("translates a real, cache-substituted relation as an UnknownPlan naming InMemoryRelation, with a diagnostic explaining why") {
     // Unlike .checkpoint() above, a bare .cache() does NOT change what
     // .queryExecution.analyzed reports for a later query - Spark only
