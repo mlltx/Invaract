@@ -1347,6 +1347,26 @@ that isn’t already governed by “is a sink configured.”</p>
 reuses it directly, computing <code dir="auto">TransformationFingerprinter.fingerprint (translated.plan, mutation)</code> immediately alongside <code dir="auto">StructuralVerifier. verify</code>’s own call, only when <code dir="auto">options.computeFingerprint</code> is true. No
 second Spark-plan translation, and no fingerprinting of anything
 <code dir="auto">SparkPlanAdapter</code> hasn’t already turned into IR.</p>
+<p><strong>A checkpoint boundary is resolved where it can be, and disclosed where it can’t, at this same
+call site.</strong> <code dir="auto">docs/SPARK_ADAPTER.md</code>’s “<code dir="auto">CheckpointRegistry</code>: seeing through a checkpoint” section
+describes how <code dir="auto">ContractEnforcementRule</code> replaces each <code dir="auto">.checkpoint()</code> boundary (<code dir="auto">LogicalRDD</code>) in the
+Catalyst plan with the plan it was made from — recorded synchronously, at the moment the pre-checkpoint
+Dataset was created, and matched by attribute id — <em>before</em> <code dir="auto">SparkPlanAdapter.translate</code> runs. So
+<code dir="auto">translated.plan</code> is structurally the plan the job would have had with no checkpoint at all, and the
+fingerprint computed from it is <strong>identical to the un-checkpointed job’s</strong> — a checkpoint stops being
+something the fingerprint has to caveat. (Node-level correlation through the checkpoint’s RDD, which an
+earlier iteration of this design concluded was infeasible, was never needed: the output attribute ids
+Spark preserves across <code dir="auto">.checkpoint()</code> are the key.)</p>
+<p>What still cannot be resolved stays an opaque <code dir="auto">ir.UnknownPlan</code> that canonicalizes exactly per §8 (its
+<code dir="auto">description</code> excluded from the hash), so the fingerprint remains <strong>fully stable and deterministic for
+the plan shape actually visible to it</strong>, but cannot reflect whatever real transformation happened
+upstream of that boundary: a checkpoint whose creation the rule never observed, an origin evicted from
+the bounded registry, or an ambiguous origin (see that section for the full list). A resolution that had
+to pick the most recent of several same-source plans sharing the boundary’s output columns is used but
+flagged. Rather than leave either undiscovered until a fingerprint is compared with different
+expectations than it can meet, <code dir="auto">ContractEnforcementRule</code> logs a WARN — naming any unresolved
+<code dir="auto">UnknownPlan.sourceType</code>(s) and any such assumed resolution — whenever <code dir="auto">computeFingerprint</code> produces a
+fingerprint that crossed one.</p>
 <p><code dir="auto">mutation</code> here is not a second, independent extraction: this same branch
 already calls <code dir="auto">RowMutationSupport.classify(plan)</code> once, to feed
 <code dir="auto">RuleVerifier.verify</code>’s DML rule checks (<code dir="auto">merge_condition</code>,
