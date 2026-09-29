@@ -688,10 +688,37 @@ side’s columns, alongside a plain read of that side): which was checkpointed i
 refused rather than guessed. When they read the <em>same</em> datasets (a <code dir="auto">.filter</code> of a dataset), the most
 recent is used and a <code dir="auto">CheckpointResolution</code> diagnostic says so — the fingerprint’s WARN log
 discloses it.</li>
-<li>A <code dir="auto">LogicalRDD</code> inside a node that keeps its query outside <code dir="auto">children</code> (Delta’s row-level DML
-commands).</li>
+<li>A <code dir="auto">LogicalRDD</code> inside a node that keeps its query outside <code dir="auto">children</code>: Delta’s row-level DML
+commands, and — measured against real writes, not assumed — the <em>outer</em> command of a
+<code dir="auto">SaveIntoDataSourceCommand</code> write (<code dir="auto">.format("delta").save(...)</code> and other data-source <code dir="auto">.save()</code>s),
+of a CTAS-style <code dir="auto">CreateDataSourceTableAsSelectCommand</code> (<code dir="auto">saveAsTable</code>/<code dir="auto">writeTo(...).create()</code> to a
+new table, SQL <code dir="auto">CREATE TABLE ... AS SELECT</code>) and of a <code dir="auto">ReplaceTableAsSelect</code>. For the last two the
+write runs an <em>inner</em> <code dir="auto">InsertIntoHadoopFsRelationCommand</code>/<code dir="auto">OverwriteByExpression</code> whose query is a
+child, and that plan is resolved (and checked, so a genuinely missing input still blocks there); for
+<code dir="auto">SaveIntoDataSourceCommand</code> nothing is. <code dir="auto">substitute</code> walks <code dir="auto">children</code> only, so rebuilding these
+commands with a substituted query is a known, unfixed gap.</li>
 <li>Every <code dir="auto">InMemoryRelation</code> (a bare <code dir="auto">.cache()</code> doesn’t reach the check rule anyway — see above).</li>
 </ul>
+<p><strong><code dir="auto">SparkAdapterListener.lastWrite</code> sees through a checkpoint too.</strong> A <code dir="auto">WriteEvent</code> describes the write
+itself (location, format, schema, metrics, versions) and carries no lineage, so a <code dir="auto">.checkpoint()</code>
+upstream never touched it; <code dir="auto">lastWrite</code> (the <code dir="auto">TranslationResult</code> behind <code dir="auto">demo/output/report.json</code>’s IR)
+is the one place the listener exposes a translated plan, and translating <code dir="auto">qe.analyzed</code> alone shows a
+checkpoint as an opaque <code dir="auto">LogicalRDD</code> while the <code dir="auto">ContractValidationEvent</code> for the same write was built
+from the resolved plan. The listener runs on the async listener bus and is built with no arguments, so
+it cannot call the rule’s registry; instead the rule tags the analyzed root plan it just verified (or,
+in dry-run, inferred from) with its translation — a Catalyst <code dir="auto">TreeNodeTag</code> holding the translation <em>and
+the plan it was made for</em> — and <code dir="auto">onSuccess</code> reads it back off <code dir="auto">qe.analyzed</code>, the same instance.
+Deterministic (the rule runs synchronously during analysis, strictly before execution) and per-plan (the
+tag lives and dies with the plan: no session lookup, no shared or global state, no new conf key, no
+change to how the listener is constructed or registered). Confirmed empirically against real writes that
+the listener receives the very instance the rule saw for every shape it treats as a write —
+<code dir="auto">.parquet</code>/<code dir="auto">.csv</code>, <code dir="auto">saveAsTable</code>, <code dir="auto">insertInto</code>, SQL <code dir="auto">INSERT</code>/CTAS, Delta <code dir="auto">.save</code>/<code dir="auto">saveAsTable</code> — and that a
+CTAS reaches it as two distinct analyzed plans (outer and inner), each tagged for itself. Catalyst
+copies tags onto plans derived by a transformation, so the lookup only accepts a tag whose recorded
+plan is <code dir="auto">eq</code> the plan asked about; anything else, and any plan the rule never saw (no rule installed,
+another session), is a miss and falls back to <code dir="auto">SparkPlanAdapter.translate(qe.analyzed)</code> — the previous
+behavior. Whatever the rule translated is what <code dir="auto">lastWrite</code> reports, including for the write roots
+listed above whose checkpoint the rule itself cannot resolve.</p>
 <p><strong>What an unresolved boundary means for verification.</strong> “No matching <code dir="auto">Read</code>” is not the same claim as
 “never read” when a boundary could be hiding it, so a declared input that is unread <em>and</em> has an
 unresolved boundary (<code dir="auto">LogicalRDD</code>/<code dir="auto">InMemoryRelation</code>) somewhere in the plan is reported as an
@@ -1182,7 +1209,9 @@ evaluated, with this result,” at analysis time — a FAILED event here
 means the write never executed.</li>
 <li><code dir="auto">WriteEvent</code> — published by <code dir="auto">SparkAdapterListener</code>’s <code dir="auto">onSuccess</code>, the
 same post-execution observation point <code dir="auto">demo/output/report.json</code>’s
-<code dir="auto">transformationIR</code> section already uses. This is “the write actually
+<code dir="auto">transformationIR</code> section already uses. It describes the write itself and
+carries no lineage; <code dir="auto">lastWrite</code> is where the listener exposes a translated
+plan (see “<code dir="auto">SparkAdapterListener.lastWrite</code> sees through a checkpoint too”). This is “the write actually
 completed,” strictly later than (and independent of) the check above —
 a write <code dir="auto">ContractEnforcementRule</code> rejects never reaches this event,
 since Spark never executes it.</li>
