@@ -4,7 +4,10 @@
 package com.invaract.sparkadapter
 
 import com.invaract.ir
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.analysis.DeduplicateRelations
+import org.apache.spark.sql.catalyst.plans.Inner
+import org.apache.spark.sql.catalyst.plans.logical.{Join, JoinHint, LogicalPlan}
 import org.apache.spark.sql.execution.LogicalRDD
 
 import java.lang.ref.SoftReference
@@ -29,16 +32,31 @@ import java.lang.ref.SoftReference
   *  - `bind`, called when the rule first sees a bare `LogicalRDD`, snapshots
   *    whichever plan is recorded under that leaf's ids *at that moment* —
   *    the plan that was just checkpointed — and ties the snapshot to that
-  *    leaf instance (a `WeakHashMap`: the snapshot lives exactly as long as
-  *    the checkpointed Dataset does). The same leaf instance flows unchanged
-  *    into every plan later built from that Dataset (`.filter`, `.select`,
-  *    a SQL view over it), so binding once at creation is what makes
-  *    resolution exact even when later plans reuse the same output ids
+  *    checkpoint's `rdd`, by identity (a `WeakHashMap`: the snapshot lives
+  *    exactly as long as the checkpointed Dataset does). The same leaf flows
+  *    unchanged into every plan later built from that Dataset (`.filter`,
+  *    `.select`, a SQL view over it), so binding once at creation is what
+  *    makes resolution exact even when later plans reuse the same output ids
   *    (`ck.filter(...)` shares `ck`'s ids; an iterative
   *    `df = df.filter(...).checkpoint()` loop checkpoints several plans
   *    under one set of ids).
   *  - `substitute` replaces each bound `LogicalRDD` in a plan with its
   *    snapshot (recursively, for chained checkpoints).
+  *
+  * ## Self-joins
+  *
+  * A second reference to the same checkpointed Dataset in one plan (a
+  * self-join, `ck.as("a").join(ck.as("b"), ...)`) is not the same leaf:
+  * Spark's analyzer gives it a `newInstance()` copy with *fresh* attribute
+  * ids but the very same `rdd`. Keying the snapshot by `rdd` finds it. Its
+  * origin is then spliced in as a *renewed* copy - fresh ids throughout, made
+  * by Spark's own `DeduplicateRelations`, which is exactly what the analyzer
+  * would have produced for the un-checkpointed self-join - and the copy's ids
+  * are rewritten to the renewed plan's ids in every ancestor
+  * (`transformUpWithNewOutput`). The result is structurally the plan the
+  * un-checkpointed self-join has, so it verifies and fingerprints like it:
+  * two occurrences of a relation keep distinct attribute ids, which is what
+  * `SparkPlanAdapter`'s alias disambiguation keys on.
   *
   * The substitution happens on the *Catalyst* plan, before translation, so
   * the result is structurally the plan the job would have had with no
@@ -66,8 +84,10 @@ import java.lang.ref.SoftReference
   *    fingerprint side can disclose it.
   *  - Only a checkpoint whose creation the rule observed can be resolved
   *    (the rule must have been installed when the Dataset was made). A copy
-  *    Spark makes with fresh attribute ids - the right side of a self-join
-  *    of a checkpointed Dataset - is unresolved too.
+  *    of one Spark makes with fresh ids (a self-join's other side) resolves
+  *    exactly when the checkpoint itself does - it is found through the
+  *    shared `rdd` - so an ambiguous or unobserved checkpoint stays opaque on
+  *    every side of a self-join too.
   *  - Bounded (LRU, `maxEntries`; origins over `maxPlanNodes` are not
   *    recorded at all, since a checkpoint exists to cut a lineage too big to
   *    carry). The LRU holds plans by `SoftReference` (a Catalyst plan keeps its
@@ -94,12 +114,13 @@ private[sparkadapter] class CheckpointRegistry(
     override def removeEldestEntry(eldest: java.util.Map.Entry[List[Long], Entry]): Boolean = size() > maxEntries
   }
 
-  // Keyed by the LogicalRDD leaf itself (structural equality includes its
-  // `rdd`, so two checkpoints never collide), weakly: a snapshot dies with
-  // the checkpointed Dataset that owns the leaf. The snapshot holds its plan
-  // STRONGLY (unlike the LRU above): resolving a checkpoint must not depend on
-  // when the garbage collector happens to run.
-  private val bound = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[LogicalRDD, Bound]())
+  // Keyed by the checkpoint's `rdd` (RDDs compare by identity, and every
+  // `.checkpoint()` makes a new one, so two checkpoints never collide; every
+  // leaf copy Spark makes of a checkpointed Dataset shares it), weakly: a
+  // snapshot dies with the checkpointed Dataset that owns the rdd. The snapshot
+  // holds its plan STRONGLY (unlike the LRU above): resolving a checkpoint must
+  // not depend on when the garbage collector happens to run.
+  private val bound = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[RDD[_], Bound]())
 
   /** Called with every analyzed plan the rule sees, *before* `substitute`: when
     * `plan` is a bare `LogicalRDD` - the Dataset `.checkpoint()` just returned -
@@ -107,11 +128,11 @@ private[sparkadapter] class CheckpointRegistry(
     */
   def bind(plan: LogicalPlan): Unit = plan match {
     case leaf: LogicalRDD =>
-      if (!bound.containsKey(leaf)) {
+      if (!bound.containsKey(leaf.rdd)) {
         for {
           entry <- lookup(leaf)
           origin <- Option(entry.plan.get) // an origin already collected is simply never resolved
-        } bound.put(leaf, Bound(origin, entry.readsAmbiguous, entry.shapeAmbiguous))
+        } bound.put(leaf.rdd, Bound(origin, entry.readsAmbiguous, entry.shapeAmbiguous))
       }
     case _ => ()
   }
@@ -164,16 +185,17 @@ private[sparkadapter] class CheckpointRegistry(
     // `inProgress` holds the checkpoints currently being expanded: an entry
     // that (through a chain of plans) would expand back into itself is
     // refused rather than followed forever.
-    def go(p: LogicalPlan, inProgress: Set[List[Long]]): LogicalPlan = p.transformUp {
+    def go(p: LogicalPlan, inProgress: Set[List[Long]]): LogicalPlan = p.transformUpWithNewOutput {
       case leaf: LogicalRDD if !inProgress.contains(idsOf(leaf)) =>
-        Option(bound.get(leaf)) match {
+        Option(bound.get(leaf.rdd)) match {
           case Some(snapshot) if snapshot.readsAmbiguous =>
             diagnostics += Diagnostic(
               "LogicalRDD",
               "Several plans reading different sources share this .checkpoint() boundary's output columns, so its " +
                 "origin could not be determined"
             )
-            leaf
+            (leaf, Nil)
+          case Some(snapshot) if shapeOf(leaf) != shapeOf(snapshot.plan) => (leaf, Nil)
           case Some(snapshot) =>
             if (snapshot.shapeAmbiguous)
               diagnostics += Diagnostic(
@@ -182,12 +204,15 @@ private[sparkadapter] class CheckpointRegistry(
                   "output columns and reading the same sources; the transformation between those sources and this " +
                   "point is assumed to be that plan's"
               )
-            go(snapshot.plan, inProgress + idsOf(leaf))
-          case None => leaf
+            val origin = go(snapshot.plan, inProgress + idsOf(leaf))
+            // The leaf itself carries the origin's ids; a self-join's copy carries fresh ones.
+            val resolved = if (idsOf(leaf) == idsOf(snapshot.plan)) origin else renewed(origin)
+            (resolved, leaf.output.zip(resolved.output))
+          case None => (leaf, Nil)
         }
     }
     val result = go(plan, Set.empty)
-    Substitution(result, diagnostics.toList)
+    Substitution(result, diagnostics.toList.distinct)
   }
 
   private def lookup(leaf: LogicalRDD): Option[Entry] = entries.synchronized(Option(entries.get(idsOf(leaf))))
@@ -203,6 +228,16 @@ private[sparkadapter] object CheckpointRegistry {
   val DefaultMaxEntries = 256
 
   private def idsOf(plan: LogicalPlan): List[Long] = plan.output.map(_.exprId.id).toList
+
+  private def shapeOf(plan: LogicalPlan) = plan.output.map(a => (a.name, a.dataType))
+
+  /** `plan` with a fresh attribute id for everything it defines - what Spark's own
+    * analyzer makes of the right side of a self-join. Uses the analyzer's own rule
+    * (a join of `plan` with itself always has conflicting ids, so its right side
+    * is the renewed copy), not a reimplementation of which nodes define ids.
+    */
+  private def renewed(plan: LogicalPlan): LogicalPlan =
+    DeduplicateRelations(Join(plan, plan, Inner, None, JoinHint.NONE)).asInstanceOf[Join].right
 
   /** The most plan nodes an origin may have to be recorded (and so resolved). */
   val DefaultMaxPlanNodes = 5000

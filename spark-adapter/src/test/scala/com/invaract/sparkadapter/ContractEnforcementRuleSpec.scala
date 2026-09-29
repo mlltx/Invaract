@@ -426,6 +426,89 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // A self-join of a checkpointed Dataset: Spark gives the second reference a
+  // copy of the checkpoint's LogicalRDD with fresh attribute ids (same rdd).
+  // The first reference still carries the origin's ids, so the declared inputs
+  // were always *found* - what broke was the copy staying an opaque boundary,
+  // which turned a genuinely unread input from a blocking MISSING_INPUT into a
+  // report-only UnverifiableInput (and made the fingerprint differ from the
+  // un-checkpointed twin's).
+  private val selfJoinInputSchema =
+    "{fields: [{name: order_id, type: integer, nullable: true}, {name: customer_id, type: string, nullable: true}, {name: amount, type: integer, nullable: true}]}"
+
+  test("PASS: inputs read through a self-join of a checkpointed Dataset are found on both sides - nothing is unverifiable") {
+    val ordersPath = scratchDir.resolve("selfjoin_orders.csv").toString
+    val customersPath = scratchDir.resolve("selfjoin_customers.csv").toString
+    val outputPath = scratchDir.resolve("selfjoin_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(ordersPath), "order_id,customer_id,amount\n1,a,100\n2,b,200\n".getBytes)
+    Files.write(java.nio.file.Paths.get(customersPath), "customer_id,name,state\na,Alice,NY\nb,Bob,CA\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: $ordersPath
+         |    schema: $selfJoinInputSchema
+         |  - name: customers
+         |    location: $customersPath
+         |    schema: {fields: [{name: customer_id, type: string, nullable: true}, {name: name, type: string, nullable: true}, {name: state, type: string, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: order_id, type: integer, nullable: true}, {name: name, type: string, nullable: true}]}
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_checkpoints").toString)
+    withContract(yaml, sink = Some(sink)) {
+      val orders = spark.read.option("header", "true").option("inferSchema", "true").csv(ordersPath)
+      val customers = spark.read.option("header", "true").option("inferSchema", "true").csv(customersPath)
+      val ck = orders.join(customers, "customer_id").select(orders("order_id"), customers("name")).checkpoint(true)
+      ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id"))
+        .select(col("l.order_id"), col("r.name")).write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
+  }
+
+  test("FAIL: a genuinely unread input is still BLOCKED when the job self-joins a checkpoint - the copy's boundary no longer makes it 'unverifiable'") {
+    val realPath = scratchDir.resolve("selfjoin_typo_real.csv").toString
+    val typoPath = scratchDir.resolve("selfjoin_typo_never_read.csv").toString
+    val outputPath = scratchDir.resolve("selfjoin_typo_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(realPath), "order_id,customer_id,amount\n1,a,100\n2,b,200\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: $selfJoinInputSchema
+         |  - name: typo
+         |    location: $typoPath
+         |    schema: $selfJoinInputSchema
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: order_id, type: integer, nullable: true}, {name: amount, type: integer, nullable: true}]}
+         |""".stripMargin
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_typo_checkpoints").toString)
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        val ck = spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+        ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id"))
+          .select(col("l.order_id"), col("r.amount")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.filter(_.violationType == ViolationType.MissingInput).map(_.location) == List(Some(typoPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, ex.result.unverifiableInputs.toString)
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
   test("PASS with UnverifiableInput: a checkpoint whose origin the rule never saw stays opaque, and the unread input is reported unverifiable, not missing") {
     val inputPath = scratchDir.resolve("unseen_origin.csv").toString
     val outputPath = scratchDir.resolve("unseen_origin_output.parquet").toString
@@ -967,6 +1050,42 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(withCheckpoint1.overall == withCheckpoint2.overall, "identical code must fingerprint identically across separate analyses")
     assert(withCheckpoint1.outputs("doubled") == withCheckpoint2.outputs("doubled"))
     assert(withCheckpoint1.overall == without.overall, "resolving the checkpoint must make it invisible to the fingerprint")
+  }
+
+  test("computeFingerprint = true: a self-join of a checkpoint fingerprints like the un-checkpointed self-join, with no fingerprint warning") {
+    val outputPath = scratchDir.resolve("selfjoin_fp.parquet").toString
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_fp_checkpoints").toString)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: long, required: true}, {name: doubled, type: long, required: true}]}
+         |""".stripMargin
+
+    def fingerprintJob(checkpoint: Boolean): (com.invaract.fingerprint.TransformationFingerprint, List[String]) = {
+      val sink = new TestNotificationSink
+      val (_, warnings) = enforcementRuleWarnings {
+        withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+          val base = spark.range(5).withColumn("k", col("id") % 2)
+          val ck = if (checkpoint) base.checkpoint(true) else base
+          ck.as("l").join(ck.as("r"), col("l.k") === col("r.k"))
+            .select(col("l.id"), (col("r.id") * 2).as("doubled")).write.mode("overwrite").parquet(outputPath)
+        }
+      }
+      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
+      (fp, fingerprintingWarnings(warnings))
+    }
+
+    val (withCheckpoint, warnings) = fingerprintJob(checkpoint = true)
+    val (again, _) = fingerprintJob(checkpoint = true)
+    val (without, _) = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint.overall == again.overall, "fresh attribute ids per run must not leak into the hash")
+    assert(withCheckpoint.overall == without.overall)
+    assert(withCheckpoint.outputs == without.outputs)
+    assert(warnings.isEmpty, warnings.toString)
   }
 
   /** Runs `body`, capturing every WARN-or-worse message `ContractEnforcementRule` logs while it runs.

@@ -568,7 +568,7 @@ assumed):
 `CheckpointRegistry` (one per session, created by `forContract`) uses them in three steps:
 `record` remembers each analyzed plan under its output attribute ids; `bind`, on first sight of a
 bare `LogicalRDD`, snapshots the plan recorded under its ids *at that moment* — the plan just
-checkpointed — and ties it to that leaf instance (weakly: it lives exactly as long as the
+checkpointed — and ties it to that checkpoint's `rdd`, by identity (weakly: it lives exactly as long as the
 checkpointed Dataset); `substitute` replaces every bound `LogicalRDD` in a plan with its snapshot,
 recursively for chained checkpoints. This happens on the *Catalyst* plan, before translation, so the
 result is structurally the plan the job would have had with no checkpoint at all: contract
@@ -576,6 +576,24 @@ verification sees the real `Read` nodes (a missing input is simply missing, an u
 simply undeclared, schema/catalog/lineage checks all apply), and a fingerprint computed across the
 checkpoint is **identical to the un-checkpointed job's** — the fingerprint-side gap
 docs/SEMANTIC_LINEAGE_FINGERPRINTING.md used to disclose is closed for every resolved checkpoint.
+
+**Self-joins.** A second reference to the same checkpointed Dataset in one plan
+(`ck.as("a").join(ck.as("b"), ...)`, a three-way self-join, a self-join of a checkpoint of a checkpoint)
+is not the same leaf: Spark's analyzer gives it a `newInstance()` copy of the `LogicalRDD` with *fresh*
+attribute ids but the very same `rdd`. Because snapshots are keyed by `rdd` (not by the leaf, whose
+equality includes the ids), the copy finds its checkpoint's snapshot. `substitute` then splices in a
+*renewed* copy of the origin — fresh ids throughout, produced by Spark's own `DeduplicateRelations`
+rule (a join of the origin with itself always has conflicting ids, so its right side is the renewed
+copy; nothing here re-implements which Catalyst nodes define ids) — and rewrites the copy's ids to the
+renewed plan's in every ancestor (`transformUpWithNewOutput`). That is exactly what the analyzer would
+have produced for the un-checkpointed self-join, so it verifies **and fingerprints** identically to it
+(tested against the un-checkpointed twin for aliased, un-aliased `USING`, computed-column-under-alias,
+three-way and chained-checkpoint self-joins; attribute ids are never hashed, so fresh ids per run
+don't perturb the fingerprint). Two occurrences of a relation keep distinct ids, which is what
+`SparkPlanAdapter`'s alias disambiguation keys on. A copy resolves exactly when its checkpoint does: an
+ambiguous or never-observed checkpoint stays opaque on every side of the self-join, never guessed on
+one. A leaf that shares a checkpoint's `rdd` but not its column names/types is never mapped onto the
+origin.
 
 There is no listener and nothing asynchronous, so — unlike an earlier design that captured
 checkpoints from a `QueryExecutionListener`, which fires on Spark's listener-bus thread a few
@@ -588,8 +606,8 @@ ever resolved, so one write's checkpoint can never excuse another write's missin
 `Diagnostic`, exactly as before the registry existed):
 
 - A checkpoint whose creation the rule never observed — the rule must have been installed when the
-  Dataset was made. A copy Spark makes with fresh attribute ids (the right side of a self-join of a
-  checkpointed Dataset) is unresolved too.
+  Dataset was made. (A self-join's copy of an observed checkpoint *does* resolve — see "Self-joins"
+  above — so this is the same boundary on every side of it.)
 - An origin the registry evicted before the checkpoint was created (bounded LRU, 256 entries by
   default) or whose plan was reclaimed under memory pressure (plans are held by `SoftReference`,
   because a Catalyst plan keeps its relations — and a file index's listing — alive).
