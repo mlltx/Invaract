@@ -924,6 +924,106 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(withCheckpoint1.overall == without.overall, "resolving the checkpoint must make it invisible to the fingerprint")
   }
 
+  /** Runs `body`, capturing every WARN-or-worse message `ContractEnforcementRule` logs while it runs.
+    * This suite raises Spark's log level to ERROR, so a dedicated logger config for just that logger is
+    * installed for the duration (and removed afterwards) rather than relying on the ambient level.
+    */
+  private def enforcementRuleWarnings[T](body: => T): (T, List[String]) = {
+    import org.apache.logging.log4j.{Level, LogManager}
+    import org.apache.logging.log4j.core.{LogEvent, LoggerContext}
+    import org.apache.logging.log4j.core.appender.AbstractAppender
+    import org.apache.logging.log4j.core.config.{LoggerConfig, Property}
+
+    val captured = new java.util.concurrent.CopyOnWriteArrayList[String]()
+    val context = LogManager.getContext(false).asInstanceOf[LoggerContext]
+    val config = context.getConfiguration
+    val loggerName = ContractEnforcementRule.getClass.getName
+    val appender = new AbstractAppender("enforcement-rule-warnings", null, null, true, Property.EMPTY_ARRAY) {
+      override def append(event: LogEvent): Unit = captured.add(event.getMessage.getFormattedMessage)
+    }
+    appender.start()
+    val loggerConfig = new LoggerConfig(loggerName, Level.WARN, false)
+    loggerConfig.addAppender(appender, null, null)
+    config.addLogger(loggerName, loggerConfig)
+    context.updateLoggers()
+    try {
+      val result = body
+      (result, captured.toArray.toList.map(_.toString))
+    } finally {
+      config.removeLogger(loggerName)
+      appender.stop()
+      context.updateLoggers()
+    }
+  }
+
+  private def fingerprintingWarnings(warnings: List[String]): List[String] = warnings.filter(_.startsWith("computeFingerprint:"))
+
+  private def fingerprintedRangeWrite(outputName: String)(dataset: => org.apache.spark.sql.DataFrame): (List[String], Boolean) = {
+    val outputPath = scratchDir.resolve(outputName).toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+    val (_, warnings) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        dataset.withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath) // must not throw
+      }
+    }
+    val fingerprinted = sink.events
+      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .lastOption.exists(_.fingerprints.isDefined)
+    (fingerprintingWarnings(warnings), fingerprinted)
+  }
+
+  test("computeFingerprint = true: a fingerprint that crosses an UNRESOLVED checkpoint boundary logs a WARN naming it, and the write still passes") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_unresolved_checkpoints").toString)
+    // Created while NO contract is active, so the check rule never sees its origin and can't resolve it.
+    val unseenOrigin = spark.range(5).checkpoint(true).toDF()
+
+    val (warnings, fingerprinted) = fingerprintedRangeWrite("fp_warn_unresolved.parquet")(unseenOrigin)
+
+    assert(fingerprinted, "the write passes and still carries a fingerprint")
+    assert(warnings.size == 1, warnings.toString)
+    assert(warnings.head.contains("unresolved boundary: LogicalRDD"), warnings.head)
+    assert(warnings.head.contains("stable and deterministic"), warnings.head)
+    assert(!warnings.head.contains("most recently created"), "no assumed resolution was involved")
+  }
+
+  test("computeFingerprint = true: a resolution that had to pick the most recent of several same-source plans is disclosed in the WARN") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_assumed_checkpoints").toString)
+    val outputPath = scratchDir.resolve("fp_warn_assumed.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val sink = new TestNotificationSink
+    val (_, captured) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+        val base = spark.range(5)
+        val filtered = base.filter(col("id") > 0) // a filter shares its input's output attribute ids
+        filtered.checkpoint(true).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+    val warnings = fingerprintingWarnings(captured)
+    val fingerprinted = sink.events
+      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .lastOption.exists(_.fingerprints.isDefined)
+
+    assert(fingerprinted)
+    assert(warnings.size == 1, warnings.toString)
+    assert(warnings.head.contains("most recently created of several plans"), warnings.head)
+    assert(!warnings.head.contains("unresolved boundary"), "the boundary was resolved - only the assumption is disclosed")
+  }
+
+  test("computeFingerprint = true: a fingerprint that crossed nothing unresolved logs no WARN at all") {
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("fp_warn_none_checkpoints").toString)
+    val outputPath = scratchDir.resolve("fp_warn_none.parquet").toString
+    val yaml = passingContractYaml.replace("OUTPUT_PATH", outputPath)
+    val (_, captured) = enforcementRuleWarnings {
+      withContract(yaml, options = VerificationOptions(computeFingerprint = true)) {
+        // A cleanly resolved checkpoint, and a plain job with none.
+        spark.range(5).checkpoint(true).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+        spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+    assert(fingerprintingWarnings(captured).isEmpty, captured.toString)
+  }
+
   // A real, confirmed false NEGATIVE, now fixed by
   // SparkPlanAdapter.computeAliasDisambiguation (see that method's own
   // doc for the full mechanism): an unaliased DataFrame-API self-join of
