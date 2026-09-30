@@ -38,10 +38,12 @@ guarantee on a machine that hasn't set up JDK/sbt/Spark at all. Only Docker is r
 
 ## What it checks
 
-Six real cases, exiting non-zero if any behaves unexpectedly — schema-level
+Ten real cases, exiting non-zero if any behaves unexpectedly — schema-level
 enforcement, then the same pass/fail proof for [static data-quality
-verification](/guides/verifying-static-data-quality/) and for [input/output type
-role-consistency](/guides/declaring-input-and-output-types/):
+verification](/guides/verifying-static-data-quality/), for [input/output type
+role-consistency](/guides/declaring-input-and-output-types/), for a job that
+[checkpoints](/reference/violation-types/#checkpoints) between reading and writing, and
+for [per-output input scoping](/guides/mapping-outputs-to-inputs/) (`derivedFrom`):
 
 1. **Contract satisfied** (`demo/contracts/invaract_output.yaml`) — the job exits `0`,
    the report says `PASS`, and the output file exists.
@@ -68,11 +70,33 @@ role-consistency](/guides/declaring-input-and-output-types/):
    exists to catch, so the job exits non-zero, the report shows a
    `ROLE_CONSISTENCY_VIOLATION`, and the output file is never created.
 
+7. **Checkpointed job, contract satisfied** (`demo/contracts/invaract_output.yaml`, the
+   same contract as case 1, run with the demo harness's `--checkpoint` flag, which
+   `.checkpoint()`s the input right after reading it) — the job really does checkpoint
+   (Spark's checkpoint directory exists), yet the declared input is found: it exits `0` and
+   the published `ContractValidationEvent` reports `PASSED` with no unverifiable inputs.
+8. **Checkpointed job, declared input never read** (`demo/contracts/invaract_output_checkpoint_missing_input.yaml`,
+   which also declares an `orders_typo` input the job never reads) — a checkpoint must not
+   hide that: the job exits non-zero, the report shows `MISSING_INPUT` for
+   `demo/input/sample_typo.csv`, the event's `unverifiableInputs` is empty (the input was
+   proven missing, not merely unverifiable), and the output file is never created.
+9. **`derivedFrom`, a write that reads only its own inputs** (`demo/contracts/invaract_output_derived_from.yaml`,
+   two outputs and three inputs; `orders_report` is `derivedFrom: [orders]`) — the job
+   writes `orders_report` and reads only `orders`, so it exits `0` even though `customers`
+   and `products` are declared and never read: they are only expected of the *other* output.
+10. **`derivedFrom`, a write that reads an input outside its output's `derivedFrom`** (the
+    same contract, the same job, now landing on `catalog_report`, which is
+    `derivedFrom: [customers, products]`) — the job still reads `orders`, an input the
+    contract declares but not as a source of this output, so it exits non-zero, the report
+    shows `UNDECLARED_INPUT`, and the output file is never created.
+
 Cases 3/4 attach `spark.invaract.staticDataQuality=true` purely via `--conf`, the same
 way a platform team would against a job whose source they don't own — see [Verify Static
 Data Quality](/guides/verifying-static-data-quality/#enable-it). Cases 5/6 attach
 `spark.invaract.roleConsistency=true` the identical way — see [Declaring Input and Output
-Types](/guides/declaring-input-and-output-types/#enable-role-consistency-checking).
+Types](/guides/declaring-input-and-output-types/#enable-role-consistency-checking). Cases 9/10 attach
+`spark.invaract.rejectUndeclaredInputs=true` the same way — see [Map Outputs to Their
+Inputs](/guides/mapping-outputs-to-inputs/).
 
 <Aside type="tip">
 This same pack runs in CI on every push — directly, once per OS/Java combination in

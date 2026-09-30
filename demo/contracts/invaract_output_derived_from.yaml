@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output_derived_from
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A two-output, three-input contract using `derivedFrom` (docs-site's "Map
+    Outputs to Their Inputs" guide), used by ./dev/regression Cases 9/10 with
+    spark.invaract.rejectUndeclaredInputs=true. `orders_report` is built from
+    `orders` alone; `catalog_report` from `customers` and `products`. The same
+    demo job (which only ever reads demo/input/sample.csv, i.e. `orders`) is run
+    twice against this one contract, once writing to each output:
+    writing `orders_report` reads only its own input, so it PASSES - even
+    though `customers` and `products` are declared and never read, because
+    they are only expected of the *other* output; writing `catalog_report` reads
+    `orders`, an input the contract declares but not as a source of that output,
+    so it FAILS with UNDECLARED_INPUT (plus MISSING_INPUT for the two inputs it
+    was expected to read). Not wired into ./dev/test.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+  - name: customers
+    location: demo/input/customers.csv
+    format: csv
+    schema:
+      fields:
+        - name: customer_id
+          type: integer
+          required: true
+          nullable: true
+  - name: products
+    location: demo/input/products.csv
+    format: csv
+    schema:
+      fields:
+        - name: product_id
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: orders_report
+    location: demo/output/result_derived_orders.parquet
+    format: parquet
+    saveMode: overwrite
+    derivedFrom: [orders]
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+  - name: catalog_report
+    location: demo/output/result_derived_catalog.parquet
+    format: parquet
+    saveMode: overwrite
+    derivedFrom: [customers, products]
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

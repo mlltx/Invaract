@@ -60,7 +60,13 @@ object DemoJobHarness {
     // exists (ContractSource.resolve, inside forContract's own builder
     // closure - see that class's doc).
     val registryUrlArg = args.find(_.startsWith("--registry-url=")).map(_.stripPrefix("--registry-url="))
-    val positional = args.filterNot(a => a == "--dry-run" || a.startsWith("--registry-url="))
+    // Checkpoints the freshly-read input before the transformation runs - the
+    // shape of a real job that cuts its lineage. Only ./dev/regression passes
+    // it, to prove the engine verifies *through* a `.checkpoint()` in a real
+    // spark-submit; recognized anywhere in `args` like `--dry-run`, so the
+    // default run (./dev/test) is unchanged.
+    val checkpointInput = args.contains("--checkpoint")
+    val positional = args.filterNot(a => a == "--dry-run" || a == "--checkpoint" || a.startsWith("--registry-url="))
 
     val inputPath = positional.headOption.getOrElse("demo/input/sample.csv")
     val outputPath = positional.applyOrElse(1, (_: Int) => "demo/output/result.parquet")
@@ -238,10 +244,15 @@ object DemoJobHarness {
       spark.listenerManager.register(irListener)
 
       // Load input
-      val inputDf = spark.read
+      val loadedDf = spark.read
         .option("header", "true")
         .option("inferSchema", "true")
         .csv(inputPath)
+      val inputDf =
+        if (checkpointInput) {
+          spark.sparkContext.setCheckpointDir(s"$outputPath.checkpoints")
+          loadedDf.checkpoint()
+        } else loadedDf
 
       val inputSchema = inputDf.schema.fields.map(f => Map(
         "name" -> f.name,

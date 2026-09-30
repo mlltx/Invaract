@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=../../contract/schema/invaract-contract.schema.json
+id: invaract_demo_output
+version: "1.0.0"
+status: active
+
+description:
+  purpose: >
+    A variant of demo/contracts/invaract_output.yaml, used by ./dev/regression
+    with the harness's --checkpoint flag: the job reads demo/input/sample.csv,
+    CHECKPOINTS it, then writes. It additionally declares a second input,
+    `orders_typo`, at a location the job never reads (a typo of sample.csv) -
+    the mistake a contract author actually makes. A .checkpoint() must not
+    hide it: the origin of the checkpoint is resolved, so the declared-but-
+    never-read input is a blocking MISSING_INPUT (not a report-only
+    UnverifiableInput, and not silently absent), aborting the write before any
+    data is written. Not wired into ./dev/test.
+
+inputs:
+  - name: orders
+    location: demo/input/sample.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+  - name: orders_typo
+    location: demo/input/sample_typo.csv
+    format: csv
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+
+outputs:
+  - name: result
+    location: demo/output/result_checkpoint_missing_input.parquet
+    format: parquet
+    saveMode: overwrite
+    schema:
+      fields:
+        - name: id
+          type: integer
+          required: true
+          nullable: true
+        - name: value
+          type: integer
+          required: true
+          nullable: true
+        - name: value_squared
+          type: integer
+          required: true
+          nullable: true
+        - name: value_tier
+          type: string
+          required: true
+          nullable: true
+
+rules:
+  - type: compatibility
+    mode: backward
+
+extensions:
+  owner: invaract-demo

@@ -3873,6 +3873,16 @@ first written: one field's value compared against *another field on the same row
       unresolved, with reasons: ambiguous origins (a join-with-lookup then
       `select` of one side's columns, resolvable by aliasing), unobserved/
       evicted checkpoints, Delta `MERGE` sources.
+- [x] **Follow-up: `./dev/regression` cases for checkpoints and `derivedFrom`**
+      (6 -> 10 cases, the only check that proves the rule aborts a bad write in
+      a real `spark-submit`): Case 7 - read, `.checkpoint()`, write, contract
+      satisfied -> PASS (the harness's new `--checkpoint` flag; default
+      `./dev/test` output unchanged); Case 8 - the same job with a declared
+      input never read -> blocking `MISSING_INPUT`, no output, no
+      `UnverifiableInput`; Cases 9/10 - one two-output, three-input
+      `derivedFrom` contract run twice under `rejectUndeclaredInputs`: a write
+      that reads only its own output's inputs passes, one that reads an input
+      outside its `derivedFrom` is aborted with `UNDECLARED_INPUT`.
 
 ---
 

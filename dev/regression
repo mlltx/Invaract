@@ -33,6 +33,17 @@
 # real transformation and only varying the contract's own declared
 # `type:`.
 #
+# Cases 7/8 prove the same for a job that CHECKPOINTS between reading and
+# writing (the harness's --checkpoint flag): the verifier sees through the
+# checkpoint, so a satisfied contract passes and a declared input the job never
+# read is a blocking MISSING_INPUT - a checkpoint must not hide either.
+#
+# Cases 9/10 prove per-output input scoping (`derivedFrom`, docs-site's "Map
+# Outputs to Their Inputs" guide) with one two-output, three-input contract and
+# spark.invaract.rejectUndeclaredInputs=true: a write that reads only the inputs
+# its own output is derived from passes, one that reads an input outside its
+# output's `derivedFrom` is aborted with UNDECLARED_INPUT.
+#
 # Usage:
 #   ./dev/regression            # builds jars first, then runs both cases
 #   SKIP_BUILD=1 ./dev/regression   # reuse jars already on disk (faster
@@ -87,7 +98,7 @@ mkdir -p demo/output
 
 # --- Case 1: contract satisfied -> execute -------------------------------
 echo ""
-echo -e "${YELLOW}Case 1/6: contract satisfied -> transformation executes${NC}"
+echo -e "${YELLOW}Case 1/10: contract satisfied -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output.yaml"
 
 # Output location must match what the contract declares — StructuralVerifier
@@ -136,7 +147,7 @@ check "a JobSummaryEvent (checksPassed=1, checksFailed=0) was published to $PASS
 
 # --- Case 2: contract violated -> abort before write ----------------------
 echo ""
-echo -e "${YELLOW}Case 2/6: contract violated -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 2/10: contract violated -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_broken_example.yaml"
 
 FAIL_OUTPUT="demo/output/result_broken_example.parquet"
@@ -193,7 +204,7 @@ check "a JobSummaryEvent (checksPassed=0, checksFailed=1) was published to $FAIL
 
 # --- Case 3: data-quality satisfied -> execute, Guaranteed reported -------
 echo ""
-echo -e "${YELLOW}Case 3/6: data-quality constraint satisfied -> transformation executes${NC}"
+echo -e "${YELLOW}Case 3/10: data-quality constraint satisfied -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output_data_quality_pass.yaml"
 
 DQ_PASS_OUTPUT="demo/output/result_dq_pass.parquet"
@@ -232,7 +243,7 @@ check "a ContractValidationEvent with value_tier's dataQuality verdict Guarantee
 
 # --- Case 4: data-quality violated -> abort before write ------------------
 echo ""
-echo -e "${YELLOW}Case 4/6: data-quality constraint violated -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 4/10: data-quality constraint violated -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_data_quality_fail.yaml"
 
 DQ_FAIL_OUTPUT="demo/output/result_dq_fail.parquet"
@@ -290,7 +301,7 @@ check "no WriteEvent was published to $DQ_FAIL_EVENTS (the write never executed)
 
 # --- Case 5: role consistency satisfied -> execute, Conforms reported ----
 echo ""
-echo -e "${YELLOW}Case 5/6: declared dataset type consistent with observed usage -> transformation executes${NC}"
+echo -e "${YELLOW}Case 5/10: declared dataset type consistent with observed usage -> transformation executes${NC}"
 echo "  contract: demo/contracts/invaract_output_role_consistency_pass.yaml"
 
 ROLE_PASS_OUTPUT="demo/output/result_role_pass.parquet"
@@ -330,7 +341,7 @@ check "a ContractValidationEvent with orders' roleConformance verdict Conforms w
 
 # --- Case 6: role consistency violated -> abort before write -------------
 echo ""
-echo -e "${YELLOW}Case 6/6: declared dataset type contradicted by observed usage -> write aborted, no output${NC}"
+echo -e "${YELLOW}Case 6/10: declared dataset type contradicted by observed usage -> write aborted, no output${NC}"
 echo "  contract: demo/contracts/invaract_output_role_consistency_fail.yaml"
 
 ROLE_FAIL_OUTPUT="demo/output/result_role_fail.parquet"
@@ -388,14 +399,211 @@ else
 fi
 check "no WriteEvent was published to $ROLE_FAIL_EVENTS (the write never executed)" "$role_fail_write_event_ok"
 
+# --- Case 7: checkpointed job, contract satisfied -> execute --------------
+echo ""
+echo -e "${YELLOW}Case 7/10: read -> .checkpoint() -> write, contract satisfied -> transformation executes${NC}"
+echo "  contract: demo/contracts/invaract_output.yaml (harness flag: --checkpoint)"
+
+CK_PASS_OUTPUT="demo/output/result.parquet"
+CK_PASS_REPORT="demo/output/regression_checkpoint_pass_report.json"
+CK_PASS_EVENTS="demo/output/regression_checkpoint_pass_events.jsonl"
+rm -rf "$CK_PASS_OUTPUT" "$CK_PASS_OUTPUT.checkpoints" "$CK_PASS_REPORT" "$CK_PASS_EVENTS"
+
+# The same job and contract as Case 1, with the input checkpointed right
+# after it is read. The checkpoint hides the read from Spark's own plan; the
+# engine resolves it, so the declared input `orders` is found (a false
+# MISSING_INPUT - or, unresolved, a report-only UnverifiableInput - would be
+# the failure this case guards against).
+run_demo_job_harness "demo/input/sample.csv" "$CK_PASS_OUTPUT" "$CK_PASS_REPORT" \
+  "demo/contracts/invaract_output.yaml" "demo/regression-notify-checkpoint-pass.properties" --checkpoint
+CK_PASS_EXIT=$?
+
+CK_PASS_STATUS="$(report_field "$CK_PASS_REPORT" status)"
+
+[ "$CK_PASS_EXIT" = "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits 0" "$ec_ok"
+
+[ "$CK_PASS_STATUS" = "PASS" ] && st_ok=true || st_ok=false
+check "report status is PASS (got '$CK_PASS_STATUS')" "$st_ok"
+
+[ -e "$CK_PASS_OUTPUT" ] && out_ok=true || out_ok=false
+check "output was written to $CK_PASS_OUTPUT" "$out_ok"
+
+# The job really did checkpoint: Spark wrote checkpoint data under the
+# directory the harness pointed it at.
+[ -d "$CK_PASS_OUTPUT.checkpoints" ] && ck_dir_ok=true || ck_dir_ok=false
+check "the job really checkpointed (checkpoint directory exists at $CK_PASS_OUTPUT.checkpoints)" "$ck_dir_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$CK_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"status": "PASSED"' "$CK_PASS_EVENTS" 2>/dev/null \
+  && grep -q '"unverifiableInputs": \[\]' "$CK_PASS_EVENTS" 2>/dev/null; then
+  ck_pass_event_ok=true
+else
+  ck_pass_event_ok=false
+fi
+check "a PASSED ContractValidationEvent with no unverifiable inputs was published to $CK_PASS_EVENTS (the checkpoint was seen through)" "$ck_pass_event_ok"
+
+# --- Case 8: checkpointed job, declared input never read -> abort ---------
+echo ""
+echo -e "${YELLOW}Case 8/10: read -> .checkpoint() -> write, declared input never read -> write aborted, no output${NC}"
+echo "  contract: demo/contracts/invaract_output_checkpoint_missing_input.yaml (harness flag: --checkpoint)"
+
+CK_FAIL_OUTPUT="demo/output/result_checkpoint_missing_input.parquet"
+CK_FAIL_REPORT="demo/output/regression_checkpoint_fail_report.json"
+CK_FAIL_EVENTS="demo/output/regression_checkpoint_fail_events.jsonl"
+rm -rf "$CK_FAIL_OUTPUT" "$CK_FAIL_OUTPUT.checkpoints" "$CK_FAIL_REPORT" "$CK_FAIL_EVENTS"
+
+# The contract also declares `orders_typo` (demo/input/sample_typo.csv), which
+# the job never reads. The checkpoint must not excuse it: the origin is
+# resolved, so this is a blocking MISSING_INPUT, not a report-only
+# UnverifiableInput.
+run_demo_job_harness "demo/input/sample.csv" "$CK_FAIL_OUTPUT" "$CK_FAIL_REPORT" \
+  "demo/contracts/invaract_output_checkpoint_missing_input.yaml" "demo/regression-notify-checkpoint-fail.properties" --checkpoint
+CK_FAIL_EXIT=$?
+
+CK_FAIL_STATUS="$(report_field "$CK_FAIL_REPORT" status)"
+
+[ "$CK_FAIL_EXIT" != "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits non-zero (got $CK_FAIL_EXIT)" "$ec_ok"
+
+[ "$CK_FAIL_STATUS" = "FAIL" ] && st_ok=true || st_ok=false
+check "report status is FAIL (got '$CK_FAIL_STATUS')" "$st_ok"
+
+if grep -q "MISSING_INPUT" "$CK_FAIL_REPORT" 2>/dev/null && grep -q "sample_typo.csv" "$CK_FAIL_REPORT" 2>/dev/null; then
+  ck_violation_ok=true
+else
+  ck_violation_ok=false
+fi
+check "report identifies the MISSING_INPUT violation for demo/input/sample_typo.csv" "$ck_violation_ok"
+
+if [ ! -e "$CK_FAIL_OUTPUT" ]; then
+  ck_no_output_ok=true
+else
+  ck_no_output_ok=false
+fi
+check "no output was written at $CK_FAIL_OUTPUT (write was actually aborted)" "$ck_no_output_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$CK_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"status": "FAILED"' "$CK_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"unverifiableInputs": \[\]' "$CK_FAIL_EVENTS" 2>/dev/null; then
+  ck_fail_event_ok=true
+else
+  ck_fail_event_ok=false
+fi
+check "a FAILED ContractValidationEvent (unverifiableInputs empty: the missing input was proven, not merely unverifiable) was published to $CK_FAIL_EVENTS before the write was aborted" "$ck_fail_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$CK_FAIL_EVENTS" 2>/dev/null; then
+  ck_fail_write_event_ok=false
+else
+  ck_fail_write_event_ok=true
+fi
+check "no WriteEvent was published to $CK_FAIL_EVENTS (the write never executed)" "$ck_fail_write_event_ok"
+
+# --- Case 9: derivedFrom, write reads only its own inputs -> execute ------
+echo ""
+echo -e "${YELLOW}Case 9/10: derivedFrom - a write that reads only its output's own inputs -> transformation executes${NC}"
+echo "  contract: demo/contracts/invaract_output_derived_from.yaml (2 outputs, 3 inputs)"
+
+DF_PASS_OUTPUT="demo/output/result_derived_orders.parquet"
+DF_PASS_REPORT="demo/output/regression_derived_pass_report.json"
+DF_PASS_EVENTS="demo/output/regression_derived_pass_events.jsonl"
+rm -rf "$DF_PASS_OUTPUT" "$DF_PASS_REPORT" "$DF_PASS_EVENTS"
+
+# The job writes `orders_report` (derivedFrom: [orders]) and reads only
+# demo/input/sample.csv, i.e. `orders`. `customers` and `products` are declared
+# and never read - fine, they are only expected of `catalog_report` - and with
+# rejectUndeclaredInputs on, nothing this write reads is outside its
+# derivedFrom. Without derivedFrom this contract would fail MISSING_INPUT twice.
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.rejectUndeclaredInputs=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$DF_PASS_OUTPUT" "$DF_PASS_REPORT" \
+  "demo/contracts/invaract_output_derived_from.yaml" "demo/regression-notify-derived-pass.properties"
+DF_PASS_EXIT=$?
+
+DF_PASS_STATUS="$(report_field "$DF_PASS_REPORT" status)"
+
+[ "$DF_PASS_EXIT" = "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits 0" "$ec_ok"
+
+[ "$DF_PASS_STATUS" = "PASS" ] && st_ok=true || st_ok=false
+check "report status is PASS (got '$DF_PASS_STATUS')" "$st_ok"
+
+[ -e "$DF_PASS_OUTPUT" ] && out_ok=true || out_ok=false
+check "output was written to $DF_PASS_OUTPUT" "$out_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$DF_PASS_EVENTS" 2>/dev/null && grep -q '"status": "PASSED"' "$DF_PASS_EVENTS" 2>/dev/null; then
+  df_pass_event_ok=true
+else
+  df_pass_event_ok=false
+fi
+check "a PASSED ContractValidationEvent was published to $DF_PASS_EVENTS" "$df_pass_event_ok"
+
+# --- Case 10: derivedFrom, write reads an input outside its own -> abort --
+echo ""
+echo -e "${YELLOW}Case 10/10: derivedFrom - a write that reads an input outside its output's derivedFrom -> write aborted, no output${NC}"
+echo "  contract: demo/contracts/invaract_output_derived_from.yaml (2 outputs, 3 inputs)"
+
+DF_FAIL_OUTPUT="demo/output/result_derived_catalog.parquet"
+DF_FAIL_REPORT="demo/output/regression_derived_fail_report.json"
+DF_FAIL_EVENTS="demo/output/regression_derived_fail_events.jsonl"
+rm -rf "$DF_FAIL_OUTPUT" "$DF_FAIL_REPORT" "$DF_FAIL_EVENTS"
+
+# The same job and contract, now landing on `catalog_report`
+# (derivedFrom: [customers, products]) while still reading demo/input/sample.csv
+# (`orders`): an input the contract declares, but not as a source of this
+# output - a real UNDECLARED_INPUT under rejectUndeclaredInputs, aborting the
+# write before any data is written.
+SPARK_SUBMIT_EXTRA_CONF="spark.invaract.rejectUndeclaredInputs=true" \
+  run_demo_job_harness "demo/input/sample.csv" "$DF_FAIL_OUTPUT" "$DF_FAIL_REPORT" \
+  "demo/contracts/invaract_output_derived_from.yaml" "demo/regression-notify-derived-fail.properties"
+DF_FAIL_EXIT=$?
+
+DF_FAIL_STATUS="$(report_field "$DF_FAIL_REPORT" status)"
+
+[ "$DF_FAIL_EXIT" != "0" ] && ec_ok=true || ec_ok=false
+check "spark-submit exits non-zero (got $DF_FAIL_EXIT)" "$ec_ok"
+
+[ "$DF_FAIL_STATUS" = "FAIL" ] && st_ok=true || st_ok=false
+check "report status is FAIL (got '$DF_FAIL_STATUS')" "$st_ok"
+
+if grep -q "UNDECLARED_INPUT" "$DF_FAIL_REPORT" 2>/dev/null; then
+  df_violation_ok=true
+else
+  df_violation_ok=false
+fi
+check "report identifies the UNDECLARED_INPUT violation" "$df_violation_ok"
+
+if [ ! -e "$DF_FAIL_OUTPUT" ]; then
+  df_no_output_ok=true
+else
+  df_no_output_ok=false
+fi
+check "no output was written at $DF_FAIL_OUTPUT (write was actually aborted)" "$df_no_output_ok"
+
+if grep -q '"eventType": "CONTRACT_VALIDATION"' "$DF_FAIL_EVENTS" 2>/dev/null \
+  && grep -q '"status": "FAILED"' "$DF_FAIL_EVENTS" 2>/dev/null \
+  && grep -q 'UNDECLARED_INPUT' "$DF_FAIL_EVENTS" 2>/dev/null; then
+  df_fail_event_ok=true
+else
+  df_fail_event_ok=false
+fi
+check "a FAILED ContractValidationEvent carrying UNDECLARED_INPUT was published to $DF_FAIL_EVENTS before the write was aborted" "$df_fail_event_ok"
+
+if grep -q '"eventType": "WRITE"' "$DF_FAIL_EVENTS" 2>/dev/null; then
+  df_fail_write_event_ok=false
+else
+  df_fail_write_event_ok=true
+fi
+check "no WriteEvent was published to $DF_FAIL_EVENTS (the write never executed)" "$df_fail_write_event_ok"
+
 # --- Summary ---------------------------------------------------------------
 echo ""
 echo "======================================"
 if [ "$FAILURES" -eq 0 ]; then
-  echo -e "${GREEN}✓ Contract regression pack passed (6/6 cases behaved as contracted)${NC}"
+  echo -e "${GREEN}✓ Contract regression pack passed (10/10 cases behaved as contracted)${NC}"
   exit 0
 else
   echo -e "${RED}✗ Contract regression pack failed ($FAILURES assertion(s) did not hold)${NC}"
-  echo "See $PASS_REPORT, $FAIL_REPORT, $DQ_PASS_REPORT, $DQ_FAIL_REPORT, $ROLE_PASS_REPORT, and $ROLE_FAIL_REPORT for full detail."
+  echo "See $PASS_REPORT, $FAIL_REPORT, $DQ_PASS_REPORT, $DQ_FAIL_REPORT, $ROLE_PASS_REPORT, $ROLE_FAIL_REPORT,"
+  echo "$CK_PASS_REPORT, $CK_FAIL_REPORT, $DF_PASS_REPORT, and $DF_FAIL_REPORT for full detail."
   exit 1
 fi
