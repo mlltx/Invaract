@@ -103,6 +103,16 @@ dependencyOverrides ++= Seq(
   // SnappyInputStream has no upper bound on the declared chunk length,
   // so a crafted input can force an oversized heap allocation.
   "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
+  // protobuf-java's parser has no recursion limit when skipping nested
+  // unknown fields/groups (and in Any/MessageSet handling), so a crafted
+  // message causes a StackOverflowError (DoS). Fixed in 3.25.5 (also 4.27.5
+  // / 4.28.2). 3.19.6 is only the fix for the older CVE-2022-3509/3510 and
+  // is NOT past this fix floor. Resolved version is whatever wins eviction
+  // over the tink (Spark) / hive-metastore (2.5.0, already evicted) edges,
+  // confirmed via `sbt Test/dependencyTree`. Stays on the 3.x line, so no
+  // package/groupId change like Hive 4.x's or Jackson 3.x's.
+  "com.google.protobuf" % "protobuf-java" % "3.25.5",
   // 2.15.2 -> 2.18.8 (jackson-core/databind/annotations and
   // jackson-module-scala, moved together - see spark-adapter/build.sbt's
   // comment for the full detail, including why these four have to move

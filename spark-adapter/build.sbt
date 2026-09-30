@@ -680,6 +680,16 @@ dependencyOverrides ++= Seq(
   // length, so a crafted input can force an inappropriately large heap
   // allocation (OutOfMemoryError DoS).
   "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
+  // protobuf-java's parser has no recursion limit when skipping nested
+  // unknown fields/groups (and in Any/MessageSet handling), so a crafted
+  // message causes a StackOverflowError (DoS). Fixed in 3.25.5 (also 4.27.5
+  // / 4.28.2). 3.19.6 is only the fix for the older CVE-2022-3509/3510 and
+  // is NOT past this fix floor. Resolved version is whatever wins eviction
+  // over the tink (Spark) / hive-metastore (2.5.0, already evicted) edges,
+  // confirmed via `sbt Test/dependencyTree`. Stays on the 3.x line, so no
+  // package/groupId change like Hive 4.x's or Jackson 3.x's.
+  "com.google.protobuf" % "protobuf-java" % "3.25.5",
   // log4j-core/log4j-api/log4j-1.2-api/log4j-slf4j2-impl pinned to a
   // single consistent version, 2.20.0 -> 2.25.5 - the same "move
   // together" discipline as Netty/Jackson above, since these four ship

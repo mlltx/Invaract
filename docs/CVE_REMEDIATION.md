@@ -378,7 +378,7 @@ never by inspecting the diff or trusting the previous fix's success.
 |---|---|---|---|---|
 | `org.apache.avro:avro` (already fixed, unaffected by this batch) | — | — | — | — |
 | `org.codehaus.jackson:jackson-mapper-asl` (XXE, #34) | `spark-adapter` | already excluded | no change needed | CVE unspecified — same artifact already excluded entirely in the critical-alert pass |
-| `com.google.protobuf:protobuf-java` (#205/#131/#52) | all three | already 3.19.6 (fixed) | no change needed | CVE-2024-7254 — vulnerable `2.5.0` node present but evicted, confirmed via `dependencyTree` |
+| `com.google.protobuf:protobuf-java` (#205/#131/#52) | all three | 3.19.6 | 3.25.5 (see §7g — this row originally recorded "already fixed", which was wrong) | CVE-2024-7254 |
 | `commons-io:commons-io` (#206/#132/#53) | all three | already 2.16.1 (fixed) | no change needed | CVE-2024-47554 (fixed 2.14.0) — same eviction story |
 | `org.apache.ivy:ivy` (#191/#117/#38) | all three | 2.5.1 | 2.5.2 | CVE-2022-46751 (XXE) |
 | `io.netty:*` (16 artifacts, #223/#149/#73, #208/#134/#57, + more) | all three | 4.1.96.Final | 4.1.132.Final | CVE-2025-24970 (SslHandler), CVE-2026-33871 (HTTP/2 CONTINUATION flood) |
@@ -810,6 +810,35 @@ newly added here and does change what `invaract-spark-runner.jar`
 bundles (compile-scope, like every other override in that module) — a
 full `./dev/test` run with real `spark-submit` confirmed `Status: PASS`
 and contract verification still passing after the rebuild.
+
+## 7g. Correction: protobuf-java 3.19.6 was never past CVE-2024-7254's fix floor
+
+§7a (and §7b/§7c, which repeat "already 3.19.6, fixed") recorded the
+`protobuf-java` alerts (#205/#131/#52, one per module) as needing no code
+change. That was wrong: `3.19.6` is the fix for the *older*
+CVE-2022-3509/3510, but CVE-2024-7254 (GHSA-735f-pc8j-v9w8 — the parser
+has no recursion limit when skipping nested unknown fields/groups or
+handling `Any`/`MessageSet`, so a crafted message causes a
+`StackOverflowError`) is only fixed in `3.25.5` (also `4.27.5`/`4.28.2`).
+The `2.5.0` node being evicted (by `hive-metastore`'s edge) was true, but
+the winner, `3.19.6`, is itself below the floor.
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `com.google.protobuf:protobuf-java` | all three | 3.19.6 (via `tink` from Spark, and `hive-metastore`) | 3.25.5 | CVE-2024-7254 |
+
+Fixed with a `dependencyOverrides` entry in `spark-adapter`, `plugin` and
+`runner`, staying on the 3.x line (no package or groupId change, so none
+of the Hive/Thrift/Derby-style repackaging risk). Confirmed via
+`show Test/dependencyClasspath` that all three modules resolve
+`protobuf-java-3.25.5.jar`. Verification: `spark-adapter`'s full suite
+(893/893), `plugin`'s (5/5), `./dev/test` (PASS, Spark 3.5.7, contract
+verification PASSED) and `./dev/regression` (10/10). `mimaReportBinaryIssues`
+was not needed: the diff is 100% `build.sbt`, no `.scala` touched.
+
+Lesson: "already fixed" for a package with several CVEs must be checked
+against *each* advisory's fix floor, not just the version that fixed the
+first one seen.
 
 ## 8. Next steps checklist
 
