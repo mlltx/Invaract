@@ -155,4 +155,56 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     assert(results.find(_.dataset == "calendar").get.verdict == RoleConformanceVerdict.Conforms)
     assert(RoleConsistencyVerifier.violations(results).isEmpty)
   }
+
+  // --- Qualifiers are scopes, not locations: aliased / disambiguated reads --
+  //
+  // A lineage `ColumnRef.qualifier` is the scope Spark reports for a Read - its explicit alias, or the
+  // "<location>#<n>" a repeated unaliased occurrence is disambiguated to - not the location itself. The plan's
+  // own Reads say which location each scope stands for.
+
+  private def aliasedRead(location: String, alias: String) = Read(DatasetRef(location), alias = Some(alias))
+
+  test("a CONTROL input read under an alias whose column reaches an output column is still Contradicts") {
+    val contract = contractWith(List(dataset("calendar", "raw.calendar", Some(DatasetType.Control))))
+    val plan = Write(DatasetRef("gold.out"), project(aliasedRead("raw.calendar", "c"), "id", col("id", Some("c"))))
+
+    val results = RoleConsistencyVerifier.verify(contract, plan)
+    assert(results.map(r => r.dataset -> r.verdict) == List("calendar" -> RoleConformanceVerdict.Contradicts))
+  }
+
+  test("a CONTROL input read as a disambiguated self-join occurrence (location#n) whose column reaches the output is Contradicts") {
+    val contract = contractWith(List(dataset("calendar", "raw.calendar", Some(DatasetType.Control))))
+    val join = Join(
+      aliasedRead("raw.calendar", "raw.calendar#0"),
+      aliasedRead("raw.calendar", "raw.calendar#1"),
+      JoinType.Inner,
+      Some(Comparison("=", col("gate", Some("raw.calendar#0")), col("gate", Some("raw.calendar#1"))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(join, "id", col("gate", Some("raw.calendar#0"))))
+
+    val results = RoleConsistencyVerifier.verify(contract, plan)
+    assert(results.map(r => r.dataset -> r.verdict) == List("calendar" -> RoleConformanceVerdict.Contradicts))
+  }
+
+  test("an aliased CONTROL input referenced only in a join condition Conforms") {
+    val contract = contractWith(List(dataset("calendar", "raw.calendar", Some(DatasetType.Control)), dataset("data", "raw.data", None)))
+    val join = Join(
+      aliasedRead("raw.data", "d"),
+      aliasedRead("raw.calendar", "c"),
+      JoinType.Inner,
+      Some(Comparison("=", col("id", Some("d")), col("gate", Some("c"))))
+    )
+    val plan = Write(DatasetRef("gold.out"), project(join, "id", col("id", Some("d"))))
+
+    val results = RoleConsistencyVerifier.verify(contract, plan)
+    assert(results.map(r => r.dataset -> r.verdict) == List("calendar" -> RoleConformanceVerdict.Conforms))
+  }
+
+  test("an alias shared by reads of DIFFERENT locations is ambiguous and resolves to neither (never a guessed Contradicts)") {
+    val contract = contractWith(List(dataset("calendar", "raw.calendar", Some(DatasetType.Control))))
+    val union = Union(List(aliasedRead("raw.calendar", "t"), aliasedRead("raw.other", "t")))
+    val plan = Write(DatasetRef("gold.out"), project(union, "id", col("id", Some("t"))))
+
+    assert(RoleConsistencyVerifier.verify(contract, plan).isEmpty)
+  }
 }

@@ -3855,6 +3855,24 @@ first written: one field's value compared against *another field on the same row
       JSON example was also missing `roleConformance` — a pre-existing
       gap from Phase 4 above, fixed in the same change since both fields'
       examples live in the same file) updated to match.
+- [x] **Follow-up: every input-side verifier audited through resolved
+      checkpoints** (`CheckpointRegistry`): checkpointed jobs are now verified
+      as if the checkpoint weren't there - input existence/schema/catalog,
+      plan-shape rules (in both directions: hidden violations caught, false
+      violations gone), role consistency, static data quality, sensitivity
+      lineage, dry-run inference and fingerprints - a deliberate behavior
+      change (a job that passed only because a checkpoint hid a violation is
+      now rejected), pinned per verifier by `CheckpointVerificationAuditSpec`
+      and documented in docs/SPARK_ADAPTER.md and docs-site's "Violation Types
+      -> Checkpoints". The audit also fixed a defect independent of
+      checkpoints: lineage qualifiers (an alias, or `location#n` for a
+      repeated read) were compared to declared locations directly, so
+      role-consistency, sensitivity tags and inference usage silently missed
+      aliased/self-joined inputs (`PlanRuleVerifier.locationResolver`;
+      `SensitivityLineage.propagate(plan, contract)` overload). Still
+      unresolved, with reasons: ambiguous origins (a join-with-lookup then
+      `select` of one side's columns, resolvable by aliasing), unobserved/
+      evicted checkpoints, Delta `MERGE` sources.
 
 ---
 

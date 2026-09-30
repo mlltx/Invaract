@@ -498,7 +498,7 @@ object DemoJobHarness {
     // being omitted entirely - a report should have the same shape whether
     // or not tags happen to be present.
     val enriched = contract match {
-      case Some(c) => SensitivityLineage.propagate(traced, c)
+      case Some(c) => SensitivityLineage.propagate(result.plan, c) // plan-aware: resolves aliased reads too
       case None    => traced.map(cl => SensitiveColumnLineage(cl, Set.empty))
     }
     val lineage = enriched.map { scl =>

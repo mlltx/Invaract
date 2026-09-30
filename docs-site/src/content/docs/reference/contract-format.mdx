@@ -138,7 +138,8 @@ it — directly, or through however many computation steps sit in between — vi
 `spark-adapter`'s `SensitivityLineage`, surfaced in `demo/output/report.json`'s
 `transformationIR.lineage[].sensitivityTags` (see
 [Concepts → The Transformation IR](/concepts/transformation-ir/)'s "Column-level
-lineage"). This is reporting, for a human or downstream tooling auditing a
+lineage"), including through an aliased read, a self-join, or a `.checkpoint()`
+in the middle of the job. This is reporting, for a human or downstream tooling auditing a
 transformation, not enforcement: a tagged field never causes `StructuralVerifier` to
 reject a write on its own — there is no "forbid this tag from reaching that output"
 rule type yet (see [What isn't part of the contract format](#what-isnt-part-of-the-contract-format)

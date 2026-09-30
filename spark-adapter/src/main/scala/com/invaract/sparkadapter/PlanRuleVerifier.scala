@@ -82,6 +82,33 @@ private[sparkadapter] object PlanRuleVerifier {
     (filterRefs ++ joinRefs).toSet
   }
 
+  /** Turns a lineage/condition `ColumnRef.qualifier` into the location of the
+    * `Read` it stands for, using `plan`'s own `Read` nodes.
+    *
+    * A qualifier is the *scope* Spark reports for a read - its explicit alias
+    * (`df.as("c")`), or the `"<location>#<n>"` an unaliased read of a location
+    * that occurs more than once is disambiguated to - not necessarily the
+    * location itself, which is what a contract input declares. Matching a
+    * declared location against a raw qualifier therefore silently misses every
+    * aliased or repeated read: `RoleConsistencyVerifier`, `SensitivityLineage`
+    * and `ContractInference`'s usage observation all need this resolution
+    * before comparing, and used not to do it.
+    *
+    * A scope is only resolved when it stands for exactly ONE location. An alias
+    * shared by reads of different locations (two sides of a union both aliased
+    * `t`) says nothing about which one a column came from, so it is left as it
+    * is - matching nothing rather than guessing, since a wrong match here would
+    * be a wrongly *blocking* role verdict or a wrongly tagged column.
+    */
+  private[sparkadapter] def locationResolver(plan: Plan): String => String = {
+    val locationByScope: Map[String, String] = StructuralVerifier.collectReads(plan)
+      .map(r => r.alias.getOrElse(r.dataset.location) -> r.dataset.location)
+      .distinct
+      .groupBy(_._1)
+      .collect { case (scope, occurrences) if occurrences.size == 1 => scope -> occurrences.head._2 }
+    qualifier => locationByScope.getOrElse(qualifier, qualifier)
+  }
+
   /** Satisfied when at least one `Aggregate` node's `groupBy` resolves (via
     * `Expr.references`) to a column-name set that's a superset of the
     * declared columns — grouping by more than required (e.g. an extra

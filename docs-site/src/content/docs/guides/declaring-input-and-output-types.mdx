@@ -179,6 +179,12 @@ pass/fail, so an unproven contradiction is never mistaken for a confirmed one:
 An input with no declared `type`, or never observed at all in the plan (already a
 `MISSING_INPUT` violation's own job), produces no role-consistency result at all.
 
+An input is recognized however the job reads it: under an alias (`df.as("calendar")`), joined
+with itself, or upstream of a `.checkpoint()` (see
+[Violation Types → Checkpoints](/reference/violation-types/#checkpoints)). Only an alias
+shared by reads of *different* datasets (both sides of a union aliased `t`) is left
+unresolved, since it doesn't say which one a column came from.
+
 **On a published `ContractValidationEvent`**, if you've also set up [a notification
 sink](/guides/notification-sinks/) — every entry, all three verdicts, on both a PASSED and
 a FAILED check:
