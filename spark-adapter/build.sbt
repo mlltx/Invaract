@@ -680,6 +680,26 @@ dependencyOverrides ++= Seq(
   // length, so a crafted input can force an inappropriately large heap
   // allocation (OutOfMemoryError DoS).
   "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 16.0.1 -> 33.4.8-jre. Three Guava CVEs, all on the same jar, all fixed
+  // by this one bump: CVE-2018-10237 (GHSA-w787-jrh4-2xh8, unbounded
+  // memory allocation when deserializing AtomicDoubleArray/CompoundOrdering,
+  // fixed 24.1.1), CVE-2020-8908 (GHSA-c2vm-c9v4-fj6q,
+  // Files.createTempDir() makes world-readable temp dirs, fixed 30.0) and
+  // CVE-2023-2976 (GHSA-7g45-4rm6-3mm3, same API, fixed 32.0.0). Previously
+  // an accepted risk (docs/CVE_REMEDIATION.md 7b) on the theory that a
+  // passing suite couldn't prove a bump safe, because the only source is
+  // org.apache.curator:curator-client:2.13.0 (Spark's ZooKeeper
+  // standalone-recovery mode, never loaded under local[*]). That premise
+  // was checked rather than trusted (see 7h): curator-client-2.13.0.jar
+  // bundles its OWN relocated Guava (org/apache/curator/shaded/com/google/
+  // common, 1690 classes) and Curator's code calls that copy, so the
+  // unshaded com.google.guava:guava:16.0.1 edge in its POM is not what
+  // Curator executes; a javap sweep of all three Curator jars found every
+  // remaining unshaded com/google/common reference resolves in 33.4.8-jre.
+  // HiveConnectorSpec (the one place Hive 2.3.9, which also uses Guava, is
+  // run for real) passes unchanged. Guava 33 adds failureaccess and
+  // listenablefuture as transitive deps; nothing else in the tree moves.
+  "com.google.guava" % "guava" % "33.4.8-jre",
   // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
   // protobuf-java's parser has no recursion limit when skipping nested
   // unknown fields/groups (and in Any/MessageSet handling), so a crafted
@@ -854,40 +874,6 @@ excludeDependencies ++= Seq(
   // fork's classes are on the classpath.
   ExclusionRule("org.lz4", "lz4-java")
 )
-
-// NOT overridden - com.google.guava:guava:16.0.1 (CVE-2018-10237,
-// GHSA-w787-jrh4-2xh8, unbounded memory allocation via
-// AtomicDoubleArray/CompoundOrdering serialization, fixed 24.1.1+).
-// Traced to its actual source, not assumed: `sbt Test/dependencyTree`
-// shows it arrives via org.apache.curator:curator-client:2.13.0, which
-// backs Spark's ZooKeeper-based standalone-cluster recovery mode
-// (`spark.deploy.recoveryMode=ZOOKEEPER`) - infrastructure this module
-// never configures or exercises, since CLAUDE.md's Execution Model has
-// every test and the demo harness run against a `local[*]` master, which
-// never touches Curator/cluster-recovery code at all. That reachability
-// gap is also why a full-suite pass here couldn't actually prove a bump
-// safe the way it did for Netty/Avro/ZooKeeper: if Curator's own
-// compiled code (built against Guava 16.0.1's decade-old API surface)
-// never gets loaded under local[*], a version conflict wouldn't surface
-// as a test failure regardless of whether it's really compatible - a
-// green run would be confirming nothing. Given that and the CVE's
-// Moderate severity (the lowest-urgency tier in
-// docs/CVE_REMEDIATION.md's bucket list), left as an accepted risk
-// rather than pushed through on an assumption a passing suite can't
-// back up. Re-evaluate if this module ever needs to exercise Spark's
-// cluster-recovery code paths for real.
-//
-// A second Guava CVE found in a later alert batch, same accepted-risk
-// reasoning exactly (same jar, same sole source, same untestable
-// reachability gap): CVE-2020-8908 (GHSA-c2vm-c9v4-fj6q,
-// Files.createTempDir() creates world-readable (mode 0755) temp
-// directories on Unix, an information-disclosure risk to any other local
-// user), fixed 30.0+. Confirmed via `sbt Test/dependencyTree` that this
-// module's own tests never call Files.createTempDir() themselves (all of
-// this module's temp-directory handling goes through Java's own
-// java.nio.file.Files.createTempDirectory, a different, unrelated API) -
-// so even setting reachability aside, there's no first-party call site
-// here that could be affected either way.
 
 // Real Maven-resolvable dependencies, not unmanagedJars pointing at a
 // sibling module's assembled jar (the pattern runner/plugin still use for

@@ -464,7 +464,7 @@ to what had already been proven compatible.
 | `org.codehaus.jackson:jackson-mapper-asl` (XXE variant) | `spark-adapter` | already excluded | no change needed | — |
 | `com.google.protobuf:protobuf-java` | all three | already 3.19.6 | no change needed | — |
 | `commons-lang:commons-lang` (2.x — not itself alerted, found while researching the commons-lang3 CVE) | `spark-adapter` | 2.6 | **not changed** — accepted risk | CVE-2025-48924 also affects this pre-rename 2.x line |
-| `com.google.guava:guava` | all three | 16.0.1 | **not changed** — accepted risk | CVE-2018-10237 |
+| `com.google.guava:guava` | all three | 16.0.1 | 33.4.8-jre (see §7h — originally left as accepted risk, later reversed) | CVE-2018-10237 |
 
 **Two alerts, again, needed zero code change**: the `jackson-mapper-asl`
 alert this batch cites is a different CVE flavor (XXE) against the exact
@@ -839,6 +839,43 @@ was not needed: the diff is 100% `build.sbt`, no `.scala` touched.
 Lesson: "already fixed" for a package with several CVEs must be checked
 against *each* advisory's fix floor, not just the version that fixed the
 first one seen.
+
+## 7h. Reversal: Guava's "accepted risk" rested on an unchecked premise
+
+§7b/§7f left `com.google.guava:guava:16.0.1` (CVE-2018-10237, alert #199 and
+its per-module twins; also CVE-2020-8908 and CVE-2023-2976) as an accepted
+risk, on the argument that its only source, `curator-client:2.13.0`, is
+never loaded under `local[*]`, so a green suite couldn't prove a bump safe.
+That premise was never checked against the jar itself. Checking it:
+
+- `unzip -l curator-client-2.13.0.jar` shows 1,690 classes under
+  `org/apache/curator/shaded/com/google/common` — Curator **bundles its own
+  relocated Guava** and calls that copy. The unshaded
+  `com.google.guava:guava:16.0.1` edge in its POM is not what Curator
+  executes.
+- A `javap -c` sweep of all three Curator jars (`client`/`framework`/
+  `recipes`) extracted every remaining unshaded `com/google/common`
+  reference (19) and checked each against Guava `33.4.8-jre`: every real one
+  resolves. The only misses are `TypeToken` members whose descriptors are
+  themselves relocated (`org/apache/curator/shaded/...`) — internal to the
+  shaded copy and unresolvable against 16.0.1 as well, so not a regression.
+
+| Artifact | Module(s) | Before | After | CVE(s) |
+|---|---|---|---|---|
+| `com.google.guava:guava` | all three | 16.0.1 | 33.4.8-jre | CVE-2018-10237 (fixed 24.1.1), CVE-2020-8908 (30.0), CVE-2023-2976 (32.0.0) |
+
+One bump closes all three Guava CVEs; `failureaccess`/`listenablefuture`
+arrive as new transitive deps, nothing else in the tree moves. The other
+real consumer, Hive 2.3.9, is exercised for real: `HiveConnectorSpec`
+passes 53/53. Full verification: `spark-adapter` 893/893, `plugin` 5/5,
+`./dev/test` PASS (contract verification PASSED), `./dev/regression`
+10/10, rebuilt `invaract-spark-runner.jar` confirmed to bundle Guava 33's
+`failureaccess`. Diff is 100% `build.sbt`, so no MiMa or mutation run.
+
+Lesson: an accepted-risk entry justified by "unreachable, therefore
+unverifiable" should say what was actually inspected. Looking at the
+vulnerable jar's real consumer (here, a one-line `unzip -l`) turned an
+unverifiable claim into a verified one.
 
 ## 8. Next steps checklist
 
