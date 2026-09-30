@@ -16,7 +16,8 @@ would without this guide.
 <Aside type="note" title="Two events, two moments">
 `ContractValidationEvent` fires when `ContractEnforcementRule` checks a write, before
 Spark executes anything — a FAILED event means the write never ran. `WriteEvent` fires
-later, only once Spark reports a write actually completed. See
+later, only once Spark reports a write actually completed, and describes the write itself
+(location, format, schema, metrics) — a `.checkpoint()` earlier in the job doesn't affect it. See
 [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for why these are
 two separate mechanisms.
 </Aside>
@@ -123,8 +124,8 @@ declared input read before a checkpoint is therefore simply *read*: no violation
 `unverifiableInputs` entry. An entry appears only when a declared input has no matching read
 in the checked plan **and** the plan still contains a boundary Invaract could not resolve
 — a checkpoint created before the enforcement rule was installed, one whose origin was
-evicted from Invaract's bounded memory of recent plans, one whose origin is ambiguous, or a
-cached relation. An unrelated checkpoint elsewhere in the plan or job never excuses a
+evicted from Invaract's bounded memory of recent plans, one whose origin is ambiguous, a
+cached relation, or a Delta `MERGE` whose source is the checkpointed Dataset. An unrelated checkpoint elsewhere in the plan or job never excuses a
 genuinely missing input (a wrong location, a typo, a forgotten read): that still fails as
 `MISSING_INPUT`. Each entry names the input
 (`inputName`/`inputLocation`) and the boundary (`unknownNodeTypes`, e.g.

@@ -17,7 +17,29 @@ import java.nio.file.{Files, Path}
   * checkpointed Dataset's plan (its `LogicalRDD` keeps the origin's output
   * attribute ids).
   */
+object CheckpointRegistrySpec {
+  import org.apache.spark.sql.catalyst.expressions.Attribute
+  import org.apache.spark.sql.catalyst.plans.QueryPlan
+  import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan}
+
+  /** A command-like node holding its query as an inner child, not a child (the shape of
+    * `SaveIntoDataSourceCommand`/a CTAS's outer command).
+    */
+  case class QueryHolder(query: LogicalPlan) extends LeafNode {
+    override def output: Seq[Attribute] = Nil
+    override def innerChildren: Seq[QueryPlan[_]] = Seq(query)
+  }
+
+  /** Same, but `makeCopy` cannot rebuild it from `productIterator` (a second parameter list). */
+  case class UncopyableHolder(query: LogicalPlan)(val extra: Int) extends LeafNode {
+    override def output: Seq[Attribute] = Nil
+    override def innerChildren: Seq[QueryPlan[_]] = Seq(query)
+  }
+}
+
 class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
+  import CheckpointRegistrySpec._
+
   private var spark: SparkSession = _
   private var dir: Path = _
   private var ordersPath: String = _
@@ -165,6 +187,17 @@ class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(viaSecond.diagnostics.exists(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType), viaSecond.diagnostics.toString)
   }
 
+  test("a checkpoint is bound at FIRST sight: seeing its bare leaf again after a later checkpoint reused its ids does not re-snapshot") {
+    val registry = new CheckpointRegistry
+    val first = checkpointed(registry, joinedSelect())
+    val second = see(registry, see(registry, first.filter(col("order_id") > 0)).checkpoint(true)) // same ids as `first`, records the filter
+    see(registry, first) // the rule sees `first`'s bare leaf again; the newest plan under its ids is now the filter's
+
+    def hasFilter(p: ir.Plan): Boolean = p.isInstanceOf[ir.Filter] || p.children.exists(hasFilter)
+    assert(!hasFilter(translate(registry, first).plan), "first was checkpointed from the unfiltered plan")
+    assert(hasFilter(translate(registry, second).plan))
+  }
+
   test("two plans with the same output columns reading DIFFERENT sources make the origin ambiguous - left unresolved, never guessed") {
     val registry = new CheckpointRegistry
     val orders = see(registry, read(ordersPath))
@@ -252,6 +285,216 @@ class CheckpointRegistrySpec extends AnyFunSuite with BeforeAndAfterAll {
     registry.record(org.apache.spark.sql.catalyst.plans.logical.LocalRelation(Seq.empty), ir.UnknownPlan("x", "X"))
 
     assert(readsOf(translate(registry, see(registry, df.checkpoint(true))).plan).size == 1)
+  }
+
+  // ---- self-joins: Spark gives every extra reference to a checkpointed Dataset a
+  // `newInstance()` copy of its LogicalRDD - fresh attribute ids, the SAME `rdd` ----
+
+  private def selfJoin(df: DataFrame): DataFrame = df.as("l").join(df.as("r"), col("l.order_id") === col("r.order_id"))
+
+  private def fingerprintOf(registry: CheckpointRegistry, df: DataFrame) =
+    TransformationFingerprinter.fingerprint(ir.Write(ir.DatasetRef("out"), translate(registry, df).plan), None)
+
+  private def readCount(plan: ir.Plan): Int = StructuralVerifier.collectReads(plan).size
+
+  private def logicalRelationIds(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Seq[Long] =
+    plan.collect { case l: org.apache.spark.sql.execution.datasources.LogicalRelation => l.output.map(_.exprId.id) }.flatten
+
+  test("a self-join of a checkpointed Dataset resolves BOTH sides to the real reads, with no unknown node") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, joinedSelect())
+    val ck = see(registry, origin.checkpoint(true)) // 2 reads each side
+    val joined = see(registry, selfJoin(ck))
+
+    val substitution = registry.substitute(joined.queryExecution.analyzed)
+    val result = translate(registry, joined)
+
+    assert(readCount(result.plan) == 4, ir.PlanPrinter.render(result.plan))
+    assert(unknownsOf(result.plan).isEmpty, ir.PlanPrinter.render(result.plan))
+    // Whatever the translator says about this join (it drops the `.as(...)` aliases over a
+    // multi-node origin) it says identically without a checkpoint; resolution adds nothing.
+    assert(substitution.diagnostics.isEmpty, substitution.diagnostics.toString)
+    assert(result.diagnostics == translate(registry, selfJoin(origin)).diagnostics)
+    // Each side's reads are separate occurrences (distinct attribute ids), like Spark's own dedup.
+    val ids = logicalRelationIds(substitution.plan)
+    assert(ids.size == 2 * 3 + 2 * 3 && ids.distinct.size == ids.size, ids.toString)
+  }
+
+  test("FINGERPRINT: a self-join of a resolved checkpoint fingerprints identically to the same self-join with no checkpoint") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, joinedSelect())
+    val viaCheckpoint = see(registry, selfJoin(see(registry, origin.checkpoint(true))))
+    val direct = see(registry, selfJoin(origin))
+
+    assert(fingerprintOf(registry, viaCheckpoint).overall == fingerprintOf(registry, direct).overall)
+    assert(fingerprintOf(registry, viaCheckpoint).outputs == fingerprintOf(registry, direct).outputs)
+    assert(fingerprintOf(registry, viaCheckpoint).overall == fingerprintOf(registry, viaCheckpoint).overall, "deterministic across repeats")
+  }
+
+  test("FINGERPRINT: an un-aliased self-join (USING) of a checkpoint matches its un-checkpointed twin, and still tells the two sides apart") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, joinedSelect())
+    val ck = see(registry, origin.checkpoint(true))
+    def usingJoin(df: DataFrame) = see(registry, df.join(df, Seq("order_id")))
+
+    assert(fingerprintOf(registry, usingJoin(ck)).overall == fingerprintOf(registry, usingJoin(origin)).overall)
+    // left vs right side's `name` must remain distinguishable, as in the twin.
+    val left = see(registry, ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id")).select(col("l.name")))
+    val right = see(registry, ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id")).select(col("r.name")))
+    assert(fingerprintOf(registry, left).overall != fingerprintOf(registry, right).overall)
+  }
+
+  test("FINGERPRINT: a self-join of a checkpoint whose origin computes columns and sits under an alias matches its twin") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, read(ordersPath).withColumn("tier", when(col("amount") > 100, "big").otherwise("small")).as("o"))
+    val ck = see(registry, origin.checkpoint(true))
+    def both(df: DataFrame) = see(registry, selfJoin(df).select(col("l.tier"), col("r.tier")))
+
+    assert(fingerprintOf(registry, both(ck)).overall == fingerprintOf(registry, both(origin)).overall)
+    assert(readCount(translate(registry, both(ck)).plan) == 2)
+  }
+
+  test("a three-way self-join of a checkpoint resolves all three sides, and fingerprints like its un-checkpointed twin") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, joinedSelect())
+    val ck = see(registry, origin.checkpoint(true))
+    def threeWay(df: DataFrame) =
+      see(registry, df.as("a").join(df.as("b"), col("a.order_id") === col("b.order_id")).join(df.as("c"), col("a.order_id") === col("c.order_id")))
+
+    val result = translate(registry, threeWay(ck))
+
+    assert(readCount(result.plan) == 6, ir.PlanPrinter.render(result.plan))
+    assert(unknownsOf(result.plan).isEmpty)
+    assert(fingerprintOf(registry, threeWay(ck)).overall == fingerprintOf(registry, threeWay(origin)).overall)
+  }
+
+  test("a self-join of a checkpoint OF a checkpoint resolves through both, and fingerprints like its un-checkpointed twin") {
+    val registry = new CheckpointRegistry
+    val origin = see(registry, joinedSelect())
+    val first = see(registry, origin.checkpoint(true))
+    val second = checkpointed(registry, first.select(col("name"), col("order_id")))
+    val plain = origin.select(col("name"), col("order_id"))
+
+    val result = translate(registry, see(registry, selfJoin(second)))
+
+    assert(readCount(result.plan) == 4, ir.PlanPrinter.render(result.plan))
+    assert(unknownsOf(result.plan).isEmpty)
+    assert(fingerprintOf(registry, see(registry, selfJoin(second))).overall == fingerprintOf(registry, see(registry, selfJoin(plain))).overall)
+  }
+
+  test("a self-join where one side is the checkpoint itself and the other a filter of it resolves both, without cross-contaminating them") {
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect())
+    val joined = see(registry, ck.as("l").join(ck.filter(col("order_id") > 1).as("r"), col("l.order_id") === col("r.order_id")))
+
+    val result = translate(registry, joined)
+
+    assert(readCount(result.plan) == 4 && unknownsOf(result.plan).isEmpty, ir.PlanPrinter.render(result.plan))
+    def filters(p: ir.Plan): Int = (if (p.isInstanceOf[ir.Filter]) 1 else 0) + p.children.map(filters).sum
+    assert(filters(result.plan) == 1, "only the right side's own filter, nothing leaked from the copy")
+  }
+
+  test("a self-join of an AMBIGUOUS checkpoint refuses on both sides rather than guessing") {
+    val registry = new CheckpointRegistry
+    val orders = see(registry, read(ordersPath))
+    val customers = read(customersPath)
+    see(registry, orders.join(customers, "customer_id").select(orders("order_id"), orders("customer_id"), orders("amount")))
+    val ck = see(registry, orders.checkpoint(true))
+
+    val result = translate(registry, see(registry, selfJoin(ck)))
+
+    assert(unknownsOf(result.plan).map(_.sourceType) == List("LogicalRDD", "LogicalRDD"))
+    assert(readCount(result.plan) == 0)
+  }
+
+  test("a leaf sharing a checkpoint's rdd but NOT its column names/types is never positionally mapped onto the origin") {
+    import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
+    import org.apache.spark.sql.execution.LogicalRDD
+    import org.apache.spark.sql.types.StringType
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect()) // (order_id: int, name: string)
+    val leaf = ck.queryExecution.analyzed.collectFirst { case l: LogicalRDD => l }.get
+    def foreign(attrs: Attribute*) = LogicalRDD(attrs, leaf.rdd)(spark)
+
+    val renamed = foreign(leaf.output.map(a => a.withName(a.name + "_x")): _*)
+    val retyped = foreign(AttributeReference("order_id", StringType)(), AttributeReference("name", StringType)())
+    val shorter = foreign(leaf.output.head)
+    val same = foreign(leaf.output.map(_.newInstance()): _*)
+
+    Seq(renamed, retyped, shorter).foreach(l => assert(registry.substitute(l).plan == l, l.toString))
+    assert(readsOf(SparkPlanAdapter.translate(registry.substitute(same).plan).plan).size == 2, "same shape, fresh ids: a genuine copy")
+  }
+
+  test("a shape-ambiguous checkpoint referenced several times in one plan discloses its assumption ONCE") {
+    val registry = new CheckpointRegistry
+    val base = see(registry, read(ordersPath))
+    val filtered = see(registry, base.filter(col("amount") > 0)) // same ids, same sources: shape-ambiguous
+    val ck = see(registry, filtered.checkpoint(true))
+
+    val result = translate(registry, see(registry, ck.as("a").join(ck.as("b"), col("a.order_id") === col("b.order_id")).join(ck.as("c"), col("a.order_id") === col("c.order_id"))))
+
+    assert(readCount(result.plan) == 3 && unknownsOf(result.plan).isEmpty, ir.PlanPrinter.render(result.plan))
+    assert(result.diagnostics.count(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType) == 1, result.diagnostics.toString)
+  }
+
+  // ---- commands that carry their query as an inner child, not a child ----
+
+  private def analyzedPlan(df: DataFrame) = df.queryExecution.analyzed
+  private def leaves(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan) =
+    plan.collect { case l: org.apache.spark.sql.execution.LogicalRDD => l }
+
+  test("a command holding its query as an inner child is rebuilt with the checkpoint in that query resolved") {
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect())
+
+    val result = registry.substitute(QueryHolder(analyzedPlan(ck))).plan
+
+    assert(result.isInstanceOf[QueryHolder])
+    val query = result.asInstanceOf[QueryHolder].query
+    assert(leaves(query).isEmpty, query.toString)
+    assert(readsOf(SparkPlanAdapter.translate(query).plan).size == 2)
+  }
+
+  test("a command whose inner query has nothing to resolve is returned untouched (the very same instance)") {
+    val registry = new CheckpointRegistry
+    val holder = QueryHolder(analyzedPlan(see(registry, read(ordersPath))))
+    assert(registry.substitute(holder).plan eq holder)
+  }
+
+  test("a command whose inner query holds an UNRESOLVABLE checkpoint is returned untouched too") {
+    val registry = new CheckpointRegistry
+    val holder = QueryHolder(analyzedPlan(see(registry, joinedSelect().checkpoint(true)))) // origin never seen
+    assert(registry.substitute(holder).plan eq holder)
+  }
+
+  test("a command that cannot be copied with a replaced query is left as it was - unresolved, never an exception") {
+    val registry = new CheckpointRegistry
+    val holder = UncopyableHolder(analyzedPlan(checkpointed(registry, joinedSelect())))(1)
+
+    val result = registry.substitute(holder)
+
+    assert(result.plan eq holder)
+    assert(leaves(holder.query).size == 1)
+  }
+
+  test("a self-join copy of a checkpoint inside a command's inner query is renewed like any other") {
+    val registry = new CheckpointRegistry
+    val ck = checkpointed(registry, joinedSelect())
+
+    val query = registry.substitute(QueryHolder(analyzedPlan(see(registry, selfJoin(ck))))).plan.asInstanceOf[QueryHolder].query
+
+    assert(readCount(SparkPlanAdapter.translate(query).plan) == 4)
+    val ids = logicalRelationIds(query)
+    assert(ids.distinct.size == ids.size, "each side's reads keep distinct attribute ids")
+  }
+
+  test("a self-join of a checkpoint the registry never saw CREATED stays opaque on both sides") {
+    val registry = new CheckpointRegistry
+    val ck = see(registry, joinedSelect()).checkpoint(true) // never shown to bind()
+
+    val result = translate(registry, selfJoin(ck))
+
+    assert(unknownsOf(result.plan).map(_.sourceType) == List("LogicalRDD", "LogicalRDD"))
   }
 
   test("FINGERPRINT: a plan through a resolved checkpoint fingerprints identically to the same plan with no checkpoint at all") {

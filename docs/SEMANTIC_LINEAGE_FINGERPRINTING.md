@@ -1287,7 +1287,10 @@ Catalyst plan with the plan it was made from — recorded synchronously, at the 
 Dataset was created, and matched by attribute id — *before* `SparkPlanAdapter.translate` runs. So
 `translated.plan` is structurally the plan the job would have had with no checkpoint at all, and the
 fingerprint computed from it is **identical to the un-checkpointed job's** — a checkpoint stops being
-something the fingerprint has to caveat. (Node-level correlation through the checkpoint's RDD, which an
+something the fingerprint has to caveat. That includes a self-join of a checkpointed Dataset: the
+copy Spark makes of the checkpoint (fresh attribute ids, same `rdd`) is resolved to a renewed copy of its
+origin with fresh ids, so the plan matches the un-checkpointed self-join's structure — and since
+`ColumnRef.id` is never hashed (§8), fingerprints match run to run. (Node-level correlation through the checkpoint's RDD, which an
 earlier iteration of this design concluded was infeasible, was never needed: the output attribute ids
 Spark preserves across `.checkpoint()` are the key.)
 

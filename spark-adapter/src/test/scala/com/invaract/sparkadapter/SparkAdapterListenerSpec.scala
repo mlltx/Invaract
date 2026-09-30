@@ -426,4 +426,67 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     val identifier = org.apache.spark.sql.connector.catalog.Identifier.of(Array("db"), "irrelevant")
     assert(SparkAdapterListener.icebergSnapshotIdOf(notATableCatalog, identifier).isEmpty)
   }
+
+  // ---- lastWrite across a .checkpoint(): the stashed-translation lookup ----
+
+  private def project(): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan =
+    spark.range(3).select("id").queryExecution.analyzed
+
+  test("translationFor: a plan the rule never stashed for is translated fresh, exactly as before") {
+    val plan = project()
+    assert(SparkAdapterListener.translationFor(plan) == SparkPlanAdapter.translate(plan))
+  }
+
+  test("translationFor: returns the stashed translation itself (not a fresh one) for the plan it was stashed on") {
+    val plan = project()
+    val stashed = TranslationResult(com.invaract.ir.UnknownPlan("stashed", "Stashed"), Nil)
+    SparkAdapterListener.stash(plan, stashed)
+    assert(SparkAdapterListener.translationFor(plan) eq stashed)
+  }
+
+  test("translationFor: a plan DERIVED from the stashed one (Catalyst copies tags onto it) is not given the stashed translation") {
+    val plan = project()
+    val stashed = TranslationResult(com.invaract.ir.UnknownPlan("stashed", "Stashed"), Nil)
+    SparkAdapterListener.stash(plan, stashed)
+    val derived = plan.makeCopy(plan.productIterator.map(_.asInstanceOf[AnyRef]).toArray)
+
+    assert(derived ne plan)
+    assert(derived.getTagValue(new org.apache.spark.sql.catalyst.trees.TreeNodeTag[Any]("invaract.stashedTranslation")).isDefined,
+      "precondition: Catalyst really did copy the tag onto the derived plan")
+    assert(SparkAdapterListener.translationFor(derived) == SparkPlanAdapter.translate(derived))
+  }
+
+  test("translationFor: stashing again for the same plan replaces the earlier translation") {
+    val plan = project()
+    val first = TranslationResult(com.invaract.ir.UnknownPlan("first", "First"), Nil)
+    val second = TranslationResult(com.invaract.ir.UnknownPlan("second", "Second"), Nil)
+    SparkAdapterListener.stash(plan, first)
+    SparkAdapterListener.stash(plan, second)
+    assert(SparkAdapterListener.translationFor(plan) eq second)
+  }
+
+  test("no rule installed: a write after a .checkpoint() publishes a correct WriteEvent, and lastWrite falls back to the opaque LogicalRDD it always was") {
+    val inputPath = scratchDir.resolve("listener_ckpt_in.parquet").toString
+    val outputPath = scratchDir.resolve("listener_ckpt_out.parquet").toString
+    spark.range(4).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(inputPath)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("listener_ckpt_dir").toString)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None)
+    spark.listenerManager.register(listener)
+    try {
+      spark.read.parquet(inputPath).select("id").checkpoint(true).write.mode("overwrite").parquet(outputPath)
+
+      val event = eventually(timeout(Span(5, Seconds))) {
+        sink.events.collectFirst { case e: WriteEvent if e.location.contains("listener_ckpt_out") => e }.getOrElse(fail("no WriteEvent yet"))
+      }
+      // The event describes the write itself: unaffected by what is upstream of it.
+      assert(event.schema.map(f => (f.name, f.dataType)) == List(("id", "long")))
+      assert(event.rowCount == Some(4L))
+      val translation = eventually(timeout(Span(5, Seconds))) {
+        listener.lastWrite.filter(_.plan.toString.contains("listener_ckpt_out")).getOrElse(fail("no lastWrite yet"))
+      }
+      assert(StructuralVerifier.collectUnknownPlans(translation.plan).map(_.sourceType) == List("LogicalRDD"))
+      assert(StructuralVerifier.collectReads(translation.plan).isEmpty)
+    } finally spark.listenerManager.unregister(listener)
+  }
 }

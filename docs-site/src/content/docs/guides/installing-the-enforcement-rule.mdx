@@ -130,6 +130,11 @@ spark.listenerManager.register(irListener)
 val result = irListener.lastWrite // Option[TranslationResult]
 ```
 
+When the enforcement rule is installed on the same session, `lastWrite` describes the same plan the
+rule checked — including seeing through a `.checkpoint()` upstream of the write, so it shows your real
+reads rather than an opaque checkpoint node. With no rule installed, it describes the plan exactly as
+Spark analyzed it.
+
 See [Verification vs. Enforcement](/concepts/verification-vs-enforcement/) for
 why these are two separate mechanisms rather than one.
 

@@ -595,6 +595,9 @@ object ContractEnforcementRule {
     recordCheckpointOrigin(checkpointRegistry, plan, translated.plan)
     translated.plan match {
       case _: com.invaract.ir.Write =>
+        // What `SparkAdapterListener.lastWrite` reports for this write, so it
+        // describes the same (checkpoint-resolved) plan this check does.
+        SparkAdapterListener.stash(analyzedPlan, translated)
         // Every check below assumes a *structurally sound* contract -
         // StructuralVerifier.verify in particular reads contract.outputs.head
         // unconditionally. `injectCheckRule` calls this method for every
@@ -852,6 +855,7 @@ object ContractEnforcementRule {
     checkpointRegistry.foreach(_ => recordCheckpointOrigin(checkpointRegistry, plan, translated.plan))
     WriteCommandSupport.combined.lift(plan) match {
       case Some(writeInfo) =>
+        SparkAdapterListener.stash(analyzedPlan, translated)
         onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query)), translated.plan))
       case None => () // not a recognized write - nothing to infer a contract from
     }

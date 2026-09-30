@@ -157,9 +157,11 @@ it — never a runtime value, and never anything outside that representation:
 - A `.checkpoint()`/`.localCheckpoint()` in the middle of the job does **not** change the
   fingerprint: Invaract remembers the plan each checkpoint was made from and fingerprints the
   real transformation through it, so a checkpointed job fingerprints identically to the same
-  job without the checkpoint. Two cases can't be seen through — a checkpoint created before
-  the enforcement rule was installed, and one whose origin is ambiguous (several plans sharing
-  its output columns while reading different datasets) — and there the fingerprint still comes
+  job without the checkpoint — including when the job joins a checkpointed Dataset with
+  itself. Some cases can't be seen through — a checkpoint created before
+  the enforcement rule was installed, one whose origin is ambiguous (several plans sharing
+  its output columns while reading different datasets), and a Delta `MERGE` whose source is
+  the checkpointed Dataset — and there the fingerprint still comes
   out stable and deterministic, but can't reflect what happened before the boundary. Invaract
   logs a WARNING when a fingerprint crosses one, so it isn't silently trusted.
 - A MERGE's `ON` condition, a conditional DELETE/UPDATE's predicate, or which columns an

@@ -426,6 +426,89 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
   }
 
+  // A self-join of a checkpointed Dataset: Spark gives the second reference a
+  // copy of the checkpoint's LogicalRDD with fresh attribute ids (same rdd).
+  // The first reference still carries the origin's ids, so the declared inputs
+  // were always *found* - what broke was the copy staying an opaque boundary,
+  // which turned a genuinely unread input from a blocking MISSING_INPUT into a
+  // report-only UnverifiableInput (and made the fingerprint differ from the
+  // un-checkpointed twin's).
+  private val selfJoinInputSchema =
+    "{fields: [{name: order_id, type: integer, nullable: true}, {name: customer_id, type: string, nullable: true}, {name: amount, type: integer, nullable: true}]}"
+
+  test("PASS: inputs read through a self-join of a checkpointed Dataset are found on both sides - nothing is unverifiable") {
+    val ordersPath = scratchDir.resolve("selfjoin_orders.csv").toString
+    val customersPath = scratchDir.resolve("selfjoin_customers.csv").toString
+    val outputPath = scratchDir.resolve("selfjoin_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(ordersPath), "order_id,customer_id,amount\n1,a,100\n2,b,200\n".getBytes)
+    Files.write(java.nio.file.Paths.get(customersPath), "customer_id,name,state\na,Alice,NY\nb,Bob,CA\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: orders
+         |    location: $ordersPath
+         |    schema: $selfJoinInputSchema
+         |  - name: customers
+         |    location: $customersPath
+         |    schema: {fields: [{name: customer_id, type: string, nullable: true}, {name: name, type: string, nullable: true}, {name: state, type: string, nullable: true}]}
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: order_id, type: integer, nullable: true}, {name: name, type: string, nullable: true}]}
+         |""".stripMargin
+    val sink = new TestNotificationSink
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_checkpoints").toString)
+    withContract(yaml, sink = Some(sink)) {
+      val orders = spark.read.option("header", "true").option("inferSchema", "true").csv(ordersPath)
+      val customers = spark.read.option("header", "true").option("inferSchema", "true").csv(customersPath)
+      val ck = orders.join(customers, "customer_id").select(orders("order_id"), customers("name")).checkpoint(true)
+      ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id"))
+        .select(col("l.order_id"), col("r.name")).write.mode("overwrite").parquet(outputPath) // must not throw
+    }
+
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
+  }
+
+  test("FAIL: a genuinely unread input is still BLOCKED when the job self-joins a checkpoint - the copy's boundary no longer makes it 'unverifiable'") {
+    val realPath = scratchDir.resolve("selfjoin_typo_real.csv").toString
+    val typoPath = scratchDir.resolve("selfjoin_typo_never_read.csv").toString
+    val outputPath = scratchDir.resolve("selfjoin_typo_output.parquet").toString
+    Files.write(java.nio.file.Paths.get(realPath), "order_id,customer_id,amount\n1,a,100\n2,b,200\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: $selfJoinInputSchema
+         |  - name: typo
+         |    location: $typoPath
+         |    schema: $selfJoinInputSchema
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: order_id, type: integer, nullable: true}, {name: amount, type: integer, nullable: true}]}
+         |""".stripMargin
+
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_typo_checkpoints").toString)
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        val ck = spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+        ck.as("l").join(ck.as("r"), col("l.order_id") === col("r.order_id"))
+          .select(col("l.order_id"), col("r.amount")).write.mode("overwrite").parquet(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.filter(_.violationType == ViolationType.MissingInput).map(_.location) == List(Some(typoPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, ex.result.unverifiableInputs.toString)
+    assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+  }
+
   test("PASS with UnverifiableInput: a checkpoint whose origin the rule never saw stays opaque, and the unread input is reported unverifiable, not missing") {
     val inputPath = scratchDir.resolve("unseen_origin.csv").toString
     val outputPath = scratchDir.resolve("unseen_origin_output.parquet").toString
@@ -455,6 +538,223 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.status == "PASSED", event.violations.toString)
     assert(event.unverifiableInputs.map(_.inputName) == List("raw"))
     assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
+  }
+
+  // SparkAdapterListener.lastWrite is the one place a listener exposes a translated
+  // plan (a WriteEvent carries no lineage). It must describe the same, resolved plan
+  // the ContractValidationEvent for that write was built from.
+  private def onlyWritesTo(name: String)(r: TranslationResult): Boolean =
+    r.plan match {
+      case w: com.invaract.ir.Write => w.dataset.location.contains(name)
+      case _ => false
+    }
+
+  private def checkpointContractYaml(inputPath: String, outputPath: String) =
+    s"""id: enforcement_demo
+       |version: "1.0.0"
+       |inputs:
+       |  - name: raw
+       |    location: $inputPath
+       |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+       |outputs:
+       |  - name: out
+       |    location: $outputPath
+       |    schema: {fields: [{name: id, type: integer, nullable: true}]}
+       |""".stripMargin
+
+  test("read, checkpoint, write: lastWrite shows the real Read (no LogicalRDD), agreeing with the ContractValidationEvent") {
+    val inputPath = scratchDir.resolve("lw_resolved_in.csv").toString
+    val outputPath = scratchDir.resolve("lw_resolved_out.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_resolved_ckpt").toString)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None)
+    spark.listenerManager.register(listener)
+    try {
+      withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+          .write.mode("overwrite").parquet(outputPath)
+      }
+
+      val translation = eventually(timeout(Span(5, Seconds))) {
+        listener.lastWrite.filter(onlyWritesTo("lw_resolved_out")).getOrElse(fail("listener has not captured the write yet"))
+      }
+      assert(StructuralVerifier.collectReads(translation.plan).map(_.dataset.location.split('/').last) == List("lw_resolved_in.csv"))
+      assert(StructuralVerifier.collectUnknownPlans(translation.plan).isEmpty, com.invaract.ir.PlanPrinter.render(translation.plan))
+      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      assert(validation.status == "PASSED" && validation.unverifiableInputs.isEmpty, validation.toString)
+    } finally spark.listenerManager.unregister(listener)
+  }
+
+  test("read, checkpoint, write with a checkpoint the rule never saw: lastWrite keeps the opaque LogicalRDD, matching the event's UnverifiableInput") {
+    val inputPath = scratchDir.resolve("lw_unseen_in.csv").toString
+    val outputPath = scratchDir.resolve("lw_unseen_out.parquet").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("lw_unseen_ckpt").toString)
+    val sink = new TestNotificationSink
+    val listener = new SparkAdapterListener(Some(sink), None)
+    spark.listenerManager.register(listener)
+    try {
+      val checkpointed = spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true) // no contract active
+      withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+        checkpointed.write.mode("overwrite").parquet(outputPath)
+      }
+
+      val translation = eventually(timeout(Span(5, Seconds))) {
+        listener.lastWrite.filter(onlyWritesTo("lw_unseen_out")).getOrElse(fail("listener has not captured the write yet"))
+      }
+      assert(StructuralVerifier.collectUnknownPlans(translation.plan).map(_.sourceType) == List("LogicalRDD"))
+      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      assert(validation.unverifiableInputs.map(_.inputName) == List("raw"))
+    } finally spark.listenerManager.unregister(listener)
+  }
+
+  // Runs `write` (a checkpointed read) under an active contract and returns every write plan the
+  // listener receives, each with what the listener reports for it. A CTAS/RTAS-style write reaches
+  // it as TWO analyzed plans (the outer command and the write it runs) - both seen by the rule.
+  // Waits until the listener has been handed every plan class in `expectedRoots`: its callbacks
+  // arrive asynchronously, in no guaranteed order.
+  private def writesSeenAfterCheckpoint(label: String, outputName: String, expectedRoots: Set[String], declaredOutput: Option[String] = None)(
+      write: (org.apache.spark.sql.DataFrame, String) => Unit
+  ): List[(LogicalPlan, TranslationResult)] = {
+    val inputPath = scratchDir.resolve(s"${label}_in.csv").toString
+    val outputPath = scratchDir.resolve(outputName).toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve(s"${label}_ckpt").toString)
+    val seen = new java.util.concurrent.CopyOnWriteArrayList[(LogicalPlan, TranslationResult)]()
+    val listener = new org.apache.spark.sql.util.QueryExecutionListener {
+      override def onSuccess(funcName: String, qe: org.apache.spark.sql.execution.QueryExecution, durationNs: Long): Unit =
+        if (WriteCommandSupport.combined.isDefinedAt(qe.analyzed)) seen.add((qe.analyzed, SparkAdapterListener.translationFor(qe.analyzed)))
+      override def onFailure(funcName: String, qe: org.apache.spark.sql.execution.QueryExecution, exception: Exception): Unit = ()
+    }
+    spark.listenerManager.register(listener)
+    try {
+      withContract(checkpointContractYaml(inputPath, declaredOutput.getOrElse(outputPath))) {
+        write(spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true), outputPath)
+      }
+      eventually(timeout(Span(5, Seconds))) {
+        val w = seen.toArray.toList.asInstanceOf[List[(LogicalPlan, TranslationResult)]].filter(_._2.plan.toString.contains(declaredOutput.getOrElse(outputName)))
+        assert(expectedRoots.subsetOf(w.map(_._1.getClass.getSimpleName).toSet), s"the listener has only seen ${w.map(_._1.getClass.getSimpleName)} of $expectedRoots so far")
+        w
+      }
+    } finally spark.listenerManager.unregister(listener)
+  }
+
+  private def assertEveryWritePlanResolved(writes: List[(LogicalPlan, TranslationResult)]): Unit =
+    writes.foreach { case (analyzed, reported) =>
+      val root = analyzed.getClass.getSimpleName
+      assert(StructuralVerifier.collectReads(reported.plan).size == 1, s"$root: ${com.invaract.ir.PlanPrinter.render(reported.plan)}")
+      assert(StructuralVerifier.collectUnknownPlans(reported.plan).isEmpty, root)
+      // ... and it is exactly what the rule itself saw for that plan.
+      assert(reported.plan == SparkPlanAdapter.translate(checkpointRegistry.substitute(analyzed).plan).plan, root)
+    }
+
+  test("a CTAS-style .saveAsTable() after a checkpoint: BOTH write plans (outer CreateDataSourceTableAsSelectCommand, inner insert) are resolved") {
+    val writes = writesSeenAfterCheckpoint("lw_ctas", "lw_ctas_out", Set("CreateDataSourceTableAsSelectCommand", "InsertIntoHadoopFsRelationCommand")) { (df, out) =>
+      df.write.option("path", out).mode("overwrite").saveAsTable("lw_ctas_tbl")
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  test("a .format(\"delta\").save() after a checkpoint (SaveIntoDataSourceCommand): the write plan is resolved") {
+    val writes = writesSeenAfterCheckpoint("lw_delta_save", "lw_delta_save_out", Set("SaveIntoDataSourceCommand")) { (df, out) =>
+      df.write.format("delta").mode("overwrite").save(out)
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  test("a Delta .saveAsTable() overwrite after a checkpoint (ReplaceTableAsSelect): BOTH write plans are resolved") {
+    val writes = writesSeenAfterCheckpoint(
+      "lw_delta_rtas", "lw_delta_rtas_out", Set("ReplaceTableAsSelect", "OverwriteByExpression"), Some("spark_catalog.default.lw_delta_rtas_tbl")
+    ) { (df, out) =>
+      df.write.format("delta").option("path", out).mode("overwrite").saveAsTable("lw_delta_rtas_tbl")
+    }
+    assertEveryWritePlanResolved(writes)
+  }
+
+  private val deltaSaveInputSchema = "{fields: [{name: id, type: integer, nullable: true}]}"
+
+  test("PASS: a declared input read, checkpointed, then written with .format(\"delta\").save() is found - nothing unverifiable") {
+    val inputPath = scratchDir.resolve("delta_ck_in.csv").toString
+    val outputPath = scratchDir.resolve("delta_ck_out").toString
+    Files.write(java.nio.file.Paths.get(inputPath), "id\n1\n2\n".getBytes)
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_ck_ckpt").toString)
+    val sink = new TestNotificationSink
+
+    withContract(checkpointContractYaml(inputPath, outputPath), sink = Some(sink)) {
+      spark.read.option("header", "true").option("inferSchema", "true").csv(inputPath).checkpoint(true)
+        .write.format("delta").mode("overwrite").save(outputPath) // must not throw
+    }
+
+    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    assert(event.status == "PASSED", event.violations.toString)
+    assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
+  }
+
+  test("FAIL: a typo'd input is BLOCKED for a checkpointed .format(\"delta\").save() - it used to be a report-only UnverifiableInput") {
+    val realPath = scratchDir.resolve("delta_typo_real.csv").toString
+    val typoPath = scratchDir.resolve("delta_typo_never_read.csv").toString
+    val outputPath = scratchDir.resolve("delta_typo_out").toString
+    Files.write(java.nio.file.Paths.get(realPath), "id\n1\n2\n".getBytes)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |inputs:
+         |  - name: real
+         |    location: $realPath
+         |    schema: $deltaSaveInputSchema
+         |  - name: typo
+         |    location: $typoPath
+         |    schema: $deltaSaveInputSchema
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: $deltaSaveInputSchema
+         |""".stripMargin
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_typo_ckpt").toString)
+
+    val ex = withContract(yaml) {
+      intercept[ContractViolationException] {
+        spark.read.option("header", "true").option("inferSchema", "true").csv(realPath).checkpoint(true)
+          .write.format("delta").mode("overwrite").save(outputPath)
+      }
+    }
+
+    assert(ex.result.violations.filter(_.violationType == ViolationType.MissingInput).map(_.location) == List(Some(typoPath)), ex.result.violations.toString)
+    assert(ex.result.unverifiableInputs.isEmpty, ex.result.unverifiableInputs.toString)
+  }
+
+  test("computeFingerprint = true: a checkpointed .format(\"delta\").save() fingerprints like the un-checkpointed one, with no fingerprint warning") {
+    val outputPath = scratchDir.resolve("delta_fp_out").toString
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("delta_fp_ckpt").toString)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: long, required: true}, {name: doubled, type: long, required: true}]}
+         |""".stripMargin
+
+    def fingerprintJob(checkpoint: Boolean): (com.invaract.fingerprint.TransformationFingerprint, List[String]) = {
+      val sink = new TestNotificationSink
+      val (_, warnings) = enforcementRuleWarnings {
+        withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+          val base = spark.range(5)
+          (if (checkpoint) base.checkpoint(true) else base).withColumn("doubled", col("id") * 2)
+            .write.format("delta").mode("overwrite").save(outputPath)
+        }
+      }
+      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
+      (fp, fingerprintingWarnings(warnings))
+    }
+
+    val (withCheckpoint, warnings) = fingerprintJob(checkpoint = true)
+    val (without, _) = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint.overall == without.overall)
+    assert(withCheckpoint.outputs == without.outputs)
+    assert(warnings.isEmpty, warnings.toString)
   }
 
   test("MISSING_INPUT: a DataFrame built directly from a plain RDD is NOT a lineage boundary - an unread declared input still blocks") {
@@ -967,6 +1267,42 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(withCheckpoint1.overall == withCheckpoint2.overall, "identical code must fingerprint identically across separate analyses")
     assert(withCheckpoint1.outputs("doubled") == withCheckpoint2.outputs("doubled"))
     assert(withCheckpoint1.overall == without.overall, "resolving the checkpoint must make it invisible to the fingerprint")
+  }
+
+  test("computeFingerprint = true: a self-join of a checkpoint fingerprints like the un-checkpointed self-join, with no fingerprint warning") {
+    val outputPath = scratchDir.resolve("selfjoin_fp.parquet").toString
+    spark.sparkContext.setCheckpointDir(scratchDir.resolve("selfjoin_fp_checkpoints").toString)
+    val yaml =
+      s"""id: enforcement_demo
+         |version: "1.0.0"
+         |outputs:
+         |  - name: out
+         |    location: $outputPath
+         |    schema: {fields: [{name: id, type: long, required: true}, {name: doubled, type: long, required: true}]}
+         |""".stripMargin
+
+    def fingerprintJob(checkpoint: Boolean): (com.invaract.fingerprint.TransformationFingerprint, List[String]) = {
+      val sink = new TestNotificationSink
+      val (_, warnings) = enforcementRuleWarnings {
+        withContract(yaml, options = VerificationOptions(computeFingerprint = true), sink = Some(sink)) {
+          val base = spark.range(5).withColumn("k", col("id") % 2)
+          val ck = if (checkpoint) base.checkpoint(true) else base
+          ck.as("l").join(ck.as("r"), col("l.k") === col("r.k"))
+            .select(col("l.id"), (col("r.id") * 2).as("doubled")).write.mode("overwrite").parquet(outputPath)
+        }
+      }
+      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+        .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
+      (fp, fingerprintingWarnings(warnings))
+    }
+
+    val (withCheckpoint, warnings) = fingerprintJob(checkpoint = true)
+    val (again, _) = fingerprintJob(checkpoint = true)
+    val (without, _) = fingerprintJob(checkpoint = false)
+    assert(withCheckpoint.overall == again.overall, "fresh attribute ids per run must not leak into the hash")
+    assert(withCheckpoint.overall == without.overall)
+    assert(withCheckpoint.outputs == without.outputs)
+    assert(warnings.isEmpty, warnings.toString)
   }
 
   /** Runs `body`, capturing every WARN-or-worse message `ContractEnforcementRule` logs while it runs.

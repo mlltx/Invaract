@@ -568,14 +568,37 @@ assumed):
 `CheckpointRegistry` (one per session, created by `forContract`) uses them in three steps:
 `record` remembers each analyzed plan under its output attribute ids; `bind`, on first sight of a
 bare `LogicalRDD`, snapshots the plan recorded under its ids *at that moment* — the plan just
-checkpointed — and ties it to that leaf instance (weakly: it lives exactly as long as the
+checkpointed — and ties it to that checkpoint's `rdd`, by identity (weakly: it lives exactly as long as the
 checkpointed Dataset); `substitute` replaces every bound `LogicalRDD` in a plan with its snapshot,
-recursively for chained checkpoints. This happens on the *Catalyst* plan, before translation, so the
+recursively for chained checkpoints - and, for a write command that carries its query as an inner child
+rather than a child (`SaveIntoDataSourceCommand`, i.e. `.format("delta").save(...)`; the outer command of a
+CTAS-style `saveAsTable`/`writeTo(...).create()`/SQL `CREATE TABLE ... AS SELECT`; `ReplaceTableAsSelect`,
+whose children go empty once analysed), in that query too, by rebuilding the command with the resolved
+query (`makeCopy`) — only when something was actually substituted, and a command that cannot be copied
+this way is left as it was, unresolved. This happens on the *Catalyst* plan, before translation, so the
 result is structurally the plan the job would have had with no checkpoint at all: contract
 verification sees the real `Read` nodes (a missing input is simply missing, an undeclared read is
 simply undeclared, schema/catalog/lineage checks all apply), and a fingerprint computed across the
 checkpoint is **identical to the un-checkpointed job's** — the fingerprint-side gap
 docs/SEMANTIC_LINEAGE_FINGERPRINTING.md used to disclose is closed for every resolved checkpoint.
+
+**Self-joins.** A second reference to the same checkpointed Dataset in one plan
+(`ck.as("a").join(ck.as("b"), ...)`, a three-way self-join, a self-join of a checkpoint of a checkpoint)
+is not the same leaf: Spark's analyzer gives it a `newInstance()` copy of the `LogicalRDD` with *fresh*
+attribute ids but the very same `rdd`. Because snapshots are keyed by `rdd` (not by the leaf, whose
+equality includes the ids), the copy finds its checkpoint's snapshot. `substitute` then splices in a
+*renewed* copy of the origin — fresh ids throughout, produced by Spark's own `DeduplicateRelations`
+rule (a join of the origin with itself always has conflicting ids, so its right side is the renewed
+copy; nothing here re-implements which Catalyst nodes define ids) — and rewrites the copy's ids to the
+renewed plan's in every ancestor (`transformUpWithNewOutput`). That is exactly what the analyzer would
+have produced for the un-checkpointed self-join, so it verifies **and fingerprints** identically to it
+(tested against the un-checkpointed twin for aliased, un-aliased `USING`, computed-column-under-alias,
+three-way and chained-checkpoint self-joins; attribute ids are never hashed, so fresh ids per run
+don't perturb the fingerprint). Two occurrences of a relation keep distinct ids, which is what
+`SparkPlanAdapter`'s alias disambiguation keys on. A copy resolves exactly when its checkpoint does: an
+ambiguous or never-observed checkpoint stays opaque on every side of the self-join, never guessed on
+one. A leaf that shares a checkpoint's `rdd` but not its column names/types is never mapped onto the
+origin.
 
 There is no listener and nothing asynchronous, so — unlike an earlier design that captured
 checkpoints from a `QueryExecutionListener`, which fires on Spark's listener-bus thread a few
@@ -588,8 +611,8 @@ ever resolved, so one write's checkpoint can never excuse another write's missin
 `Diagnostic`, exactly as before the registry existed):
 
 - A checkpoint whose creation the rule never observed — the rule must have been installed when the
-  Dataset was made. A copy Spark makes with fresh attribute ids (the right side of a self-join of a
-  checkpointed Dataset) is unresolved too.
+  Dataset was made. (A self-join's copy of an observed checkpoint *does* resolve — see "Self-joins"
+  above — so this is the same boundary on every side of it.)
 - An origin the registry evicted before the checkpoint was created (bounded LRU, 256 entries by
   default) or whose plan was reclaimed under memory pressure (plans are held by `SoftReference`,
   because a Catalyst plan keeps its relations — and a file index's listing — alive).
@@ -598,9 +621,30 @@ ever resolved, so one write's checkpoint can never excuse another write's missin
   refused rather than guessed. When they read the *same* datasets (a `.filter` of a dataset), the most
   recent is used and a `CheckpointResolution` diagnostic says so — the fingerprint's WARN log
   discloses it.
-- A `LogicalRDD` inside a node that keeps its query outside `children` (Delta's row-level DML
-  commands).
+- A `LogicalRDD` in a Delta row-level DML command (`MERGE`'s source, measured: a `MERGE` whose source is
+  a checkpointed Dataset stays an opaque `LogicalRDD`). These commands keep their plans somewhere
+  `substitute` does not look and are not rebuilt.
 - Every `InMemoryRelation` (a bare `.cache()` doesn't reach the check rule anyway — see above).
+
+**`SparkAdapterListener.lastWrite` sees through a checkpoint too.** A `WriteEvent` describes the write
+itself (location, format, schema, metrics, versions) and carries no lineage, so a `.checkpoint()`
+upstream never touched it; `lastWrite` (the `TranslationResult` behind `demo/output/report.json`'s IR)
+is the one place the listener exposes a translated plan, and translating `qe.analyzed` alone shows a
+checkpoint as an opaque `LogicalRDD` while the `ContractValidationEvent` for the same write was built
+from the resolved plan. The listener runs on the async listener bus and is built with no arguments, so
+it cannot call the rule's registry; instead the rule tags the analyzed root plan it just verified (or,
+in dry-run, inferred from) with its translation — a Catalyst `TreeNodeTag` holding the translation *and
+the plan it was made for* — and `onSuccess` reads it back off `qe.analyzed`, the same instance.
+Deterministic (the rule runs synchronously during analysis, strictly before execution) and per-plan (the
+tag lives and dies with the plan: no session lookup, no shared or global state, no new conf key, no
+change to how the listener is constructed or registered). Confirmed empirically against real writes that
+the listener receives the very instance the rule saw for every shape it treats as a write —
+`.parquet`/`.csv`, `saveAsTable`, `insertInto`, SQL `INSERT`/CTAS, Delta `.save`/`saveAsTable` — and that a
+CTAS reaches it as two distinct analyzed plans (outer and inner), each tagged for itself. Catalyst
+copies tags onto plans derived by a transformation, so the lookup only accepts a tag whose recorded
+plan is `eq` the plan asked about; anything else, and any plan the rule never saw (no rule installed,
+another session), is a miss and falls back to `SparkPlanAdapter.translate(qe.analyzed)` — the previous
+behavior. Whatever the rule translated is what `lastWrite` reports, so it can never disagree with the event about lineage.
 
 **What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
 "never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
@@ -1145,7 +1189,9 @@ above.**
   means the write never executed.
 - `WriteEvent` — published by `SparkAdapterListener`'s `onSuccess`, the
   same post-execution observation point `demo/output/report.json`'s
-  `transformationIR` section already uses. This is "the write actually
+  `transformationIR` section already uses. It describes the write itself and
+  carries no lineage; `lastWrite` is where the listener exposes a translated
+  plan (see "`SparkAdapterListener.lastWrite` sees through a checkpoint too"). This is "the write actually
   completed," strictly later than (and independent of) the check above —
   a write `ContractEnforcementRule` rejects never reaches this event,
   since Spark never executes it.
