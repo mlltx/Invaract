@@ -3883,6 +3883,14 @@ first written: one field's value compared against *another field on the same row
       `derivedFrom` contract run twice under `rejectUndeclaredInputs`: a write
       that reads only its own output's inputs passes, one that reads an input
       outside its `derivedFrom` is aborted with `UNDECLARED_INPUT`.
+- [x] **Follow-up: merge dry-run drafts (`ContractDraftMerger`/`MergeDraftsCli`)**
+      (`contract` module, pure and Spark-free, additive - no MiMa break): the
+      per-write drafts dry-run prints (positional `input`, `input_1`, ...) are
+      merged into one multi-output contract - inputs unified by normalized
+      location and named from it, each output's `derivedFrom` rewritten to the
+      merged names, outputs kept distinct by location, conflicting schemas for
+      one location reported (`MergeConflict`) rather than guessed at, result
+      round-trips through `ContractParser` and passes `ContractValidator`.
 
 ---
 

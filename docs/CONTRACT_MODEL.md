@@ -656,6 +656,30 @@ Schema documents the key too.
 a deliberate MiMa break (`contract` 0.11.0 → 0.12.0), the same shape as
 `datasetType`'s.
 
+### Merging dry-run drafts (`ContractDraftMerger`)
+
+Dry-run inference (`spark-adapter`) emits one single-output draft per write,
+with positional input names (`input`, `input_1`, ...) that only mean something
+inside that draft. `ContractDraftMerger.merge(drafts, id, version)` — a pure,
+Spark-free function in this module, with the `MergeDraftsCli` command line over
+it — merges them into one multi-output contract:
+
+- inputs are unified by normalized location (`file:` stripped, `\` as `/`, no
+  trailing `/`) and named from it (last path segment without extension, or the
+  last dotted part of a catalog identifier, lower-cased and sanitized; `_2`,
+  `_3` on a clash, in order of first appearance);
+- each output's `derivedFrom` is rewritten from its draft's own names to the
+  merged ones; a location written by several drafts is one output, its
+  `derivedFrom` the union (or `None` if any draft said "all inputs");
+- nothing is guessed: the same location with different schemas
+  (`InputSchemaConflict`/`OutputSchemaConflict`), a draft whose `derivedFrom`
+  names an input it doesn't declare, an empty draft list, or a result
+  `ContractValidator` rejects all come back as `Left(List[MergeConflict])`,
+  never as a contract picked from among the disagreeing ones.
+
+It is additive (a new object and CLI, no existing signature touched), so it is
+not a MiMa break and needs no version bump.
+
 ## Input and Output Types
 
 Every dataset (`inputs[]`/`outputs[]`) may declare its semantic role via an
