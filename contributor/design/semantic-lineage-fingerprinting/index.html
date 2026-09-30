@@ -1354,7 +1354,10 @@ Catalyst plan with the plan it was made from — recorded synchronously, at the 
 Dataset was created, and matched by attribute id — <em>before</em> <code dir="auto">SparkPlanAdapter.translate</code> runs. So
 <code dir="auto">translated.plan</code> is structurally the plan the job would have had with no checkpoint at all, and the
 fingerprint computed from it is <strong>identical to the un-checkpointed job’s</strong> — a checkpoint stops being
-something the fingerprint has to caveat. (Node-level correlation through the checkpoint’s RDD, which an
+something the fingerprint has to caveat. That includes a self-join of a checkpointed Dataset: the
+copy Spark makes of the checkpoint (fresh attribute ids, same <code dir="auto">rdd</code>) is resolved to a renewed copy of its
+origin with fresh ids, so the plan matches the un-checkpointed self-join’s structure — and since
+<code dir="auto">ColumnRef.id</code> is never hashed (§8), fingerprints match run to run. (Node-level correlation through the checkpoint’s RDD, which an
 earlier iteration of this design concluded was infeasible, was never needed: the output attribute ids
 Spark preserves across <code dir="auto">.checkpoint()</code> are the key.)</p>
 <p>What still cannot be resolved stays an opaque <code dir="auto">ir.UnknownPlan</code> that canonicalizes exactly per §8 (its
