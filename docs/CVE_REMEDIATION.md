@@ -907,6 +907,48 @@ Lesson: a fix recorded for "the modules the alert named" is not a fix for
 the *artifact* — when an alert names a coordinate, resolve it in every
 module's classpath, including the ones with no obvious reason to have it.
 
+## 7j. `commons-lang` 2.x re-checked: removal tried and disproved, risk now evidenced
+
+The `commons-lang:commons-lang` alert (CVE-2025-48924, `>= 2.0 <= 2.6`, no
+patched version) is the same CVE §7b/§7f accepted as risk, but that
+acceptance rested on an unchecked "may be referenced, can't verify"
+premise — the same shape §7h reversed for Guava. Re-checked properly, in
+the §4 order:
+
+| Step | Result |
+|---|---|
+| 1. Remove if unused | **Used.** A scan of all 230 jars on `spark-adapter`'s Test classpath finds 110 classes in 10 jars referencing `org/apache/commons/lang/` (Hive 2.3.9's `hive-common`/`-exec`/`-metastore`/`-serde`/`-shims-*`/`-llap-common`/`-storage-api`, plus Iceberg's shaded copy of one). Tried excluding it (`excludeDependencies += ExclusionRule("commons-lang", "commons-lang")`, session-only): `HiveConnectorSpec` aborts at startup, `NoClassDefFoundError: org/apache/commons/lang/StringUtils`. |
+| 2. Bump the direct dependency | n/a — it is a direct dependency of Hive 2.3.9's own modules (via `spark-hive`), and Hive 4 breaks the metastore (§7f). |
+| 3. Pin a patched version | **None exists** — 2.6 is the last 2.x release (EOL); the fix is only in `commons-lang3` ≥ 3.18.0 (already resolved at 3.18.0), a different package Hive's compiled code can't be pointed at. |
+| 4. Report | Accepted risk, below. |
+
+**Scope and inheritance (§2):** only `spark-adapter` resolves it (`plugin`,
+`runner`, `contract`, `ir`, `fingerprint`, `registry-client`,
+`notification-kafka` resolve only `commons-lang3` 3.18.0 or neither), and
+only on the `test` classpath via `spark-hive` — never in a published POM, so
+no downstream user inherits it.
+
+**Reachability, from the bytecode rather than the advisory:** the CVE is
+`ClassUtils.getClass(...)` throwing `StackOverflowError` on a very long
+class-name string. Only two classes on the entire classpath reference
+`ClassUtils` at all, and `javap -c` shows they call
+`getAllInterfaces(Class)` (hive-metastore `RawStoreProxy`) and
+`wrapperToPrimitive(Class)` (hive-serde `AvroLazyObjectInspector`) — both
+take a `Class`, not a string, and neither is the vulnerable method.
+
+**Risk rating:** upstream rates the CVE Medium (CVSS 6.5, availability-only:
+a `StackOverflowError`, no confidentiality/integrity impact). For this
+repo: **Low** — test-scope only, not shipped, the vulnerable method is not
+called by any code on the classpath, and the embedded test metastore takes
+no attacker-controlled input. Revisit when Hive's metastore client moves off
+`commons-lang` 2.x; `spark-adapter/build.sbt`'s comment at this coordinate
+carries the same evidence.
+
+Lesson (same as §7h): an accepted-risk entry should say what was
+actually inspected. Here it turned "might be needed" into "is needed, and
+the vulnerable method is not called" with a jar scan, one `javap`, and one
+short test run.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`

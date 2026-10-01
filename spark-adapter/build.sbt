@@ -761,14 +761,24 @@ dependencyOverrides ++= Seq(
 // 3.18.0 above - there is no 2.7 and never will be, the 2.x line is EOL
 // (confirmed: multiple downstream trackers list "no fix planned" for the
 // legacy 2.x branch). Excluding it outright, the way jackson-mapper-asl
-// was excluded above, was considered and rejected: unlike that case,
-// commons-lang 2.x's org.apache.commons.lang package (pre-rename) is a
-// real, separate namespace from commons-lang3's org.apache.commons.lang3
-// - old Hadoop-ecosystem code transitively pulling this in may reference
-// org.apache.commons.lang.* classes directly that commons-lang3 does not
-// provide, so removing the jar risks a NoClassDefFoundError this module
-// has no way to verify is safe without exercising every code path that
-// might reach it. Accepted risk (see docs/CVE_REMEDIATION.md section 3).
+// was excluded above, was tried and fails: commons-lang 2.x's
+// org.apache.commons.lang package (pre-rename) is a real, separate
+// namespace from commons-lang3's org.apache.commons.lang3, and Hive 2.3.9
+// (via spark-hive; the declared parent of the jar in `Test/dependencyTree`
+// is hive-metastore/hive-serde/hive-shims-*) calls it directly - a scan of
+// all 230 jars on this module's Test classpath finds 110 classes in 10 jars
+// (hive-common/-exec/-metastore/-serde/-shims-*/-llap-common/-storage-api,
+// plus iceberg's shaded copy of one) referencing org/apache/commons/lang/.
+// Run with the jar excluded, HiveConnectorSpec aborts at startup with
+// `NoClassDefFoundError: org/apache/commons/lang/StringUtils`.
+// Reachability of the actual CVE: only 2 classes on the whole classpath
+// reference ClassUtils at all (hive-metastore's RawStoreProxy ->
+// getAllInterfaces(Class), hive-serde's AvroLazyObjectInspector ->
+// wrapperToPrimitive(Class)); neither calls the vulnerable
+// ClassUtils.getClass(String) with a string, so no attacker-controlled
+// long class name reaches the recursion. Test scope only (never in the
+// published POM). Accepted risk (see docs/CVE_REMEDIATION.md sections 3
+// and 7j).
 
 // NOT overridden, unlike Avro/ZooKeeper/Netty above - CVE-2022-46337
 // (GHSA-rcjc-c4pj-xxrp, LDAP injection in Derby's
