@@ -54,8 +54,9 @@ private[sparkadapter] object ContractInference {
     */
   def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, StructType)], plan: Plan): Contract = {
     val totalInputs = inputSchemas.size
-    val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet
-    val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier)
+    val locationOf = PlanRuleVerifier.locationResolver(plan)
+    val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet.map(locationOf)
+    val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier).map(locationOf)
     val inputs = inputSchemas.zipWithIndex.map { case ((location, schema), index) =>
       val normalizedLocation = normalizeLocation(location)
       Dataset(

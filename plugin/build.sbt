@@ -103,6 +103,36 @@ dependencyOverrides ++= Seq(
   // SnappyInputStream has no upper bound on the declared chunk length,
   // so a crafted input can force an oversized heap allocation.
   "org.xerial.snappy" % "snappy-java" % "1.1.10.4",
+  // 16.0.1 -> 33.4.8-jre. Three Guava CVEs, all on the same jar, all fixed
+  // by this one bump: CVE-2018-10237 (GHSA-w787-jrh4-2xh8, unbounded
+  // memory allocation when deserializing AtomicDoubleArray/CompoundOrdering,
+  // fixed 24.1.1), CVE-2020-8908 (GHSA-c2vm-c9v4-fj6q,
+  // Files.createTempDir() makes world-readable temp dirs, fixed 30.0) and
+  // CVE-2023-2976 (GHSA-7g45-4rm6-3mm3, same API, fixed 32.0.0). Previously
+  // an accepted risk (docs/CVE_REMEDIATION.md 7b) on the theory that a
+  // passing suite couldn't prove a bump safe, because the only source is
+  // org.apache.curator:curator-client:2.13.0 (Spark's ZooKeeper
+  // standalone-recovery mode, never loaded under local[*]). That premise
+  // was checked rather than trusted (see 7h): curator-client-2.13.0.jar
+  // bundles its OWN relocated Guava (org/apache/curator/shaded/com/google/
+  // common, 1690 classes) and Curator's code calls that copy, so the
+  // unshaded com.google.guava:guava:16.0.1 edge in its POM is not what
+  // Curator executes; a javap sweep of all three Curator jars found every
+  // remaining unshaded com/google/common reference resolves in 33.4.8-jre.
+  // HiveConnectorSpec (the one place Hive 2.3.9, which also uses Guava, is
+  // run for real) passes unchanged. Guava 33 adds failureaccess and
+  // listenablefuture as transitive deps; nothing else in the tree moves.
+  "com.google.guava" % "guava" % "33.4.8-jre",
+  // 3.19.6 -> 3.25.5: CVE-2024-7254 (GHSA-735f-pc8j-v9w8, CVSS 8.7) -
+  // protobuf-java's parser has no recursion limit when skipping nested
+  // unknown fields/groups (and in Any/MessageSet handling), so a crafted
+  // message causes a StackOverflowError (DoS). Fixed in 3.25.5 (also 4.27.5
+  // / 4.28.2). 3.19.6 is only the fix for the older CVE-2022-3509/3510 and
+  // is NOT past this fix floor. Resolved version is whatever wins eviction
+  // over the tink (Spark) / hive-metastore (2.5.0, already evicted) edges,
+  // confirmed via `sbt Test/dependencyTree`. Stays on the 3.x line, so no
+  // package/groupId change like Hive 4.x's or Jackson 3.x's.
+  "com.google.protobuf" % "protobuf-java" % "3.25.5",
   // 2.15.2 -> 2.18.8 (jackson-core/databind/annotations and
   // jackson-module-scala, moved together - see spark-adapter/build.sbt's
   // comment for the full detail, including why these four have to move
@@ -132,15 +162,6 @@ dependencyOverrides ++= Seq(
   "org.apache.logging.log4j" % "log4j-1.2-api" % "2.25.5",
   "org.apache.logging.log4j" % "log4j-slf4j2-impl" % "2.25.5"
 )
-
-// NOT overridden - com.google.guava:guava:16.0.1, same two CVEs and same
-// accepted-risk reasoning as spark-adapter/build.sbt's own comment (see
-// there for the full detail): CVE-2018-10237 and CVE-2020-8908, both
-// arriving via org.apache.curator:curator-client:2.13.0 (confirmed via
-// `sbt Test/dependencyTree`), which backs Spark's ZooKeeper-based
-// standalone-cluster recovery mode - infrastructure this module's own
-// `local[*]`-only tests never configure or exercise, so a passing suite
-// here couldn't prove a bump safe either.
 
 assembly / assemblyJarName := "invaract-spark-plugin-0.2.0.jar"
 assembly / assemblyMergeStrategy := {

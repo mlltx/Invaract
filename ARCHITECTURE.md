@@ -516,8 +516,11 @@ Testing Requirement." Summary:
   invokes.
 - **`./dev/regression`**: the pass/fail pair proving `ContractEnforcementRule`
   actually enforces something, not just that a harness run completes — now
-  four cases, not two: schema-level enforcement (Cases 1/2) and static
-  data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md).
+  ten cases, not two: schema-level enforcement (Cases 1/2), static
+  data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md),
+  role consistency (Cases 5/6), a job that checkpoints between reading and
+  writing (Cases 7/8, the harness's `--checkpoint` flag), and per-output input
+  scoping via `derivedFrom` (Cases 9/10).
   Runs twice in CI: directly, once per OS/Java combination in the `test`
   job's matrix, and again via Docker in the separate `docker-regression` job
   (`docker/Dockerfile`).

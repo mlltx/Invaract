@@ -3855,6 +3855,42 @@ first written: one field's value compared against *another field on the same row
       JSON example was also missing `roleConformance` — a pre-existing
       gap from Phase 4 above, fixed in the same change since both fields'
       examples live in the same file) updated to match.
+- [x] **Follow-up: every input-side verifier audited through resolved
+      checkpoints** (`CheckpointRegistry`): checkpointed jobs are now verified
+      as if the checkpoint weren't there - input existence/schema/catalog,
+      plan-shape rules (in both directions: hidden violations caught, false
+      violations gone), role consistency, static data quality, sensitivity
+      lineage, dry-run inference and fingerprints - a deliberate behavior
+      change (a job that passed only because a checkpoint hid a violation is
+      now rejected), pinned per verifier by `CheckpointVerificationAuditSpec`
+      and documented in docs/SPARK_ADAPTER.md and docs-site's "Violation Types
+      -> Checkpoints". The audit also fixed a defect independent of
+      checkpoints: lineage qualifiers (an alias, or `location#n` for a
+      repeated read) were compared to declared locations directly, so
+      role-consistency, sensitivity tags and inference usage silently missed
+      aliased/self-joined inputs (`PlanRuleVerifier.locationResolver`;
+      `SensitivityLineage.propagate(plan, contract)` overload). Still
+      unresolved, with reasons: ambiguous origins (a join-with-lookup then
+      `select` of one side's columns, resolvable by aliasing), unobserved/
+      evicted checkpoints, Delta `MERGE` sources.
+- [x] **Follow-up: `./dev/regression` cases for checkpoints and `derivedFrom`**
+      (6 -> 10 cases, the only check that proves the rule aborts a bad write in
+      a real `spark-submit`): Case 7 - read, `.checkpoint()`, write, contract
+      satisfied -> PASS (the harness's new `--checkpoint` flag; default
+      `./dev/test` output unchanged); Case 8 - the same job with a declared
+      input never read -> blocking `MISSING_INPUT`, no output, no
+      `UnverifiableInput`; Cases 9/10 - one two-output, three-input
+      `derivedFrom` contract run twice under `rejectUndeclaredInputs`: a write
+      that reads only its own output's inputs passes, one that reads an input
+      outside its `derivedFrom` is aborted with `UNDECLARED_INPUT`.
+- [x] **Follow-up: merge dry-run drafts (`ContractDraftMerger`/`MergeDraftsCli`)**
+      (`contract` module, pure and Spark-free, additive - no MiMa break): the
+      per-write drafts dry-run prints (positional `input`, `input_1`, ...) are
+      merged into one multi-output contract - inputs unified by normalized
+      location and named from it, each output's `derivedFrom` rewritten to the
+      merged names, outputs kept distinct by location, conflicting schemas for
+      one location reported (`MergeConflict`) rather than guessed at, result
+      round-trips through `ContractParser` and passes `ContractValidator`.
 
 ---
 

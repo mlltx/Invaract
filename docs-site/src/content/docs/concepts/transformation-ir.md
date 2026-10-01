@@ -63,6 +63,15 @@ the tagged field — see [Reference → Contract Format](/reference/contract-for
 "Sensitivity tags" section. This is reporting, for audit/governance visibility, not
 enforcement: a tagged field never causes verification to fail on its own.
 
+## Checkpoints
+
+A `.checkpoint()` replaces a Dataset's plan with an opaque node, which would hide everything
+before it from the IR. Invaract puts the original plan back before translating it, so the IR
+of a checkpointed job is the IR of the same job without the checkpoint — the same `Read`
+nodes, joins, filters and column lineage — and every verification that runs on the IR treats
+it that way. See [Violation Types → Checkpoints](/reference/violation-types/#checkpoints)
+for what that changes for a job's results and for the few cases that can't be seen through.
+
 ## Degrading, never crashing
 
 A real adapter will meet constructs it has no precise translation for. Invaract's answer

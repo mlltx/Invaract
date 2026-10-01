@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, Dataset, Field}
-import com.invaract.ir.{ColumnLineage, ColumnRef}
+import com.invaract.ir.{ColumnLineage, ColumnRef, Lineage, Plan}
 
 /** One output column's traced lineage (`ir.ColumnLineage`), enriched with
   * the union of every `sensitivityTags` label declared on any contract
@@ -45,9 +45,28 @@ object SensitivityLineage {
     * for a contract that declares no sensitive fields at all). Order-
     * preserving and 1:1 with `lineage`.
     */
-  def propagate(lineage: List[ColumnLineage], contract: Contract): List[SensitiveColumnLineage] = {
+  def propagate(lineage: List[ColumnLineage], contract: Contract): List[SensitiveColumnLineage] =
+    propagateResolving(lineage, contract, identity)
+
+  /** The same propagation, computed from `plan` itself: `Lineage.trace(plan)`, with each traced
+    * source's qualifier resolved to the location of the `Read` it stands for through `plan`'s own
+    * `Read` nodes (see `PlanRuleVerifier.locationResolver`). Prefer this over the lineage-only
+    * overload: a qualifier is the scope Spark reports for a read - an explicit alias
+    * (`df.as("orders")`), or `"<location>#<n>"` for a repeated unaliased read - not necessarily the
+    * location a contract input declares, so the lineage-only overload contributes no tags for any
+    * source read through one. This overload does; a scope shared by reads of different locations
+    * stays unresolved (and so untagged) rather than guessed.
+    */
+  def propagate(plan: Plan, contract: Contract): List[SensitiveColumnLineage] =
+    propagateResolving(Lineage.trace(plan), contract, PlanRuleVerifier.locationResolver(plan))
+
+  private def propagateResolving(
+      lineage: List[ColumnLineage],
+      contract: Contract,
+      locationOf: String => String
+  ): List[SensitiveColumnLineage] = {
     val taggedFields = taggedInputFields(contract)
-    lineage.map(cl => SensitiveColumnLineage(cl, cl.sources.flatMap(tagsFor(_, taggedFields))))
+    lineage.map(cl => SensitiveColumnLineage(cl, cl.sources.flatMap(tagsFor(_, taggedFields, locationOf))))
   }
 
   /** Every (dataset, field) pair among `contract.inputs` whose field
@@ -67,12 +86,12 @@ object SensitivityLineage {
     * all (e.g. a self-join alias, or a plain untagged column), simply
     * contributes no tags rather than guessing.
     */
-  private def tagsFor(source: ColumnRef, taggedFields: List[(Dataset, Field)]): Set[String] =
+  private def tagsFor(source: ColumnRef, taggedFields: List[(Dataset, Field)], locationOf: String => String): Set[String] =
     source.qualifier match {
       case None => Set.empty
       case Some(qualifier) =>
         taggedFields.collect {
-          case (dataset, field) if field.name == source.name && StructuralVerifier.locationsMatch(dataset.location, qualifier) =>
+          case (dataset, field) if field.name == source.name && StructuralVerifier.locationsMatch(dataset.location, locationOf(qualifier)) =>
             field.sensitivityTags
         }.flatten.toSet
     }

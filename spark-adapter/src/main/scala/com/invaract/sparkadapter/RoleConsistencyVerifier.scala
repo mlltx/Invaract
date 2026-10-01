@@ -54,8 +54,10 @@ private[sparkadapter] object RoleConsistencyVerifier {
     */
   def verify(contract: Contract, plan: Plan): List[RoleConformanceCheckResult] = plan match {
     case _: Write =>
-      val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet
-      val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier)
+      // Qualifiers are scopes (aliases, `location#n`), resolved to the reads' real locations first.
+      val locationOf = PlanRuleVerifier.locationResolver(plan)
+      val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet.map(locationOf)
+      val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier).map(locationOf)
       contract.inputs.flatMap(checkInput(_, outputContributingQualifiers, conditionReferencedQualifiers))
     case _ => Nil
   }

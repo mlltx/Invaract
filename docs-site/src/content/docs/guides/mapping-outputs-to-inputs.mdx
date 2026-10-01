@@ -80,6 +80,16 @@ something silently ignored — dropping it would quietly turn "this output needs
 output needs nothing". (`derivedFrom` on an *input* means nothing and is ignored.)
 </Aside>
 
+## Starting from a dry run
+
+You don't have to write the mapping from scratch. [Dry-run mode](/guides/dry-run-mode/)
+prints one single-output draft per write with `derivedFrom` already filled in from what
+that write actually read, and
+[`MergeDraftsCli`](/guides/dry-run-mode/#merging-drafts-from-a-job-with-several-writes)
+combines the drafts into one contract: shared inputs are unified by location, and every
+output's `derivedFrom` is rewritten to the merged input names. Review the result — the
+observed mapping is what the job did on that run, not necessarily what it should do.
+
 ## Versioning
 
 Changing which inputs an output is built from changes what a valid write must look like, so

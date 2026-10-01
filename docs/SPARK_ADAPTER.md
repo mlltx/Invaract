@@ -646,6 +646,62 @@ plan is `eq` the plan asked about; anything else, and any plan the rule never sa
 another session), is a miss and falls back to `SparkPlanAdapter.translate(qe.analyzed)` — the previous
 behavior. Whatever the rule translated is what `lastWrite` reports, so it can never disagree with the event about lineage.
 
+**Every input-side verifier now runs through a resolved checkpoint (a behavior change).** Because
+`substitute` happens on the Catalyst plan *before* translation, everything downstream of it consumes
+the plan the job would have had with no checkpoint. Audited one verifier at a time
+(`CheckpointVerificationAuditSpec`, real `local[*]` Spark, each job run three ways: checkpointed under
+the real rule, the identical job with no checkpoint, and the checkpointed job's own write plan verified
+by a rule with no registry - the pre-registry behavior):
+
+| Consumer | Reads | Through a resolved checkpoint |
+|---|---|---|
+| `StructuralVerifier` inputs (`MISSING_INPUT`, `UNDECLARED_INPUT`, `derivedFrom` scoping) | `Read` locations | applies; unread-input verdict is `MISSING_INPUT`, not `UnverifiableInput` |
+| `StructuralVerifier` input schema (`MISSING_INPUT_FIELD`, `UNDECLARED_INPUT_COLUMN`, `INPUT_FIELD_*`) | `collectInputSchemas` over the substituted plan | applies (used to be skipped entirely) |
+| `StructuralVerifier` input catalog (`*_INPUT_CATALOG_*`) | `Read.catalog` | applies |
+| `PlanRuleVerifier` (cross join, group by, join/filter columns) | any matching node in the plan | applies **in both directions**: a hidden cross join is now caught, and a rule satisfied upstream of the checkpoint is no longer falsely reported as violated |
+| `RoleConsistencyVerifier` | `Lineage.trace` + condition references | applies (`Contradicts` blocks, under `roleConsistency`) |
+| `StaticDataQualityVerifier` | `PropertyAnalysis` seeded from input `Read`s | applies (`Violated` blocks, under `staticDataQuality`); a proven-satisfied constraint is `Guaranteed`, it used to be `NotGuaranteed` |
+| `SensitivityLineage` (report-only) | traced lineage | tags reach the output columns (through `lastWrite`) |
+| `ContractInference` (dry-run) | inputs + usage | inputs read before the checkpoint are inferred, with observed usage |
+| `TransformationFingerprinter` | the whole IR | identical to the un-checkpointed job's |
+| `OrgPolicyEvaluator` / `TypeGuaranteeValidator` (`contract`) | the contract document only | unaffected - never read a plan; a policy-injected rule or option is checked like any other |
+
+A job that passed only because a checkpoint hid an undeclared read, a cross join, a `CONTROL` input
+flowing into an output or a wrong input schema is now rejected - correctly, and the same way the
+un-checkpointed job always was. `CheckpointVerificationAuditSpec` asserts, for every row above, the
+checkpointed verdict equals the twin's and pins what the legacy verdict was.
+
+Auditing this found (and fixed) one defect that was independent of checkpoints but reached through
+them: lineage qualifiers are *scopes* (an explicit alias, or `<location>#<n>` for a repeated unaliased
+read), not locations, and `RoleConsistencyVerifier`, `SensitivityLineage` and `ContractInference`'s
+usage observation compared them to a contract's declared location directly - so an input read under
+`df.as("c")`, or self-joined without aliases, was never matched and its role verdict/sensitivity
+tags/usage were silently missing. `PlanRuleVerifier.locationResolver` now maps each scope to the
+location of the `Read` it stands for (an alias shared by reads of different locations stays unresolved,
+never guessed); `SensitivityLineage` gained a plan-aware `propagate(plan, contract)` overload (the
+lineage-only one is unchanged and cannot resolve scopes).
+
+**Still unresolved (and so still not verified through), with why:**
+
+- *Ambiguous origin.* Entries are keyed by output attribute ids, and an ordinary job shape reuses them:
+  a join with a lookup followed by a `select` of one side's columns unchanged has the same output ids as
+  the plain read of that side, while reading different sources. The registry refuses to guess, the
+  checkpoint stays opaque, and the unread inputs are `UnverifiableInput`. Giving the selected columns a
+  new attribute id (`.as("id")`, `withColumnRenamed`) makes them distinct and resolvable
+  (`CheckpointVerificationAuditSpec`'s "KNOWN LIMIT" test pins both). A same-source reuse (`.filter`)
+  resolves to the most recent plan and is disclosed by a `CheckpointResolution` diagnostic.
+- *Not observed / not remembered:* created before the rule was installed, another session, evicted from
+  the 256-entry LRU, or an origin over 5,000 nodes.
+- *Delta `MERGE` source* (row-level DML keeps its plans where `substitute` does not look).
+- *`InMemoryRelation`* (not a checkpoint; a bare `.cache()` doesn't reach the check rule).
+
+**A pattern that is newly visible: read, checkpoint, overwrite the same path.** Spark refuses to
+overwrite a path a plan reads unless the read is cut off by a checkpoint, so this is the standard
+workaround. The resolved plan really does read that path, so under `rejectUndeclaredInputs` the contract
+must declare it as an input (as well as the output). This is a verdict with no un-checkpointed twin,
+pinned by `CheckpointVerificationAuditSpec`; it is the intended direction, flagged here as a behavior
+change rather than a bug.
+
 **What an unresolved boundary means for verification.** "No matching `Read`" is not the same claim as
 "never read" when a boundary could be hiding it, so a declared input that is unread *and* has an
 unresolved boundary (`LogicalRDD`/`InMemoryRelation`) somewhere in the plan is reported as an

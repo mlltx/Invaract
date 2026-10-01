@@ -168,4 +168,40 @@ class SensitivityLineageSpec extends AnyFunSuite {
     val result = SensitivityLineage.propagate(lineage, contract)
     assert(result.map(_.lineage.output.name) == lineage.map(_.output.name))
   }
+
+  // --- plan-aware overload: qualifiers resolved to locations through the plan's own Reads ---
+
+  test("propagate(plan, contract) tags a column read through an alias, which the plan-less overload cannot resolve") {
+    val contract = contractWith(List(dataset("orders", "raw.orders", Field("id", "integer", sensitivityTags = Set("pii")))))
+    val plan = Write(
+      DatasetRef("gold.out"),
+      Project(Read(DatasetRef("raw.orders"), alias = Some("cur")), List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("cur"))))))
+    )
+
+    assert(SensitivityLineage.propagate(plan, contract).map(_.sensitivityTags) == List(Set("pii")))
+    assert(SensitivityLineage.propagate(Lineage.trace(plan), contract).map(_.sensitivityTags) == List(Set.empty[String]))
+  }
+
+  test("propagate(plan, contract) tags each side of a self-join (location#n occurrences) and matches the plan-less overload where that already worked") {
+    val contract = contractWith(List(dataset("orders", "raw.orders", Field("id", "integer", sensitivityTags = Set("pii")))))
+    val join = Join(
+      Read(DatasetRef("raw.orders"), alias = Some("raw.orders#0")),
+      Read(DatasetRef("raw.orders"), alias = Some("raw.orders#1")),
+      JoinType.Inner,
+      None
+    )
+    val plan = Write(DatasetRef("gold.out"), Project(join, List(NamedExpr("theirs", ColumnReference(ColumnRef("id", Some("raw.orders#1")))))))
+    assert(SensitivityLineage.propagate(plan, contract).map(_.sensitivityTags) == List(Set("pii")))
+
+    val plain = Write(DatasetRef("gold.out"), Project(Read(DatasetRef("raw.orders")), List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("raw.orders")))))))
+    assert(SensitivityLineage.propagate(plain, contract) == SensitivityLineage.propagate(Lineage.trace(plain), contract))
+  }
+
+  test("propagate(plan, contract) leaves a column untagged when its alias is shared by reads of different locations") {
+    val contract = contractWith(List(dataset("orders", "raw.orders", Field("id", "integer", sensitivityTags = Set("pii")))))
+    val union = Union(List(Read(DatasetRef("raw.orders"), alias = Some("t")), Read(DatasetRef("raw.other"), alias = Some("t"))))
+    val plan = Write(DatasetRef("gold.out"), Project(union, List(NamedExpr("id", ColumnReference(ColumnRef("id", Some("t")))))))
+
+    assert(SensitivityLineage.propagate(plan, contract).map(_.sensitivityTags) == List(Set.empty[String]))
+  }
 }

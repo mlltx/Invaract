@@ -122,6 +122,47 @@ verified write is structurally wrong. See
 | `RULE_UNVERIFIABLE_DML` | The plan is genuinely row-level DML of a kind the active contract declares a rule for, but Invaract couldn't extract the fact that rule needs (e.g. Iceberg's merge-on-read `UPDATE`). |
 | `INVALID_CONTRACT` | The contract itself is structurally unsound (e.g. no declared outputs) — caught before any plan is checked against it. |
 
+## Checkpoints
+
+A job that calls `.checkpoint()` or `.localCheckpoint()` is verified **as if the checkpoint
+weren't there**. Invaract remembers the plan each checkpoint was made from and puts it back
+before any check runs, so every check that looks at what a job reads or how it transforms
+data applies to the work done *upstream* of a checkpoint too:
+
+- the input checks — `MISSING_INPUT`, `UNDECLARED_INPUT`, the input schema checks
+  (`MISSING_INPUT_FIELD`, `UNDECLARED_INPUT_COLUMN`, `INPUT_FIELD_TYPE_MISMATCH`,
+  `INPUT_FIELD_NULLABILITY_MISMATCH`) and the input catalog checks;
+- the transformation-shape rules (`RULE_CROSS_JOIN_VIOLATION`,
+  `RULE_REQUIRED_GROUP_BY_VIOLATION`, `RULE_REQUIRED_JOIN_COLUMNS_VIOLATION`,
+  `RULE_REQUIRED_FILTER_COLUMNS_VIOLATION`), including rules an
+  [organizational policy](/guides/enforcing-organizational-policy/) injects;
+- `ROLE_CONSISTENCY_VIOLATION` and `DATA_QUALITY_VIOLATION`, and the sensitivity tags and
+  [fingerprint](/guides/fingerprinting-transformations/) computed from the same lineage.
+
+The verdict is the same one the same job gets with the checkpoint removed.
+
+**This can change a job's result.** A checkpoint used to hide everything before it, so a job
+could pass by accident — an undeclared read, a cross join, a `CONTROL` input flowing into the
+output, an input with the wrong schema, all upstream of the checkpoint, were never checked. A
+job could also be rejected by accident: a `required_filter_columns` or `required_group_by`
+rule satisfied *before* the checkpoint used to be reported as violated. If a checkpointed
+job that passed before is now rejected, the violation is real; it was there all along.
+
+### What still can't be seen through
+
+Where Invaract can't determine what a checkpoint was made from, it leaves the checkpoint
+opaque rather than guess. Nothing is blocked because of that — a declared input that can't
+be found is reported as *unverifiable* (report-only, see `unverifiableInputs` in the
+[notification sinks guide](/guides/notification-sinks/#what-an-event-looks-like)) instead of
+`MISSING_INPUT` — but the checks above can't run on what is upstream of it:
+
+| Case | Why | What to do |
+|---|---|---|
+| A checkpoint created before the enforcement rule was installed, in another session, or from a plan Invaract no longer remembers | Invaract can only look up plans it saw being created (it keeps the most recent 256, and never remembers a plan over 5,000 nodes — a checkpoint exists to cut a lineage that long) | Install the rule before the job creates its Datasets |
+| Several plans that share their output columns but read *different* datasets — typically a join with a lookup followed by a `select` of one side's columns, unchanged | The plan a checkpoint was made from can't be told apart from a plain read of that side | Give the selected columns a new name or an alias (`col("id").as("id")`) — that makes the columns distinct and the checkpoint resolvable |
+| A Delta `MERGE` whose *source* is the checkpointed Dataset | The command keeps its source where Invaract doesn't look | — |
+| A cached relation (`.cache()`/`.persist()`) | Not a checkpoint; a plain cache never reaches the check at all | — |
+
 ## Learn more
 
 - [View Verification Results](/guides/viewing-results/) — where these appear in

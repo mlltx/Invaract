@@ -93,7 +93,9 @@ intend before treating it as a finished document.
    naming only the inputs that feed it (see
    [Map Outputs to Their Inputs](/guides/mapping-outputs-to-inputs/)). A write that read
    nothing gets `derivedFrom: []`. Inferred input names are positional per write
-   (`input`, `input_1`, `input_2`, ...), so reconcile them by hand when you merge.
+   (`input`, `input_1`, `input_2`, ...), so they mean different things in different
+   drafts — [merge them with `MergeDraftsCli`](#merging-drafts-from-a-job-with-several-writes)
+   rather than by hand.
 
    `location` is the absolute `file:`-scheme-stripped path Spark actually reported for this
    run (see [Contract Format](/reference/contract-format/)'s "Location matching") — replace
@@ -148,6 +150,62 @@ unrecognized write shape produces nothing. If your job performs more than one wr
 callback fires once per recognized write — capture the one you want by overwriting a
 mutable cell, the same way [the explicit-code example](/guides/calling-invaract-explicitly/#infer-a-contract-with-a-custom-callback)
 does.
+
+## Merging drafts from a job with several writes
+
+A job with several writes prints one draft per write. Save each draft to its own file
+(a directory of them works too), then merge them into one multi-output contract with the
+`contract` module's command line — no Spark involved:
+
+```bash
+cd contract
+sbt "runMain com.invaract.contract.cli.MergeDraftsCli --id customer_pipeline --version 1.0.0 drafts/"
+```
+
+Given two drafts — one write reading `data/orders.csv`, another reading
+`data/customers.csv` and `data/orders.csv` (as its `input` and `input_1`) — it prints:
+
+```yaml
+inputs:
+- name: orders
+  location: data/orders.csv
+  ...
+- name: customers
+  location: data/customers.csv
+  ...
+outputs:
+- name: orders_report
+  location: out/orders_report.parquet
+  ...
+  derivedFrom:
+  - orders
+- name: customer_totals
+  location: out/customer_totals.parquet
+  ...
+  derivedFrom:
+  - orders
+  - customers
+```
+
+What the merge does, and what it refuses to guess:
+
+- **Inputs are one per location.** The same location read by several writes becomes one
+  input, named after its location (`data/orders.csv` → `orders`; a catalog table
+  `main.sales.orders` → `orders`; a clash gets `_2`, `_3`, ...). Each output's
+  `derivedFrom` is rewritten to those names.
+- **Conflicting schemas are an error, not a pick.** If two drafts saw the same location
+  with different schemas (say, one was inferred before the source changed), the command
+  prints every conflict, exits `1`, and writes nothing. Re-run the stale write and merge
+  again.
+- **Outputs stay distinct by location.** Two writes to one location merge only if they
+  agree on its schema.
+- **A write that read nothing** keeps `derivedFrom: []`.
+- The merged contract is checked with the same validation as any contract file, and parses
+  back with the normal parser. `--output merged.yaml` writes it to a file instead of
+  standard output; `--id` defaults to `merged_contract`, `--version` to `0.1.0`.
+
+From code, `ContractDraftMerger.merge(drafts, id, version)` does the same on parsed
+`Contract`s and returns either the merged contract or the list of conflicts.
 
 ## Checkpoints
 
