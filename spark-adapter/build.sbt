@@ -780,45 +780,59 @@ dependencyOverrides ++= Seq(
 // published POM). Accepted risk (see docs/CVE_REMEDIATION.md sections 3
 // and 7j).
 
-// NOT overridden, unlike Avro/ZooKeeper/Netty above - CVE-2022-46337
-// (GHSA-rcjc-c4pj-xxrp, LDAP injection in Derby's
-// LDAPAuthenticationSchemeImpl) has no compatible fix for this module's
-// Derby use, on any JDK. Investigated, not assumed:
+// CVE-2022-46337 (GHSA-rcjc-c4pj-xxrp, LDAP injection in Derby's
+// LDAPAuthenticationSchemeImpl). Derby 10.14.2.0 arrives test-scope via
+// spark-hive's embedded Hive metastore. Investigated, not assumed:
 //
 //  - Confirmed against Maven Central's own version listing that
 //    10.17.1.0 is the *only* published fixed coordinate at all - the
-//    advisory names 10.14.3/10.15.2.1/10.16.1.2 as lower-JDK backports,
-//    but none of those three were ever actually published (see
-//    DERBY-7178, "Wrong 10.14 backport patch version"); only
-//    10.14.1.0/10.14.2.0 (both still vulnerable), 10.15.1.3, 10.15.2.0,
-//    10.16.1.1 (also vulnerable per the advisory's own ranges), and
-//    10.17.1.0 exist.
-//  - Tried 10.17.1.0 anyway (JDK 21+-only, since Derby's own release
-//    notes say 10.17 doesn't support Java below 21) and it broke
-//    HiveConnectorSpec outright: confirmed by inspecting the actual jars
-//    (`unzip -l`) that 10.17.1.0 no longer contains
-//    `org/apache/derby/jdbc/EmbeddedDriver.class` at all - Derby
-//    restructured its packaging between these releases - while Hive
-//    2.3.9's own metastore code (DataNucleus/JDO, not this repo's code)
-//    hardcodes exactly that class name as its default
-//    `javax.jdo.option.ConnectionDriverName`. The real failure:
-//    `DatastoreDriverNotFoundException: The specified datastore driver
-//    ("org.apache.derby.jdbc.EmbeddedDriver") was not found in the
-//    CLASSPATH`. Fixing this would mean patching Hive's own metastore
-//    config, not a dependency bump - out of scope for a transitive CVE
-//    override, and this module's tests only use the embedded metastore
-//    as test-scope plumbing (see HiveConnectorSpec's own doc comment),
-//    not something worth that risk to fix.
+//    advisory (and Dependabot) name 10.14.2.1/10.14.3/10.15.2.1/10.16.1.2
+//    as lower-JDK backports, but none of those were ever actually
+//    published (all 404 on Central; see DERBY-7178, "Wrong 10.14 backport
+//    patch version"); only 10.14.1.0/10.14.2.0 (both still vulnerable),
+//    10.15.1.3, 10.15.2.0, 10.16.1.1 (also vulnerable per the advisory's
+//    own ranges), and 10.17.1.0 exist.
+//  - 10.17.1.0 needs Java 21+ (Derby's own release notes; class files are
+//    major version 65). It has two packaging differences from 10.14.x: it
+//    splits out `derbyshared` (arrives transitively from derby's own POM)
+//    and it moved `org/apache/derby/jdbc/EmbeddedDriver.class` out of
+//    derby.jar into the companion `derbytools` jar. An earlier attempt at
+//    this override swapped only the `derby` artifact, saw EmbeddedDriver
+//    "missing", and concluded 10.17 was incompatible with Hive 2.3.9's
+//    metastore (which hardcodes that class name as its default
+//    `javax.jdo.option.ConnectionDriverName`) - that conclusion was wrong:
+//    with `derbytools` 10.17.1.0 added alongside it, HiveConnectorSpec
+//    passes 53/53 (see docs/CVE_REMEDIATION.md 7k).
+//  - The hard constraint is the JDK, not the packaging: CI's main `test`
+//    job builds with `./dev/build` (which runs this module's full
+//    `sbt test`, HiveConnectorSpec included) on a JDK 11/17/21 matrix, and
+//    Derby 10.17 cannot load below Java 21. So the override is applied
+//    only when the build itself runs on JDK 21+; every other spark-adapter
+//    CI job (mutation, coverage, version matrices, docker) already runs on
+//    21, as does the Dependabot dependency-graph submission, so the
+//    alert's own view of this module sees the fixed version.
 //
-// Accepted risk (see docs/CVE_REMEDIATION.md section 3): this module's
-// own test setup never configures LDAP authentication at all -
+// On JDK 11/17 the module still resolves Derby 10.14.2.0 and so still
+// carries this CVE in its *test* classpath only (never in the published
+// POM). Accepted risk there (see docs/CVE_REMEDIATION.md section 3): this
+// module's own test setup never configures LDAP authentication at all -
 // HiveConnectorSpec's embedded metastore JDBC URL
 // (`jdbc:derby:;databaseName=...;create=true`) sets no
 // `derby.authentication.provider`, so the specific vulnerable code path
 // (LDAPAuthenticationSchemeImpl) is never reachable through this module's
-// tests regardless of version. Re-check when Hive's own metastore client
-// moves off Derby 10.14.x-era packaging expectations (a Spark/Hive
-// version bump, not something fixable here).
+// tests regardless of version. Drop the condition once the CI matrix's
+// minimum JDK reaches 21.
+val runningOnJdk21Plus: Boolean =
+  scala.util.Try(sys.props("java.specification.version").split('.').head.toInt >= 21).getOrElse(false)
+
+libraryDependencies ++= (
+  if (runningOnJdk21Plus) Seq("org.apache.derby" % "derbytools" % "10.17.1.0" % "test")
+  else Seq.empty
+)
+dependencyOverrides ++= (
+  if (runningOnJdk21Plus) Seq("org.apache.derby" % "derby" % "10.17.1.0")
+  else Seq.empty
+)
 
 // NOT overridden, unlike Avro/ZooKeeper/Netty/Jackson/log4j above -
 // two Apache Hive CVEs found in a later alert batch, both requiring a

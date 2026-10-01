@@ -295,7 +295,7 @@ or that "critical" means "our users are exposed":
 | `org.apache.avro:avro` | `plugin`, `runner`, `spark-adapter` | `provided` (`plugin`/`spark-adapter`), compile (`runner`) | **No** via `plugin`/`spark-adapter` (non-transitive); n/a via `runner` (never a dependency) | 1.11.2 | 1.11.4 | CVE-2024-47561 |
 | `org.apache.zookeeper:zookeeper` | `plugin`, `runner`, `spark-adapter` | same as above | same as above | 3.6.3 | 3.9.2 | CVE-2023-44981 |
 | `org.codehaus.jackson:jackson-mapper-asl` | `spark-adapter` | `test` (via `spark-hive`) | **No** — excluded from the published POM entirely | 1.9.13 | excluded (no fix exists) | CVE-2019-10202 |
-| `org.apache.derby:derby` | `spark-adapter` | `test` (via `spark-hive`) | **No** — same as above | 10.14.2.0 | **not changed** — accepted risk | CVE-2022-46337 |
+| `org.apache.derby:derby` | `spark-adapter` | `test` (via `spark-hive`) | **No** — same as above | 10.14.2.0 | **not changed** — accepted risk (see §7k: later fixed on JDK 21+, this row's "no compatible version" finding was wrong) | CVE-2022-46337 |
 
 **None of the 8 critical alerts were in the externally-facing (compile-scope,
 `contract`/`ir`/`spark-adapter`) bucket §2 says to check first** — every one
@@ -948,6 +948,76 @@ Lesson (same as §7h): an accepted-risk entry should say what was
 actually inspected. Here it turned "might be needed" into "is needed, and
 the vulnerable method is not called" with a jar scan, one `javap`, and one
 short test run.
+
+## 7k. Reversal: Derby 10.17.1.0 does work with Hive 2.3.9 — the earlier test never added `derbytools`
+
+§7's "sometimes there really is no fix" case (CVE-2022-46337, Derby
+LDAP-authentication bypass; affected `= 10.14.2.0` in this module) concluded
+that Derby 10.17.1.0, the only published fixed release, "no longer contains
+`org/apache/derby/jdbc/EmbeddedDriver.class` at all" and so breaks Hive
+2.3.9's metastore. The `unzip -l` was accurate for `derby-10.17.1.0.jar`.
+The conclusion was not, because the attempt only swapped that one artifact.
+Looking at the companion jars (the same "inspect the real consumer"
+lesson as §7h):
+
+| Jar | `org/apache/derby/jdbc/EmbeddedDriver.class` |
+|---|---|
+| `derby-10.14.2.0.jar` | present |
+| `derby-10.17.1.0.jar` | absent |
+| `derbyshared-10.17.1.0.jar` | absent (arrives transitively from `derby`'s POM) |
+| **`derbytools-10.17.1.0.jar`** | **present** — Derby 10.15+ moved it here |
+
+| Step | Result |
+|---|---|
+| 1. Remove if unused | n/a — it is the embedded metastore's database; `HiveConnectorSpec`/`CatalogIdentitySupportSpec` use it. |
+| 2. Bump the direct dependency | n/a — transitive via `spark-hive` (Hive 2.3.9); Hive 4 breaks the metastore (§7f). |
+| 3. Pin | **Done, JDK 21+ only** — see below. |
+| 4. Report | Residual accepted risk on JDK 11/17, below. |
+
+**What was verified.** With `derby` overridden to `10.17.1.0` and
+`derbytools` `10.17.1.0` added (test scope): `HiveConnectorSpec` 53/53 on
+JDK 21. The full `spark-adapter` suite on JDK 21 (which also covers
+`CatalogIdentitySupportSpec`'s in-memory Derby use) was still running when
+this was first committed; its result is recorded in the follow-up note at
+the end of this section. The alert's own suggested fix, `10.14.2.1`, does
+not exist — 10.14.2.1, 10.14.3.0, 10.15.2.1 and 10.16.1.2 all 404 on Maven
+Central; the published versions are 10.14.1.0, 10.14.2.0, 10.15.1.3,
+10.15.2.0, 10.16.1.1 and 10.17.1.0, and only the last is fixed.
+
+**The real constraint is the JDK, not the packaging.** Derby 10.17 needs
+Java 21 (class-file version 65). CI's main `test` job runs `./dev/build`,
+which runs `spark-adapter`'s whole `sbt test`, `HiveConnectorSpec` included,
+on a JDK 11/17/21 matrix; every other `spark-adapter` job (mutation,
+coverage, the Spark/Delta/Iceberg matrices, Docker) and the Dependabot
+dependency-graph submission already run on 21. So `spark-adapter/build.sbt`
+applies the override only when the build itself runs on JDK 21+
+(`runningOnJdk21Plus`, parsed from `java.specification.version`):
+
+- JDK 21+: `derby` pinned to `10.17.1.0`, `derbytools` `10.17.1.0` added
+  at `test` scope. The Dependabot graph (JDK 21) sees the fixed version, so
+  the alert clears.
+- JDK 11/17: unchanged — still Spark's Derby 10.14.2.0.
+
+Both branches were exercised rather than assumed: the parse expression was
+evaluated over `1.8`/`8`/`11`/`17`/`21`/`22`/`25` and malformed input
+(only 21+ is true; malformed safely means "no pin"), and with the threshold
+temporarily raised so the condition was false, the module resolved only
+`derby-10.14.2.0.jar`. (Overriding `-Djava.specification.version` does not
+work for this — the JVM ignores it — so don't rely on that to test the
+fallback.)
+
+**Residual risk (JDK 11/17 test legs only), rated Low:** Derby 10.14.2.0
+stays on those legs' *test* classpath, never in a published POM. The
+vulnerable path is `LDAPAuthenticationSchemeImpl`, which only runs when
+`derby.authentication.provider` selects LDAP; `HiveConnectorSpec`'s embedded
+metastore URL (`jdbc:derby:;databaseName=...;create=true`) and
+`CatalogIdentitySupportSpec`'s in-memory URL set no authentication provider
+at all. Drop the JDK condition once the CI matrix's minimum JDK reaches 21.
+
+Lesson: when a "fix breaks the dependent" finding rests on one artifact
+missing a class, check the sibling artifacts the library split into before
+accepting it — and check what the *build* runs on, not just what the
+developer's machine does, before pinning something with a JDK floor.
 
 ## 8. Next steps checklist
 
