@@ -813,8 +813,8 @@ dependencyOverrides ++= Seq(
 //    alert's own view of this module sees the fixed version.
 //
 // On JDK 11/17 the module still resolves Derby 10.14.2.0 and so still
-// carries this CVE in its *test* classpath only (never in the published
-// POM). Accepted risk there (see docs/CVE_REMEDIATION.md section 3): this
+// carries this CVE in its *test* classpath only (test scope is not
+// inherited by a consumer of the published artifact). Accepted risk there (see docs/CVE_REMEDIATION.md section 3): this
 // module's own test setup never configures LDAP authentication at all -
 // HiveConnectorSpec's embedded metastore JDBC URL
 // (`jdbc:derby:;databaseName=...;create=true`) sets no

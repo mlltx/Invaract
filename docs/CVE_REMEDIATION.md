@@ -1007,12 +1007,24 @@ work for this — the JVM ignores it — so don't rely on that to test the
 fallback.)
 
 **Residual risk (JDK 11/17 test legs only), rated Low:** Derby 10.14.2.0
-stays on those legs' *test* classpath, never in a published POM. The
+stays on those legs' *test* classpath only; test scope is not inherited by
+a consumer of the published artifact. The
 vulnerable path is `LDAPAuthenticationSchemeImpl`, which only runs when
 `derby.authentication.provider` selects LDAP; `HiveConnectorSpec`'s embedded
 metastore URL (`jdbc:derby:;databaseName=...;create=true`) and
 `CatalogIdentitySupportSpec`'s in-memory URL set no authentication provider
 at all. Drop the JDK condition once the CI matrix's minimum JDK reaches 21.
+
+**Follow-up, verification result:** the full `spark-adapter` suite on JDK
+21 with the pin in place passed 893/893 (41 suites, 0 aborted), including
+`CatalogIdentitySupportSpec`'s in-memory Derby use. `sbt makePom` lists
+`derbytools` only as `<scope>test</scope>` (and, being a
+`dependencyOverrides` entry, the `derby` pin itself is not published at
+all). Not run: a real JDK 11 or 17 build (only JDK 21 is installed in the
+authoring environment) — the fallback branch was verified by forcing the
+condition false on JDK 21, so CI's 11/17 matrix legs are the first real
+exercise of it. `./dev/test`/`./dev/regression` were not run: Derby is a
+`spark-adapter` test dependency, absent from the runner's runtime classpath.
 
 Lesson: when a "fix breaks the dependent" finding rests on one artifact
 missing a class, check the sibling artifacts the library split into before
