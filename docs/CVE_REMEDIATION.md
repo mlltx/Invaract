@@ -877,6 +877,36 @@ unverifiable" should say what was actually inspected. Looking at the
 vulnerable jar's real consumer (here, a one-line `unzip -l`) turned an
 unverifiable claim into a verified one.
 
+## 7i. Gap: `contract` was never covered by the Jackson passes (§7d/§7f)
+
+A `jackson-databind` alert (`BasicPolymorphicTypeValidator.Builder.
+allowIfSubTypeIsArray()` allowlist bypass; affected `>= 2.10.0 < 2.18.8`,
+fixed `2.18.8`) looked already-fixed: §7d/§7f moved Jackson to `2.18.8`/
+`2.18.9` in `spark-adapter`/`plugin`/`runner`. It wasn't. Resolving every
+module's real `Test/fullClasspath` (not just the three that §7d named)
+showed `contract` still on `jackson-databind-2.17.1`; `ir`, `fingerprint`,
+`registry-client` and `notification-kafka` have no Jackson at all.
+
+| Artifact | Module | Scope | Downstream-inherited? (§2) | Before | After |
+|---|---|---|---|---|---|
+| `jackson-{core,databind,annotations,dataformat-yaml}` | `contract` | `test` (via `json-schema-validator:1.4.1`) | **No** — the published POM has 0 Jackson references and `json-schema-validator` is `<scope>test</scope>` | 2.17.1 | 2.18.9 |
+
+Worked in the usual order: the source, `json-schema-validator`, is used by
+`ContractSchemaSpec`/`OrgPolicySchemaSpec`, so it can't be removed;
+bumping it doesn't help — its newest 1.x release (1.5.9) still depends on
+Jackson 2.18.3, below the floor, and 2.x/3.x are a different API
+generation — so Jackson is pinned with `dependencyOverrides` in
+`contract/build.sbt`, to the same `2.18.9` the other modules use, with
+`dataformat-yaml` moved in lockstep (§7d's "matched set" lesson). `sbt
+test` passed 499/499 and the resolved Test classpath shows all four
+artifacts at 2.18.9. The diff is `build.sbt`-only, so MiMa and mutation
+testing don't apply; `dependencyOverrides` isn't published, so the POM is
+unchanged.
+
+Lesson: a fix recorded for "the modules the alert named" is not a fix for
+the *artifact* — when an alert names a coordinate, resolve it in every
+module's classpath, including the ones with no obvious reason to have it.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
