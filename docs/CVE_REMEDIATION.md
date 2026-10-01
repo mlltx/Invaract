@@ -985,7 +985,9 @@ Central; the published versions are 10.14.1.0, 10.14.2.0, 10.15.1.3,
 10.15.2.0, 10.16.1.1 and 10.17.1.0, and only the last is fixed.
 
 **The real constraint is the JDK, not the packaging.** Derby 10.17 needs
-Java 21 (class-file version 65). CI's main `test` job runs `./dev/build`,
+Java 21 (Derby's release notes; every class in `derby`/`derbytools`/
+`derbyshared` 10.17.1.0 is class-file major version 63, i.e. Java 19+, so
+JDK 11 and 17 cannot load it either way). CI's main `test` job runs `./dev/build`,
 which runs `spark-adapter`'s whole `sbt test`, `HiveConnectorSpec` included,
 on a JDK 11/17/21 matrix; every other `spark-adapter` job (mutation,
 coverage, the Spark/Delta/Iceberg matrices, Docker) and the Dependabot
@@ -1006,7 +1008,13 @@ temporarily raised so the condition was false, the module resolved only
 work for this — the JVM ignores it — so don't rely on that to test the
 fallback.)
 
-**Residual risk (JDK 11/17 test legs only), rated Low:** Derby 10.14.2.0
+**Residual risk (JDK 11/17 test legs only).** Upstream rates the CVE
+**Critical (CVSS 9.8)** — but only for LDAP-authenticated Derby
+installations; the advisory lists affected `10.14.2.0`, `10.15.1.3`-`10.15.2.0`
+and `10.16.1.1`, with fixes `10.14.2.1`/`10.15.2.1`/`10.16.1.2` that were
+not on Maven Central (checked: all three 404; Apache's own download site
+was not checked) — the advisory's mitigation for those JDKs is to build a
+distribution from the release-family source branch yourself. For this repo the rating is **Low**, because: Derby 10.14.2.0
 stays on those legs' *test* classpath only; test scope is not inherited by
 a consumer of the published artifact. The
 vulnerable path is `LDAPAuthenticationSchemeImpl`, which only runs when

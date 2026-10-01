@@ -792,8 +792,9 @@ dependencyOverrides ++= Seq(
 //    patch version"); only 10.14.1.0/10.14.2.0 (both still vulnerable),
 //    10.15.1.3, 10.15.2.0, 10.16.1.1 (also vulnerable per the advisory's
 //    own ranges), and 10.17.1.0 exist.
-//  - 10.17.1.0 needs Java 21+ (Derby's own release notes; class files are
-//    major version 65). It has two packaging differences from 10.14.x: it
+//  - 10.17.1.0 needs Java 21+ (Derby's own release notes state 21; every
+//    class in derby/derbytools/derbyshared is class-file major version 63,
+//    i.e. Java 19+, so JDK 11 and 17 cannot load it either way). It has two packaging differences from 10.14.x: it
 //    splits out `derbyshared` (arrives transitively from derby's own POM)
 //    and it moved `org/apache/derby/jdbc/EmbeddedDriver.class` out of
 //    derby.jar into the companion `derbytools` jar. An earlier attempt at
