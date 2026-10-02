@@ -455,8 +455,11 @@ locally/interactively (dev/lib.sh’s own doc), not something any CI job
 invokes.</li>
 <li><strong><code dir="auto">./dev/regression</code></strong>: the pass/fail pair proving <code dir="auto">ContractEnforcementRule</code>
 actually enforces something, not just that a harness run completes — now
-four cases, not two: schema-level enforcement (Cases 1/2) and static
-data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md).
+ten cases, not two: schema-level enforcement (Cases 1/2), static
+data-quality enforcement (Cases 3/4, docs/STATIC_DATA_QUALITY_VERIFICATION.md),
+role consistency (Cases 5/6), a job that checkpoints between reading and
+writing (Cases 7/8, the harness’s <code dir="auto">--checkpoint</code> flag), and per-output input
+scoping via <code dir="auto">derivedFrom</code> (Cases 9/10).
 Runs twice in CI: directly, once per OS/Java combination in the <code dir="auto">test</code>
 job’s matrix, and again via Docker in the separate <code dir="auto">docker-regression</code> job
 (<code dir="auto">docker/Dockerfile</code>).</li>

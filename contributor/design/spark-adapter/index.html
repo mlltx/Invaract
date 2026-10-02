@@ -717,6 +717,106 @@ copies tags onto plans derived by a transformation, so the lookup only accepts a
 plan is <code dir="auto">eq</code> the plan asked about; anything else, and any plan the rule never saw (no rule installed,
 another session), is a miss and falls back to <code dir="auto">SparkPlanAdapter.translate(qe.analyzed)</code> — the previous
 behavior. Whatever the rule translated is what <code dir="auto">lastWrite</code> reports, so it can never disagree with the event about lineage.</p>
+<p><strong>Every input-side verifier now runs through a resolved checkpoint (a behavior change).</strong> Because
+<code dir="auto">substitute</code> happens on the Catalyst plan <em>before</em> translation, everything downstream of it consumes
+the plan the job would have had with no checkpoint. Audited one verifier at a time
+(<code dir="auto">CheckpointVerificationAuditSpec</code>, real <code dir="auto">local[*]</code> Spark, each job run three ways: checkpointed under
+the real rule, the identical job with no checkpoint, and the checkpointed job’s own write plan verified
+by a rule with no registry - the pre-registry behavior):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Consumer</th><th>Reads</th><th>Through a resolved checkpoint</th></tr></thead><tbody><tr><td><code dir="auto">StructuralVerifier</code> inputs (<code dir="auto">MISSING_INPUT</code>, <code dir="auto">UNDECLARED_INPUT</code>, <code dir="auto">derivedFrom</code> scoping)</td><td><code dir="auto">Read</code> locations</td><td>applies; unread-input verdict is <code dir="auto">MISSING_INPUT</code>, not <code dir="auto">UnverifiableInput</code></td></tr><tr><td><code dir="auto">StructuralVerifier</code> input schema (<code dir="auto">MISSING_INPUT_FIELD</code>, <code dir="auto">UNDECLARED_INPUT_COLUMN</code>, <code dir="auto">INPUT_FIELD_*</code>)</td><td><code dir="auto">collectInputSchemas</code> over the substituted plan</td><td>applies (used to be skipped entirely)</td></tr><tr><td><code dir="auto">StructuralVerifier</code> input catalog (<code dir="auto">*_INPUT_CATALOG_*</code>)</td><td><code dir="auto">Read.catalog</code></td><td>applies</td></tr><tr><td><code dir="auto">PlanRuleVerifier</code> (cross join, group by, join/filter columns)</td><td>any matching node in the plan</td><td>applies <strong>in both directions</strong>: a hidden cross join is now caught, and a rule satisfied upstream of the checkpoint is no longer falsely reported as violated</td></tr><tr><td><code dir="auto">RoleConsistencyVerifier</code></td><td><code dir="auto">Lineage.trace</code> + condition references</td><td>applies (<code dir="auto">Contradicts</code> blocks, under <code dir="auto">roleConsistency</code>)</td></tr><tr><td><code dir="auto">StaticDataQualityVerifier</code></td><td><code dir="auto">PropertyAnalysis</code> seeded from input <code dir="auto">Read</code>s</td><td>applies (<code dir="auto">Violated</code> blocks, under <code dir="auto">staticDataQuality</code>); a proven-satisfied constraint is <code dir="auto">Guaranteed</code>, it used to be <code dir="auto">NotGuaranteed</code></td></tr><tr><td><code dir="auto">SensitivityLineage</code> (report-only)</td><td>traced lineage</td><td>tags reach the output columns (through <code dir="auto">lastWrite</code>)</td></tr><tr><td><code dir="auto">ContractInference</code> (dry-run)</td><td>inputs + usage</td><td>inputs read before the checkpoint are inferred, with observed usage</td></tr><tr><td><code dir="auto">TransformationFingerprinter</code></td><td>the whole IR</td><td>identical to the un-checkpointed job’s</td></tr><tr><td><code dir="auto">OrgPolicyEvaluator</code> / <code dir="auto">TypeGuaranteeValidator</code> (<code dir="auto">contract</code>)</td><td>the contract document only</td><td>unaffected - never read a plan; a policy-injected rule or option is checked like any other</td></tr></tbody></table>
+<p>A job that passed only because a checkpoint hid an undeclared read, a cross join, a <code dir="auto">CONTROL</code> input
+flowing into an output or a wrong input schema is now rejected - correctly, and the same way the
+un-checkpointed job always was. <code dir="auto">CheckpointVerificationAuditSpec</code> asserts, for every row above, the
+checkpointed verdict equals the twin’s and pins what the legacy verdict was.</p>
+<p>Auditing this found (and fixed) one defect that was independent of checkpoints but reached through
+them: lineage qualifiers are <em>scopes</em> (an explicit alias, or <code dir="auto">&#x3C;location>#&#x3C;n></code> for a repeated unaliased
+read), not locations, and <code dir="auto">RoleConsistencyVerifier</code>, <code dir="auto">SensitivityLineage</code> and <code dir="auto">ContractInference</code>’s
+usage observation compared them to a contract’s declared location directly - so an input read under
+<code dir="auto">df.as("c")</code>, or self-joined without aliases, was never matched and its role verdict/sensitivity
+tags/usage were silently missing. <code dir="auto">PlanRuleVerifier.locationResolver</code> now maps each scope to the
+location of the <code dir="auto">Read</code> it stands for (an alias shared by reads of different locations stays unresolved,
+never guessed); <code dir="auto">SensitivityLineage</code> gained a plan-aware <code dir="auto">propagate(plan, contract)</code> overload (the
+lineage-only one is unchanged and cannot resolve scopes).</p>
+<p><strong>Still unresolved (and so still not verified through), with why:</strong></p>
+<ul>
+<li><em>Ambiguous origin.</em> Entries are keyed by output attribute ids, and an ordinary job shape reuses them:
+a join with a lookup followed by a <code dir="auto">select</code> of one side’s columns unchanged has the same output ids as
+the plain read of that side, while reading different sources. The registry refuses to guess, the
+checkpoint stays opaque, and the unread inputs are <code dir="auto">UnverifiableInput</code>. Giving the selected columns a
+new attribute id (<code dir="auto">.as("id")</code>, <code dir="auto">withColumnRenamed</code>) makes them distinct and resolvable
+(<code dir="auto">CheckpointVerificationAuditSpec</code>’s “KNOWN LIMIT” test pins both). A same-source reuse (<code dir="auto">.filter</code>)
+resolves to the most recent plan and is disclosed by a <code dir="auto">CheckpointResolution</code> diagnostic.</li>
+<li><em>Not observed / not remembered:</em> created before the rule was installed, another session, evicted from
+the 256-entry LRU, or an origin over 5,000 nodes.</li>
+<li><em>Delta <code dir="auto">MERGE</code> source</em> (row-level DML keeps its plans where <code dir="auto">substitute</code> does not look).</li>
+<li><em><code dir="auto">InMemoryRelation</code></em> (not a checkpoint; a bare <code dir="auto">.cache()</code> doesn’t reach the check rule).</li>
+</ul>
+<p><strong>A pattern that is newly visible: read, checkpoint, overwrite the same path.</strong> Spark refuses to
+overwrite a path a plan reads unless the read is cut off by a checkpoint, so this is the standard
+workaround. The resolved plan really does read that path, so under <code dir="auto">rejectUndeclaredInputs</code> the contract
+must declare it as an input (as well as the output). This is a verdict with no un-checkpointed twin,
+pinned by <code dir="auto">CheckpointVerificationAuditSpec</code>; it is the intended direction, flagged here as a behavior
+change rather than a bug.</p>
 <p><strong>What an unresolved boundary means for verification.</strong> “No matching <code dir="auto">Read</code>” is not the same claim as
 “never read” when a boundary could be hiding it, so a declared input that is unread <em>and</em> has an
 unresolved boundary (<code dir="auto">LogicalRDD</code>/<code dir="auto">InMemoryRelation</code>) somewhere in the plan is reported as an
@@ -2698,7 +2798,7 @@ overhead. The two levers above reduced wasted time around that core cost
 (serialization, under-utilized cores), not the cost itself.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="sharding-spark-adapters-whole-module-run">Sharding <code dir="auto">spark-adapter</code>’s whole-module run</h4><a class="sl-anchor-link" href="#sharding-spark-adapters-whole-module-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sharding spark-adapter’s whole-module run”</span></a></div>
 <p>The bottleneck named above was addressed directly by splitting
-<code dir="auto">mutation-testing-spark-adapter</code> itself into a 4-way matrix job
+<code dir="auto">mutation-testing-spark-adapter</code> itself into a 5-way matrix job
 (<code dir="auto">.github/workflows/test.yml</code>), each leg running <code dir="auto">sbt stryker --mutate</code>
 scoped to a fixed subset of the module’s source files (30 as of
 <code dir="auto">RoleConsistencyVerifier</code>, added to shard-4 — the shard smallest by line
@@ -2707,12 +2807,23 @@ currently smallest” convention; <code dir="auto">PlanRuleVerifier</code>/<code
 were added to shard-3/shard-2 respectively before it)
 (<code dir="auto">strategy.matrix.include</code>, one entry per shard). This doesn’t reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
-once per mutant, exactly as before — it parallelizes it across four
-runners instead of one. The four shards were hand-balanced by source line
+once per mutant, exactly as before — it parallelizes it across several
+runners instead of one. The shards were first hand-balanced by source line
 count (not file count, since the module’s files range from 50 to over
-1100 lines) into roughly 1300-line groups, the same order of magnitude as
-<code dir="auto">WriteCommandSupport.scala</code> alone, so no single shard dominates the
-others’ wall-clock.</p>
+1100 lines).</p>
+<p><strong>Line count turned out not to predict wall-clock.</strong> Measured on the main
+run for the PR #81 merge (Oct 2026): shard-1 66 min, shard-2 68 min,
+shard-4 72 min, and the then-shard-3 <strong>152 min</strong> (171 mutants) — about
+twice the others despite holding a similar number of lines (2800 vs
+2000-2661). A mutant’s cost is the number and weight of the tests that
+cover it, and the verifier/checkpoint code in that shard sits on nearly
+every write path in the suite. shard-3 was therefore split in two
+(<code dir="auto">StructuralVerifier</code> plus two small files stay in shard-3; the other five
+files became shard-5). That split is itself only a line-count-balanced
+first guess — no per-file timing existed when it was made — so if one
+shard is still clearly the longest, re-tune it from the per-file section
+of that shard’s Stryker HTML report (the
+<code dir="auto">mutation-report-spark-adapter-&#x3C;shard></code> artifact), not from line counts.</p>
 <p>Splitting by file, rather than by mutator category or some other axis,
 composes with the existing gating story for free: build.sbt’s
 <code dir="auto">strykerThresholdsBreak</code> (70%) still applies unmodified to each shard’s
@@ -2730,7 +2841,7 @@ back above the bar.</p>
 standalone job (<code dir="auto">mutation-testing-spark-adapter-incremental</code>) rather than
 being sharded too — it already only mutates what a PR touched, so it was
 never the source of the 30-40 minute cost, and running it standalone lets
-it start immediately alongside all four shards instead of waiting behind
+it start immediately alongside all of the shards instead of waiting behind
 whichever shard it used to run after.</p>
 <p>A new <code dir="auto">mutation-shard-drift-check</code> job guards the one real risk a
 hand-written per-shard file list introduces: a new file added to
@@ -2747,10 +2858,11 @@ whichever shard runs longest).</p>
 <p><strong>What this changes for recovery, specifically</strong>: previously, a
 transient failure anywhere in the ~30-40 minute whole-module run (a flaky
 Spark-session startup, a runner resource hiccup) meant re-running the
-entire job from scratch. Now each shard is an independent ~8-10 minute
-job with <code dir="auto">fail-fast: false</code>, so a transient failure in one shard doesn’t
-cancel the other three, and GitHub’s “re-run failed jobs” only has to
-redo the one shard that actually failed.</p>
+entire job from scratch. Now each shard is an independent job with
+<code dir="auto">fail-fast: false</code> (roughly 50-90 minutes each, not the “~8-10 minutes”
+this section used to claim — see the measurements above), so a transient
+failure in one shard doesn’t cancel the others, and GitHub’s “re-run
+failed jobs” only has to redo the one shard that actually failed.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="mutation-testing-the-expression-algebra-rework">Mutation testing: the expression-algebra rework</h4><a class="sl-anchor-link" href="#mutation-testing-the-expression-algebra-rework"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Mutation testing: the expression-algebra rework”</span></a></div>
 <p>CLAUDE.md’s per-PR 70% bar, scoped to the two touched files (not a
 whole-module run):</p>
