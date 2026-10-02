@@ -11,6 +11,19 @@ on:
       - main
       - develop
 
+# One live run per pull request: a new push to the PR cancels the previous
+# run instead of letting every push's full ~30-job run pile up behind it.
+# Before this existed, 7 pushes to one PR branch inside an hour put roughly
+# 230 jobs in the queue, and the latest run's jobs waited up to ~129 minutes
+# for a runner (measured on PR #84). Push events (main, develop, feature/**)
+# get a unique per-run group instead, so every commit on a long-lived branch
+# still gets its own full run - a shared per-ref group would silently
+# collapse queued runs for intermediate commits even with cancel-in-progress
+# off.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test on ${{ matrix.os }} / Java ${{ matrix.java-version }}
@@ -411,15 +424,30 @@ jobs:
   # doesn't reduce that work (Stryker4s still reruns the full real-Spark
   # test suite once per mutant, same as before) - it parallelizes it: each
   # shard below runs `--mutate` scoped to a fixed subset of files (see
-  # mutation-testing-spark-adapter's `matrix.include`, balanced by line
-  # count into four ~1300-line groups so no shard dominates the others'
-  # wall-clock), on its own runner, at the same time as the other three.
-  # `fail-fast: false` on the matrix means one shard hitting a transient
-  # failure (a flaky Spark-session startup, a runner hiccup) no longer
-  # takes the other three down with it, and GitHub's "re-run failed jobs"
-  # only has to redo that one ~8-10 min shard instead of the entire
-  # previous ~30-40 min monolith - the actual ask behind this split, not
-  # just the wall-clock reduction.
+  # mutation-testing-spark-adapter's `matrix.include`), on its own runner, at
+  # the same time as the others. `fail-fast: false` on the matrix means one
+  # shard hitting a transient failure (a flaky Spark-session startup, a
+  # runner hiccup) no longer takes the others down with it, and GitHub's
+  # "re-run failed jobs" only has to redo that one shard instead of the
+  # entire previous ~30-40 min monolith - the actual ask behind this split,
+  # not just the wall-clock reduction.
+  #
+  # Measured wall-clock (the main run for the PR #81 merge, Oct 2026): shard-1
+  # 66 min, shard-2 68 min, shard-4 72 min and - the outlier - the old
+  # shard-3 152 min (171 mutants, "Mutation run finished! Took 2 hours, 23
+  # minutes"). Splitting by source line count did not balance them: the old
+  # shard-3 held about the same number of lines as the others (2800 vs
+  # 2000-2661) yet took twice as long, because a mutant's cost is the number
+  # (and weight) of tests that cover it, and the verifier / checkpoint code in
+  # that shard sits on nearly every write path in the suite. Line count is
+  # only a first guess at balance here. shard-3 was therefore split into
+  # shard-3 (StructuralVerifier and two small files) and shard-5 (the other
+  # five files), kept even by line count because no per-file timing existed
+  # when that was done; re-tune from the per-file section of a shard's Stryker
+  # HTML report (uploaded as the mutation-report-spark-adapter-<shard>
+  # artifact) if one shard is still clearly the longest. The "~8-10 min per
+  # shard" figure this comment used to quote was stale by roughly an order of
+  # magnitude.
   #
   # Because Stryker4s's mutation score is a mutant-count-weighted average,
   # every shard clearing build.sbt's existing 70% break threshold on its
@@ -435,13 +463,18 @@ jobs:
   # gap CLAUDE.md already calls out mutation testing as only partially
   # solving, narrowed a bit further for free.
   #
-  # The four-way split trades a single ~30-40 min compute run for four
-  # ~8-10 min ones, each paying its own Spark-distribution-restore +
-  # contract/ir-assembly setup cost - not free, but the Spark distribution
-  # itself is cached (actions/cache, keyed on OS + version, same as the
-  # `test` job above) and sbt's own cache is warmed by actions/setup-java's
-  # `cache: 'sbt'`, so each shard's repeated setup is a cache restore, not
-  # a fresh network download/compile every time.
+  # Sharding trades one long run for several shorter ones, each paying its
+  # own setup cost - not free, but small next to the mutation work: measured
+  # on shard-1 of that same run, everything before the Stryker step (JDK/sbt
+  # setup, the Spark cache restore) took ~17 s and publishing contract/ir/
+  # fingerprint locally took 1m44s, against a 63m44s mutation step. The Spark
+  # distribution is cached (actions/cache, keyed on OS + version, same as the
+  # `test` job above), sbt's own cache is warmed by actions/setup-java's
+  # `cache: 'sbt'`, and the local publish is now restored from cache when
+  # contract/ir/fingerprint are unchanged (see
+  # .github/actions/publish-engine-modules). The mutation step itself also
+  # includes Stryker's own initial full test run, which is not separately
+  # timed in the step list.
   #
   # mutation-shard-drift-check (below) is the safety net for the one real
   # risk a hand-written, per-file shard list introduces: a new file added
@@ -462,9 +495,11 @@ jobs:
           - name: shard-2
             files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala,src/main/scala/com/invaract/sparkadapter/StaticDataQualityVerifier.scala"
           - name: shard-3
-            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala,src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala"
           - name: shard-4
             files: "src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala,src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala,src/main/scala/com/invaract/sparkadapter/location/LocationResolver.scala,src/main/scala/com/invaract/sparkadapter/location/ContractLocationResolution.scala,src/main/scala/com/invaract/sparkadapter/RoleConsistencyVerifier.scala"
+          - name: shard-5
+            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -518,11 +553,7 @@ jobs:
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        shell: bash
-        run: |
-          cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal && cd ..
-          cd fingerprint && sbt publishLocal
+        uses: ./.github/actions/publish-engine-modules
 
       # No --thresholds override here (unlike the incremental step below):
       # build.sbt's own strykerThresholdsHigh/Low/Break (90/80/70) already
@@ -548,7 +579,7 @@ jobs:
   # anything with the shards - it always mutates only what a PR actually
   # touched, so it was never the source of the 30-40 min bottleneck the
   # sharding above addresses, and running it standalone lets it start
-  # immediately in parallel with all four shards instead of waiting in line
+  # immediately in parallel with all of the shards instead of waiting in line
   # behind whichever shard it used to be bolted onto.
   mutation-testing-spark-adapter-incremental:
     name: Mutation testing (spark-adapter, incremental)
@@ -601,11 +632,7 @@ jobs:
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        shell: bash
-        run: |
-          cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal && cd ..
-          cd fingerprint && sbt publishLocal
+        uses: ./.github/actions/publish-engine-modules
 
       # CLAUDE.md's "Mutation Testing Requirement" asks for 70% on the
       # specific file(s) a feature adds or changes to ir/spark-adapter -
@@ -811,21 +838,19 @@ jobs:
       # libraryDependencies against their own published coordinate (no
       # aggregating root build.sbt), so both need `publishLocal` first,
       # same as the mutation-testing job above. These are Spark-version-
-      # independent (contract/ir have no Spark dependency at all), so
-      # they're built once per matrix
-      # leg rather than shared - simpler than rigging a cross-job artifact
-      # hand-off for a build that only takes a few seconds.
+      # independent (contract/ir have no Spark dependency at all), so each
+      # matrix leg gets them from the shared publish-engine-modules action:
+      # restored from the Actions cache when contract/ir/fingerprint are
+      # unchanged, published otherwise (~1m45s measured). A cache rather than
+      # a cross-job artifact hand-off, because a hand-off would put a serial
+      # prerequisite job in front of every leg without shortening the run.
       # spark-adapter's build.sbt resolves contract/ir as real
       # libraryDependencies against their own published coordinate (not
       # unmanagedJars — see spark-adapter/build.sbt's own comment on the
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        shell: bash
-        run: |
-          cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal && cd ..
-          cd fingerprint && sbt publishLocal
+        uses: ./.github/actions/publish-engine-modules
 
       - name: Test spark-adapter against Spark ${{ matrix.spark-version }}
         shell: bash
@@ -891,11 +916,7 @@ jobs:
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        shell: bash
-        run: |
-          cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal && cd ..
-          cd fingerprint && sbt publishLocal
+        uses: ./.github/actions/publish-engine-modules
 
       - name: Test spark-adapter's Delta specs against delta-spark ${{ matrix.delta-version }}
         shell: bash
@@ -961,11 +982,7 @@ jobs:
       # fix and why), so they need `publishLocal`, not just `assembly`,
       # before anything that compiles spark-adapter can resolve them.
       - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
-        shell: bash
-        run: |
-          cd contract && sbt publishLocal && cd ..
-          cd ir && sbt publishLocal && cd ..
-          cd fingerprint && sbt publishLocal
+        uses: ./.github/actions/publish-engine-modules
 
       - name: Test spark-adapter's Iceberg specs against iceberg-spark-runtime ${{ matrix.iceberg-version }}
         shell: bash
@@ -1481,14 +1498,12 @@ jobs:
       # *compile* dependencies of spark-adapter, resolved from Maven Central -
       # no local Spark distribution or spark-submit required just to produce
       # its jar).
-      - name: Build contract, ir, fingerprint, and spark-adapter
+      - name: Publish contract, ir, and fingerprint locally
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Build spark-adapter
         shell: bash
-        run: |
-          set -e
-          (cd contract && sbt publishLocal)
-          (cd ir && sbt publishLocal)
-          (cd fingerprint && sbt publishLocal)
-          (cd spark-adapter && sbt assembly)
+        run: cd spark-adapter && sbt assembly
 
       - name: Test notification-kafka
         run: cd notification-kafka && sbt test
