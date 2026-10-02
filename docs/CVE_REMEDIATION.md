@@ -20,6 +20,7 @@ and they support very different remediation paths:
 | Scala/Java deps (`contract`, `ir`, `spark-adapter`, `plugin`, `runner`) | Submitted as `maven`-ecosystem entries by [`dependency-graph.yml`](../.github/workflows/dependency-graph.yml) (`scalacenter/sbt-dependency-submission`), on every push to `main`. Without this workflow the graph would be empty and Dependabot would see zero Scala dependencies. | **No.** Dependabot has no `build.sbt` updater — it can *see* vulnerable coordinates via the submitted graph, but cannot open a version-bump PR for them. These alerts are manual-only. |
 | `web/` npm deps | `web/package-lock.json`, parsed natively. | Yes, once `dependabot.yml` is configured (see §4). |
 | `docs-site/` npm deps | `docs-site/package-lock.json`, parsed natively. | Yes, same. |
+| `contributor-docs/` npm deps | `contributor-docs/package-lock.json`, parsed natively. | Yes, same — but only since §7l: it was missing from `dependabot.yml` until then. |
 | GitHub Actions pins (`.github/workflows/*.yml`) | Parsed natively. | Yes, same. |
 
 This asymmetry is almost certainly why the count is 238: Spark's own
@@ -154,10 +155,10 @@ most of the prioritization decision.
 
 ## 4. Remediation workflow, by ecosystem
 
-### npm (`web/`, `docs-site/`) and GitHub Actions — now automated
+### npm (`web/`, `docs-site/`, `contributor-docs/`) and GitHub Actions — now automated
 
 `.github/dependabot.yml` (added alongside this document) configures weekly
-version-update PRs for these three ecosystems, grouped by minor/patch so
+version-update PRs for these ecosystems, grouped by minor/patch so
 routine bumps land as one PR instead of dozens, while majors (a Next.js or
 Astro major, especially) still arrive as their own PR for manual review —
 those can carry real breaking changes and shouldn't be batch-merged blind.
@@ -1115,10 +1116,11 @@ crash — rated **Low**.
 **Why it was missed, and what to check next time:** #84's `npm audit` covered
 `web/` and `docs-site/` only; `contributor-docs/` is a second Starlight site
 with its own lockfile. `git ls-files '*package-lock.json'` lists all three.
-Separately, `.github/dependabot.yml` configures npm updates for `/web` and
+Separately, `.github/dependabot.yml` configured npm updates for `/web` and
 `/docs-site` but **not** `/contributor-docs`, so Dependabot never opened a
-version-update PR for it (alerts still appear, since GitHub reads the
-lockfile).
+version-update PR for it (alerts still appeared, since GitHub reads the
+lockfile). `/contributor-docs` has now been added there, mirroring the
+`docs-site` entry (weekly, minor/patch grouped, majors as their own PR).
 
 ## 8. Next steps checklist
 

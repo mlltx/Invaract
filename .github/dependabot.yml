@@ -1,7 +1,8 @@
 # Dependency update automation.
 #
 # Covers only the ecosystems Dependabot actually has an updater for in this
-# repo: npm (web/, docs-site/) and github-actions (workflow pins). There is
+# repo: npm (web/, docs-site/, contributor-docs/) and github-actions (workflow
+# pins). There is
 # no `maven`/sbt entry here on purpose — Dependabot has no build.sbt parser,
 # so it cannot open version-bump PRs for contract/ir/spark-adapter/plugin/
 # runner's dependencies even though dependency-graph.yml (which submits
@@ -48,6 +49,29 @@ updates:
       - "docs-site"
     groups:
       docs-site-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Contributor docs site (a second Astro Starlight site, generated from
+  # ROADMAP.md/ARCHITECTURE.md/docs/** — see CLAUDE.md's Documentation
+  # Policy). It has its own package-lock.json, and was missing from this file
+  # until a devalue advisory surfaced there while docs-site/ (same astro
+  # dependency tree) was already fixed: Dependabot alerts fire from the
+  # lockfile regardless, but without an entry here no version-update PR was
+  # ever opened for it. Build-time only, like docs-site/.
+  - package-ecosystem: "npm"
+    directory: "/contributor-docs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "contributor-docs"
+    groups:
+      contributor-docs-minor-patch:
         applies-to: version-updates
         update-types:
           - "minor"
