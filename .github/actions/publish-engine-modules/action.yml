@@ -1,0 +1,67 @@
+name: Publish contract, ir and fingerprint locally
+description: >
+  Makes the contract, ir and fingerprint modules resolvable as ordinary
+  library dependencies (sbt `publishLocal` into ~/.ivy2/local), restoring them
+  from the Actions cache when their sources have not changed.
+
+# Why this exists: spark-adapter's build.sbt depends on contract, ir and
+# fingerprint by their published coordinate (com.invaract %% invaract-<module>),
+# and there is no aggregating root build, so every job that compiles or tests
+# spark-adapter has to publish those three locally first. About a dozen jobs
+# used to repeat the same three `sbt publishLocal` commands inline, costing
+# ~1m45s each (measured: shard-1 of the #81 merge run, 19:19:31 -> 19:21:15).
+#
+# How it works: the cache key is a hash of every git-tracked file under
+# contract/, ir/ and fingerprint/ (sources, tests, build.sbt, project/*.sbt),
+# plus the OS and JDK. If nothing in those three directories changed since a
+# run that populated the cache, the published artifacts are restored and the
+# `publishLocal` step is skipped. On a miss it publishes, and actions/cache
+# saves the result when the job succeeds.
+#
+# Only the three module directories are cached, not all of
+# ~/.ivy2/local/com.invaract: a job that later publishes spark-adapter itself
+# (dev/build does) must not leak that into a cache keyed on these three.
+#
+# Not used by api-compatibility, which deliberately publishes the PR's *base*
+# build under the same coordinate and so must always build for real, nor by
+# coverage-gating (separate, ordered plain builds) or the `test` matrix (which
+# gets the same effect from ./dev/build). See docs/SPARK_ADAPTER.md's
+# "Sharding spark-adapter's whole-module run".
+
+inputs:
+  java-version:
+    description: JDK version the calling job builds with (part of the cache key)
+    required: false
+    default: '21'
+
+runs:
+  using: composite
+  steps:
+    - name: Hash contract, ir and fingerprint sources
+      id: sources
+      shell: bash
+      run: |
+        # -z / -0 so paths with spaces cannot split; sorted so the hash does not
+        # depend on git's listing order. sha256sum prints the file name too, so
+        # a rename changes the hash.
+        HASH=$(git ls-files -z contract ir fingerprint | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)
+        echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+    - name: Restore locally published contract, ir and fingerprint
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.ivy2/local/com.invaract/invaract-contract_2.12
+          ~/.ivy2/local/com.invaract/invaract-ir_2.12
+          ~/.ivy2/local/com.invaract/invaract-fingerprint_2.12
+        key: ivy-local-engine-${{ runner.os }}-jdk${{ inputs.java-version }}-${{ steps.sources.outputs.hash }}
+
+    - name: Publish contract, ir, and fingerprint locally (spark-adapter's libraryDependencies)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -e
+        (cd contract && sbt publishLocal)
+        (cd ir && sbt publishLocal)
+        (cd fingerprint && sbt publishLocal)
