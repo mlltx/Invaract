@@ -384,7 +384,7 @@ never by inspecting the diff or trusting the previous fix's success.
 | `io.netty:*` (16 artifacts, #223/#149/#73, #208/#134/#57, + more) | all three | 4.1.96.Final | 4.1.132.Final | CVE-2025-24970 (SslHandler), CVE-2026-33871 (HTTP/2 CONTINUATION flood) |
 | `org.apache.arrow:arrow-{vector,memory-core,memory-netty}` (not itself alerted — broke as a side effect) | `spark-adapter` | 14.0.1 | 17.0.0 | n/a — required by the Netty bump above, not a CVE fix in its own right |
 | `com.fasterxml.jackson.core:{jackson-core,jackson-databind,jackson-annotations}` (not itself alerted — broke as a side effect) | `spark-adapter` | Spark's own 2.15.2 | pinned back to 2.15.2 | n/a — Arrow 17.0.0 tried to pull 2.17.1; pinned back down |
-| `org.apache.thrift:libthrift` (#35/#36) | `spark-adapter` | 0.12.0 | 0.13.0 | CVE-2019-0205 fixed; CVE-2020-13949 left as accepted risk (0.14.0's fix is incompatible with Hive 2.3.9) |
+| `org.apache.thrift:libthrift` (#35/#36) | `spark-adapter` | 0.12.0 | 0.13.0 | CVE-2019-0205 fixed; CVE-2020-13949 left as accepted risk (0.14.0's fix is incompatible with Hive 2.3.9) — **later fixed, see §7m** |
 
 **Three alerts needed zero code change.** `jackson-mapper-asl`'s XXE
 alert (#34) is against the exact artifact already excluded entirely for
@@ -556,8 +556,8 @@ A small batch, closing out most of what remained after §7a/§7b:
 | Artifact | Module(s) | Before | After | CVE |
 |---|---|---|---|---|
 | `io.airlift:aircompressor` | all three | 0.27 (already fixed for CVE-2024-36114) | 2.0.3 | CVE-2025-67721 |
-| `org.apache.thrift:libthrift` | `spark-adapter` | 0.13.0 | **not changed** — accepted risk | CVE-2026-43869 |
-| `org.apache.thrift:libthrift` (revisited) | `spark-adapter` | 0.13.0 | unchanged, already accepted per §7 | CVE-2020-13949 (reconfirmed) |
+| `org.apache.thrift:libthrift` | `spark-adapter` | 0.13.0 | **not changed** — accepted risk (later fixed, see §7m) | CVE-2026-43869 |
+| `org.apache.thrift:libthrift` (revisited) | `spark-adapter` | 0.13.0 | unchanged, already accepted per §7 (later fixed, see §7m) | CVE-2020-13949 (reconfirmed) |
 | `com.google.protobuf:protobuf-java` | all three | already 3.19.6 | no change needed | CVE unspecified in this batch — already fixed |
 
 **A second, distinct CVE landed on an artifact already bumped once.**
@@ -574,6 +574,10 @@ trusting it, not assumed safe because the previous 0.27 bump had been:
 including the `io.airlift.compress.hadoop` adapter package Spark's own
 codec integration actually calls into. Confirmed via the real suite
 regardless (286/286) rather than resting on the jar comparison alone.
+
+*(Correction: the reasoning in this paragraph — that testing a larger version
+jump "would only teach the same lesson again" — was wrong. §7m tested it, found
+the break was two classes wide, and fixed all three CVEs.)*
 
 **A third Thrift CVE, and the clearest illustration yet that "the fix
 breaks Hive" doesn't need re-testing every time.** CVE-2026-43869 (TLS
@@ -1038,6 +1042,76 @@ Lesson: when a "fix breaks the dependent" finding rests on one artifact
 missing a class, check the sibling artifacts the library split into before
 accepting it — and check what the *build* runs on, not just what the
 developer's machine does, before pinning something with a JDK floor.
+
+## 7m. Reversal: libthrift 0.24.0 does work with Hive 2.3.9 — the break was two classes wide
+
+A new `libthrift` advisory (affected `< 0.24.0`: "loop with unreachable exit
+condition", Java/Python/Go/PHP bindings; no CVE ID in the alert I was given)
+joined three already on file for the same artifact: CVE-2019-0205 (fixed
+0.13.0), CVE-2020-13949 (fixed 0.14.0) and CVE-2026-43869 (fixed 0.23.0).
+§7/§7a/§7c had accepted the last two as risk because "0.14.0+ breaks Hive
+2.3.9's `TFramedTransport` package expectations", and §7c explicitly declined
+to retest a larger version jump. That is the third time an "accepted because
+the fix breaks the dependent" call turned out to rest on an unchecked premise
+(Guava §7h, Derby §7k). Worked in the §4 order:
+
+| Step | Result |
+|---|---|
+| 1. Remove if unused | n/a — Hive's metastore code references 104 distinct Thrift classes. |
+| 2. Bump the direct dependency | n/a — transitive via `spark-hive` (Hive 2.3.9); Spark 3.5.7 is not bumped for a transitive CVE (§4). |
+| 3. Pin | **Done** — `libthrift` 0.13.0 → **0.24.0**, with a test-only shim and two compensating pins (below). |
+
+**What actually breaks, measured instead of assumed.** A scan of all 232 jars
+on `spark-adapter`'s Test classpath for `org/apache/thrift/**` references,
+checked against 0.24.0's class list: 104 distinct Thrift classes are referenced
+outside libthrift; **only two are missing** — `TFramedTransport` and
+`TFramedTransport$Factory`, moved to `transport/layered/` in 0.14.0 with the
+same public API (only the parent class differs). Both are referenced only by
+`hive-metastore-2.3.9.jar`: `HiveMetaStore` (server side,
+`new TFramedTransport.Factory()`) and `HiveMetaStoreClient` (client side,
+`new TFramedTransport(TTransport)`) — real-network code the embedded test
+metastore never runs, but which the JVM must still link. Without a class at the
+old name, `HiveConnectorSpec` aborts with `NoClassDefFoundError:
+org/apache/thrift/transport/TFramedTransport` (reproduced by removing the shim).
+
+**The fix, and a second break found by testing.**
+1. A thin shim, `spark-adapter/src/test/scala/org/apache/thrift/transport/TFramedTransport.scala`:
+   the two old names as subclasses of the relocated classes. It inherits the real
+   implementation and adds no behavior; only the two constructors Hive calls are
+   provided. Test sources only — never in a published jar. Its class files are
+   Java 8 (major 52), like libthrift 0.24.0's.
+2. 0.24.0's own new runtime dependencies evict Spark's: `jakarta.servlet-api`
+   4.0.3 → 5.0.0 and `jakarta.annotation-api` 1.3.5 → 2.1.1 (the `jakarta.*`
+   namespace), after which Spark 3.5 fails at `SparkSession` startup with
+   `NoClassDefFoundError: javax/servlet/Servlet` (diagnosed by comparing the
+   classpath before/after, and finding `jakarta.servlet-api-4.0.3.jar` was the
+   only provider of `javax/servlet/Servlet.class`). Pinned back to 4.0.3 / 1.3.5.
+   `httpclient5`/`httpcore5` (libthrift's HTTP transport; nothing else uses them)
+   are excluded.
+
+**Verified:** the committed branch, built fresh from `main`'s base:
+`HiveConnectorSpec` + `CatalogIdentitySupportSpec` 57/57; Test classpath resolves
+`libthrift-0.24.0`, `jakarta.servlet-api-4.0.3`, `jakarta.annotation-api-1.3.5`,
+`httpclient-4.5.14`/`httpcore-4.4.16` (Spark's own) and no `httpclient5`. The full
+`spark-adapter` suite on the same configuration: **893/893, 41 suites, 0 aborted**.
+Not run locally: the JDK 11/17 CI legs (libthrift 0.24.0 and the shim are both
+Java 8 bytecode, so none is expected); `mimaReportBinaryIssues` (build.sbt and
+test sources only, no `src/main` change); `./dev/test`/`./dev/regression` (libthrift
+resolves only on `spark-adapter`'s test classpath — `plugin`, `runner` and every other
+module resolve none — so neither the demo job nor the enforcement rule can see it).
+
+**Scope and risk (§2): none now.** Test scope, never reaches a downstream user; and
+with 0.24.0 there is no libthrift advisory left open against this module. (Even
+before, every advisory concerned a real Thrift RPC/TLS path, and the embedded
+test metastore opens no Thrift socket.) **When the shim can go:** once
+`spark-hive` bundles a Hive whose metastore references
+`transport/layered/TFramedTransport` (not Hive 2.3.9).
+
+**Lesson (third time):** an "accepted because X breaks Y" entry should say
+*which* classes break. A reference scan of the dependent against the target
+version's class list turns "it breaks" into a short, concrete list — here two
+classes — which is often small enough to bridge. Also check what the *new*
+version's own dependencies evict, not just whether it compiles and links.
 
 ## 8. Next steps checklist
 
