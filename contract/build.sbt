@@ -117,6 +117,23 @@ libraryDependencies ++= Seq(
   "com.networknt" % "json-schema-validator" % "1.4.1" % "test"
 )
 
+// jackson-databind CVE fix (BasicPolymorphicTypeValidator.Builder.
+// allowIfSubTypeIsArray() bypass, affected >= 2.10.0 < 2.18.8): the only
+// source of Jackson in this module is json-schema-validator above, which
+// is test-scoped (so it never reaches the published POM or a downstream
+// consumer) but resolved 2.17.1 for the whole Test classpath. Bumping the
+// direct dependency does not help - even its newest 1.x release (1.5.9)
+// still depends on Jackson 2.18.3, below the 2.18.8 floor, and 2.x/3.x are
+// a different API generation. So pin the Jackson artifacts to the same
+// 2.18.9 spark-adapter/plugin/runner already use, moved together (core,
+// databind, annotations and dataformat-yaml share one release train).
+dependencyOverrides ++= Seq(
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
+  "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % "2.18.9"
+)
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",

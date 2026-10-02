@@ -14,7 +14,7 @@ organization := "com.invaract"
 // a stronger guarantee than even the test-scoped connector dependencies
 // get (those still get resolved to build/test spark-adapter itself).
 libraryDependencies ++= Seq(
-  "org.apache.kafka" % "kafka-clients" % "3.8.0",
+  "org.apache.kafka" % "kafka-clients" % "3.9.2",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test"
 )
 
