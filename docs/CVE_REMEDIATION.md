@@ -20,6 +20,7 @@ and they support very different remediation paths:
 | Scala/Java deps (`contract`, `ir`, `spark-adapter`, `plugin`, `runner`) | Submitted as `maven`-ecosystem entries by [`dependency-graph.yml`](../.github/workflows/dependency-graph.yml) (`scalacenter/sbt-dependency-submission`), on every push to `main`. Without this workflow the graph would be empty and Dependabot would see zero Scala dependencies. | **No.** Dependabot has no `build.sbt` updater — it can *see* vulnerable coordinates via the submitted graph, but cannot open a version-bump PR for them. These alerts are manual-only. |
 | `web/` npm deps | `web/package-lock.json`, parsed natively. | Yes, once `dependabot.yml` is configured (see §4). |
 | `docs-site/` npm deps | `docs-site/package-lock.json`, parsed natively. | Yes, same. |
+| `contributor-docs/` npm deps | `contributor-docs/package-lock.json`, parsed natively. | Yes, same — but only since §7l: it was missing from `dependabot.yml` until then. |
 | GitHub Actions pins (`.github/workflows/*.yml`) | Parsed natively. | Yes, same. |
 
 This asymmetry is almost certainly why the count is 238: Spark's own
@@ -154,10 +155,10 @@ most of the prioritization decision.
 
 ## 4. Remediation workflow, by ecosystem
 
-### npm (`web/`, `docs-site/`) and GitHub Actions — now automated
+### npm (`web/`, `docs-site/`, `contributor-docs/`) and GitHub Actions — now automated
 
 `.github/dependabot.yml` (added alongside this document) configures weekly
-version-update PRs for these three ecosystems, grouped by minor/patch so
+version-update PRs for these ecosystems, grouped by minor/patch so
 routine bumps land as one PR instead of dozens, while majors (a Next.js or
 Astro major, especially) still arrive as their own PR for manual review —
 those can carry real breaking changes and shouldn't be batch-merged blind.
@@ -1038,6 +1039,88 @@ Lesson: when a "fix breaks the dependent" finding rests on one artifact
 missing a class, check the sibling artifacts the library split into before
 accepting it — and check what the *build* runs on, not just what the
 developer's machine does, before pinning something with a JDK floor.
+
+## 7l. Jackson 2.18.9 → 2.18.11, and a third npm lockfile
+
+Two more alerts, and the second time §7i's lesson applied: an alert names one
+file, but the fix has to be applied to every place the artifact lives.
+
+### `jackson-core` ReDoS (affected `>= 2.17.0 <= 2.18.10`, fixed `2.18.11`)
+
+`NumberInput.looksLikeValidNumber()` runs two backtracking regexes
+(`PATTERN_FLOAT`, then `PATTERN_FLOAT_TRAILING_DOT`) over a non-matching
+string, quadratic in its length (the reporter measured 74 s for one
+160,000-character string). The length gate on that path is
+`StreamReadConstraints.maxStringLength` (default 20,000,000), not
+`maxNumberLength` (default 1,000). The alert I was given named
+`contract/build.sbt` only and did not state an upstream severity or CVE ID.
+
+| Step | Result |
+|---|---|
+| 1. Remove if unused | n/a — used by `json-schema-validator` (`contract`'s schema specs) and by Spark. |
+| 2. Bump the direct dependency | Doesn't help — `json-schema-validator`'s newest 1.x (1.5.9) still depends on Jackson 2.18.3, below the floor (§7i). |
+| 3. Pin | **Done** — `dependencyOverrides` 2.18.9 → 2.18.11. |
+
+The same `2.18.9` pin lived in **four** modules (`contract`, `spark-adapter`,
+`plugin`, `runner`), so all four moved, as the matched set: `jackson-core`,
+`-databind`, `-annotations`, `jackson-module-scala_2.12` (and
+`jackson-dataformat-yaml` in `contract`). All five coordinates have a
+`2.18.11` release on Maven Central (checked before touching anything).
+
+**Scope (§2):** `contract` — test only, via `json-schema-validator`. `plugin`/
+`spark-adapter` — `provided`/`test` (their assembled jars bundle no Jackson,
+§7d). `runner` — compile scope, so it *does* ship in
+`invaract-spark-runner.jar`, but `runner` is the demo harness and nobody
+depends on it as a library. None of these reach a user of the published
+`contract`/`ir`/`spark-adapter` artifacts. **Reachability:** exploiting it needs
+attacker-controlled, very long numeric-looking text parsed by Jackson. The only
+direct Jackson use in this repo's own sources is two `contract` test specs
+(`ContractSchemaSpec`, `OrgPolicySchemaSpec`, via `ObjectMapper`) parsing
+repo-owned fixtures — checked with a source search, not assumed. I did not
+trace Spark's or other libraries' own internal Jackson use. Rated **Low** for
+this repo.
+
+**Verified:** every module's `Test/fullClasspath` resolves all Jackson
+artifacts at 2.18.11 with nothing left on 2.18.9. `./dev/test` exit 0:
+`contract` 499, `ir` 236, `plugin` 5, `fingerprint` 197 and `spark-adapter`
+893 tests, all passing; the demo job ran through real `spark-submit` on Spark
+3.5.7, `report.json` `Status: PASS`, contract verification `PASSED`, no
+violations. `./dev/regression` 10/10 (the pass cases write, the violating
+cases are aborted with no output written). The freshly built
+`invaract-spark-runner.jar` was checked directly:
+`com/fasterxml/jackson/core/json/PackageVersion.class` and
+`.../databind/cfg/PackageVersion.class` both read `2.18.11` (the §7d trap —
+`assembly` reusing a stale jar — does not apply: `dev/build` runs `clean`, and
+the jar's timestamp postdates the change). The web UI (`./dev/report`) was not
+opened; the report JSON was examined directly. The diff is `build.sbt`-only, so
+MiMa and mutation testing do not apply.
+
+### `devalue` in a third npm lockfile
+
+`devalue` `>= 5.8.0 <= 5.9.2` (fixed `5.9.3`): when `stringifyAsync`
+serializes several promises and a later one rejects before an earlier one
+settles, an internal rejected promise stays unhandled and can terminate a Node
+process. The advisory itself calls it essentially impossible to exploit.
+
+| Lockfile | astro | devalue |
+|---|---|---|
+| `web/package-lock.json` | — | — |
+| `docs-site/package-lock.json` | 7.2.9 | 5.9.4 (fixed in #84) |
+| **`contributor-docs/package-lock.json`** | 7.3.2 | **5.9.2 → 5.9.4** |
+
+Transitive via `astro` (unchanged), so a lockfile refresh was enough; `npm
+audit` 0 vulnerabilities, `npm ci` + `npm run build` pass (21 pages).
+`contributor-docs` builds to static HTML, so there is no runtime server to
+crash — rated **Low**.
+
+**Why it was missed, and what to check next time:** #84's `npm audit` covered
+`web/` and `docs-site/` only; `contributor-docs/` is a second Starlight site
+with its own lockfile. `git ls-files '*package-lock.json'` lists all three.
+Separately, `.github/dependabot.yml` configured npm updates for `/web` and
+`/docs-site` but **not** `/contributor-docs`, so Dependabot never opened a
+version-update PR for it (alerts still appeared, since GitHub reads the
+lockfile). `/contributor-docs` has now been added there, mirroring the
+`docs-site` entry (weekly, minor/patch grouped, majors as their own PR).
 
 ## 8. Next steps checklist
 

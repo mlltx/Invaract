@@ -125,13 +125,17 @@ libraryDependencies ++= Seq(
 // direct dependency does not help - even its newest 1.x release (1.5.9)
 // still depends on Jackson 2.18.3, below the 2.18.8 floor, and 2.x/3.x are
 // a different API generation. So pin the Jackson artifacts to the same
-// 2.18.9 spark-adapter/plugin/runner already use, moved together (core,
+// 2.18.11 spark-adapter/plugin/runner already use, moved together (core,
 // databind, annotations and dataformat-yaml share one release train).
+// 2.18.9 -> 2.18.11 for a later jackson-core ReDoS alert (affected >= 2.17.0
+// <= 2.18.10, NumberInput.looksLikeValidNumber(); see spark-adapter/
+// build.sbt's matching comment) - same reasoning, same test-scope-only
+// exposure, so the pin simply moves with the others.
 dependencyOverrides ++= Seq(
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
-  "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % "2.18.9"
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11",
+  "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % "2.18.11"
 )
 
 scalacOptions ++= Seq(

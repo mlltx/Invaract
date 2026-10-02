@@ -146,10 +146,10 @@ dependencyOverrides ++= Seq(
   // resolves the same vulnerable jackson-databind:2.15.2 spark-adapter
   // did before its own fix, even though this specific alert batch only
   // named spark-adapter/build.sbt.
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.11",
   // log4j-core/log4j-api/log4j-1.2-api/log4j-slf4j2-impl, 2.20.0 -> 2.25.5
   // - see spark-adapter/build.sbt's comment for the full detail on all
   // four CVEs fixed (CVE-2025-68161, CVE-2026-34477, CVE-2026-34480/
