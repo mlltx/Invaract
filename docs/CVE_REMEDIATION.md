@@ -1177,11 +1177,14 @@ org/apache/thrift/transport/TFramedTransport` (reproduced by removing the shim).
 `libthrift-0.24.0`, `jakarta.servlet-api-4.0.3`, `jakarta.annotation-api-1.3.5`,
 `httpclient-4.5.14`/`httpcore-4.4.16` (Spark's own) and no `httpclient5`. The full
 `spark-adapter` suite on the same configuration: **893/893, 41 suites, 0 aborted**.
-Not run locally: the JDK 11/17 CI legs (libthrift 0.24.0 and the shim are both
-Java 8 bytecode, so none is expected); `mimaReportBinaryIssues` (build.sbt and
-test sources only, no `src/main` change); `./dev/test`/`./dev/regression` (libthrift
-resolves only on `spark-adapter`'s test classpath — `plugin`, `runner` and every other
-module resolve none — so neither the demo job nor the enforcement rule can see it).
+`./dev/test` on the branch merged with `main` (after #85/#86): exit 0, 499 + 236 +
+5 + 197 + 893 tests, 0 failed, demo `report.json` Status PASS /
+contractVerification PASSED. Not run locally: the JDK 11/17 CI legs (libthrift
+0.24.0 and the shim are both Java 8 bytecode, so none is expected);
+`mimaReportBinaryIssues` (build.sbt and test sources only, no `src/main` change);
+`./dev/regression` (libthrift resolves only on `spark-adapter`'s test classpath —
+`plugin`, `runner` and every other module resolve none — so neither the demo job
+nor the enforcement rule can see it; CI's `test` matrix and Docker job run it).
 
 **Scope and risk (§2): none now.** Test scope, never reaches a downstream user; and
 with 0.24.0 there is no libthrift advisory left open against this module. (Even
