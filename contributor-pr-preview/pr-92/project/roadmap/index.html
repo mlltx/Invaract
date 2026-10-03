@@ -3985,6 +3985,13 @@ drafts, and learn from the skips/self-checks how safe turning enforcement on is.
 Job identity via <code dir="auto">spark.invaract.jobId</code> / <code dir="auto">spark.invaract.job.metadata.*</code>. Delivery:
 <code dir="auto">NotificationSink.flush</code>, <code dir="auto">HttpNotificationSink</code> auth headers/<code dir="auto">bearerTokenEnv</code> and
 in-flight draining, <code dir="auto">FanOutNotificationSink</code> with per-target <code dir="auto">statuses</code> routing.
+Follow-ups in the same PR: a bad <code dir="auto">notifyConfig</code> no longer fails a dry-run job (WARN and
+log-only fallback); <code dir="auto">schemaVersion</code> + deterministic <code dir="auto">eventId</code> (+ <code dir="auto">contractDigest</code>) on every
+event; a published JSON Schema (<code dir="auto">docs-site/public/schemas/notification/v1/</code>) with real
+examples, checked by the whole Scala suite and by Ajv in the docs build; <code dir="auto">HttpNotificationSink</code>
+retry with backoff and a dead letter (<code dir="auto">deadLetter.path</code>, local or any Hadoop FS), configurable
+from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
+reference receiver, two troubleshooting entries.
 Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
 weakly). Open: redaction of locations/schemas in events; the receiving contract
 repository (separate repo).</li>
