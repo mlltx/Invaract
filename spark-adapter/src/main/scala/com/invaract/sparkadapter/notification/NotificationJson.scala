@@ -74,6 +74,32 @@ object NotificationJson {
         "metadata" -> e.metadata,
         "applicationId" -> e.applicationId
       )
+    case e: ContractInferenceEvent =>
+      Map(
+        "eventType" -> e.eventType,
+        "timestamp" -> e.timestamp,
+        "status" -> e.status,
+        "reason" -> e.reason,
+        "writeLocation" -> e.writeLocation,
+        "contractYaml" -> e.contractYaml,
+        "selfCheck" -> e.selfCheck,
+        "selfCheckViolations" -> e.selfCheckViolations.map(_.toMap),
+        "diagnostics" -> e.diagnostics,
+        "fingerprints" -> e.fingerprints.map(_.toMap),
+        "job" -> e.job.toMap,
+        "metadata" -> e.metadata
+      )
+    case e: DryRunSummaryEvent =>
+      Map(
+        "eventType" -> e.eventType,
+        "timestamp" -> e.timestamp,
+        "statusCounts" -> e.statusCounts,
+        "mergeStatus" -> e.mergeStatus,
+        "mergedContractYaml" -> e.mergedContractYaml,
+        "mergeConflicts" -> e.mergeConflicts,
+        "job" -> e.job.toMap,
+        "metadata" -> e.metadata
+      )
   }
 
   /** Recursively renders any value `fields` above can produce — `Map`/`List`/

@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractValidator, OrgPolicy, OrgPolicyE
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
-import com.invaract.sparkadapter.notification.{ContractValidationEvent, NotificationSink}
+import com.invaract.sparkadapter.notification.{ContractValidationEvent, InferenceStatus, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -466,10 +466,12 @@ object ContractEnforcementRule {
     * observes. Only a plan recognized as an ordinary write (one
     * `WriteCommandSupport.combined` matches) triggers `onInferred` — the
     * same scope `verifyOrThrow`'s `ir.Write` branch covers, deliberately
-    * excluding state-changing CALLs and row-level DML (MERGE/UPDATE/DELETE
-    * have no "new output" to infer a dataset schema from — see
-    * `WriteCommandInfo`'s row-level-DML cases in `WriteCommandSupport` for
-    * why). `injectCheckRule` fires on every analyzed plan the session
+    * excluding state-changing CALLs. Row-level DML (MERGE/UPDATE/DELETE) is
+    * *not* excluded, contrary to what this doc used to say: `combined`
+    * includes those cases, so a draft is inferred from the target's current
+    * schema - weakly, since DML has no "new output" (see `WriteCommandInfo`'s
+    * row-level-DML cases in `WriteCommandSupport`). `DryRunReporter`
+    * flags such a draft degraded. `injectCheckRule` fires on every analyzed plan the session
     * produces, so `onInferred` may fire more than once for what a user
     * thinks of as a single write (e.g. an atomic CTAS's nested `AppendData`
     * against a `StagedTable` — see `WriteCommandSupport.namedRelationLocationAndFormat`'s
@@ -846,7 +848,49 @@ object ContractEnforcementRule {
       analyzedPlan: LogicalPlan,
       onInferred: Contract => Unit,
       checkpointRegistry: Option[CheckpointRegistry] = None
-  ): Unit = {
+  ): Unit =
+    inferOutcome(analyzedPlan, checkpointRegistry).foreach {
+      case outcome: InferenceOutcome.Inferred => onInferred(outcome.contract)
+      case _: InferenceOutcome.Skipped => () // surfaced by DryRunReporter; this callback only ever wanted contracts
+    }
+
+  /** What dry-run mode made of one analyzed plan - the structured form
+    * `inferOrIgnore` flattens to "a contract, or nothing". `DryRunReporter`
+    * consumes this so a write dry-run mode could not infer from is reported
+    * rather than indistinguishable from a plan that was never a write.
+    */
+  private[sparkadapter] sealed trait InferenceOutcome
+  private[sparkadapter] object InferenceOutcome {
+
+    /** `plan` is the checkpoint-resolved plan `contract` was inferred from, and `translated`
+      * its translation - everything a self-check against that same write needs.
+      */
+    final case class Inferred(
+        contract: Contract,
+        plan: LogicalPlan,
+        translated: TranslationResult,
+        writeInfo: WriteCommandInfo,
+        inputSchemas: List[(String, StructType)]
+    ) extends InferenceOutcome
+
+    /** A write-shaped plan with no inference: `status` is an `InferenceStatus`. */
+    final case class Skipped(status: String, reason: String) extends InferenceOutcome
+  }
+
+  /** `None` for a plan that is not write-shaped at all (a read, a `.count()`, an
+    * intermediate transformation) - the only silent case.
+    *
+    * The two `Skipped` cases mirror exactly what `verifyOrThrow` does with a
+    * non-`ir.Write` plan, in the same order: a recognized state-changing CALL
+    * first, then the fail-closed `Command` catch-all (`FailClosedCommands`).
+    * Reusing those predicates, rather than a second opinion on what "might be
+    * a write", means a plan enforcement would block is a plan dry-run reports
+    * - which is the whole point of dry-run as a rehearsal for enforcement.
+    */
+  private[sparkadapter] def inferOutcome(
+      analyzedPlan: LogicalPlan,
+      checkpointRegistry: Option[CheckpointRegistry] = None
+  ): Option[InferenceOutcome] = {
     // The same checkpoint resolution real enforcement does (see verifyOrThrow),
     // so a write downstream of a `.checkpoint()` infers the inputs it really
     // read rather than an empty contract.
@@ -856,8 +900,36 @@ object ContractEnforcementRule {
     WriteCommandSupport.combined.lift(plan) match {
       case Some(writeInfo) =>
         SparkAdapterListener.stash(analyzedPlan, translated)
-        onInferred(ContractInference.infer(writeInfo, collectInputSchemas(plan, Some(writeInfo.query)), translated.plan))
-      case None => () // not a recognized write - nothing to infer a contract from
+        val inputSchemas = collectInputSchemas(plan, Some(writeInfo.query))
+        Some(
+          InferenceOutcome.Inferred(
+            ContractInference.infer(writeInfo, inputSchemas, translated.plan),
+            plan,
+            translated,
+            writeInfo,
+            inputSchemas
+          )
+        )
+      case None =>
+        StateChangingCallSupport.extract(plan) match {
+          case Some(info) =>
+            Some(
+              InferenceOutcome.Skipped(
+                InferenceStatus.SkippedUnsupported,
+                s"state-changing CALL ${info.callName}(...) targeting '${info.location}': dry-run mode infers a " +
+                  "contract from a write's output schema, and a procedure call has none"
+              )
+            )
+          case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
+            Some(
+              InferenceOutcome.Skipped(
+                InferenceStatus.SkippedUnrecognized,
+                s"'${plan.getClass.getSimpleName}' may write data but Invaract has no translation for it; with a " +
+                  "contract active, enforcement would reject it as an UNVERIFIABLE_WRITE"
+              )
+            )
+          case None => None
+        }
     }
   }
 

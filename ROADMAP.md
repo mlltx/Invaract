@@ -3891,6 +3891,20 @@ first written: one field's value compared against *another field on the same row
       merged names, outputs kept distinct by location, conflicting schemas for
       one location reported (`MergeConflict`) rather than guessed at, result
       round-trips through `ContractParser` and passes `ContractValidator`.
+- [x] **Follow-up: dry-run reporting to a sink (`DryRunReporter`)** (`spark-adapter`,
+      additive): with `spark.invaract.dryRun=true` + `spark.invaract.notifyConfig`, dry-run
+      publishes a `ContractInferenceEvent` per write-shaped plan (`INFERRED`/
+      `INFERRED_DEGRADED`/`SKIPPED_UNSUPPORTED`/`SKIPPED_UNRECOGNIZED`/`INFERENCE_ERROR`,
+      each draft self-checked against its own write) and, at application end, a
+      `DryRunSummaryEvent` (counts per status, `NO_WRITES_OBSERVED`, all drafts merged by
+      `ContractDraftMerger`). Purpose: roll Invaract out across many jobs - collect the
+      drafts, and learn from the skips/self-checks how safe turning enforcement on is.
+      Job identity via `spark.invaract.jobId` / `spark.invaract.job.metadata.*`. Delivery:
+      `NotificationSink.flush`, `HttpNotificationSink` auth headers/`bearerTokenEnv` and
+      in-flight draining, `FanOutNotificationSink` with per-target `statuses` routing.
+      Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
+      weakly). Open: redaction of locations/schemas in events; the receiving contract
+      repository (separate repo).
 
 ---
 

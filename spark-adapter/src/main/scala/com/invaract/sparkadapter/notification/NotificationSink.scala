@@ -3,6 +3,9 @@
 
 package com.invaract.sparkadapter.notification
 
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
+
 import org.slf4j.LoggerFactory
 
 /** A destination for `NotificationEvent`s. Implementations are looked up by
@@ -35,6 +38,15 @@ trait NotificationSink {
     * still want one for their own diagnostics.
     */
   def publish(event: NotificationEvent): Unit
+
+  /** Gives a sink that delivers asynchronously (`HttpNotificationSink`) a chance to
+    * finish what it has already accepted, waiting at most `timeoutMs`. Called once,
+    * at application end, by dry-run reporting - a short job can otherwise exit
+    * before its last request completes and silently lose it. The default no-op
+    * suits every synchronous sink. Must not throw for a delivery that failed or
+    * timed out (that is already logged); it only waits.
+    */
+  def flush(timeoutMs: Long): Unit = ()
 }
 
 /** Wraps a sink so a broken or slow `publish` call (a network sink timing
@@ -59,6 +71,14 @@ private[sparkadapter] class SafeNotificationSink(delegate: NotificationSink) ext
           s"Notification sink ${delegate.getClass.getName} failed to publish a ${event.eventType} event; continuing without it.",
           e
         )
+    }
+
+  override def flush(timeoutMs: Long): Unit =
+    try {
+      delegate.flush(timeoutMs)
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Notification sink ${delegate.getClass.getName} failed to flush; continuing without it.", e)
     }
 }
 
@@ -128,12 +148,29 @@ class FileNotificationSink extends NotificationSink {
   * once the async response arrives — by then there is no longer a call
   * stack for `SafeNotificationSink` to catch an exception on, so this sink
   * does its own equivalent logging for the async case.
+  *
+  * Because delivery is asynchronous, a job that ends right after its last
+  * `publish` can lose that request; `flush` waits (bounded) for every
+  * request still in flight, and dry-run reporting calls it at application end.
+  *
+  * Authentication: every `sink.property.header.<Name>=<value>` is sent as a
+  * request header, and `sink.property.bearerTokenEnv=<VAR>` sends
+  * `Authorization: Bearer <value of environment variable VAR>`. The token is
+  * deliberately read from the environment, never from the properties file:
+  * that file is a deployment artifact people copy, commit and attach to
+  * tickets. A named variable that is unset fails at setup, loudly, rather than
+  * silently sending unauthenticated requests forever.
   */
 class HttpNotificationSink extends NotificationSink {
   private val logger = LoggerFactory.getLogger(classOf[HttpNotificationSink])
   private var url: String = _
   private var timeout: java.time.Duration = _
   private var client: java.net.http.HttpClient = _
+  private var headers: Map[String, String] = Map.empty
+  private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet[java.util.concurrent.CompletableFuture[_]]()
+
+  /** Seam for tests: where `bearerTokenEnv` is looked up. */
+  protected def environmentVariable(name: String): Option[String] = Option(System.getenv(name))
 
   override def configure(properties: Map[String, String]): Unit = {
     url = properties.getOrElse(
@@ -152,18 +189,44 @@ class HttpNotificationSink extends NotificationSink {
     }
     timeout = java.time.Duration.ofMillis(timeoutMs)
     client = java.net.http.HttpClient.newBuilder().connectTimeout(timeout).build()
+
+    val configured = properties.collect {
+      case (key, value) if key.startsWith(HttpNotificationSink.HeaderPrefix) =>
+        key.stripPrefix(HttpNotificationSink.HeaderPrefix) -> value
+    }
+    val bearer = properties.get("bearerTokenEnv").map { variable =>
+      val token = environmentVariable(variable).filter(_.nonEmpty).getOrElse(
+        throw new IllegalArgumentException(
+          s"HttpNotificationSink's 'bearerTokenEnv' names environment variable '$variable', which is not set"
+        )
+      )
+      "Authorization" -> s"Bearer $token"
+    }
+    headers = configured ++ bearer
+    // Validate now: HttpRequest.Builder rejects a malformed or restricted header name only
+    // when it is added, which would otherwise be inside publish() - once per event, forever.
+    headers.foldLeft(java.net.http.HttpRequest.newBuilder().uri(java.net.URI.create(url))) {
+      case (builder, (name, value)) =>
+        try builder.header(name, value)
+        catch {
+          case e: IllegalArgumentException =>
+            throw new IllegalArgumentException(s"HttpNotificationSink has an invalid header '$name': ${e.getMessage}", e)
+        }
+    }
   }
 
   override def publish(event: NotificationEvent): Unit = {
-    val request = java.net.http.HttpRequest
+    val builder = java.net.http.HttpRequest
       .newBuilder()
       .uri(java.net.URI.create(url))
       .timeout(timeout)
       .header("Content-Type", "application/json")
+    val request = headers
+      .foldLeft(builder) { case (b, (name, value)) => b.header(name, value) }
       .POST(java.net.http.HttpRequest.BodyPublishers.ofString(NotificationJson.toJson(event)))
       .build()
 
-    client
+    val delivery = client
       .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
       .whenComplete { (response, throwable) =>
         // A null throwable is a legal, documented SafeLogger#warn(String,
@@ -176,10 +239,25 @@ class HttpNotificationSink extends NotificationSink {
           logger.warn(msg, throwable)
         }
       }
+    inFlight.add(delivery)
+    delivery.whenComplete { (_, _) => inFlight.remove(delivery); () }
+  }
+
+  override def flush(timeoutMs: Long): Unit = {
+    val deadline = System.nanoTime() + timeoutMs * 1000000L
+    inFlight.asScala.toList.foreach { pending =>
+      val remainingMs = (deadline - System.nanoTime()) / 1000000L
+      if (remainingMs > 0) {
+        // Whether it succeeded or failed was already logged by publish's own callback; this only waits.
+        try pending.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        catch { case _: Exception => () }
+      }
+    }
   }
 }
 
 private[notification] object HttpNotificationSink {
+  val HeaderPrefix = "header."
 
   /** The decision of *whether* (and what) to log, pulled out of `publish`'s
     * async callback so it's directly unit-testable: a mutation on the
@@ -331,6 +409,8 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
 
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
 
+  override def flush(timeoutMs: Long): Unit = delegate.flush(timeoutMs)
+
   override def publish(event: NotificationEvent): Unit = {
     event match {
       case e: WriteEvent =>
@@ -342,7 +422,8 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
         violationsTotal.addAndGet(e.violations.size.toLong)
         lastApplicationId = e.applicationId.orElse(lastApplicationId)
         lastMetadata = e.metadata
-      case _: JobSummaryEvent => () // a summary isn't itself summarized
+      // a summary isn't itself summarized; dry-run events are not write/check traffic
+      case _: JobSummaryEvent | _: ContractInferenceEvent | _: DryRunSummaryEvent => ()
     }
     delegate.publish(event)
   }
@@ -387,9 +468,15 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
 class FailureOnlyNotificationSink(delegate: NotificationSink) extends NotificationSink {
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
 
+  override def flush(timeoutMs: Long): Unit = delegate.flush(timeoutMs)
+
   override def publish(event: NotificationEvent): Unit = event match {
     case e: ContractValidationEvent => if (e.status != "PASSED") delegate.publish(e)
     case e: JobSummaryEvent => delegate.publish(e)
+    // Anything short of a clean, undegraded inference is a "problem" for this
+    // sink's purposes; the once-per-job dry-run summary, like JobSummaryEvent, always goes.
+    case e: ContractInferenceEvent => if (e.status != InferenceStatus.Inferred) delegate.publish(e)
+    case e: DryRunSummaryEvent => delegate.publish(e)
     case _: WriteEvent => ()
   }
 }
@@ -436,6 +523,11 @@ class RetryingNotificationSink(
 
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
 
+  override def flush(timeoutMs: Long): Unit = {
+    delegate.flush(timeoutMs)
+    deadLetterSink.flush(timeoutMs)
+  }
+
   /** Pulled out so a test can override it (to a no-op, or to one that
     * records the requested duration) instead of a real test run actually
     * blocking for the full backoff — the real behavior is exactly
@@ -469,6 +561,92 @@ class RetryingNotificationSink(
         lastFailure.orNull
       )
       deadLetterSink.publish(event)
+    }
+  }
+}
+
+/** Publishes every event to several sinks - "the contracts to the registry's endpoint,
+  * and a copy to a file", or "everything to one endpoint, only the problems to another".
+  * One sink class, configured entirely from the one properties file
+  * `spark.invaract.notifyConfig` already names, so it attaches with
+  * `spark-submit --conf` alone like any other sink:
+  *
+  * {{{
+  * sink.enabled=true
+  * sink.class=com.invaract.sparkadapter.notification.FanOutNotificationSink
+  * sink.property.sinks=registry,audit
+  * sink.property.registry.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+  * sink.property.registry.property.url=https://registry.corp.internal/inferred
+  * sink.property.registry.property.bearerTokenEnv=INVARACT_TOKEN
+  * sink.property.registry.statuses=INFERRED,INFERRED_DEGRADED
+  * sink.property.audit.class=com.invaract.sparkadapter.notification.FileNotificationSink
+  * sink.property.audit.property.path=/var/log/invaract-events.jsonl
+  * }}}
+  *
+  * `sinks` is the ordered list of ids; each id `x` takes `x.class` (required) and
+  * `x.property.*` (that sink's own `sink.property.*`, as for any sink). The optional
+  * `x.statuses` is a comma-separated allow-list applied to events that carry a
+  * `status` (`ContractInferenceEvent`, `ContractValidationEvent`); every other event,
+  * the end-of-job `DryRunSummaryEvent` included, always passes, so a destination
+  * that only wants problems still learns that the job ended.
+  *
+  * Each target is isolated: one that throws is logged and skipped, and the others
+  * still receive the event. A target that cannot be built fails at setup, like
+  * any single sink does.
+  */
+class FanOutNotificationSink extends NotificationSink {
+  private val logger = LoggerFactory.getLogger(classOf[FanOutNotificationSink])
+  private var targets: List[FanOutNotificationSink.Target] = Nil
+
+  override def configure(properties: Map[String, String]): Unit = {
+    val ids = properties.get("sinks").toList.flatMap(_.split(",").map(_.trim).filter(_.nonEmpty))
+    if (ids.isEmpty) {
+      throw new IllegalArgumentException(
+        "FanOutNotificationSink requires a 'sinks' property naming at least one target (sink.property.sinks=a,b)"
+      )
+    }
+    ids.groupBy(identity).collectFirst { case (id, occurrences) if occurrences.size > 1 => id }.foreach { id =>
+      throw new IllegalArgumentException(s"FanOutNotificationSink lists target '$id' more than once")
+    }
+    targets = ids.map { id =>
+      val className = properties.getOrElse(
+        s"$id.class",
+        throw new IllegalArgumentException(s"FanOutNotificationSink target '$id' has no '$id.class' property")
+      )
+      val targetProperties = properties.collect {
+        case (key, value) if key.startsWith(s"$id.property.") => key.stripPrefix(s"$id.property.") -> value
+      }
+      val statuses = properties.get(s"$id.statuses").map(_.split(",").map(_.trim).filter(_.nonEmpty).toSet).filter(_.nonEmpty)
+      val sink = NotificationSinkFactory
+        .create(NotificationConfig(enabled = true, sinkClassName = Some(className), properties = targetProperties))
+        .get
+      FanOutNotificationSink.Target(id, sink, statuses)
+    }
+  }
+
+  override def publish(event: NotificationEvent): Unit =
+    targets.filter(_.accepts(event)).foreach { target =>
+      try target.sink.publish(event)
+      catch { case NonFatal(e) => logger.warn(s"FanOutNotificationSink target '${target.id}' failed: $e") }
+    }
+
+  override def flush(timeoutMs: Long): Unit =
+    targets.foreach { target =>
+      try target.sink.flush(timeoutMs)
+      catch { case NonFatal(e) => logger.warn(s"FanOutNotificationSink target '${target.id}' failed to flush: $e") }
+    }
+}
+
+private[notification] object FanOutNotificationSink {
+  final case class Target(id: String, sink: NotificationSink, statuses: Option[Set[String]]) {
+    def accepts(event: NotificationEvent): Boolean = statuses match {
+      case None => true
+      case Some(allowed) =>
+        event match {
+          case e: ContractInferenceEvent => allowed.contains(e.status)
+          case e: ContractValidationEvent => allowed.contains(e.status)
+          case _ => true
+        }
     }
   }
 }

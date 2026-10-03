@@ -86,6 +86,10 @@ Both event types are plain JSON. A `ContractValidationEvent`, from a passing che
 {"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null, "catalog": null, "partitionColumns": [], "datasetType": null}
 ```
 
+Dry-run mode, when pointed at a sink, publishes two more event types
+(`CONTRACT_INFERENCE` and `DRY_RUN_SUMMARY`) — see
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs).
+
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
 [Contract Format](/reference/contract-format/) — so anything you've already recorded
 there (an owning team, an upstream system) rides along on every event without a second
@@ -217,13 +221,29 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
   optional `sink.property.timeoutMs` (default `5000`). Built on
   `java.net.http.HttpClient`, part of the JDK since Java 11 — no extra dependency here
   either. Requests are sent asynchronously, so a slow or unreachable endpoint doesn't
-  block your job; a connection failure or non-2xx response is logged, not thrown.
+  block your job; a connection failure or non-2xx response is logged, not thrown. Dry-run
+  reporting waits (up to ten seconds) for requests still in flight when the application
+  ends, so a short job doesn't lose its last events.
 
   ```properties
   sink.enabled=true
   sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
   sink.property.url=https://example.com/invaract-events
   ```
+
+  To authenticate, add request headers with `sink.property.header.<Name>`, or let the sink
+  send `Authorization: Bearer <token>` with `sink.property.bearerTokenEnv`, which names an
+  **environment variable** to read the token from:
+
+  ```properties
+  sink.property.header.X-Tenant=acme
+  sink.property.bearerTokenEnv=INVARACT_TOKEN
+  ```
+
+  The token is read from the environment rather than the properties file on purpose: that
+  file is the kind of thing that gets copied, committed and attached to tickets. A
+  `bearerTokenEnv` naming a variable that isn't set — and a malformed header name — fail
+  when the job starts, rather than silently sending unauthenticated requests forever.
 
 - **`HadoopFsNotificationSink`** — writes each event as its own JSON object under
   `sink.property.path`, on **any filesystem Hadoop's own `FileSystem` API supports**:
@@ -252,6 +272,29 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
   instead of appending to one growing file, so it behaves the same way on every
   backend the path might point at.
   </Aside>
+
+## Send events to more than one place
+
+`FanOutNotificationSink` publishes every event to several sinks, configured from the same
+properties file. `sink.property.sinks` lists the targets in order; each target `x` takes
+`x.class` and its own `x.property.*`:
+
+```properties
+sink.enabled=true
+sink.class=com.invaract.sparkadapter.notification.FanOutNotificationSink
+sink.property.sinks=registry,audit
+sink.property.registry.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.registry.property.url=https://registry.corp.internal/events
+sink.property.registry.property.bearerTokenEnv=INVARACT_TOKEN
+sink.property.audit.class=com.invaract.sparkadapter.notification.FileNotificationSink
+sink.property.audit.property.path=/var/log/invaract-events.jsonl
+```
+
+An optional `x.statuses=A,B` limits a target to events whose `status` is in the list — for
+[dry-run reporting](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs)'s
+inference statuses, or `PASSED`/`FAILED` on contract checks. An event with no status (a
+write, or any summary) always passes. One target failing never stops the others, and a
+target that can't be built fails when the job starts, like any single sink does.
 
 ## Summaries and failure-only filtering
 
@@ -403,10 +446,15 @@ class MySink extends NotificationSink {
     endpoint = properties("endpoint")
 
   override def publish(event: NotificationEvent): Unit = {
-    // event is one of ContractValidationEvent, WriteEvent, or (if you're
-    // behind a SummarizingNotificationSink) JobSummaryEvent - send it
-    // however your destination expects.
+    // event is one of ContractValidationEvent, WriteEvent, ContractInferenceEvent or
+    // DryRunSummaryEvent (dry-run reporting), or (if you're behind a
+    // SummarizingNotificationSink) JobSummaryEvent - send it however your
+    // destination expects.
   }
+
+  // Optional. A sink that delivers asynchronously can wait here, for at most
+  // timeoutMs, for what it has already accepted - called once at application end.
+  override def flush(timeoutMs: Long): Unit = ()
 }
 ```
 

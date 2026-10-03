@@ -1204,9 +1204,114 @@ match on customer_id" from watching one execution, the way `RuleType`'s
 vocabulary expresses it. Every inferred field is marked `required: true`
 (it genuinely was present in this run) with `nullable` taken directly from
 Spark's own tracked nullability, not guessed. Row-level DML (MERGE/UPDATE/
-DELETE) is out of scope for the same reason `WriteCommandInfo`'s DML cases
-already document: those operations have no single "new output" to build a
-dataset schema from.
+DELETE) is inferred only weakly, for the reason `WriteCommandInfo`'s DML
+cases already document: those operations have no single "new output" to
+build a dataset schema from, so the draft describes the target's *current*
+schema and none of the operation's own logic. (An earlier version of this
+section, and of `dryRun`'s doc, said DML was excluded outright. It is not:
+`WriteCommandSupport.combined` includes the DML cases, so `inferOrIgnore`
+has always inferred from them - confirmed by a real Iceberg `DELETE` in
+`IcebergConnectorSpec`. `DryRunReporter` below flags such a draft
+`INFERRED_DEGRADED` rather than the exclusion that was documented.)
+
+### Reporting dry-run results to a sink (`DryRunReporter`)
+
+`dryRun(onInferred)` hands a callback each inferred contract and is silent
+about everything else. That is enough to look at one job, and not enough to
+migrate many: a platform team wants the successful drafts collected, and
+wants to know *why* the others weren't - a job whose only write Invaract
+skipped looks exactly like a job with no write at all. `DryRunReporter`
+(`DryRunReporter.scala`) is the reporting counterpart. With
+`spark.invaract.dryRun=true` **and** `spark.invaract.notifyConfig` set,
+`InvaractSparkSessionExtension` installs it instead of the log-only callback
+(no `notifyConfig` keeps the old behavior exactly). It publishes through the
+same `NotificationSink` machinery enforcement does (see "Notification sinks"),
+so every built-in sink, `FanOutNotificationSink` and a custom one work
+unchanged.
+
+**Two events.**
+
+- `ContractInferenceEvent`, one per write-shaped plan: `status`, `reason`,
+  `writeLocation`, `contractYaml` (`ContractParser.write`'s rendering of the
+  draft), `selfCheck`/`selfCheckViolations`, `diagnostics`, `fingerprints`,
+  and `job` (`JobInfo`).
+- `DryRunSummaryEvent`, once, from a `SparkListener.onApplicationEnd`: a
+  count per status, and every draft merged by `ContractDraftMerger`
+  (`mergeStatus` `MERGED`/`CONFLICT`/`NO_DRAFTS`; a schema disagreement is
+  reported, never resolved by guessing). That listener is also where the sink
+  is `flush`ed.
+
+**Statuses** (`InferenceStatus`). The classification mirrors what
+`verifyOrThrow` does with the same plan, in the same order, by reusing its
+predicates (`ContractEnforcementRule.inferOutcome` is the structured form
+`inferOrIgnore` flattens), so a plan enforcement would block is a plan dry-run
+reports:
+
+- `INFERRED` / `INFERRED_DEGRADED` - a recognized write. Degraded means:
+  an unresolved `.checkpoint()`/cache boundary (a `CheckpointRegistry.BoundarySourceTypes`
+  `UnknownPlan` left in the translation), a `CheckpointResolution` diagnostic
+  (resolution picked among candidates), a `WriteCommandInfo.diagnostic`, or
+  row-level DML. Deliberately **not** degraded: an IR node Invaract merely has
+  no translation for (`Range`, a UDF). A draft's inputs and schemas come from
+  the Catalyst plan, not the IR, so such a node does not make them less
+  trustworthy - found the hard way: a first version flagged any translation
+  diagnostic, which marked every `spark.range(...)` write degraded and would
+  have made `INFERRED` unreachable for most real jobs.
+- `SKIPPED_UNSUPPORTED` - `StateChangingCallSupport.extract` matched (a
+  procedure CALL has no output schema to infer from).
+- `SKIPPED_UNRECOGNIZED` - a `Command` that is neither a recognized write nor
+  `FailClosedCommands.isKnownSafe`: exactly what enforcement rejects as
+  `UNVERIFIABLE_WRITE`, so it is the status that blocks turning enforcement on.
+- `INFERENCE_ERROR` - anything in inference, classification, self-check,
+  fingerprinting or rendering threw (including a `StackOverflowError` on a
+  pathologically deep plan). One failure boundary wraps all of it: dry-run
+  must never fail the job's query. (The older `dryRun(onInferred)` path does
+  not have this boundary; a throwing callback still propagates.)
+- `NO_WRITES_OBSERVED` - summary only.
+
+**The self-check.** Each draft is verified with `StructuralVerifier.verify`
+against the plan it came from, under `resolveVerificationOptions(VerificationOptions(), session)` -
+the job's own `spark.invaract.*` conf, so `PASSED` means "would pass as
+configured". `ContractValidator` runs first (`INVALID`); an exception in the
+check is `ERROR`, with the cause in `diagnostics`. It is its own field, not
+folded into `status`: a draft that fails its own write is still worth
+publishing, for a human to look at.
+
+**Deduplication.** `injectCheckRule` fires per analyzed plan, so one logical
+write can arrive repeatedly (see `dryRun`'s doc on atomic CTAS). A draft is
+keyed by its rendered YAML, a skip by `(status, reason)`; each is published
+and counted once per reporter. The key is the whole YAML rather than the
+output location so two genuinely different drafts for one location both
+reach the merge, which then reports the conflict instead of one silently
+winning.
+
+**Job identity.** `JobInfo` carries the application id, app name, Spark
+version, master, deploy mode, user and start time, plus `jobId`
+(`spark.invaract.jobId`) and `attributes` (every
+`spark.invaract.job.metadata.<key>`, prefix stripped). `jobId` exists because
+`spark.app.name` is often unique per run under a scheduler, so cannot say
+"the same job as last night"; the fingerprint identifies the transformation
+itself. Metadata is allowlist-by-prefix on purpose - the whole `SparkConf`
+holds credentials. The merged contract's id is the job id (else the app
+name), sanitized for `ContractValidator`'s id rule.
+
+**Delivery.** `NotificationSink.flush(timeoutMs)` (a default no-op, so
+existing sinks are unaffected) exists because `HttpNotificationSink` sends
+with `sendAsync`: a job ending right after its last `publish` could lose that
+request. `HttpNotificationSink` tracks its in-flight requests and `flush`
+waits for them, bounded (`DryRunReporter.FlushTimeoutMs`, 10s - this runs on
+Spark's listener thread during shutdown and must not be able to hang it).
+Every wrapper sink delegates `flush`. `HttpNotificationSink` also gained
+`sink.property.header.<Name>` and `sink.property.bearerTokenEnv` (the token
+is read from the environment, never from the properties file; an unset
+variable or a malformed header name fails at setup rather than sending
+unauthenticated requests forever).
+
+**Not done, deliberately.** Redaction of locations/schemas in events (they
+leave the cluster; a hashing knob is a follow-up). Retrying a failed HTTP
+delivery beyond what `RetryingNotificationSink` already offers around it. A
+reporter per `SparkSession`: a job that creates child sessions publishes one
+summary per session.
 
 **A real bug this caught.** The first implementation inferred a write's
 raw `WriteCommandInfo.location` verbatim — for a local path, that includes

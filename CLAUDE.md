@@ -504,6 +504,7 @@ would be.
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
+│   │   ├── DryRunReporter.scala       # dry-run mode + a sink: per-write inference events + job summary
 │   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
 │   │   ├── location/                  # Resolves a contract's ref://<id> locations
 │   │   │   ├── LocationRef.scala            # recognizes the ref://<id> shape

@@ -83,10 +83,29 @@ object InvaractSparkSessionExtension {
     */
   val NotifyConfigConfKey = "spark.invaract.notifyConfig"
 
+  /** In dry-run mode, `NotifyConfigConfKey` takes on a second meaning: the sink receives a
+    * `ContractInferenceEvent` per write and a `DryRunSummaryEvent` at application end
+    * instead of the enforcement-mode events (see [[DryRunReporter]]). These two keys
+    * describe the job in those events: `JobIdConfKey` is its stable identity across runs
+    * and every `JobMetadataConfPrefix` entry rides along as an attribute.
+    */
+  val JobIdConfKey: String = DryRunReporter.JobIdConfKey
+  val JobMetadataConfPrefix: String = DryRunReporter.JobMetadataConfPrefix
+
   private[sparkadapter] def checkRuleFor: SparkSession => LogicalPlan => Unit =
     session => {
       if (session.conf.getOption(DryRunConfKey).exists(_.toBoolean)) {
-        ContractEnforcementRule.dryRun(logInferredContract)(session)
+        // A configured sink turns dry-run into reporting mode (DryRunReporter): every
+        // write-shaped plan, inferred or not, is published, plus one summary at application
+        // end. With no sink it stays the log-only behavior it always was.
+        session.conf.getOption(NotifyConfigConfKey)
+          .flatMap(path => NotificationSinkFactory.create(NotificationConfig.load(path))) match {
+          case Some(sink) =>
+            val reporter = DryRunReporter.installFor(session, sink)
+            (plan: LogicalPlan) => reporter.check(plan)
+          case None =>
+            ContractEnforcementRule.dryRun(logInferredContract)(session)
+        }
       } else {
         val contractPath = session.conf.getOption(ContractConfKey).getOrElse(
           throw new IllegalStateException(
