@@ -247,6 +247,9 @@ class HttpNotificationSink extends NotificationSink {
     val deadline = System.nanoTime() + timeoutMs * 1000000L
     inFlight.asScala.toList.foreach { pending =>
       val remainingMs = (deadline - System.nanoTime()) / 1000000L
+      // Mutation testing: this guard's `>=` and always-true mutants survive by design - they are
+      // equivalent. `get` with a zero or negative timeout just times out at once, which the catch
+      // below already swallows; the guard only skips that pointless call once the deadline has passed.
       if (remainingMs > 0) {
         // Whether it succeeded or failed was already logged by publish's own callback; this only waits.
         try pending.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS)
