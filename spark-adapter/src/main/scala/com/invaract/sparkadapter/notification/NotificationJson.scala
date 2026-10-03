@@ -18,12 +18,37 @@ package com.invaract.sparkadapter.notification
   */
 object NotificationJson {
 
+  /** The version of the JSON shape every event below renders. A receiver can branch on
+    * it instead of guessing from which fields are present. Additive changes (a new
+    * field, a new `status` value) do NOT bump it - a receiver must ignore fields it
+    * does not know; only a change that could break such a receiver (a removed or
+    * renamed field, a changed type) does. The published JSON Schema
+    * (`docs-site/public/schemas/notification/v1/`) is versioned the same way.
+    */
+  val SchemaVersion = 1
+
   /** Each event type's own fixed field order — deliberately not routed
     * through a generic case-class-to-map reflection, so the JSON shape is
     * an explicit, reviewable contract rather than whatever field order the
     * compiler happens to produce.
+    *
+    * Every event also carries `schemaVersion` and `eventId`. `eventId` is the SHA-256
+    * of the event's own content (keys sorted, so it does not depend on map ordering),
+    * which makes it deterministic: re-sending the same event - a retry, a replay from
+    * a dead-letter file - yields the same id, so a receiver can deduplicate on it.
+    * Two different events never share one in practice, because `timestamp` is part of
+    * the content.
     */
-  def toJson(event: NotificationEvent): String = anyToJson(fields(event))
+  def toJson(event: NotificationEvent): String = {
+    val content = fields(event)
+    anyToJson(content + ("schemaVersion" -> SchemaVersion, "eventId" -> sha256Hex(canonicalJson(content))))
+  }
+
+  /** `eventId` for `event`, exactly as `toJson` embeds it. */
+  def eventIdOf(event: NotificationEvent): String = sha256Hex(canonicalJson(fields(event)))
+
+  private def sha256Hex(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes("UTF-8")).map("%02x".format(_)).mkString
 
   private def fields(event: NotificationEvent): Map[String, Any] = event match {
     case e: ContractValidationEvent =>
@@ -82,6 +107,7 @@ object NotificationJson {
         "reason" -> e.reason,
         "writeLocation" -> e.writeLocation,
         "contractYaml" -> e.contractYaml,
+        "contractDigest" -> e.contractYaml.map(sha256Hex),
         "selfCheck" -> e.selfCheck,
         "selfCheckViolations" -> e.selfCheckViolations.map(_.toMap),
         "diagnostics" -> e.diagnostics,
@@ -96,6 +122,7 @@ object NotificationJson {
         "statusCounts" -> e.statusCounts,
         "mergeStatus" -> e.mergeStatus,
         "mergedContractYaml" -> e.mergedContractYaml,
+        "mergedContractDigest" -> e.mergedContractYaml.map(sha256Hex),
         "mergeConflicts" -> e.mergeConflicts,
         "job" -> e.job.toMap,
         "metadata" -> e.metadata
@@ -107,12 +134,20 @@ object NotificationJson {
     * `Violation.toMap` and `Contract.extensions` (SnakeYAML-sourced) ever
     * carry.
     */
-  def anyToJson(obj: Any): String = obj match {
+  def anyToJson(obj: Any): String = render(obj, sortKeys = false)
+
+  /** Same rendering with every object's keys sorted, so equal content renders to equal
+    * text regardless of how a `Map` happened to be built - what `eventId` hashes.
+    */
+  private def canonicalJson(obj: Any): String = render(obj, sortKeys = true)
+
+  private def render(obj: Any, sortKeys: Boolean): String = obj match {
     case m: Map[_, _] =>
-      "{" + m.map { case (k, v) => s""""${escape(k.toString)}": ${anyToJson(v)}""" }.mkString(", ") + "}"
+      val entries = if (sortKeys) m.toList.sortBy(_._1.toString) else m.toList
+      "{" + entries.map { case (k, v) => s""""${escape(k.toString)}": ${render(v, sortKeys)}""" }.mkString(", ") + "}"
     case it: Iterable[_] =>
-      "[" + it.map(anyToJson).mkString(", ") + "]"
-    case Some(v) => anyToJson(v)
+      "[" + it.map(render(_, sortKeys)).mkString(", ") + "]"
+    case Some(v) => render(v, sortKeys)
     case None => "null"
     case s: String => quote(s)
     case n: Number => n.toString

@@ -323,4 +323,77 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     assert(!onlyProblems.exists(_.contains("CONTRACT_INFERENCE")), "a clean INFERRED draft is not a problem")
     assert(onlyProblems.exists(_.contains("DRY_RUN_SUMMARY")), "the end-of-job summary always passes")
   }
+
+  test("dry-run with a notifyConfig that cannot be loaded warns and falls back to log-only instead of failing the job") {
+    val outputPath = scratchDir.resolve("dry_run_bad_config.parquet").toString
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> scratchDir.resolve("does-not-exist.properties").toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dry-run with a sink.class that cannot be built falls back the same way") {
+    val outputPath = scratchDir.resolve("dry_run_bad_class.parquet").toString
+    val badClass = writeNotifyProps("sink.enabled" -> "true", "sink.class" -> "com.example.NoSuchSink")
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> badClass.toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dry-run with a sink whose own configuration is invalid (a missing required property) falls back too") {
+    val outputPath = scratchDir.resolve("dry_run_bad_sink_props.parquet").toString
+    val noPath = writeNotifyProps(
+      "sink.enabled" -> "true",
+      "sink.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink" // requires sink.property.path
+    )
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> noPath.toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dryRunSink: none when notifyConfig is unset or disabled, a sink when it is valid, none when it is not") {
+    val spark = buildSession(InvaractSparkSessionExtension.DryRunConfKey -> "true")
+    try {
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, writeNotifyProps("sink.enabled" -> "false").toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, fileSinkProps(scratchDir.resolve("sink_probe.jsonl")).toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isDefined)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, scratchDir.resolve("missing.properties").toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+    } finally spark.stop()
+  }
+
+  test("enforcement mode still fails loudly on a notifyConfig that cannot be loaded (only dry-run is lenient)") {
+    val outputPath = scratchDir.resolve("enforce_bad_config.parquet").toString
+    val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
+    Files.write(contractFile, passingContractYaml.replace("OUTPUT_PATH", outputPath).getBytes("UTF-8"))
+    val spark = buildSession(
+      InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> scratchDir.resolve("does-not-exist.properties").toString
+    )
+    try {
+      intercept[Exception] {
+        spark.range(3).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+      assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
 }

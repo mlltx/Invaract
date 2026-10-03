@@ -26,5 +26,13 @@ private[sparkadapter] class TestNotificationSink extends NotificationSink {
 
   def clear(): Unit = synchronized(_events.clear())
 
-  override def publish(event: NotificationEvent): Unit = synchronized(_events += event)
+  /** Every event a test publishes is also checked against the published JSON Schema, so the
+    * whole suite - real writes, real checks, real dry-run runs - doubles as a test that the
+    * schema describes what the engine really emits. An invalid event throws an `AssertionError`
+    * (an `Error`, which `SafeNotificationSink` deliberately does not swallow).
+    */
+  override def publish(event: NotificationEvent): Unit = {
+    EventSchema.assertValid(event)
+    synchronized(_events += event)
+  }
 }

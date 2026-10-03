@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
+    "check:schemas": "node scripts/check-schemas.mjs",
+    "prebuild": "node scripts/check-schemas.mjs",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"
@@ -18,5 +20,8 @@
     "astro": "^7.2.9",
     "sharp": "^0.35.4",
     "unist-util-visit": "^5.1.0"
+  },
+  "devDependencies": {
+    "ajv": "^8.20.0"
   }
 }

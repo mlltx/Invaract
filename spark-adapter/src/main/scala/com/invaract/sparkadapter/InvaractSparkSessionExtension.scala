@@ -4,12 +4,14 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory}
 import com.invaract.sparkadapter.registry.ContractSource
 
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.slf4j.LoggerFactory
+
+import scala.util.control.NonFatal
 
 /** Installs Invaract with **no code at all** in the job it's attached to —
   * only `spark-submit --conf`:
@@ -98,8 +100,7 @@ object InvaractSparkSessionExtension {
         // A configured sink turns dry-run into reporting mode (DryRunReporter): every
         // write-shaped plan, inferred or not, is published, plus one summary at application
         // end. With no sink it stays the log-only behavior it always was.
-        session.conf.getOption(NotifyConfigConfKey)
-          .flatMap(path => NotificationSinkFactory.create(NotificationConfig.load(path))) match {
+        dryRunSink(session) match {
           case Some(sink) =>
             val reporter = DryRunReporter.installFor(session, sink)
             (plan: LogicalPlan) => reporter.check(plan)
@@ -124,6 +125,27 @@ object InvaractSparkSessionExtension {
           case None =>
             ContractEnforcementRule.forContract(contract)(session)
         }
+      }
+    }
+
+  /** The sink dry-run mode should report to, or `None` for the log-only behavior.
+    *
+    * Unlike enforcement mode - where a `notifyConfig` that cannot be loaded is a real
+    * misconfiguration worth failing the job over - dry-run's whole promise is that it
+    * is safe to attach to a job nobody here owns. A missing file, an unreadable one, or
+    * a typo'd `sink.class` therefore costs one WARN and a fallback to logging the
+    * inferred contract, never the job itself. (Enforcement mode keeps failing loudly.)
+    */
+  private[sparkadapter] def dryRunSink(session: SparkSession): Option[NotificationSink] =
+    session.conf.getOption(NotifyConfigConfKey).flatMap { path =>
+      try NotificationSinkFactory.create(NotificationConfig.load(path))
+      catch {
+        case NonFatal(e) =>
+          logger.warn(
+            s"Invaract dry-run mode: could not set up the notification sink named by '$NotifyConfigConfKey=$path' " +
+              s"($e); falling back to logging inferred contracts. The job is not affected."
+          )
+          None
       }
     }
 

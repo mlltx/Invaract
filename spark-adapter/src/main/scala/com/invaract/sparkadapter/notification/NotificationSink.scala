@@ -160,14 +160,29 @@ class FileNotificationSink extends NotificationSink {
   * that file is a deployment artifact people copy, commit and attach to
   * tickets. A named variable that is unset fails at setup, loudly, rather than
   * silently sending unauthenticated requests forever.
+  *
+  * Reliability: an attempt that fails in a way another try could fix (a connection
+  * failure, a timeout, `408`, `429`, any `5xx`) is retried with capped exponential backoff
+  * - `sink.property.retry.maxAttempts` (default `3`, counting the first try),
+  * `retry.initialBackoffMs` (`200`), `retry.backoffMultiplier` (`2.0`), `retry.maxBackoffMs`
+  * (`5000`) - without ever blocking the caller. Any other non-2xx (`400`, `401`, `404`, ...)
+  * is the receiver refusing this request and is not retried. An event that is given up on,
+  * or is still undelivered when `flush` runs out of time at application end, is saved to
+  * the dead letter if `sink.property.deadLetter.path` is set (see `deadLetterFrom`) and
+  * otherwise logged and dropped. Delivery is therefore at-least-once; every event carries
+  * a deterministic `eventId` (see `NotificationJson`) for the receiver to deduplicate on.
   */
 class HttpNotificationSink extends NotificationSink {
+  import HttpNotificationSink._
+
   private val logger = LoggerFactory.getLogger(classOf[HttpNotificationSink])
   private var url: String = _
   private var timeout: java.time.Duration = _
   private var client: java.net.http.HttpClient = _
   private var headers: Map[String, String] = Map.empty
-  private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet[java.util.concurrent.CompletableFuture[_]]()
+  private var retryPolicy: RetryPolicy = RetryPolicy()
+  private var deadLetter: Option[NotificationSink] = None
+  private val pending = java.util.concurrent.ConcurrentHashMap.newKeySet[PendingDelivery]()
 
   /** Seam for tests: where `bearerTokenEnv` is looked up. */
   protected def environmentVariable(name: String): Option[String] = Option(System.getenv(name))
@@ -213,6 +228,9 @@ class HttpNotificationSink extends NotificationSink {
             throw new IllegalArgumentException(s"HttpNotificationSink has an invalid header '$name': ${e.getMessage}", e)
         }
     }
+
+    retryPolicy = RetryPolicy.from(properties)
+    deadLetter = deadLetterFrom(properties)
   }
 
   override def publish(event: NotificationEvent): Unit = {
@@ -226,41 +244,183 @@ class HttpNotificationSink extends NotificationSink {
       .POST(java.net.http.HttpRequest.BodyPublishers.ofString(NotificationJson.toJson(event)))
       .build()
 
-    val delivery = client
-      .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
-      .whenComplete { (response, throwable) =>
-        // A null throwable is a legal, documented SafeLogger#warn(String,
-        // Throwable) argument (it just omits a stack trace) - passing it
-        // through unconditionally, rather than branching on it here too,
-        // removes an untested duplicate of failureMessage's own
-        // throwable != null check instead of needing a second test to
-        // cover it.
-        HttpNotificationSink.failureMessage(throwable, response.statusCode(), event.eventType, url).foreach { msg =>
-          logger.warn(msg, throwable)
-        }
-      }
-    inFlight.add(delivery)
-    delivery.whenComplete { (_, _) => inFlight.remove(delivery); () }
+    val delivery = new PendingDelivery(event)
+    pending.add(delivery)
+    delivery.result = attempt(request, delivery, 1)
+    delivery.result.whenComplete { (_, _) => pending.remove(delivery); () }
   }
 
+  /** One attempt, then - if it failed in a way another try could fix - the next, after a
+    * backoff; completes once the event is delivered or given up on. Tracking the whole
+    * chain (not a single request) is what lets `flush` wait for retries too.
+    */
+  private def attempt(
+      request: java.net.http.HttpRequest,
+      delivery: PendingDelivery,
+      attemptNumber: Int
+  ): java.util.concurrent.CompletableFuture[Void] =
+    if (delivery.abandoned.get()) java.util.concurrent.CompletableFuture.completedFuture[Void](null)
+    else
+      client
+        .sendAsync(request, java.net.http.HttpResponse.BodyHandlers.discarding())
+        .handle[Option[Failure]] { (response, throwable) =>
+          // `response` is null exactly when `throwable` is set; statusCode is by-name so it is
+          // never read in that case.
+          failureOf(throwable, response.statusCode(), delivery.event.eventType, url)
+        }
+        .thenCompose[Void] {
+          case None => java.util.concurrent.CompletableFuture.completedFuture[Void](null)
+          case Some(failure) =>
+            if (delivery.abandoned.get()) {
+              // flush already handed this event to the dead letter; nothing more to do for it.
+              java.util.concurrent.CompletableFuture.completedFuture[Void](null)
+            } else if (failure.retryable && attemptNumber < retryPolicy.maxAttempts) {
+              logger.debug(s"${failure.message}; retrying (attempt ${attemptNumber + 1} of ${retryPolicy.maxAttempts})")
+              val wait = retryPolicy.backoffMs(attemptNumber)
+              java.util.concurrent.CompletableFuture
+                .supplyAsync[Void](
+                  () => null,
+                  java.util.concurrent.CompletableFuture.delayedExecutor(wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+                )
+                .thenCompose[Void](_ => attempt(request, delivery, attemptNumber + 1))
+            } else {
+              giveUp(delivery.event, failure, attemptNumber)
+              java.util.concurrent.CompletableFuture.completedFuture[Void](null)
+            }
+        }
+
+  private def giveUp(event: NotificationEvent, failure: Failure, attempts: Int): Unit = {
+    logger.warn(
+      s"${failure.message} (gave up after $attempts attempt(s)" +
+        (if (deadLetter.isDefined) "; saved to the dead letter" else "; no deadLetter.path configured, so it is dropped") + ")",
+      failure.cause
+    )
+    toDeadLetter(event)
+  }
+
+  private def toDeadLetter(event: NotificationEvent): Unit =
+    deadLetter.foreach { sink =>
+      try sink.publish(event)
+      catch { case e: Exception => logger.warn(s"HttpNotificationSink could not write a ${event.eventType} event to its dead letter: $e") }
+    }
+
+  /** Waits (bounded by `timeoutMs`) for every event still being delivered, retries
+    * included. Whatever has not finished when the time is up is handed to the dead
+    * letter right then, because a JVM that is about to exit would otherwise take it
+    * with it. That can, rarely, send an event twice (the request completes just after
+    * being handed over): delivery is at-least-once, which is what `eventId` is for.
+    */
   override def flush(timeoutMs: Long): Unit = {
     val deadline = System.nanoTime() + timeoutMs * 1000000L
-    inFlight.asScala.toList.foreach { pending =>
+    pending.asScala.toList.foreach { delivery =>
       val remainingMs = (deadline - System.nanoTime()) / 1000000L
       // Mutation testing: this guard's `>=` and always-true mutants survive by design - they are
       // equivalent. `get` with a zero or negative timeout just times out at once, which the catch
       // below already swallows; the guard only skips that pointless call once the deadline has passed.
       if (remainingMs > 0) {
-        // Whether it succeeded or failed was already logged by publish's own callback; this only waits.
-        try pending.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        // Whether it succeeded or failed was already logged by the delivery chain itself; this only waits.
+        try delivery.result.get(remainingMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         catch { case _: Exception => () }
       }
+    }
+    val stragglers = pending.asScala.toList.filter(d => !d.result.isDone && d.abandoned.compareAndSet(false, true))
+    if (stragglers.nonEmpty) {
+      logger.warn(
+        s"HttpNotificationSink still had ${stragglers.size} undelivered event(s) at shutdown" +
+          (if (deadLetter.isDefined) "; saved them to the dead letter" else "; no deadLetter.path configured, so they are dropped")
+      )
+      stragglers.foreach(d => toDeadLetter(d.event))
     }
   }
 }
 
 private[notification] object HttpNotificationSink {
   val HeaderPrefix = "header."
+  val DeadLetterPrefix = "deadLetter."
+
+  /** One event on its way: `result` completes when it is delivered or given up on;
+    * `abandoned` is set by `flush` once it has been handed to the dead letter, so a late
+    * failure does not hand it over a second time.
+    */
+  final class PendingDelivery(val event: NotificationEvent) {
+    @volatile var result: java.util.concurrent.CompletableFuture[Void] = _
+    val abandoned = new java.util.concurrent.atomic.AtomicBoolean(false)
+  }
+
+  /** Why one attempt failed, and whether trying again could help. */
+  final case class Failure(message: String, retryable: Boolean, cause: Throwable)
+
+  /** `None` for a delivered (2xx) attempt. Retryable: a connection failure or timeout, `408`,
+    * `429`, and any `5xx` - things that can be different a moment later. Any other non-2xx
+    * (`400`, `401`, `403`, `404`, `422`, ...) is the receiver rejecting this request, which a
+    * retry cannot change, so it goes straight to the dead letter. `statusCode` is by-name for
+    * the same reason `failureMessage`'s is.
+    */
+  def failureOf(throwable: Throwable, statusCode: => Int, eventType: String, url: String): Option[Failure] =
+    failureMessage(throwable, statusCode, eventType, url).map { message =>
+      Failure(message, retryable = throwable != null || isRetryableStatus(statusCode), cause = throwable)
+    }
+
+  def isRetryableStatus(status: Int): Boolean = status == 408 || status == 429 || status / 100 == 5
+
+  /** `retry.maxAttempts` counts the first try (so `1` means no retries). Backoff before
+    * attempt `n + 1` is `initialBackoffMs * backoffMultiplier^(n - 1)`, capped at `maxBackoffMs`.
+    */
+  final case class RetryPolicy(
+      maxAttempts: Int = 3,
+      initialBackoffMs: Long = 200L,
+      backoffMultiplier: Double = 2.0,
+      maxBackoffMs: Long = 5000L
+  ) {
+    def backoffMs(attemptNumber: Int): Long =
+      math.min(maxBackoffMs.toDouble, initialBackoffMs * math.pow(backoffMultiplier, (attemptNumber - 1).toDouble)).toLong
+  }
+
+  object RetryPolicy {
+    def from(properties: Map[String, String]): RetryPolicy = {
+      val defaults = RetryPolicy()
+      def number[T](key: String, default: T, parse: String => T, valid: T => Boolean, expectation: String): T =
+        properties.get(key) match {
+          case None => default
+          case Some(raw) =>
+            val parsed =
+              try Some(parse(raw.trim))
+              catch { case _: NumberFormatException => None }
+            parsed.filter(valid).getOrElse(
+              throw new IllegalArgumentException(s"HttpNotificationSink's '$key' property must be $expectation, got '$raw'")
+            )
+        }
+      val maxAttempts = number[Int]("retry.maxAttempts", defaults.maxAttempts, _.toInt, _ >= 1, "a whole number >= 1")
+      val initial = number[Long]("retry.initialBackoffMs", defaults.initialBackoffMs, _.toLong, _ >= 0L, "a number >= 0")
+      val multiplier = number[Double]("retry.backoffMultiplier", defaults.backoffMultiplier, _.toDouble, _ >= 1.0, "a number >= 1")
+      val maxBackoff = number[Long]("retry.maxBackoffMs", defaults.maxBackoffMs, _.toLong, _ >= 0L, "a number >= 0")
+      RetryPolicy(maxAttempts, initial, multiplier, maxBackoff)
+    }
+  }
+
+  /** The dead letter named by `deadLetter.path`: a plain path is appended to as a local
+    * file (`FileNotificationSink`); anything with a `scheme://` (`s3a://`, `hdfs://`,
+    * `gs://`, `file://`) goes through Hadoop's `FileSystem` (`HadoopFsNotificationSink`,
+    * one object per event) - the cluster-safe choice, since a local file on a driver
+    * container disappears with the container. Every `deadLetter.*` property is handed to
+    * that sink with the prefix stripped (so `deadLetter.hadoop.fs.s3a.access.key` reaches
+    * Hadoop's configuration, exactly as for `HadoopFsNotificationSink` itself).
+    */
+  def deadLetterFrom(properties: Map[String, String]): Option[NotificationSink] = {
+    val own = properties.collect { case (k, v) if k.startsWith(DeadLetterPrefix) => k.stripPrefix(DeadLetterPrefix) -> v }
+    if (own.isEmpty) None
+    else {
+      val path = own.getOrElse(
+        "path",
+        throw new IllegalArgumentException(
+          "HttpNotificationSink has deadLetter.* properties but no 'deadLetter.path' (sink.property.deadLetter.path=...)"
+        )
+      )
+      val sink: NotificationSink = if (path.contains("://")) new HadoopFsNotificationSink else new FileNotificationSink
+      sink.configure(own)
+      Some(sink)
+    }
+  }
 
   /** The decision of *whether* (and what) to log, pulled out of `publish`'s
     * async callback so it's directly unit-testable: a mutation on the
