@@ -1,0 +1,16 @@
+{
+  "checksFailed": 0,
+  "eventType": "JOB_SUMMARY",
+  "timestamp": 1791068444275,
+  "totalViolations": 0,
+  "applicationId": "local-1791068436169",
+  "eventId": "c61c294c2c1b83837504c169c5f1aeb95f31ff62a2f52e4637c7cca6c0e4f9cb",
+  "totalWrites": 1,
+  "durationMs": 8848,
+  "metadata": {
+    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "owner": "invaract-demo"
+  },
+  "schemaVersion": 1,
+  "checksPassed": 1
+}
