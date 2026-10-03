@@ -3902,6 +3902,13 @@ first written: one field's value compared against *another field on the same row
       Job identity via `spark.invaract.jobId` / `spark.invaract.job.metadata.*`. Delivery:
       `NotificationSink.flush`, `HttpNotificationSink` auth headers/`bearerTokenEnv` and
       in-flight draining, `FanOutNotificationSink` with per-target `statuses` routing.
+      Follow-ups in the same PR: a bad `notifyConfig` no longer fails a dry-run job (WARN and
+      log-only fallback); `schemaVersion` + deterministic `eventId` (+ `contractDigest`) on every
+      event; a published JSON Schema (`docs-site/public/schemas/notification/v1/`) with real
+      examples, checked by the whole Scala suite and by Ajv in the docs build; `HttpNotificationSink`
+      retry with backoff and a dead letter (`deadLetter.path`, local or any Hadoop FS), configurable
+      from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
+      reference receiver, two troubleshooting entries.
       Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
       weakly). Open: redaction of locations/schemas in events; the receiving contract
       repository (separate repo).

@@ -188,13 +188,179 @@ that doesn't pass its own write isn't something to promote.
 
 ### What's in an event
 
+Real events, from a real `spark-sql` run with the settings above (the file paths are the
+run's own). The first is a write dry-run mode inferred a contract for; its `contractYaml` is
+the draft itself, and `selfCheck` says it would pass enforcement:
+
 ```json
-{"eventType": "CONTRACT_INFERENCE", "status": "INFERRED", "selfCheck": "PASSED",
- "writeLocation": "s3a://lake/orders_daily", "contractYaml": "id: orders_nightly\n...",
- "fingerprints": {...}, "diagnostics": [],
- "job": {"jobId": "orders_nightly", "appName": "orders", "applicationId": "application_...",
-         "sparkVersion": "3.5.1", "user": "etl", "attributes": {"team": "orders"}, ...}}
+{
+  "eventType": "CONTRACT_INFERENCE",
+  "timestamp": 1791067546178,
+  "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: output\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - input\n",
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791067534583,
+    "applicationId": "local-1791067535950",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "contractDigest": "c07dd66d4a26e2e866d25807c69c8a64669c3639e35da164ed21c21518e20048",
+  "selfCheckViolations": [],
+  "reason": null,
+  "eventId": "5c184816082c9a70b094579c91990de1c3d52cdc71b7f4d0940d6eb7bf592ab6",
+  "fingerprints": {
+    "outputs": {
+      "id": {
+        "expression": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "5ab5867724e4d491890b27e81e156c2519f82d72aaf998e142a424bdede7b458"
+        },
+        "lineage": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "8700f1b3b1049f806346155f3714120b6bcff12a4b8d5e7ff7a062c09f09c18c"
+        },
+        "combined": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "7435d6bcb31305eb9e4329cdccb9f1d398fb5a77d5ecd5168c17a78931047599"
+        },
+        "nonDeterministic": false
+      },
+      "doubled": {
+        "expression": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "d14b6bfaca780f0f5ecf2863c7303da26f0f002cbc8f0c1aa34c0b647cb9a4b8"
+        },
+        "lineage": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "20570e2e08bd252d482e40c326be931d4359711d34ff624ebd7ede2e048cdbf3"
+        },
+        "combined": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "20631bdb3f13ff80eab770b5e521aca364ee052021457cfac8bfbdf7544b16c8"
+        },
+        "nonDeterministic": false
+      }
+    },
+    "rowMutation": null,
+    "version": 2,
+    "inputs": {
+      "file:/tmp/invaract-example/data/orders.csv#0": {
+        "version": 2,
+        "algorithm": "SHA-256",
+        "value": "ea575f3ccf4ed51aed7a96de9b02af16adfbb5cc8120b95d2d04f29cf26ab4f7"
+      }
+    },
+    "overall": {
+      "version": 2,
+      "algorithm": "SHA-256",
+      "value": "01a4f49d7329136bca7a0e3aa03976a3cf6732bc8b18b5c52e9c42bf9b3d249e"
+    }
+  },
+  "diagnostics": [],
+  "status": "INFERRED",
+  "selfCheck": "PASSED",
+  "writeLocation": "/tmp/invaract-example/out/orders_doubled",
+  "metadata": {
+    "team": "orders",
+    "dag": "orders_daily"
+  },
+  "schemaVersion": 1
+}
 ```
+
+The second is a write it could not infer from. Here the job used `INSERT OVERWRITE DIRECTORY`,
+which Invaract has no translation for, so with a contract active enforcement would reject it:
+
+```json
+{
+  "eventType": "CONTRACT_INFERENCE",
+  "timestamp": 1791067546042,
+  "contractYaml": null,
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791067534583,
+    "applicationId": "local-1791067535950",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "contractDigest": null,
+  "selfCheckViolations": [],
+  "reason": "'InsertIntoDataSourceDirCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE",
+  "eventId": "0f1426929ca271fef4629db29d7bf554778581936f8a7faedc2a208cbe93b9b5",
+  "fingerprints": null,
+  "diagnostics": [],
+  "status": "SKIPPED_UNRECOGNIZED",
+  "selfCheck": null,
+  "writeLocation": null,
+  "metadata": {
+    "team": "orders",
+    "dag": "orders_daily"
+  },
+  "schemaVersion": 1
+}
+```
+
+And the summary published when the application ended:
+
+```json
+{
+  "mergeStatus": "MERGED",
+  "mergeConflicts": [],
+  "eventType": "DRY_RUN_SUMMARY",
+  "timestamp": 1791067547522,
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791067534583,
+    "applicationId": "local-1791067535950",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "mergedContractYaml": "id: orders_nightly\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: orders\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: orders_doubled\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - orders\n",
+  "eventId": "173b43805be46cc3cf877f283b4a2c01ba6a4be68f345229d96a562ac1df9405",
+  "statusCounts": {
+    "SKIPPED_UNRECOGNIZED": 1,
+    "INFERRED": 1
+  },
+  "metadata": {
+    "team": "orders",
+    "dag": "orders_daily"
+  },
+  "schemaVersion": 1,
+  "mergedContractDigest": "9bf61d4884f102e2fb4982cbdbc9ab3ddbff59186ba6648882b8acb7e89c9842"
+}
+```
+
+Every event also carries `schemaVersion`, a deterministic `eventId` to deduplicate on, and (on
+the first two) a `contractDigest`: the SHA-256 of the draft, identical for identical drafts.
+The [JSON Schema and a reference receiver](/guides/notification-sinks/#validate-events-and-build-an-endpoint-to-receive-them)
+are in the notification sinks guide.
 
 `job.jobId` comes from `spark.invaract.jobId` — set it. Spark's own app name is often
 different on every run under a scheduler, so it can't tell you "this is the same job as
@@ -232,12 +398,44 @@ the job ended.
 
 <Aside type="note" title="Dry-run never gets in the job's way">
 Inference, the self-check and publishing are each failure-isolated: a sink that is down or
-a plan shape Invaract hasn't seen costs a log line, never a query. Delivery to an HTTP
+a plan shape Invaract hasn't seen costs a log line, never a query. That includes setting the
+sink up: a `notifyConfig` that can't be read, or names a class that doesn't exist, logs one
+`WARN` and falls back to logging the inferred contract, instead of failing the job (enforcement
+mode, by contrast, still fails loudly on a bad `notifyConfig`). Delivery to an HTTP
 endpoint is asynchronous, and at application end the sink is given up to ten seconds to
 finish what it already accepted, so a short job doesn't lose its last events. Each
 `SparkSession` a job creates reports on its own; a job that spawns child sessions sends one
 summary per session.
 </Aside>
+
+## Migrating a job: from dry-run to enforcement
+
+Dry-run exists to answer one question per job: is it safe to turn enforcement on? Work
+through the answer like this.
+
+1. **Run the job once with dry-run reporting**, down every code path that writes (a job that
+   writes differently by date or by parameter needs a run for each).
+2. **Read its `DRY_RUN_SUMMARY`.** `statusCounts` says how many writes landed in each status.
+3. **A job is ready when** every write is `INFERRED` with `selfCheck: PASSED`, nothing is
+   `SKIPPED_UNRECOGNIZED`, and `mergeStatus` is `MERGED`.
+4. **If it isn't, the status says what to do:**
+   - `SKIPPED_UNRECOGNIZED`: the write is a shape Invaract can't verify, so enforcement would
+     reject it. Check [Connector Support](/reference/connector-support/); change the write to a
+     supported shape if you can ([an example](/troubleshooting/common-problems/#dry-run-reports-skipped_unrecognized-for-a-write-that-works-fine)).
+   - `INFERRED_DEGRADED`: read `diagnostics`. An unresolved `.checkpoint()` means a draft's
+     inputs are incomplete; row-level DML means the draft describes only the target's current schema.
+   - `selfCheck` of `FAILED`, `INVALID` or `ERROR`: the draft doesn't pass its own write, so don't
+     promote it. `selfCheckViolations` and `diagnostics` say why.
+   - `NO_WRITES_OBSERVED`: Invaract saw no write it recognizes. Either that run never wrote,
+     or the write shape isn't recognized; don't read it as "safe".
+   - `CONFLICT`: two writes disagree about one location's schema. `mergeConflicts` names it.
+5. **Review the merged draft** (`mergedContractYaml`): replace the placeholder `id`, `version` and
+   `status`, make locations portable, and add the rules dry-run can't infer, as in
+   [Write a Contract](/guides/writing-a-contract/).
+6. **Switch to enforcement**: replace `spark.invaract.dryRun=true` with
+   `spark.invaract.contract=<your reviewed contract>`. The strict toggles
+   (`rejectUndeclaredInputs`, `rejectUndeclaredFields`) are off by default; turn them on later,
+   once the job has run clean.
 
 ## Need a custom callback?
 

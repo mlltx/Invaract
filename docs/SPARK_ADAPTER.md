@@ -1307,6 +1307,67 @@ is read from the environment, never from the properties file; an unset
 variable or a malformed header name fails at setup rather than sending
 unauthenticated requests forever).
 
+**Configuration failure never fails a dry-run job.** Enforcement mode treats a
+`notifyConfig` that cannot be loaded (a missing file, a typo'd `sink.class`, a sink
+rejecting its own properties) as a real misconfiguration and fails loudly at setup,
+which is right when a contract is gating writes. Dry-run's promise is that it is safe
+to attach to a job nobody here owns, so `InvaractSparkSessionExtension.dryRunSink`
+catches the same failure, logs one WARN naming the cause, and falls back to the
+log-only behavior. Found by asking "what could a first-time user's typo do to a prod
+job" of the original implementation, which would have propagated the exception out of
+session construction.
+
+**The event envelope.** `NotificationJson.toJson` adds, to every event type,
+`schemaVersion` (`NotificationJson.SchemaVersion`, currently 1) and `eventId`. Both are
+added at the JSON layer, not as case-class fields, so the event classes - and
+MiMa - are untouched. `eventId` is the SHA-256 of the event's content rendered with
+every object's keys sorted (so it does not depend on `Map` iteration order, which is
+insertion order for up to four entries and hash order beyond), which makes it
+deterministic: a retry or a dead-letter replay of an event carries the same id, and a
+receiver can deduplicate on it. `timestamp` is part of the content, so two distinct
+events do not collide. `ContractInferenceEvent` additionally renders `contractDigest`
+and `DryRunSummaryEvent` `mergedContractDigest` (SHA-256 of the YAML), so identical
+drafts are recognizable without diffing YAML. `schemaVersion` bumps only for a change
+that could break a receiver that ignores unknown fields: a removed or renamed field or
+a changed type. A new field or a new `status` value does not.
+
+**The JSON Schema.** `docs-site/public/schemas/notification/v1/event.schema.json`
+(draft 2020-12, published on the docs site) describes every event; the files in
+`.../v1/examples/` are real events from real runs. Unlike `demo/output/report.json`,
+this one *is* something external consumers bind to, which is why it is versioned and
+tested rather than documented in prose. Two checkers, deliberately different:
+
+- **JVM** (`EventSchema.scala`, tests): a small validator over the keyword subset the
+  schema uses. It throws on any validation keyword it does not implement, so the schema
+  cannot gain a constraint it would silently skip. `TestNotificationSink.publish`
+  validates every event it receives against the schema, so the entire existing suite -
+  real writes, real checks, real dry-run runs - doubles as a test that the schema
+  describes what the engine really emits. It is hand-written because this module's
+  Jackson versions are pinned together with Spark's (see `build.sbt`'s
+  `dependencyOverrides`), and a JSON Schema library brings Jackson modules of its own
+  into that pinning.
+- **Docs build** (`docs-site/scripts/check-schemas.mjs`, run as `prebuild`): Ajv, a real
+  implementation of the specification, in strict mode, compiles the schema and validates
+  every example as the event type it claims to be, and fails if an event type has no
+  example. That is the second opinion that the schema means what the JVM checker thinks.
+
+**Retry and dead letter in `HttpNotificationSink`.** Previously a failed request was
+logged and the event was gone. Now each event is a chain of attempts: a failure that
+another try could fix (a connection failure or timeout, `408`, `429`, `5xx`) is retried
+after a capped exponential backoff (`retry.*`, default 3 attempts), using
+`CompletableFuture.delayedExecutor` so no thread is held and the caller is never
+blocked; any other non-2xx is a refusal and goes straight to the dead letter. An event
+that is given up on is handed to `deadLetter.path`'s sink: `FileNotificationSink` for a
+plain path, `HadoopFsNotificationSink` for a `scheme://` one (`deadLetter.*` is passed
+through with the prefix stripped, so Hadoop keys work). `flush` waits on the whole
+chain, and an event still unfinished when its time runs out is handed to the dead
+letter immediately and marked abandoned so its late completion neither retries nor
+hands it over twice - the JVM is about to exit and would otherwise take it along. The
+cost is that an event can, rarely, be both delivered and dead-lettered; delivery is
+at-least-once, which `eventId` exists to absorb. `RetryingNotificationSink` remains for
+code that wants to compose its own sinks; it could not be reached from a properties
+file, which is the gap this closes.
+
 **Not done, deliberately.** Redaction of locations/schemas in events (they
 leave the cluster; a hashing knob is a follow-up). Retrying a failed HTTP
 delivery beyond what `RetryingNotificationSink` already offers around it. A
