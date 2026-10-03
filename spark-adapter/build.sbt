@@ -615,53 +615,53 @@ dependencyOverrides ++= Seq(
   // fixed in 2.5.2. Confirmed via `sbt Test/dependencyTree` that 2.5.1 is
   // this module's actual resolved winner (2.4.0 already evicted by it).
   "org.apache.ivy" % "ivy" % "2.5.2",
-  // 0.12.0 -> 0.13.0 ONLY, not further. Pulled in transitively by
-  // spark-hive's Hive 2.3.9 dependency tree (the only module libthrift
-  // appears in - confirmed via `sbt Test/dependencyTree`, same
-  // Thrift-based Hive metastore client path as the Derby entry below).
-  // Two real CVEs here, and - like Derby - a real Hive-compatibility wall
-  // found by testing, not assumed:
+  // libthrift 0.13.0 -> 0.24.0. Pulled in transitively by spark-hive's Hive
+  // 2.3.9 dependency tree (the only module libthrift appears in, test scope;
+  // confirmed via each module's Test/fullClasspath). 0.24.0 is the first
+  // release past every libthrift advisory raised against this module:
+  // CVE-2019-0205 (infinite loop, fixed 0.13.0), CVE-2020-13949 (a short
+  // malicious RPC message triggers a large allocation, fixed 0.14.0),
+  // CVE-2026-43869 (TLS hostname-verification bypass in TSSLTransportFactory,
+  // fixed 0.23.0) and a later "loop with unreachable exit condition" advisory
+  // affecting everything before 0.24.0. This used to be held at 0.13.0 as an
+  // accepted risk because "0.14.0+ breaks Hive 2.3.9"; that was true but far
+  // coarser than the real problem, and went unchecked for years. Checked
+  // against the jars (docs/CVE_REMEDIATION.md 7m), the real picture is:
   //
-  //  - CVE-2019-0205 (loop with an unreachable exit condition - a
-  //    malicious payload can put a client/server into an infinite loop),
-  //    fixed in 0.13.0. Safe to take.
-  //  - CVE-2020-13949 (a short malicious RPC message can trigger a large
-  //    memory allocation), fixed in 0.14.0 - NOT safe to take. Tried it
-  //    first; broke HiveConnectorSpec outright with
-  //    `NoClassDefFoundError: org/apache/thrift/transport/TFramedTransport`.
-  //    Confirmed by inspecting the actual jars (`unzip -l`) across every
-  //    0.1x release: 0.13.0 still has
-  //    `org/apache/thrift/transport/TFramedTransport.class`; 0.14.0
-  //    onward moved it to `org/apache/thrift/transport/layered/`
-  //    (0.14.1/0.14.2 confirmed same). Hive 2.3.9's compiled code
-  //    references the pre-0.14.0 package by name, exactly like Derby's
-  //    EmbeddedDriver - no libthrift release both fixes CVE-2020-13949
-  //    and keeps that package path.
+  //  1. The packaging break is narrow. A scan of all 232 jars on the Test
+  //     classpath finds 104 distinct Thrift classes referenced outside
+  //     libthrift; only two are missing from 0.14.0 onward:
+  //     org/apache/thrift/transport/TFramedTransport and its nested Factory
+  //     (moved to transport/layered/, same public API, different parent
+  //     class). Both are referenced only by hive-metastore - HiveMetaStore
+  //     (server: `new TFramedTransport.Factory()`) and HiveMetaStoreClient
+  //     (client: `new TFramedTransport(TTransport)`) - real-network code the
+  //     embedded test metastore never executes, but which the JVM must still
+  //     be able to link: without a class at the old name HiveConnectorSpec
+  //     aborts with `NoClassDefFoundError: org/apache/thrift/transport/
+  //     TFramedTransport` (confirmed by removing the shim below). So
+  //     src/test/scala/org/apache/thrift/transport/TFramedTransport.scala
+  //     re-exposes the two old names as thin subclasses of the relocated
+  //     ones; it inherits the real implementation and adds no behavior, and
+  //     lives in test sources only, so it is never in a published jar.
+  //  2. 0.24.0's own new runtime dependencies evict Spark's: they pull
+  //     jakarta.servlet-api 4.0.3 -> 5.0.0 and jakarta.annotation-api 1.3.5
+  //     -> 2.1.1 (the jakarta.* package namespace), after which Spark 3.5
+  //     fails at SparkSession startup with `NoClassDefFoundError: javax/
+  //     servlet/Servlet`. The two entries after libthrift pin Spark's own
+  //     versions back; httpclient5/httpcore5 (libthrift's HTTP transport
+  //     only, used by nothing else on the classpath) are excluded below.
+  //  3. 0.24.0's class files are Java 8 (checked), so unlike Derby there is
+  //     no JDK-floor problem for CI's JDK 11 leg.
   //
-  // Accepted risk for CVE-2020-13949 (see docs/CVE_REMEDIATION.md section
-  // 3): not reachable through this module's own tests regardless -
-  // HiveConnectorSpec's `enableHiveSupport()` session sets no
-  // `hive.metastore.uris`, so it runs Hive's *embedded* metastore
-  // (in-process calls, per Hive's own architecture), never a real Thrift
-  // RPC server that could receive the "malicious RPC client" payload this
-  // CVE describes.
-  //
-  // A third CVE, found in a later alert batch: CVE-2026-43869 (CWE-297,
-  // Improper Validation of Certificate with Host Mismatch -
-  // TSSLTransportFactory.java's Java TLS transport skips hostname
-  // verification, so a client will trust a certificate issued for the
-  // wrong host), fixed in 0.23.0. Not even attempted - 0.23.0 is far
-  // past 0.14.0, the exact point already confirmed above to break Hive
-  // 2.3.9's package expectations, so it carries the same packaging-break
-  // risk at a larger version delta, with no reason to expect it resolved
-  // itself in between. Also accepted risk, for an even more direct
-  // reachability reason than CVE-2020-13949 above: this CVE is
-  // specifically about validating the hostname on a *TLS* Thrift
-  // connection, and
-  // HiveConnectorSpec's embedded metastore is not just non-networked but
-  // never establishes a real socket connection of any kind, TLS or
-  // otherwise - there's no certificate to mis-validate.
-  "org.apache.thrift" % "libthrift" % "0.13.0",
+  // Reachability, unchanged by any of this: test scope; HiveConnectorSpec's
+  // `enableHiveSupport()` session sets no `hive.metastore.uris`, so it runs
+  // Hive's embedded metastore (in-process calls) and never opens a Thrift
+  // socket - every advisory above concerns a real Thrift RPC or TLS path.
+  "org.apache.thrift" % "libthrift" % "0.24.0",
+  // Spark 3.5's own versions (javax.* namespace) - see item 2 above.
+  "jakarta.servlet" % "jakarta.servlet-api" % "4.0.3",
+  "jakarta.annotation" % "jakarta.annotation-api" % "1.3.5",
   // 0.25 -> 2.0.3 (via 0.27). CVE-2024-36114 (GHSA-973x-65j7-xcf4) - every
   // Aircompressor decompressor (LZ4/LZO/Snappy/Zstandard) used
   // sun.misc.Unsafe for unchecked out-of-bounds memory access, malformed
@@ -907,7 +907,12 @@ excludeDependencies ++= Seq(
   // full CVE detail and why the fork exists - this is the other half of
   // that fix, removing the unmaintained org.lz4 coordinate so only the
   // fork's classes are on the classpath.
-  ExclusionRule("org.lz4", "lz4-java")
+  ExclusionRule("org.lz4", "lz4-java"),
+  // libthrift 0.24.0's own new runtime deps (HTTP transport only - nothing on
+  // this classpath uses them; see the libthrift comment in
+  // dependencyOverrides above, item 2).
+  ExclusionRule("org.apache.httpcomponents.client5", "httpclient5"),
+  ExclusionRule("org.apache.httpcomponents.core5", "httpcore5")
 )
 
 // Real Maven-resolvable dependencies, not unmanagedJars pointing at a
