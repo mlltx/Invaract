@@ -1199,6 +1199,48 @@ version's class list turns "it breaks" into a short, concrete list — here two
 classes — which is often small enough to bridge. Also check what the *new*
 version's own dependencies evict, not just whether it compiles and links.
 
+## 7n. `at.yawk.lz4:lz4-java` 1.10.1 via `kafka-clients` — pinned in `notification-kafka`
+
+Advisory: affected `<= 1.11.0`, fixed `1.11.1`. Insufficient validation of the
+array/offset/length arguments of the **JNI-based XXHash** methods lets a caller
+that controls those arguments crash the JVM. It does not affect the common case
+where only the *contents* of a valid array are attacker-controlled, and the
+Java-based XXHash implementations are not affected. Alert path:
+`org.apache.kafka:kafka-clients 3.9.2 -> at.yawk.lz4:lz4-java 1.10.1`
+(runtime scope in kafka-clients' own POM), which exists only in
+`notification-kafka` — the module #84 moved from kafka-clients 3.8.0 to 3.9.2
+for the `kafka-clients` / `org.lz4:lz4-java` alerts of that round.
+
+| Step | Result |
+|---|---|
+| 1. Remove if unused | **Not possible.** It is `kafka-clients`' own transitive dependency, and the sink passes producer properties straight through, so a user who sets `compression.type=lz4` needs it at runtime; excluding it would turn that setting into a `NoClassDefFoundError`. |
+| 2. Bump the direct dependency | **Doesn't help.** 3.9.2 is the last 3.x release; kafka-clients 4.0.2 and 4.1.2 still declare `lz4-java 1.10.1` and the newest, 4.3.1, declares `1.10.2` — all `<= 1.11.0` (each release's POM on Maven Central). 4.x would also be a major-version move for a sink that only needs the producer. |
+| 3. Pin | **Done** — `dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.1"` in `notification-kafka/build.sbt`, the same coordinate and version `spark-adapter` already pins (test scope) for §7b. An override rather than a direct dependency, so it stays a runtime-only transitive. |
+
+**Compatibility, checked rather than assumed.** 1.10.1, 1.11.1 and newer
+releases all have the `net.jpountz.lz4`/`net.jpountz.xxhash` classes kafka-clients
+uses (`LZ4Factory`, `LZ4Compressor`, `LZ4SafeDecompressor`, `XXHashFactory`,
+`XXHash32`) and Java 7 class files. `KafkaLz4CodecSpec` (new) builds a real
+LZ4-compressed record batch with Kafka's own `MemoryRecords` — the compressor,
+decompressor and XXHash frame checksums a real producer/consumer use — and reads
+it back. Nothing else in this module's tests reaches the LZ4 codec (the sink
+only hands records to a `MockProducer`), so before this a pin to a version
+kafka-clients couldn't use would have passed every test.
+
+**Verification:** `notification-kafka`'s test classpath resolves
+`lz4-java-1.11.1.jar` (was 1.10.1); 8/8 tests pass (5 existing + 3 new); the
+rebuilt `invaract-notification-kafka-0.2.0.jar` contains 32/32 `net.jpountz.xxhash`
+classes byte-identical to 1.11.1's (28/32 for 1.10.1's).
+
+**Scope (§2):** `notification-kafka` is an optional extension a user opts into
+by adding its assembled jar to their own classpath; it is not part of
+`contract`/`ir`/`spark-adapter`, and a job that never configures a Kafka sink
+never loads it. **Reachability — Low:** kafka-clients calls the XXHash methods
+internally with its own valid buffers (LZ4 frame checksums), not with
+attacker-supplied array references or ranges, and only when LZ4 compression is
+configured. I did not trace other callers of lz4-java outside kafka-clients. The
+alert text I was given did not state an upstream severity or CVE ID.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`

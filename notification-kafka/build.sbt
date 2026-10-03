@@ -18,6 +18,30 @@ libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.2.18" % "test"
 )
 
+// at.yawk.lz4:lz4-java: kafka-clients declares it as a runtime-scope
+// dependency (3.9.2 -> 1.10.1), and an advisory affects <= 1.11.0 (fixed in
+// 1.11.1): insufficient validation of the array/offset/length arguments of the
+// JNI-based XXHash methods lets a caller that controls those arguments crash
+// the JVM. Dependency route, in the order docs/CVE_REMEDIATION.md §1 gives:
+//   1. Remove - not possible: it is kafka-clients' own transitive dependency,
+//      and the sink passes producer properties straight through, so a user who
+//      sets compression.type=lz4 needs it at runtime. Excluding it would turn
+//      that setting into a NoClassDefFoundError.
+//   2. Bump the direct dependency - no kafka-clients release helps: 3.9.2 is
+//      the last 3.x, 4.0.2 and 4.1.2 still declare 1.10.1, and the newest
+//      (4.3.1) declares 1.10.2, all <= 1.11.0 (checked against each release's
+//      POM on Maven Central). 4.x is also a major-version move for a sink that
+//      only needs the producer.
+//   3. Pin - this. The same coordinate and version spark-adapter already pins
+//      (test scope) for its own lz4 alert. Same net.jpountz.* classes
+//      (LZ4Factory, LZ4Compressor, LZ4SafeDecompressor, XXHashFactory,
+//      XXHash32 all present, Java 7 class files, checked in the jar), so
+//      kafka-clients' LZ4 codec is unaffected.
+// A dependencyOverrides entry rather than a direct dependency: lz4-java must
+// stay a runtime-only transitive, not become a compile dependency of this
+// module's own code.
+dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.1"
+
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-deprecation",
