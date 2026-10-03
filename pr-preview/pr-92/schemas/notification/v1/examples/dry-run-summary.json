@@ -1,0 +1,32 @@
+{
+  "mergeStatus": "MERGED",
+  "mergeConflicts": [],
+  "eventType": "DRY_RUN_SUMMARY",
+  "timestamp": 1791067547522,
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791067534583,
+    "applicationId": "local-1791067535950",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "mergedContractYaml": "id: orders_nightly\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: orders\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: orders_doubled\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - orders\n",
+  "eventId": "173b43805be46cc3cf877f283b4a2c01ba6a4be68f345229d96a562ac1df9405",
+  "statusCounts": {
+    "SKIPPED_UNRECOGNIZED": 1,
+    "INFERRED": 1
+  },
+  "metadata": {
+    "team": "orders",
+    "dag": "orders_daily"
+  },
+  "schemaVersion": 1,
+  "mergedContractDigest": "9bf61d4884f102e2fb4982cbdbc9ab3ddbff59186ba6648882b8acb7e89c9842"
+}

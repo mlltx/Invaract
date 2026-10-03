@@ -1,0 +1,86 @@
+{
+  "eventType": "CONTRACT_INFERENCE",
+  "timestamp": 1791067546178,
+  "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: output\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - input\n",
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791067534583,
+    "applicationId": "local-1791067535950",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "contractDigest": "c07dd66d4a26e2e866d25807c69c8a64669c3639e35da164ed21c21518e20048",
+  "selfCheckViolations": [],
+  "reason": null,
+  "eventId": "5c184816082c9a70b094579c91990de1c3d52cdc71b7f4d0940d6eb7bf592ab6",
+  "fingerprints": {
+    "outputs": {
+      "id": {
+        "expression": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "5ab5867724e4d491890b27e81e156c2519f82d72aaf998e142a424bdede7b458"
+        },
+        "lineage": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "8700f1b3b1049f806346155f3714120b6bcff12a4b8d5e7ff7a062c09f09c18c"
+        },
+        "combined": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "7435d6bcb31305eb9e4329cdccb9f1d398fb5a77d5ecd5168c17a78931047599"
+        },
+        "nonDeterministic": false
+      },
+      "doubled": {
+        "expression": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "d14b6bfaca780f0f5ecf2863c7303da26f0f002cbc8f0c1aa34c0b647cb9a4b8"
+        },
+        "lineage": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "20570e2e08bd252d482e40c326be931d4359711d34ff624ebd7ede2e048cdbf3"
+        },
+        "combined": {
+          "version": 2,
+          "algorithm": "SHA-256",
+          "value": "20631bdb3f13ff80eab770b5e521aca364ee052021457cfac8bfbdf7544b16c8"
+        },
+        "nonDeterministic": false
+      }
+    },
+    "rowMutation": null,
+    "version": 2,
+    "inputs": {
+      "file:/tmp/invaract-example/data/orders.csv#0": {
+        "version": 2,
+        "algorithm": "SHA-256",
+        "value": "ea575f3ccf4ed51aed7a96de9b02af16adfbb5cc8120b95d2d04f29cf26ab4f7"
+      }
+    },
+    "overall": {
+      "version": 2,
+      "algorithm": "SHA-256",
+      "value": "01a4f49d7329136bca7a0e3aa03976a3cf6732bc8b18b5c52e9c42bf9b3d249e"
+    }
+  },
+  "diagnostics": [],
+  "status": "INFERRED",
+  "selfCheck": "PASSED",
+  "writeLocation": "/tmp/invaract-example/out/orders_doubled",
+  "metadata": {
+    "team": "orders",
+    "dag": "orders_daily"
+  },
+  "schemaVersion": 1
+}
