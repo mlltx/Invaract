@@ -496,10 +496,20 @@ dependencyOverrides ++= Seq(
   // lines this module and Spark 3.5.7 both depend on. Accepted risk (see
   // docs/CVE_REMEDIATION.md section 3's "no available patched version"
   // case) - re-evaluate if FasterXML ever backports it to 2.x.
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.9",
+  //
+  // 2.18.9 -> 2.18.11 (all four again, same "move together" discipline): a
+  // jackson-core ReDoS (affected >= 2.17.0 <= 2.18.10, fixed 2.18.11):
+  // NumberInput.looksLikeValidNumber() runs two backtracking regexes over a
+  // non-matching string, quadratic in its length (measured by the reporter:
+  // 74 s for one 160,000-char string), and the length gate on that path is
+  // maxStringLength (default 20,000,000), not maxNumberLength (default
+  // 1,000). Confirmed on Maven Central that all five coordinates
+  // (jackson-core/databind/annotations/module-scala_2.12/dataformat-yaml)
+  // have a 2.18.11 release before touching this.
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.11",
   // CVE remediation (see docs/CVE_REMEDIATION.md) for transitive jars
   // pulled in by Spark/Delta/Hive's own dependency trees - same
   // dependencyOverrides pattern as Arrow above, not a change to what this

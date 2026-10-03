@@ -2862,7 +2862,7 @@ overhead. The two levers above reduced wasted time around that core cost
 #### Sharding `spark-adapter`'s whole-module run
 
 The bottleneck named above was addressed directly by splitting
-`mutation-testing-spark-adapter` itself into a 4-way matrix job
+`mutation-testing-spark-adapter` itself into a 5-way matrix job
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
 scoped to a fixed subset of the module's source files (30 as of
 `RoleConsistencyVerifier`, added to shard-4 — the shard smallest by line
@@ -2871,12 +2871,24 @@ currently smallest" convention; `PlanRuleVerifier`/`EqualityConditions`
 were added to shard-3/shard-2 respectively before it)
 (`strategy.matrix.include`, one entry per shard). This doesn't reduce the
 underlying work — Stryker4s still reruns the full real-Spark test suite
-once per mutant, exactly as before — it parallelizes it across four
-runners instead of one. The four shards were hand-balanced by source line
+once per mutant, exactly as before — it parallelizes it across several
+runners instead of one. The shards were first hand-balanced by source line
 count (not file count, since the module's files range from 50 to over
-1100 lines) into roughly 1300-line groups, the same order of magnitude as
-`WriteCommandSupport.scala` alone, so no single shard dominates the
-others' wall-clock.
+1100 lines).
+
+**Line count turned out not to predict wall-clock.** Measured on the main
+run for the PR #81 merge (Oct 2026): shard-1 66 min, shard-2 68 min,
+shard-4 72 min, and the then-shard-3 **152 min** (171 mutants) — about
+twice the others despite holding a similar number of lines (2800 vs
+2000-2661). A mutant's cost is the number and weight of the tests that
+cover it, and the verifier/checkpoint code in that shard sits on nearly
+every write path in the suite. shard-3 was therefore split in two
+(`StructuralVerifier` plus two small files stay in shard-3; the other five
+files became shard-5). That split is itself only a line-count-balanced
+first guess — no per-file timing existed when it was made — so if one
+shard is still clearly the longest, re-tune it from the per-file section
+of that shard's Stryker HTML report (the
+`mutation-report-spark-adapter-<shard>` artifact), not from line counts.
 
 Splitting by file, rather than by mutator category or some other axis,
 composes with the existing gating story for free: build.sbt's
@@ -2896,7 +2908,7 @@ The changed-files incremental check (above) moved out into its own
 standalone job (`mutation-testing-spark-adapter-incremental`) rather than
 being sharded too — it already only mutates what a PR touched, so it was
 never the source of the 30-40 minute cost, and running it standalone lets
-it start immediately alongside all four shards instead of waiting behind
+it start immediately alongside all of the shards instead of waiting behind
 whichever shard it used to run after.
 
 A new `mutation-shard-drift-check` job guards the one real risk a
@@ -2915,10 +2927,11 @@ whichever shard runs longest).
 **What this changes for recovery, specifically**: previously, a
 transient failure anywhere in the ~30-40 minute whole-module run (a flaky
 Spark-session startup, a runner resource hiccup) meant re-running the
-entire job from scratch. Now each shard is an independent ~8-10 minute
-job with `fail-fast: false`, so a transient failure in one shard doesn't
-cancel the other three, and GitHub's "re-run failed jobs" only has to
-redo the one shard that actually failed.
+entire job from scratch. Now each shard is an independent job with
+`fail-fast: false` (roughly 50-90 minutes each, not the "~8-10 minutes"
+this section used to claim — see the measurements above), so a transient
+failure in one shard doesn't cancel the others, and GitHub's "re-run
+failed jobs" only has to redo the one shard that actually failed.
 
 #### Mutation testing: the expression-algebra rework
 

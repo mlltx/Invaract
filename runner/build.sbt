@@ -142,10 +142,10 @@ dependencyOverrides ++= Seq(
   // async parser). This is the one module where the fix actually changes
   // what ships in invaract-spark-runner.jar, not just this module's own
   // test classpath (same note as the other overrides above).
-  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.9",
-  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.9",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.9",
+  "com.fasterxml.jackson.core" % "jackson-core" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-databind" % "2.18.11",
+  "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.11",
   // log4j-core/log4j-api/log4j-1.2-api/log4j-slf4j2-impl, 2.20.0 -> 2.25.5
   // - see spark-adapter/build.sbt's comment for the full detail on all
   // four CVEs fixed (CVE-2025-68161, CVE-2026-34477, CVE-2026-34480/

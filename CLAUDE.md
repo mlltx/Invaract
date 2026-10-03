@@ -178,7 +178,7 @@ docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 
 **Adding a new file under `spark-adapter/src/main/scala` also means updating
 `.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
-sharded across a 4-way matrix job (`mutation-testing-spark-adapter`), and each
+sharded across a 5-way matrix job (`mutation-testing-spark-adapter`), and each
 shard's file list is hand-written (`strategy.matrix.include`, one
 comma-separated `files:` string per shard) — see docs/SPARK_ADAPTER.md's
 "Sharding `spark-adapter`'s whole-module run." A new source file isn't
