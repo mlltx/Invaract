@@ -3041,7 +3041,7 @@ overhead. The two levers above reduced wasted time around that core cost
 #### Sharding `spark-adapter`'s whole-module run
 
 The bottleneck named above was addressed directly by splitting
-`mutation-testing-spark-adapter` itself into a 5-way matrix job
+`mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 now — see "Runner memory and runner loss" below)
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
 scoped to a fixed subset of the module's source files (30 as of
 `RoleConsistencyVerifier`, added to shard-4 — the shard smallest by line
@@ -3111,6 +3111,63 @@ entire job from scratch. Now each shard is an independent job with
 this section used to claim — see the measurements above), so a transient
 failure in one shard doesn't cancel the others, and GitHub's "re-run
 failed jobs" only has to redo the one shard that actually failed.
+
+#### Runner memory and runner loss
+
+Five of the twelve most recent `main` runs before this change had at least one
+mutation shard die with GitHub's "The runner has received a shutdown signal"
+(the job ends `failure`, with the single annotation "The operation was
+canceled." — a real test failure instead ends "Process completed with exit
+code 1."). It was not a flaky test: running the old shard-3 file set locally on
+a 4 vCPU / 16 GB machine (the same as `ubuntu-latest`) with the same
+`--concurrency 4` reproduced it, with 14 GB in use and kernel OOM kills.
+
+What the memory was: Stryker4s keeps `--concurrency` Spark test JVMs alive
+at once, and every one of them was sitting at the JVM defaults — a heap sized
+at a quarter of the machine's RAM (~4 GB) and G1's many GC threads — which a
+Spark `local[*]` session happily fills. Run alone, each suite measured:
+
+| Suite (run alone) | resident, defaults | resident, capped heap + `SerialGC` |
+|---|---|---|
+| `HiveConnectorSpec` | 4.8 GB (95th percentile) | 0.86 GB |
+| `ContractEnforcementRuleSpec` | 3.4 GB | 1.25 GB |
+| `SparkAdapterListenerSpec` | 3.5-4.5 GB | 0.66 GB |
+| `SparkPlanAdapterSpec` | 4.2 GB | 0.55 GB |
+| `IcebergConnectorSpec` | 3.8 GB | 0.71 GB |
+
+(Capped columns: `-Xmx1536m -XX:+UseSerialGC` for Hive, `ContractEnforcementRuleSpec` and `SparkAdapterListenerSpec`; the same two plus `-Xss512k` and metaspace, code-cache and direct-memory limits for `SparkPlanAdapterSpec` and `IcebergConnectorSpec` — the extra limits made no measurable difference where both variants were run, so only the two flags were kept. Thread counts roughly halved too, from 330-600 to ~290.) The heaviest suites
+were Hive, Iceberg, `ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
+`SparkPlanAdapterSpec` and the fuzz suite — **not** ClickHouse, which peaked
+around 1.2 GB — so the fix is on the test JVM as a whole rather than on any
+one suite. `build.sbt` now sets `-Xmx1g -XX:+UseSerialGC` in
+`Test / javaOptions`; the full 986-test suite passes under it in ~5 minutes.
+
+That was necessary but not sufficient: a real Stryker run still leaves about
+1 GB per test JVM outside the heap (class metadata, thread stacks, native
+buffers), so four of them plus sbt's own JVM peaked at ~10 GB with the cap in
+place (and ~11.6 GB with a 1.5 GB cap), against ~14 GB without. The whole-module
+mutation job therefore also runs at `--concurrency 2` (~6 GB peak, measured the
+same way) split across 10 shards instead of 5. Over the first 15 minutes of the
+same shard, 4 runners and 2 runners tested mutants at about the same rate — on
+4 vCPUs the extra runners mostly queue for CPU — so this costs little wall-clock
+per shard; what it does cost is five more runners' worth of checkout/Spark
+download/`publishLocal` setup per run. The split uses the same line-count proxy
+as before, so expect to re-tune it from real per-shard times.
+
+Two guardrails make a future loss cheaper to diagnose and recover from:
+
+- `.github/scripts/memwatch.sh` wraps every `sbt stryker` invocation and prints a
+  `[memwatch]` line every 30 s (memory in use/available, swap, load, Java
+  process count, resident memory and threads, free disk, the three biggest
+  processes) into the live job log, plus a peak summary at the end. It streams
+  rather than writes a file for a later step because a killed runner never runs
+  later steps; the last lines before the kill are still in the log.
+- `.github/workflows/rerun-on-runner-loss.yml` re-runs the failed jobs of a
+  finished "Test and Build" run, once, only when every failed job (besides the
+  "Test Summary" gate) shows the runner-loss signature and none shows a real
+  step failure — classified by `.github/scripts/runner_loss.py`, which has unit
+  tests run by the `workflow-scripts` CI job. A `workflow_run` workflow only
+  takes effect from the default branch, so this one starts working once merged.
 
 #### Mutation testing: the expression-algebra rework
 

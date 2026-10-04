@@ -127,6 +127,14 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - [x] Caching strategies (`actions/cache@v4` plus `setup-java`'s
     `cache: 'sbt'`, throughout `.github/workflows/test.yml`)
   - [x] Artifact publishing (`release.yml`, `publish-spark-jars.yml`)
+  - [x] CI stability under runner loss — the `spark-adapter` mutation shards
+    were being killed by memory exhaustion ("The runner has received a
+    shutdown signal"). Fixed by capping the test JVM heap, running 10 shards
+    at `--concurrency 2` instead of 5 at 4, streaming memory telemetry into the
+    job log (`.github/scripts/memwatch.sh`), and re-running a run whose only
+    failures are lost runners (`rerun-on-runner-loss.yml`). Measurements and
+    the open follow-up (re-tune shard balance from real per-shard times) are in
+    docs/SPARK_ADAPTER.md's "Runner memory and runner loss."
 
 - [ ] **Quality gates** — mostly done; style enforcement is the one real
   gap.
