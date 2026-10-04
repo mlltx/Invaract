@@ -1022,6 +1022,19 @@ Test / unmanagedSources / excludeFilter := {
 // for JDK 17+ compatibility (see spark-defaults.conf.template).
 Test / fork := true
 Test / javaOptions ++= Seq(
+  // Bound the test JVM's memory (see the comment above `Test / javaOptions`'s add-opens
+  // list for the unrelated flags below). Unbounded, a JVM on a 16 GB machine defaults to a
+  // ~4 GB heap and G1's many GC threads, and a Spark `local[*]` session fills it: measured
+  // per suite, with each suite run alone, the biggest (HiveConnectorSpec, IcebergConnectorSpec,
+  // ContractEnforcementRuleSpec, SparkAdapterListenerSpec, SparkPlanAdapterSpec) sat at
+  // 3.4-5.6 GB resident and 330-600 threads each. Stryker4s runs --concurrency of these in
+  // parallel on one runner, and four of them used up the whole 16 GB runner and got it killed
+  // ("The runner has received a shutdown signal"). With the two flags below the same suites
+  // measured 0.35-1.3 GB and ~290 threads, still passing, and slightly faster, and the whole
+  // 986-test suite passes in one JVM under the same cap. SerialGC drops the parallel GC
+  // worker threads a single small test JVM has no use for.
+  "-Xmx1536m",
+  "-XX:+UseSerialGC",
   "--add-opens=java.base/java.lang=ALL-UNNAMED",
   "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
   "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",

@@ -295,7 +295,7 @@ jobs:
 
       - name: Mutation test ir
         shell: bash
-        run: cd ir && sbt "stryker --concurrency 4"
+        run: cd ir && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
       # See the shared comment on CLAUDE.md's "Mutation Testing
       # Requirement" / the base-commit-not-previous-push reasoning on the
@@ -322,7 +322,7 @@ jobs:
 
             echo "=== ir: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd ir && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd ir && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -376,7 +376,7 @@ jobs:
 
       - name: Mutation test fingerprint
         shell: bash
-        run: cd fingerprint && sbt "stryker --concurrency 4"
+        run: cd fingerprint && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
       # See the shared comment on CLAUDE.md's "Mutation Testing
       # Requirement" / the base-commit-not-previous-push reasoning on the
@@ -403,7 +403,7 @@ jobs:
 
             echo "=== fingerprint: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd fingerprint && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd fingerprint && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -486,6 +486,9 @@ jobs:
   mutation-testing-spark-adapter:
     name: Mutation testing (spark-adapter, ${{ matrix.name }})
     runs-on: ubuntu-latest
+    # Shards take 50-90 min. Without this the 360-minute default would let a hung runner
+    # (or a Stryker run wedged on a stuck test JVM) hold a slot for six hours.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -564,7 +567,7 @@ jobs:
         shell: bash
         run: |
           cd spark-adapter
-          sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 4"
+          "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 4"
 
       - name: Upload mutation report
         if: always()
@@ -584,6 +587,7 @@ jobs:
   mutation-testing-spark-adapter-incremental:
     name: Mutation testing (spark-adapter, incremental)
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -690,7 +694,7 @@ jobs:
 
             echo "=== spark-adapter: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd spark-adapter && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd spark-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -1110,6 +1114,33 @@ jobs:
         shell: bash
         run: ./dev/generate-version-docs --check
 
+  # Unit tests for the scripts CI itself runs: runner_loss.py (decides whether a failed run is
+  # re-run by rerun-on-runner-loss.yml - a wrong answer would either hide a real failure behind a
+  # lucky re-run or leave a runner loss red) and memwatch.sh (wraps every mutation job; a bug here
+  # would break those jobs' exit status).
+  workflow-scripts:
+    name: Workflow script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Unit-test runner_loss.py
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_runner_loss
+
+      - name: memwatch.sh passes the wrapped command's exit status through
+        shell: bash
+        run: |
+          bash -n .github/scripts/memwatch.sh
+          .github/scripts/memwatch.sh --interval 1 -- bash -c 'exit 0'
+          set +e
+          .github/scripts/memwatch.sh --interval 1 -- bash -c 'exit 7'
+          status=$?
+          set -e
+          test "$status" -eq 7 || { echo "expected exit status 7, got $status"; exit 1; }
+
   api-compatibility:
     name: API compatibility (contract, ir, spark-adapter, fingerprint)
     runs-on: ubuntu-latest
@@ -1512,12 +1543,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

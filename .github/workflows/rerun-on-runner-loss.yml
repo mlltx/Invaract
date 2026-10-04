@@ -1,0 +1,42 @@
+name: Re-run on runner loss
+
+# GitHub occasionally kills a hosted runner mid-job ("The runner has received a shutdown
+# signal"), which fails the job although nothing in the code is wrong. The long, memory-heavy
+# Stryker4s jobs are the ones it hits most. This workflow re-runs the failed jobs of a finished
+# "Test and Build" run - once - when EVERY failed job (besides the summary gate) shows the
+# runner-loss signature and none shows a real step failure. The classification lives in
+# .github/scripts/runner_loss.py, which has its own unit tests (see the `workflow-scripts` job in
+# test.yml); a run with any real failure is never re-run into a green.
+#
+# Like every workflow_run workflow, this file only takes effect once it is on the default branch.
+
+on:
+  workflow_run:
+    workflows: ["Test and Build"]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+
+jobs:
+  rerun:
+    name: Re-run failed jobs if the runner was lost
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Classify the failure
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/runner_loss.py "${{ github.repository }}" "${{ github.event.workflow_run.id }}"
+      - name: Re-run the failed jobs
+        if: ${{ steps.classify.outputs.rerun == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::notice::Re-running failed jobs: ${{ steps.classify.outputs.reason }}"
+          gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/rerun-failed-jobs"
