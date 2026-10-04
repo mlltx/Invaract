@@ -1355,6 +1355,18 @@ version, master, deploy mode, user and start time, plus <code dir="auto">jobId</
 itself. Metadata is allowlist-by-prefix on purpose - the whole <code dir="auto">SparkConf</code>
 holds credentials. The merged contract’s id is the job id (else the app
 name), sanitized for <code dir="auto">ContractValidator</code>’s id rule.</p>
+<p><strong>Contract metadata versus run metadata.</strong> <code dir="auto">spark.invaract.contract.metadata.&#x3C;key></code> is
+attached to every inferred draft’s <code dir="auto">extensions</code> (<code dir="auto">DryRunReporter.reportInferred</code> tags the
+draft before it is rendered, self-checked or merged, so all three see one contract) and
+echoed as each event’s <code dir="auto">metadata</code>; <code dir="auto">ContractInference.infer</code> itself still returns
+<code dir="auto">extensions = Map.empty</code>, since it has no configuration to read. <code dir="auto">spark.invaract.job.metadata.*</code>
+stays on <code dir="auto">job.attributes</code> only. The split is deliberate: <code dir="auto">Contract.extensions</code> is the bag a
+hand-written contract keeps its owner/team/source system in, and enforcement already copies it
+into <code dir="auto">ContractValidationEvent.metadata</code>/<code dir="auto">WriteEvent.metadata</code>, so tagging the draft means the
+same keys reappear on the events of the real runs after promotion - one set of keys links a
+dry run to what follows. A run id, by contrast, would be stale in a contract the next night.
+(An earlier version of this section echoed <code dir="auto">job.attributes</code> as <code dir="auto">metadata</code>; that conflated the
+two.)</p>
 <p><strong>Delivery.</strong> <code dir="auto">NotificationSink.flush(timeoutMs)</code> (a default no-op, so
 existing sinks are unaffected) exists because <code dir="auto">HttpNotificationSink</code> sends
 with <code dir="auto">sendAsync</code>: a job ending right after its last <code dir="auto">publish</code> could lose that

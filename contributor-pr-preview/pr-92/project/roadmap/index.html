@@ -3992,6 +3992,9 @@ examples, checked by the whole Scala suite and by Ajv in the docs build; <code d
 retry with backoff and a dead letter (<code dir="auto">deadLetter.path</code>, local or any Hadoop FS), configurable
 from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
 reference receiver, two troubleshooting entries.
+<code dir="auto">spark.invaract.contract.metadata.*</code> tags every inferred draft’s <code dir="auto">extensions</code> (and each
+event’s <code dir="auto">metadata</code>), so enforcement’s own events later carry the same keys and link back to
+the dry run; run-level facts stay on <code dir="auto">spark.invaract.job.metadata.*</code> / <code dir="auto">job.attributes</code>.
 Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
 weakly). Open: redaction of locations/schemas in events; the receiving contract
 repository (separate repo).</li>
