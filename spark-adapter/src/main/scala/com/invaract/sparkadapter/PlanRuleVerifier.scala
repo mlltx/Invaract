@@ -42,13 +42,19 @@ import com.invaract.ir.{Aggregate, ColumnRef, Filter, Join, JoinType, Plan}
 private[sparkadapter] object PlanRuleVerifier {
 
   def verify(rules: List[ContractRule], plan: Plan): List[Violation] =
-    rules.flatMap(rule => rule.interpret.toList.flatMap(checkOne(_, plan)))
+    verify(rules, PlanFacts.of(plan))
 
-  private def checkOne(rule: InterpretedRule, plan: Plan): List[Violation] = rule match {
-    case InterpretedRule.RequiredGroupBy(columns)       => checkRequiredGroupBy(columns, plan)
-    case InterpretedRule.ForbidCrossJoin                => checkForbidCrossJoin(plan)
-    case InterpretedRule.RequiredJoinColumns(columns)   => checkRequiredJoinColumns(columns, plan)
-    case InterpretedRule.RequiredFilterColumns(columns) => checkRequiredFilterColumns(columns, plan)
+  /** Every rule is checked against the same, once-gathered view of the plan
+    * (see `PlanFacts`) — each rule used to walk the whole plan itself.
+    */
+  def verify(rules: List[ContractRule], facts: PlanFacts): List[Violation] =
+    rules.flatMap(rule => rule.interpret.toList.flatMap(checkOne(_, facts)))
+
+  private def checkOne(rule: InterpretedRule, facts: PlanFacts): List[Violation] = rule match {
+    case InterpretedRule.RequiredGroupBy(columns)       => checkRequiredGroupBy(columns, facts)
+    case InterpretedRule.ForbidCrossJoin                => checkForbidCrossJoin(facts)
+    case InterpretedRule.RequiredJoinColumns(columns)   => checkRequiredJoinColumns(columns, facts)
+    case InterpretedRule.RequiredFilterColumns(columns) => checkRequiredFilterColumns(columns, facts)
     // A row-level-DML InterpretedRule (RuleVerifier's own concern) reaching
     // here is not a bug - ContractEnforcementRule passes every declared
     // rule to both verifiers, since which family a rule belongs to is
@@ -59,28 +65,16 @@ private[sparkadapter] object PlanRuleVerifier {
     case _: InterpretedRule.AllowedUpdateColumns   => Nil
   }
 
-  private def collectAggregates(plan: Plan): List[Aggregate] =
-    (plan match { case a: Aggregate => List(a); case _ => Nil }) ++ plan.children.flatMap(collectAggregates)
-
-  private def collectJoins(plan: Plan): List[Join] =
-    (plan match { case j: Join => List(j); case _ => Nil }) ++ plan.children.flatMap(collectJoins)
-
-  private def collectFilters(plan: Plan): List[Filter] =
-    (plan match { case f: Filter => List(f); case _ => Nil }) ++ plan.children.flatMap(collectFilters)
-
   /** Every column referenced in any `Filter` condition or `Join` condition
     * anywhere in `plan` — shared by this object's own `required_filter_columns`
-    * check (via `collectFilters` above) and by `ContractInference`/
+    * check (via `PlanFacts.filters`) and by `ContractInference`/
     * `RoleConsistencyVerifier`'s dry-run/role-consistency usage observation,
     * which need the identical "was this column read only to gate/match
     * rows, never to compute output data" signal — written once here rather
     * than reimplemented per caller.
     */
-  private[sparkadapter] def collectConditionReferences(plan: Plan): Set[ColumnRef] = {
-    val filterRefs = collectFilters(plan).flatMap(_.condition.references)
-    val joinRefs = collectJoins(plan).flatMap(_.condition.toList.flatMap(_.references))
-    (filterRefs ++ joinRefs).toSet
-  }
+  private[sparkadapter] def collectConditionReferences(plan: Plan): Set[ColumnRef] =
+    PlanFacts.of(plan).conditionReferences
 
   /** Turns a lineage/condition `ColumnRef.qualifier` into the location of the
     * `Read` it stands for, using `plan`'s own `Read` nodes.
@@ -100,22 +94,16 @@ private[sparkadapter] object PlanRuleVerifier {
     * is - matching nothing rather than guessing, since a wrong match here would
     * be a wrongly *blocking* role verdict or a wrongly tagged column.
     */
-  private[sparkadapter] def locationResolver(plan: Plan): String => String = {
-    val locationByScope: Map[String, String] = StructuralVerifier.collectReads(plan)
-      .map(r => r.alias.getOrElse(r.dataset.location) -> r.dataset.location)
-      .distinct
-      .groupBy(_._1)
-      .collect { case (scope, occurrences) if occurrences.size == 1 => scope -> occurrences.head._2 }
-    qualifier => locationByScope.getOrElse(qualifier, qualifier)
-  }
+  private[sparkadapter] def locationResolver(plan: Plan): String => String =
+    PlanFacts.of(plan).locationResolver
 
   /** Satisfied when at least one `Aggregate` node's `groupBy` resolves (via
     * `Expr.references`) to a column-name set that's a superset of the
     * declared columns — grouping by more than required (e.g. an extra
     * partition key) still satisfies "grouped by X."
     */
-  private def checkRequiredGroupBy(columns: List[String], plan: Plan): List[Violation] = {
-    val aggregates = collectAggregates(plan)
+  private def checkRequiredGroupBy(columns: List[String], facts: PlanFacts): List[Violation] = {
+    val aggregates = facts.aggregates
     val required = columns.toSet
     val groupings = aggregates.map(_.groupBy.flatMap(_.references).map(_.name).toSet)
     if (groupings.exists(required.subsetOf))
@@ -143,8 +131,8 @@ private[sparkadapter] object PlanRuleVerifier {
     * explicit `.crossJoin(other)` — see `SparkPlanAdapter`'s `Join`
     * translation).
     */
-  private def checkForbidCrossJoin(plan: Plan): List[Violation] = {
-    val crossJoins = collectJoins(plan).filter(j => j.joinType == JoinType.Cross || j.condition.isEmpty)
+  private def checkForbidCrossJoin(facts: PlanFacts): List[Violation] = {
+    val crossJoins = facts.joins.filter(j => j.joinType == JoinType.Cross || j.condition.isEmpty)
     if (crossJoins.isEmpty)
       Nil
     else
@@ -164,8 +152,8 @@ private[sparkadapter] object PlanRuleVerifier {
     * `RuleVerifier`'s `merge_condition` rule uses for a MERGE's `ON`
     * condition) covering every declared column.
     */
-  private def checkRequiredJoinColumns(columns: List[String], plan: Plan): List[Violation] = {
-    val allJoins = collectJoins(plan)
+  private def checkRequiredJoinColumns(columns: List[String], facts: PlanFacts): List[Violation] = {
+    val allJoins = facts.joins
     val required = columns.toSet
     val satisfied = allJoins.exists(_.condition.exists(cond => required.subsetOf(EqualityConditions.equalityPairedColumns(cond))))
     if (satisfied)
@@ -194,8 +182,8 @@ private[sparkadapter] object PlanRuleVerifier {
     * is satisfied by `col IS NOT NULL`, `col != 'deleted'`, `col > 0`, or
     * anything else that reads the column inside a `Filter`.
     */
-  private def checkRequiredFilterColumns(columns: List[String], plan: Plan): List[Violation] = {
-    val filteredColumns = collectFilters(plan).flatMap(_.condition.references).map(_.name).toSet
+  private def checkRequiredFilterColumns(columns: List[String], facts: PlanFacts): List[Violation] = {
+    val filteredColumns = facts.filters.flatMap(_.condition.references).map(_.name).toSet
     val missing = columns.filterNot(filteredColumns.contains)
     if (missing.isEmpty)
       Nil

@@ -52,24 +52,31 @@ private[sparkadapter] object RoleConsistencyVerifier {
     * check only makes sense once there is a real output to trace lineage
     * into.
     */
-  def verify(contract: Contract, plan: Plan): List[RoleConformanceCheckResult] = plan match {
-    case _: Write =>
+  def verify(contract: Contract, plan: Plan): List[RoleConformanceCheckResult] = verify(contract, PlanFacts.of(plan))
+
+  /** The same check over a plan whose shape `ContractEnforcementRule` already gathered (see `PlanFacts`). */
+  def verify(contract: Contract, facts: PlanFacts): List[RoleConformanceCheckResult] = facts.plan match {
+    case plan: Write =>
       // Qualifiers are scopes (aliases, `location#n`), resolved to the reads' real locations first.
-      val locationOf = PlanRuleVerifier.locationResolver(plan)
+      val locationOf = facts.locationResolver
       val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet.map(locationOf)
-      val conditionReferencedQualifiers = PlanRuleVerifier.collectConditionReferences(plan).flatMap(_.qualifier).map(locationOf)
-      contract.inputs.flatMap(checkInput(_, outputContributingQualifiers, conditionReferencedQualifiers))
+      val conditionReferencedQualifiers = facts.conditionReferences.flatMap(_.qualifier).map(locationOf)
+      // Which declared inputs each set of observed qualifiers matches, found by
+      // looking the qualifiers up in an index of the declared locations rather
+      // than testing every input against every qualifier.
+      val inputIndex = LocationIndex(contract.inputs.zipWithIndex.map { case (input, i) => input.location -> i })
+      val contributing: Set[Int] = outputContributingQualifiers.flatMap(inputIndex.matchingIndices)
+      val referenced: Set[Int] = conditionReferencedQualifiers.flatMap(inputIndex.matchingIndices)
+      contract.inputs.zipWithIndex.flatMap { case (input, i) => checkInput(input, contributing.contains(i), referenced.contains(i)) }
     case _ => Nil
   }
 
   private def checkInput(
       input: Dataset,
-      outputContributingQualifiers: Set[String],
-      conditionReferencedQualifiers: Set[String]
+      contributesToOutput: Boolean,
+      referencedInCondition: Boolean
   ): Option[RoleConformanceCheckResult] =
     input.datasetType.flatMap { datasetType =>
-      val contributesToOutput = StructuralVerifier.matchesAny(input.location, outputContributingQualifiers)
-      val referencedInCondition = StructuralVerifier.matchesAny(input.location, conditionReferencedQualifiers)
       if (!contributesToOutput && !referencedInCondition) {
         None // never observed at all in this plan - StructuralVerifier's MissingInput already covers this
       } else {

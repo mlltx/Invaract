@@ -16,6 +16,7 @@ import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
@@ -663,8 +664,17 @@ object ContractEnforcementRule {
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
         val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
+        // The plan's shape (reads, unknown nodes, aggregates, joins, filters) is
+        // gathered once here and shared by every verifier below, instead of each
+        // walking the plan itself - see `PlanFacts`.
+        val planFacts = PlanFacts.of(translated.plan)
+        // Declared field names are matched the way Spark matches columns: by the
+        // session's `spark.sql.caseSensitive` (read per check, so a runtime change
+        // is honoured). `SQLConf.get` is the active session's conf on the analyzer
+        // thread this rule runs on.
+        val caseSensitive = SQLConf.get.caseSensitiveAnalysis
         val structuralResult =
-          StructuralVerifier.verify(contract, translated.plan, inputSchemas, outputSchema, options)
+          StructuralVerifier.verify(contract, planFacts, inputSchemas, outputSchema, options, caseSensitive)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
         // classifier over the same `plan` (see its class doc for why it
@@ -700,7 +710,7 @@ object ContractEnforcementRule {
         // on rowMutationClassification the way ruleViolations is. A rule
         // outside both families (unrecognized, or DML-shaped) contributes
         // nothing here - see PlanRuleVerifier.checkOne's own doc.
-        val planRuleViolations = PlanRuleVerifier.verify(contract.rules, translated.plan)
+        val planRuleViolations = PlanRuleVerifier.verify(contract.rules, planFacts)
         // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
         // one branch with a real, complete ir.Plan already in hand
         // (`translated.plan`, produced above for structural verification
@@ -737,7 +747,7 @@ object ContractEnforcementRule {
             // asserts on log output, so this call is covered only by the
             // fingerprint-determinism tests, not by an assertion on the
             // message itself.)
-            val unresolvedBoundaries = StructuralVerifier.collectUnknownPlans(translated.plan)
+            val unresolvedBoundaries = planFacts.unknownPlans
               .map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
             val assumedResolutions = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType)
             if (unresolvedBoundaries.nonEmpty || assumedResolutions.nonEmpty) {
@@ -756,7 +766,7 @@ object ContractEnforcementRule {
         // while only its Violated entries become real Violations that can
         // fail this check and abort the write - the same "distinct from
         // NotGuaranteed" principle DataQualityVerdict's own doc explains.
-        val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, translated.plan) else Nil
+        val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, planFacts) else Nil
         val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults)
         // See VerificationOptions.roleConsistency's own doc and
         // docs/CONTRACT_MODEL.md's "Input and Output Types" section:
@@ -765,7 +775,7 @@ object ContractEnforcementRule {
         // entries become real Violations - the same "distinct from
         // CannotDetermine" principle RoleConformanceVerdict's own doc
         // explains.
-        val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, translated.plan) else Nil
+        val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, planFacts) else Nil
         val roleConsistencyViolations = RoleConsistencyVerifier.violations(roleConformanceResults)
         val result = VerificationResult.of(
           structuralResult.contract,
@@ -792,7 +802,7 @@ object ContractEnforcementRule {
             // Same reasoning as the ir.Write branch above: verifyStateChange
             // assumes a structurally sound contract too.
             requireValidContract(contract, sink, applicationId)
-            val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options)
+            val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options, SQLConf.get.caseSensitiveAnalysis)
             publishValidation(contract, result, sink, applicationId)
             if (!result.passed) {
               // No ir.Plan translation exists for a state-changing CALL

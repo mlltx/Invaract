@@ -3112,6 +3112,46 @@ this section used to claim — see the measurements above), so a transient
 failure in one shard doesn't cancel the others, and GitHub's "re-run
 failed jobs" only has to redo the one shard that actually failed.
 
+#### `StructuralVerifier` internals: schema checking, location matching, plan facts
+
+`StructuralVerifier.verify` is the entry point; three helpers carry the logic that used to
+be inline, each with its own spec:
+
+- **`SchemaChecker`** compares a declared schema with the actual `StructType`. Names are
+  matched by the session's `spark.sql.caseSensitive` (`ContractEnforcementRule` reads
+  `SQLConf.get.caseSensitiveAnalysis` per check and passes it down; `verify`'s own default is
+  Spark's, `false`). Types are compared structurally where the contract says more than a
+  keyword: a field's `properties` recurse into the actual struct (findings carry the dotted
+  path), and a type written as Spark DDL (`array<int>`, `map<string,long>`,
+  `struct<a:int>`) is parsed with `DataType.fromDDL` and compared ignoring inner nullability.
+  A bare `array`/`map`/`struct` keeps its shallow meaning. Before this, only
+  `DataType.typeName` was compared — `array` for every array — so a changed element type
+  passed. See docs-site's contract-format reference for the user-facing rules.
+- **`LocationMatching` / `LocationIndex`** hold the one definition of "declared location
+  matches actual location" (normalize both sides, then equal or `/`-boundary suffix) and an
+  index that buckets declared locations by their last path segment, so each question is a
+  lookup instead of a scan. `verify` used to normalize and test every declared input against
+  every read in four separate loops (missing, undeclared, schema, catalog) — quadratic in
+  contract size × plan size. Measured on one machine with a replica of the old loops: 3,000
+  declared inputs and 3,000 reads, ~1.1 s of matching per checked write before, ~24 ms for the
+  whole of `verify` after (200 inputs: 13 ms vs 6 ms). The matching *rule* is unchanged;
+  `LocationMatchingSpec` checks the index against the old rule on thousands of generated paths.
+- **`PlanFacts`** gathers an `ir.Plan`'s reads, unknown nodes, aggregates, joins and
+  filters in one iterative pre-order pass. `ContractEnforcementRule` builds one per checked
+  write and hands it to `StructuralVerifier`, `PlanRuleVerifier` (previously one full walk
+  per declared rule), `StaticDataQualityVerifier` and `RoleConsistencyVerifier`. Order is the
+  same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
+
+Not changed here: `ContractInference` (dry-run only) still matches observed qualifiers to
+inferred inputs with the linear `matchesAny`, and `Lineage.trace` (in `ir`) walks the plan
+itself.
+
+The single-output rule is deliberate: a contract with one declared output checks a write
+against it whatever the write's location (`expectedOutputFor`), so a mistyped location comes
+back with every finding at once. It used to be justified only by a connector test that declared
+a location which never matched; that test now declares its table's real location and the rule is
+pinned in `StructuralVerifierSpec`.
+
 #### Runner memory and runner loss
 
 Five of the twelve most recent `main` runs before this change had at least one

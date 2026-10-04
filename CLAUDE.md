@@ -502,6 +502,9 @@ would be.
 │   ├── src/main/scala/com/invaract/sparkadapter/
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
+│   │   ├── SchemaChecker.scala        # declared vs. actual schema (nested types, spark.sql.caseSensitive)
+│   │   ├── LocationMatching.scala     # declared-vs-actual location rule + LocationIndex (bulk lookups)
+│   │   ├── PlanFacts.scala            # one traversal of an ir.Plan shared by every verifier
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
 │   │   ├── DryRunReporter.scala       # dry-run mode + a sink: per-write inference events + job summary

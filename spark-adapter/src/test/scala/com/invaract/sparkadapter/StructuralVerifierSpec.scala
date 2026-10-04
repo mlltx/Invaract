@@ -1634,4 +1634,136 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
   }
+
+  // --- A single-output contract checks its only output whatever the write's location --------
+  //
+  // Deliberate, and pinned here rather than by any connector spec: with one declared
+  // output there is no ambiguity about which output the author meant, so a write that
+  // missed the location (a typo, a moved path) is reported with every finding at once.
+
+  private def singleOutputContract() =
+    ContractParser.parse(
+      """id: single_output
+        |version: "1.0.0"
+        |outputs:
+        |  - name: only
+        |    location: warehouse/only.parquet
+        |    format: parquet
+        |    saveMode: overwrite
+        |    catalog: {required: true, technology: iceberg}
+        |    schema:
+        |      fields:
+        |        - {name: id, type: integer, required: true, nullable: false}
+        |        - {name: total, type: integer, required: true}
+        |""".stripMargin
+    )
+
+  test("single-output: a write to the wrong location is reported together with its format, save mode, catalog and schema findings") {
+    val plan = com.invaract.ir.Write(
+      DatasetRef("warehouse/typo.parquet"),
+      readOf("raw.source"),
+      format = Some("csv"),
+      saveMode = Some("append"),
+      catalog = None
+    )
+    val result = StructuralVerifier.verify(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    assert(
+      result.violations.map(_.violationType).toSet == Set(
+        ViolationType.OutputLocationMismatch,
+        ViolationType.OutputFormatMismatch,
+        ViolationType.OutputSaveModeMismatch,
+        ViolationType.MissingOutputCatalogRegistration,
+        ViolationType.MissingOutputField,
+        ViolationType.OutputFieldNullabilityMismatch
+      ),
+      result.violations.toString
+    )
+  }
+
+  test("single-output: the same write at the declared location has no location finding - the other findings are location-independent") {
+    val plan = com.invaract.ir.Write(DatasetRef("warehouse/only.parquet"), readOf("raw.source"), format = Some("csv"))
+    val result = StructuralVerifier.verify(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    assert(!result.violations.exists(_.violationType == ViolationType.OutputLocationMismatch))
+    assert(result.violations.exists(_.violationType == ViolationType.OutputFormatMismatch))
+  }
+
+  test("multi-output: a write matching no declared output gets only the location finding - there is no output to check the rest against") {
+    val plan = com.invaract.ir.Write(DatasetRef("warehouse/typo.parquet"), readOf("raw.source"), format = Some("csv"))
+    val result = StructuralVerifier.verify(twoOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    assert(result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
+  }
+
+  // --- Field names follow spark.sql.caseSensitive -----------------------------------------
+
+  private def caseContract() =
+    ContractParser.parse(
+      """id: case_demo
+        |version: "1.0.0"
+        |inputs:
+        |  - name: src
+        |    location: bronze/src.parquet
+        |    schema: {fields: [{name: ORDER_ID, type: integer, required: true}]}
+        |outputs:
+        |  - name: out
+        |    location: gold/out.parquet
+        |    schema: {fields: [{name: Total, type: integer, required: true}]}
+        |""".stripMargin
+    )
+
+  private def caseWrite() = com.invaract.ir.Write(DatasetRef("gold/out.parquet"), Read(DatasetRef("bronze/src.parquet")))
+
+  test("verify: declared names match actual columns case-insensitively by default, on both the input and output side") {
+    val result = StructuralVerifier.verify(
+      caseContract(),
+      caseWrite(),
+      List("bronze/src.parquet" -> new StructType().add("order_id", IntegerType, nullable = false)),
+      new StructType().add("total", IntegerType, nullable = false)
+    )
+    assert(result.passed, result.violations.toString)
+  }
+
+  test("verify: caseSensitive = true turns the same names into missing fields (input and output)") {
+    val result = StructuralVerifier.verify(
+      caseContract(),
+      caseWrite(),
+      List("bronze/src.parquet" -> new StructType().add("order_id", IntegerType, nullable = false)),
+      new StructType().add("total", IntegerType, nullable = false),
+      caseSensitive = true
+    )
+    assert(result.violations.map(_.violationType).toSet == Set(ViolationType.MissingInputField, ViolationType.MissingOutputField), result.violations.toString)
+  }
+
+  test("verifyStateChange follows the case rule as well") {
+    val contract = caseContract()
+    val schema = new StructType().add("total", IntegerType, nullable = false)
+    assert(StructuralVerifier.verifyStateChange(contract, "gold/out.parquet", schema).passed)
+    assert(!StructuralVerifier.verifyStateChange(contract, "gold/out.parquet", schema, caseSensitive = true).passed)
+  }
+
+  // --- Bulk matching: many declared inputs against many reads ---------------------------------
+
+  test("verify at scale: 600 declared inputs, 600 reads - results are exact and in declaration order") {
+    val n = 600
+    val inputs = (0 until n).map(i => s"""  - name: in$i
+                                        |    location: warehouse/db/table$i
+                                        |    schema: {fields: [{name: id, type: integer, required: true}]}""".stripMargin).mkString("\n")
+    val contract = ContractParser.parse(
+      s"""id: big
+         |version: "1.0.0"
+         |inputs:
+         |$inputs
+         |outputs:
+         |  - name: out
+         |    location: gold/out
+         |    schema: {fields: [{name: id, type: integer}]}
+         |""".stripMargin
+    )
+    // read every table except the multiples of 50, under an absolute s3 path
+    val read = (0 until n).filterNot(_ % 50 == 0)
+    val plan = com.invaract.ir.Write(DatasetRef("gold/out"), com.invaract.ir.Union(read.map(i => Read(DatasetRef(s"s3://bkt/warehouse/db/table$i"))).toList))
+    val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
+    val missing = result.violations.filter(_.violationType == ViolationType.MissingInput).flatMap(_.location)
+    assert(missing == (0 until n).filter(_ % 50 == 0).map(i => s"warehouse/db/table$i").toList)
+    assert(result.violations.size == missing.size)
+  }
 }

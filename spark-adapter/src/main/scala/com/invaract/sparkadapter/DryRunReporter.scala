@@ -174,7 +174,8 @@ private[sparkadapter] final class DryRunReporter(
           inferred.translated.plan,
           inferred.inputSchemas,
           inferred.writeInfo.outputSchema,
-          options
+          options,
+          caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis
         )
         (if (result.passed) SelfCheckPassed else SelfCheckFailed, result.violations, Nil)
       }

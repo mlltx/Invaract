@@ -83,7 +83,7 @@ extensions:
 | `type` | yes | Logical type — see [known types](#known-types) below. An unrecognized type produces a validation warning, not a parse failure. |
 | `required` | no | Defaults to `false`. Whether the field must be present. |
 | `nullable` | no | Defaults to `!required`. Whether the value may be null when present. |
-| `properties` | no | Nested field list, for `struct`/record types. |
+| `properties` | no | Nested field list, for `struct`/record types. Each nested field is checked against the actual struct with the same rules as a top-level field, and reported by its dotted path (`address.zip`). |
 | `sensitivityTags` | no | List of governance labels (e.g. `[pii, financial]`) — see [Sensitivity tags](#sensitivity-tags) below. Defaults to none. |
 | `constraints` | no | List of `{type, ...}` static data-quality constraints (`equals`/`oneOf`/`range`/`length`) — see [Static data-quality constraints](#static-data-quality-constraints) below. Defaults to none. |
 
@@ -93,6 +93,39 @@ extensions:
 `date`, `timestamp`, `binary`, `struct`, `array`, `map`. An unlisted type is a validator
 warning, not a rejection — a contract using a type Invaract doesn't yet recognize still
 validates and parses.
+
+Types can carry parameters, written as Spark writes them — `decimal(10,2)`,
+`array<int>`, `map<string,long>`, `struct<a:int,b:string>`, nested to any depth. Only the
+leading keyword is checked against the list above.
+
+### How a declared type is compared
+
+- A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type.
+- `array<...>`, `map<...>` and `struct<...>` are compared structurally against the actual
+  type: element, key, value and member types must match, and a struct's member names and
+  count must too. Nullability *inside* a container (`containsNull`, a nested field's
+  `nullable` flag) is not compared; the field's own `nullable` is.
+- A bare `array`, `map` or `struct` with no `properties` means "any array / map / struct"
+  and does not look inside. Declare `array<int>` (or give a struct `properties`) to have
+  the contents checked.
+
+For example, a contract field `tags` declared `array<int>` against a plan that produces
+`array<string>` is rejected as `OUTPUT_FIELD_TYPE_MISMATCH`:
+
+```text
+field 'tags' declares type 'array<int>' but the actual OUTPUT schema has type 'array<string>'
+```
+
+and a struct field `address` with a nested `zip: integer` against a `string` column reports
+the mismatch on `address.zip`.
+
+### How field names are compared
+
+Invaract matches contract field names to the plan's columns the way Spark does: by the
+session's `spark.sql.caseSensitive` setting. In a default session (`false`) a contract
+field `ORDER_ID` is satisfied by a column `order_id`; with `spark.sql.caseSensitive=true`
+names must match exactly. This applies to nested struct fields and to
+`rejectUndeclaredFields` too, and the violation reports the contract's own spelling.
 
 ## Validator checks
 

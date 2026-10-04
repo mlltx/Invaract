@@ -51,6 +51,28 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(result.warnings.exists(_.message.contains("Unrecognized field type 'variant'")))
   }
 
+  test("parameterized and nested types are recognized by their keyword, not warned about") {
+    def warnings(fieldType: String) = {
+      val contract = Contract(
+        id = "typed",
+        version = ContractVersion(1, 0, 0),
+        status = "active",
+        inputs = Nil,
+        outputs = List(Dataset("out", "gold.out", None, Schema(List(Field("f", fieldType))))),
+        rules = Nil,
+        extensions = Map.empty
+      )
+      ContractValidator.validate(contract).warnings.filter(_.message.contains("Unrecognized field type"))
+    }
+    List("decimal(10,2)", "DECIMAL( 12 , 4 )", "array<int>", "map<string,array<long>>", "struct<a:int,b:string>", "Array<String>", "  array<int>  ")
+      .foreach(t => assert(warnings(t).isEmpty, s"'$t' should be recognized"))
+    // a genuinely unknown keyword is still flagged, parameters or not:
+    assert(warnings("variant").size == 1)
+    assert(warnings("variant<int>").size == 1)
+    assert(warnings("vector(3)").size == 1)
+    assert(warnings("variant<int>").head.message.contains("Unrecognized field type 'variant<int>'"))
+  }
+
   test("validate should error when a dataset schema has no fields") {
     val contract = Contract(
       id = "empty_schema",
