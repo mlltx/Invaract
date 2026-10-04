@@ -3090,21 +3090,33 @@ one suite. <code dir="auto">build.sbt</code> now sets <code dir="auto">-Xmx1g -X
 buffers), so four of them plus sbt’s own JVM peaked at ~10 GB with the cap in
 place (and ~11.6 GB with a 1.5 GB cap), against ~14 GB without. The whole-module
 mutation job therefore also runs at <code dir="auto">--concurrency 2</code> (~6 GB peak, measured the
-same way) split across 10 shards instead of 5. Over the first 15 minutes of the
-same shard, 4 runners and 2 runners tested mutants at about the same rate — on
-4 vCPUs the extra runners mostly queue for CPU — so this costs little wall-clock
-per shard; what it does cost is five more runners’ worth of checkout/Spark
-download/<code dir="auto">publishLocal</code> setup per run. The split uses the same line-count proxy
-as before, so expect to re-tune it from real per-shard times.</p>
-<p>First CI run of the 10-way split (PR #92, all jobs green, no runner lost):
-shard-1 (<code dir="auto">StructuralVerifier</code> alone) 93 min, shard-4 85, shard-10 69, shard-2
-(<code dir="auto">WriteCommandSupport</code> alone) 63, shard-6 51, shard-8 45, shard-9 37, shard-3 22,
-shard-5 and shard-7 20 each; the incremental PR check 82. <code dir="auto">memwatch</code> on shard-1
-reported a peak of 6.85 GB used (9.1 GB still available), 5.9 GB of it in Java
-processes, 694 threads — the ~6 GB the local measurement predicted, against
-~14 GB and a lost runner before. The split is lopsided (the line-count proxy again:
-shards 3, 5 and 7 finish in about a fifth of shard-1’s time), so the follow-up is to
-move files from shards 1/4/10 into the short ones using these times.</p>
+same way) split across 10 shards instead of 5. A local 15-minute comparison on one shard suggested
+4 and 2 runners test mutants at about the same rate, but the first CI run showed
+that was too optimistic: the ten shards summed to ~505 runner-minutes against
+~360 for the old five at <code dir="auto">--concurrency 4</code> (about 1.4x the compute), plus five
+more runners’ worth of checkout/Spark download/<code dir="auto">publishLocal</code> setup.</p>
+<p>First CI run of the 10-way split (PR #92, all green, no runner lost), with the
+line-count assignment: shard-1 (<code dir="auto">StructuralVerifier</code> alone) 93 min, shard-4 85,
+shard-10 69, shard-2 (<code dir="auto">WriteCommandSupport</code> alone) 63, shard-6 51, shard-8 45,
+shard-9 37, shard-3 22, shard-5 and shard-7 20 each; the incremental PR check 82.
+<code dir="auto">memwatch</code> on shard-1 reported a peak of 6.85 GB used (9.1 GB still available),
+5.9 GB of it in Java processes, 694 threads — the ~6 GB the local measurement
+predicted, against ~14 GB and a lost runner before.</p>
+<p>The files were then reassigned from those times. Only shard totals are measured,
+so per-file costs were estimated: the new run’s ten shard times and the two
+earlier <code dir="auto">main</code> runs’ times for the old five-way grouping (scaled by 1.35 for
+the concurrency change) were fitted to per-file costs by non-negative least
+squares, with line count as a weak prior. The ranking was stable when that scale
+was varied between 1.2 and 1.5: <code dir="auto">StructuralVerifier</code> (~90 min), <code dir="auto">WriteCommandSupport</code>
+(~63), <code dir="auto">ContractEnforcementRule</code> (~50) and <code dir="auto">SparkPlanAdapter</code> (~48) now each sit in
+their own shard, and the other 30 files are packed into six shards of ~41-43 min.
+Since <code dir="auto">StructuralVerifier</code> alone is ~90 min, the wall-clock floor is unchanged;
+rebalancing evens out runner usage and lowers the chance one long shard is the
+only thing left running, but it does not shorten the run. Splitting
+<code dir="auto">StructuralVerifier</code> itself (Stryker4s accepts a line range after the file
+name) is the lever that would, and <code dir="auto">mutation-shard-drift-check</code> would need to
+learn that a file may then appear in more than one shard. Re-fit from the next
+run’s shard times.</p>
 <p>Two guardrails make a future loss cheaper to diagnose and recover from:</p>
 <ul>
 <li><code dir="auto">.github/scripts/memwatch.sh</code> wraps every <code dir="auto">sbt stryker</code> invocation and prints a
