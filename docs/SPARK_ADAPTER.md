@@ -3147,22 +3147,35 @@ That was necessary but not sufficient: a real Stryker run still leaves about
 buffers), so four of them plus sbt's own JVM peaked at ~10 GB with the cap in
 place (and ~11.6 GB with a 1.5 GB cap), against ~14 GB without. The whole-module
 mutation job therefore also runs at `--concurrency 2` (~6 GB peak, measured the
-same way) split across 10 shards instead of 5. Over the first 15 minutes of the
-same shard, 4 runners and 2 runners tested mutants at about the same rate — on
-4 vCPUs the extra runners mostly queue for CPU — so this costs little wall-clock
-per shard; what it does cost is five more runners' worth of checkout/Spark
-download/`publishLocal` setup per run. The split uses the same line-count proxy
-as before, so expect to re-tune it from real per-shard times.
+same way) split across 10 shards instead of 5. A local 15-minute comparison on one shard suggested
+4 and 2 runners test mutants at about the same rate, but the first CI run showed
+that was too optimistic: the ten shards summed to ~505 runner-minutes against
+~360 for the old five at `--concurrency 4` (about 1.4x the compute), plus five
+more runners' worth of checkout/Spark download/`publishLocal` setup.
 
-First CI run of the 10-way split (PR #92, all jobs green, no runner lost):
-shard-1 (`StructuralVerifier` alone) 93 min, shard-4 85, shard-10 69, shard-2
-(`WriteCommandSupport` alone) 63, shard-6 51, shard-8 45, shard-9 37, shard-3 22,
-shard-5 and shard-7 20 each; the incremental PR check 82. `memwatch` on shard-1
-reported a peak of 6.85 GB used (9.1 GB still available), 5.9 GB of it in Java
-processes, 694 threads — the ~6 GB the local measurement predicted, against
-~14 GB and a lost runner before. The split is lopsided (the line-count proxy again:
-shards 3, 5 and 7 finish in about a fifth of shard-1's time), so the follow-up is to
-move files from shards 1/4/10 into the short ones using these times.
+First CI run of the 10-way split (PR #92, all green, no runner lost), with the
+line-count assignment: shard-1 (`StructuralVerifier` alone) 93 min, shard-4 85,
+shard-10 69, shard-2 (`WriteCommandSupport` alone) 63, shard-6 51, shard-8 45,
+shard-9 37, shard-3 22, shard-5 and shard-7 20 each; the incremental PR check 82.
+`memwatch` on shard-1 reported a peak of 6.85 GB used (9.1 GB still available),
+5.9 GB of it in Java processes, 694 threads — the ~6 GB the local measurement
+predicted, against ~14 GB and a lost runner before.
+
+The files were then reassigned from those times. Only shard totals are measured,
+so per-file costs were estimated: the new run's ten shard times and the two
+earlier `main` runs' times for the old five-way grouping (scaled by 1.35 for
+the concurrency change) were fitted to per-file costs by non-negative least
+squares, with line count as a weak prior. The ranking was stable when that scale
+was varied between 1.2 and 1.5: `StructuralVerifier` (~90 min), `WriteCommandSupport`
+(~63), `ContractEnforcementRule` (~50) and `SparkPlanAdapter` (~48) now each sit in
+their own shard, and the other 30 files are packed into six shards of ~41-43 min.
+Since `StructuralVerifier` alone is ~90 min, the wall-clock floor is unchanged;
+rebalancing evens out runner usage and lowers the chance one long shard is the
+only thing left running, but it does not shorten the run. Splitting
+`StructuralVerifier` itself (Stryker4s accepts a line range after the file
+name) is the lever that would, and `mutation-shard-drift-check` would need to
+learn that a file may then appear in more than one shard. Re-fit from the next
+run's shard times.
 
 Two guardrails make a future loss cheaper to diagnose and recover from:
 
