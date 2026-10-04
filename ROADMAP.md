@@ -3909,6 +3909,9 @@ first written: one field's value compared against *another field on the same row
       retry with backoff and a dead letter (`deadLetter.path`, local or any Hadoop FS), configurable
       from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
       reference receiver, two troubleshooting entries.
+      `spark.invaract.contract.metadata.*` tags every inferred draft's `extensions` (and each
+      event's `metadata`), so enforcement's own events later carry the same keys and link back to
+      the dry run; run-level facts stay on `spark.invaract.job.metadata.*` / `job.attributes`.
       Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
       weakly). Open: redaction of locations/schemas in events; the receiving contract
       repository (separate repo).

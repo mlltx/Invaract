@@ -49,6 +49,9 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
   )
   private val fixedClock: () => Long = () => 42L
 
+  // About the contract (-> extensions, and every event's `metadata`), as opposed to `job.attributes`, about one run.
+  private val contractMetadata = Map("owner" -> "orders-team", "source_system" -> "crm")
+
   override def beforeAll(): Unit = {
     scratchDir = Files.createTempDirectory("invaract-dryrun-reporter-test")
     spark = SparkSession
@@ -74,8 +77,9 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
       jobInfo: JobInfo = job,
       options: VerificationOptions = VerificationOptions(),
       infer: (LogicalPlan, CheckpointRegistry) => Option[InferenceOutcome] =
-        (plan, registry) => ContractEnforcementRule.inferOutcome(plan, Some(registry))
-  ): DryRunReporter = new DryRunReporter(sink, jobInfo, options, fixedClock, infer)
+        (plan, registry) => ContractEnforcementRule.inferOutcome(plan, Some(registry)),
+      contractMetadata: Map[String, String] = Map.empty
+  ): DryRunReporter = new DryRunReporter(sink, jobInfo, options, fixedClock, infer, contractMetadata)
 
   private def withReporter[T](reporter: DryRunReporter)(body: => T): T = {
     current = Some(reporter)
@@ -114,7 +118,7 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("a plain write publishes one INFERRED event carrying the draft, its self-check, a fingerprint and the job") {
     val sink = new TestNotificationSink
-    val reporter = reporterFor(sink)
+    val reporter = reporterFor(sink, contractMetadata = contractMetadata)
     val path = withReporter(reporter)(writeTo("plain.parquet", spark.range(5).withColumn("doubled", col("id") * 2)))
 
     val events = inferenceEvents(sink)
@@ -129,7 +133,8 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.fingerprints.isDefined)
     assert(event.job == job)
     assert(event.timestamp == 42L)
-    assert(event.metadata == Map("team" -> "data-eng"))
+    assert(event.metadata == contractMetadata, "metadata is the contract's metadata, not the run's")
+    assert(event.job.attributes == Map("team" -> "data-eng"), "the run's own facts stay on job.attributes")
 
     val draft = ContractParser.parse(event.contractYaml.getOrElse(fail("no contract in an INFERRED event")))
     assert(draft.outputs.map(_.schema.fields.map(_.name)) == List(List("id", "doubled")))
@@ -155,7 +160,7 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("finish merges every draft of the job into one contract named for the job") {
     val sink = new FlushRecordingSink
-    val reporter = reporterFor(sink)
+    val reporter = reporterFor(sink, contractMetadata = contractMetadata)
     withReporter(reporter) {
       writeTo("merge_a.parquet", spark.range(3).withColumn("a", col("id")))
       writeTo("merge_b.parquet", spark.range(3).withColumn("b", col("id")))
@@ -169,9 +174,10 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(summary.mergeConflicts.isEmpty)
     assert(summary.job == job)
     assert(summary.timestamp == 42L)
-    assert(summary.metadata == Map("team" -> "data-eng"))
+    assert(summary.metadata == contractMetadata)
     val merged = ContractParser.parse(summary.mergedContractYaml.getOrElse(fail("no merged contract")))
     assert(merged.id == "nightly_orders")
+    assert(merged.extensions == contractMetadata, "the merged contract keeps the metadata every draft carried")
     assert(merged.outputs.map(_.location.split('/').last).toSet == Set("merge_a.parquet", "merge_b.parquet"))
   }
 
@@ -412,6 +418,95 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(mergedIdFor(job.copy(jobId = None, appName = None)) == ContractInference.InferredId)
     assert(mergedIdFor(job.copy(jobId = Some("9 lives/x"))) == "job_9_lives_x")
     assert(mergedIdFor(job.copy(jobId = Some(""))) == ContractInference.InferredId)
+  }
+
+  test("the inferred draft carries the contract metadata in its extensions, and the published YAML, the self-check and the merge all see it") {
+    val sink = new FlushRecordingSink
+    val reporter = reporterFor(sink, contractMetadata = contractMetadata)
+    withReporter(reporter)(writeTo("tagged.parquet", spark.range(3)))
+    reporter.finish()
+
+    val event = inferenceEvents(sink).head
+    val draft = ContractParser.parse(event.contractYaml.get)
+    assert(draft.extensions == contractMetadata)
+    assert(event.contractYaml.get.contains("owner: orders-team"))
+    assert(event.selfCheck.contains("PASSED"), "a tagged draft must still pass its own write")
+    assert(ContractParser.parse(summaryOf(sink).mergedContractYaml.get).extensions == contractMetadata)
+  }
+
+  test("with no contract metadata the draft's extensions stay empty, exactly as before") {
+    val sink = new TestNotificationSink
+    val reporter = reporterFor(sink)
+    withReporter(reporter)(writeTo("untagged.parquet", spark.range(3)))
+    val event = inferenceEvents(sink).head
+    assert(ContractParser.parse(event.contractYaml.get).extensions.isEmpty)
+    assert(!event.contractYaml.get.contains("extensions"))
+    assert(event.metadata.isEmpty)
+  }
+
+  test("every event kind carries the contract metadata: inferred, skipped, error and the summary") {
+    val sink = new TestNotificationSink
+    val reporter = reporterFor(sink, contractMetadata = contractMetadata, infer = (plan, _) =>
+      if (plan.isInstanceOf[UnrecognizedWriteCommand]) None else throw new RuntimeException("boom"))
+    reporter.check(spark.range(1).queryExecution.analyzed) // inference error
+    val skipped = new TestNotificationSink
+    val skipper = reporterFor(skipped, contractMetadata = contractMetadata)
+    skipper.check(UnrecognizedWriteCommand())
+    skipper.finish()
+
+    assert(inferenceEvents(sink).map(_.status) == List(InferenceStatus.InferenceError))
+    assert(inferenceEvents(sink).head.metadata == contractMetadata)
+    assert(inferenceEvents(skipped).head.status == InferenceStatus.SkippedUnrecognized)
+    assert(inferenceEvents(skipped).head.metadata == contractMetadata)
+    assert(summaryOf(skipped).metadata == contractMetadata)
+  }
+
+  test("metadata given to the contract and metadata given to the run are kept apart, in both directions") {
+    val sink = new TestNotificationSink
+    val runOnly = job.copy(attributes = Map("run_id" -> "2026-10-04T02:00"))
+    val reporter = reporterFor(sink, jobInfo = runOnly, contractMetadata = Map("owner" -> "orders-team"))
+    withReporter(reporter)(writeTo("apart.parquet", spark.range(2)))
+
+    val event = inferenceEvents(sink).head
+    assert(event.job.attributes == Map("run_id" -> "2026-10-04T02:00"))
+    assert(event.metadata == Map("owner" -> "orders-team"))
+    val extensions = ContractParser.parse(event.contractYaml.get).extensions
+    assert(extensions == Map("owner" -> "orders-team"), "a run id must never end up in a contract that outlives the run")
+  }
+
+  test("a draft's metadata reappears on the enforcement events once the draft is promoted: one set of keys links both") {
+    val sink = new TestNotificationSink
+    val reporter = reporterFor(sink, contractMetadata = contractMetadata)
+    capturedPlans.synchronized(capturedPlans.clear())
+    withReporter(reporter)(writeTo("promoted.parquet", spark.range(3).withColumn("doubled", col("id") * 2)))
+    val draft = ContractParser.parse(inferenceEvents(sink).head.contractYaml.get)
+    val writePlan = capturedPlans.synchronized(capturedPlans.toList).filter(p => WriteCommandSupport.combined.isDefinedAt(p)).last
+
+    val enforcement = new TestNotificationSink
+    ContractEnforcementRule.verifyOrThrow(draft, writePlan, VerificationOptions(), Some(enforcement), Some("app-9"))
+
+    val validation = enforcement.events.collect { case e: ContractValidationEvent => e }
+    assert(validation.map(_.status) == List("PASSED"))
+    assert(validation.head.metadata == contractMetadata, "ContractValidationEvent.metadata is the draft's extensions")
+  }
+
+  test("contractMetadataOf reads only spark.invaract.contract.metadata.*: not the contract path, not job metadata, not a bare prefix") {
+    spark.conf.set(DryRunReporter.ContractMetadataConfPrefix + "owner", "orders-team")
+    spark.conf.set(DryRunReporter.ContractMetadataConfPrefix + "source_system", "crm")
+    spark.conf.set(DryRunReporter.ContractMetadataConfPrefix, "no-key-after-the-prefix")
+    spark.conf.set("spark.invaract.contract", "/some/contract.yaml")
+    spark.conf.set(DryRunReporter.JobMetadataConfPrefix + "run_id", "r-1")
+    try {
+      assert(DryRunReporter.contractMetadataOf(spark) == Map("owner" -> "orders-team", "source_system" -> "crm"))
+      assert(DryRunReporter.jobInfoOf(spark).attributes == Map("run_id" -> "r-1"), "and the job's own prefix is untouched by it")
+    } finally {
+      spark.conf.unset(DryRunReporter.ContractMetadataConfPrefix + "owner")
+      spark.conf.unset(DryRunReporter.ContractMetadataConfPrefix + "source_system")
+      spark.conf.unset(DryRunReporter.ContractMetadataConfPrefix)
+      spark.conf.unset("spark.invaract.contract")
+      spark.conf.unset(DryRunReporter.JobMetadataConfPrefix + "run_id")
+    }
+    assert(DryRunReporter.contractMetadataOf(spark).isEmpty)
   }
 
   test("jobInfoOf describes the session, its stable job id, and only the metadata-prefixed conf") {

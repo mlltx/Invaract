@@ -53,6 +53,15 @@ import org.slf4j.LoggerFactory
   *
   * @param options what the self-check verifies under: the job's own
   *   `spark.invaract.*` conf, so "PASSED" means "would pass as configured".
+  * @param contractMetadata user-defined metadata about the *contract*
+  *   (`spark.invaract.contract.metadata.<key>`): put in every inferred draft's
+  *   `extensions` - the same bag a hand-written contract keeps its owner/team/
+  *   source system in - and echoed as every event's `metadata`. Because
+  *   enforcement copies `Contract.extensions` into `ContractValidationEvent`/
+  *   `WriteEvent.metadata`, the same keys then appear on the enforcement
+  *   events once a draft is promoted: one set of keys links a dry-run event to
+  *   the events of the real runs that follow. (Facts about one *run* belong in
+  *   `job.attributes` instead: they must not persist in a contract.)
   */
 private[sparkadapter] final class DryRunReporter(
     sink: NotificationSink,
@@ -61,7 +70,8 @@ private[sparkadapter] final class DryRunReporter(
     clock: () => Long = () => System.currentTimeMillis(),
     // A seam, not a feature: lets a test make inference throw, which no real plan reliably does.
     infer: (LogicalPlan, CheckpointRegistry) => Option[InferenceOutcome] =
-      (plan, registry) => ContractEnforcementRule.inferOutcome(plan, Some(registry))
+      (plan, registry) => ContractEnforcementRule.inferOutcome(plan, Some(registry)),
+    contractMetadata: Map[String, String] = Map.empty
 ) {
   import DryRunReporter._
 
@@ -95,7 +105,10 @@ private[sparkadapter] final class DryRunReporter(
     )
   }
 
-  private def reportInferred(inferred: InferenceOutcome.Inferred): Unit = {
+  private def reportInferred(untagged: InferenceOutcome.Inferred): Unit = {
+    // Tagged before anything else looks at the draft, so the YAML that is published, the draft that
+    // is self-checked and the draft that is merged at the end are all the same contract.
+    val inferred = untagged.copy(contract = untagged.contract.copy(extensions = untagged.contract.extensions ++ contractMetadata))
     val yaml = ContractParser.write(inferred.contract)
     val degradation = degradationOf(inferred)
     val status = if (degradation.isEmpty) InferenceStatus.Inferred else InferenceStatus.InferredDegraded
@@ -198,7 +211,7 @@ private[sparkadapter] final class DryRunReporter(
       fingerprints = fingerprints,
       job = job,
       timestamp = clock(),
-      metadata = job.attributes
+      metadata = contractMetadata
     )
 
   /** Counts, de-duplicates and publishes one event. `draft` is kept for the
@@ -243,7 +256,7 @@ private[sparkadapter] final class DryRunReporter(
           mergeConflicts = conflicts,
           job = job,
           timestamp = clock(),
-          metadata = job.attributes
+          metadata = contractMetadata
         )
       )
       try sink.flush(FlushTimeoutMs)
@@ -284,10 +297,25 @@ private[sparkadapter] object DryRunReporter {
     */
   val JobIdConfKey = "spark.invaract.jobId"
 
-  /** `spark.invaract.job.metadata.<key>=<value>` entries ride along on every dry-run event,
-    * prefix stripped (team, DAG id, orchestrator run id, ...).
+  /** `spark.invaract.job.metadata.<key>=<value>` entries ride along on every dry-run event as
+    * `job.attributes`, prefix stripped (DAG id, orchestrator run id, trigger, ...): facts about
+    * *this run*, which is why they are not put in the contract (see `ContractMetadataConfPrefix`).
     */
   val JobMetadataConfPrefix = "spark.invaract.job.metadata."
+
+  /** `spark.invaract.contract.metadata.<key>=<value>` entries become the inferred draft's
+    * `extensions` (and every event's `metadata`), prefix stripped: owner, team, source system,
+    * a ticket - anything that describes the contract rather than one run of the job.
+    */
+  val ContractMetadataConfPrefix = "spark.invaract.contract.metadata."
+
+  /** Every conf entry under `prefix` with something after it, prefix stripped. */
+  private def withPrefix(session: SparkSession, prefix: String): Map[String, String] =
+    session.conf.getAll.collect {
+      case (key, value) if key.startsWith(prefix) && key.length > prefix.length => key.stripPrefix(prefix) -> value
+    }
+
+  def contractMetadataOf(session: SparkSession): Map[String, String] = withPrefix(session, ContractMetadataConfPrefix)
 
   def jobInfoOf(session: SparkSession): JobInfo = {
     val sc = session.sparkContext
@@ -300,10 +328,7 @@ private[sparkadapter] object DryRunReporter {
       deployMode = Some(sc.deployMode),
       user = Some(sc.sparkUser),
       startTimeMs = Some(sc.startTime),
-      attributes = session.conf.getAll.collect {
-        case (key, value) if key.startsWith(JobMetadataConfPrefix) && key.length > JobMetadataConfPrefix.length =>
-          key.stripPrefix(JobMetadataConfPrefix) -> value
-      }
+      attributes = withPrefix(session, JobMetadataConfPrefix)
     )
   }
 
@@ -317,7 +342,8 @@ private[sparkadapter] object DryRunReporter {
     val reporter = new DryRunReporter(
       sink,
       jobInfoOf(session),
-      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), session)
+      ContractEnforcementRule.resolveVerificationOptions(VerificationOptions(), session),
+      contractMetadata = contractMetadataOf(session)
     )
     session.sparkContext.addSparkListener(new SparkListener {
       override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = reporter.finish()

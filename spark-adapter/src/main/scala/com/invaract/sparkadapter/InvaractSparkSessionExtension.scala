@@ -94,6 +94,14 @@ object InvaractSparkSessionExtension {
   val JobIdConfKey: String = DryRunReporter.JobIdConfKey
   val JobMetadataConfPrefix: String = DryRunReporter.JobMetadataConfPrefix
 
+  /** Also in dry-run mode: `spark.invaract.contract.metadata.<key>=<value>` is attached to every
+    * inferred draft's `extensions` (and echoed as each event's `metadata`), so a draft arrives
+    * already tagged with what it is and who owns it, and - because enforcement copies a contract's
+    * `extensions` into its own events - the same keys later link those events back to the dry run.
+    * `JobMetadataConfPrefix` entries, by contrast, describe one run and stay out of the contract.
+    */
+  val ContractMetadataConfPrefix: String = DryRunReporter.ContractMetadataConfPrefix
+
   private[sparkadapter] def checkRuleFor: SparkSession => LogicalPlan => Unit =
     session => {
       if (session.conf.getOption(DryRunConfKey).exists(_.toBoolean)) {

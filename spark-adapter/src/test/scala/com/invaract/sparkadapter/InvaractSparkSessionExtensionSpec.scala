@@ -242,7 +242,8 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
       InvaractSparkSessionExtension.DryRunConfKey -> "true",
       InvaractSparkSessionExtension.NotifyConfigConfKey -> fileSinkProps(eventsFile).toString,
       InvaractSparkSessionExtension.JobIdConfKey -> "e2e_job",
-      InvaractSparkSessionExtension.JobMetadataConfPrefix + "team" -> "orders"
+      InvaractSparkSessionExtension.JobMetadataConfPrefix + "team" -> "orders",
+      InvaractSparkSessionExtension.ContractMetadataConfPrefix + "owner" -> "orders-team"
     )
     try {
       spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
@@ -259,9 +260,13 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     assert(inference.head.contains("\"selfCheck\": \"PASSED\""))
     assert(inference.head.contains("\"jobId\": \"e2e_job\""))
     assert(inference.head.contains("\"team\": \"orders\""))
+    assert(inference.head.contains("owner: orders-team"), "the published draft is tagged: its YAML carries an extensions block")
+    assert(inference.head.contains("\"metadata\": {\"owner\": \"orders-team\"}"), "and the event's metadata is the contract's")
+    assert(inference.head.contains("\"attributes\": {\"team\": \"orders\"}"), "while the run's own facts stay on job.attributes")
     assert(inference.head.contains("dry_run_reporting.parquet"))
     assert(summary.size == 1, s"expected exactly one summary at application end, got: $lines")
     assert(summary.head.contains("\"mergeStatus\": \"MERGED\""))
+    assert(summary.head.contains("owner: orders-team"), "the merged contract keeps the tag")
     assert(summary.head.contains("\"statusCounts\": {\"INFERRED\": 1}"))
     assert(lines.indexWhere(_.contains("CONTRACT_INFERENCE")) < lines.indexWhere(_.contains("DRY_RUN_SUMMARY")))
   }

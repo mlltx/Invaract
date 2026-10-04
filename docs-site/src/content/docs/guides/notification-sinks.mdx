@@ -187,6 +187,10 @@ Dry-run mode, when pointed at a sink, publishes two more event types
 (`CONTRACT_INFERENCE` and `DRY_RUN_SUMMARY`) — see
 [Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs).
 
+On the dry-run events, `metadata` is the draft's `extensions`, which come from
+`spark.invaract.contract.metadata.*`; once a draft is promoted, the enforcement events below
+carry the same keys. See [Tag the draft, and link events back to the run](/guides/dry-run-mode/#tag-the-draft-and-link-events-back-to-the-run).
+
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
 [Contract Format](/reference/contract-format/) — so anything you've already recorded
 there (an owning team, an upstream system) rides along on every event without a second

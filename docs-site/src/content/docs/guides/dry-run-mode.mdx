@@ -195,26 +195,26 @@ the draft itself, and `selfCheck` says it would pass enforcement:
 ```json
 {
   "eventType": "CONTRACT_INFERENCE",
-  "timestamp": 1791067546178,
-  "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: output\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - input\n",
+  "timestamp": 1791097550747,
+  "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: output\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - input\nextensions:\n  source_system: crm\n  owner: orders-team\n",
   "job": {
     "master": "local[2]",
     "deployMode": "client",
     "appName": "SparkSQL::192.0.2.2",
-    "startTimeMs": 1791067534583,
-    "applicationId": "local-1791067535950",
+    "startTimeMs": 1791097540432,
+    "applicationId": "local-1791097541542",
     "sparkVersion": "3.5.7",
     "attributes": {
-      "team": "orders",
+      "run_id": "orders_daily__2026-10-04T02:00",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
     "user": "root"
   },
-  "contractDigest": "c07dd66d4a26e2e866d25807c69c8a64669c3639e35da164ed21c21518e20048",
+  "contractDigest": "29efd2c8fc03a026e644e4f15b096297618f42dcf8b7310bf21b26b98273b648",
   "selfCheckViolations": [],
   "reason": null,
-  "eventId": "5c184816082c9a70b094579c91990de1c3d52cdc71b7f4d0940d6eb7bf592ab6",
+  "eventId": "84c976d83b5276267a97fed46a3da4985afffd1cb4b65a22272439ac4890625b",
   "fingerprints": {
     "outputs": {
       "id": {
@@ -274,8 +274,8 @@ the draft itself, and `selfCheck` says it would pass enforcement:
   "selfCheck": "PASSED",
   "writeLocation": "/tmp/invaract-example/out/orders_doubled",
   "metadata": {
-    "team": "orders",
-    "dag": "orders_daily"
+    "source_system": "crm",
+    "owner": "orders-team"
   },
   "schemaVersion": 1
 }
@@ -287,17 +287,17 @@ which Invaract has no translation for, so with a contract active enforcement wou
 ```json
 {
   "eventType": "CONTRACT_INFERENCE",
-  "timestamp": 1791067546042,
+  "timestamp": 1791097550611,
   "contractYaml": null,
   "job": {
     "master": "local[2]",
     "deployMode": "client",
     "appName": "SparkSQL::192.0.2.2",
-    "startTimeMs": 1791067534583,
-    "applicationId": "local-1791067535950",
+    "startTimeMs": 1791097540432,
+    "applicationId": "local-1791097541542",
     "sparkVersion": "3.5.7",
     "attributes": {
-      "team": "orders",
+      "run_id": "orders_daily__2026-10-04T02:00",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
@@ -306,15 +306,15 @@ which Invaract has no translation for, so with a contract active enforcement wou
   "contractDigest": null,
   "selfCheckViolations": [],
   "reason": "'InsertIntoDataSourceDirCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE",
-  "eventId": "0f1426929ca271fef4629db29d7bf554778581936f8a7faedc2a208cbe93b9b5",
+  "eventId": "2cde1d5de2f0d06ee29ba309486e4a574dd418a76d7a3a705f7f9e98d6c91f00",
   "fingerprints": null,
   "diagnostics": [],
   "status": "SKIPPED_UNRECOGNIZED",
   "selfCheck": null,
   "writeLocation": null,
   "metadata": {
-    "team": "orders",
-    "dag": "orders_daily"
+    "source_system": "crm",
+    "owner": "orders-team"
   },
   "schemaVersion": 1
 }
@@ -327,33 +327,33 @@ And the summary published when the application ended:
   "mergeStatus": "MERGED",
   "mergeConflicts": [],
   "eventType": "DRY_RUN_SUMMARY",
-  "timestamp": 1791067547522,
+  "timestamp": 1791097551727,
   "job": {
     "master": "local[2]",
     "deployMode": "client",
     "appName": "SparkSQL::192.0.2.2",
-    "startTimeMs": 1791067534583,
-    "applicationId": "local-1791067535950",
+    "startTimeMs": 1791097540432,
+    "applicationId": "local-1791097541542",
     "sparkVersion": "3.5.7",
     "attributes": {
-      "team": "orders",
+      "run_id": "orders_daily__2026-10-04T02:00",
       "dag": "orders_daily"
     },
     "jobId": "orders_nightly",
     "user": "root"
   },
-  "mergedContractYaml": "id: orders_nightly\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: orders\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: orders_doubled\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - orders\n",
-  "eventId": "173b43805be46cc3cf877f283b4a2c01ba6a4be68f345229d96a562ac1df9405",
+  "mergedContractYaml": "id: orders_nightly\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: orders\n  location: /tmp/invaract-example/data/orders.csv\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: value\n      type: integer\n      required: true\n      nullable: true\noutputs:\n- name: orders_doubled\n  location: /tmp/invaract-example/out/orders_doubled\n  format: parquet\n  schema:\n    fields:\n    - name: id\n      type: integer\n      required: true\n      nullable: true\n    - name: doubled\n      type: integer\n      required: true\n      nullable: true\n  saveMode: overwrite\n  derivedFrom:\n  - orders\nextensions:\n  source_system: crm\n  owner: orders-team\n",
+  "eventId": "d385abb6ea56d23756fedf7f207592956382eaa161714e8a59f143e18c5cf63e",
   "statusCounts": {
     "SKIPPED_UNRECOGNIZED": 1,
     "INFERRED": 1
   },
   "metadata": {
-    "team": "orders",
-    "dag": "orders_daily"
+    "source_system": "crm",
+    "owner": "orders-team"
   },
   "schemaVersion": 1,
-  "mergedContractDigest": "9bf61d4884f102e2fb4982cbdbc9ab3ddbff59186ba6648882b8acb7e89c9842"
+  "mergedContractDigest": "da5d6a750b375826cf983342bc94129a020702974c0173cd3adc385ce6d407eb"
 }
 ```
 
@@ -367,6 +367,34 @@ different on every run under a scheduler, so it can't tell you "this is the same
 last night"; the `fingerprints` field identifies the transformation itself, which makes
 repeat runs recognizable. Every `spark.invaract.job.metadata.<key>=<value>` conf entry
 arrives as `job.attributes.<key>`; nothing else from your Spark configuration is sent.
+
+### Tag the draft, and link events back to the run
+
+Two kinds of metadata, kept apart on purpose:
+
+| Conf prefix | Describes | Where it lands |
+| --- | --- | --- |
+| `spark.invaract.contract.metadata.<key>=<value>` | The **contract**: owner, team, source system, a ticket. | The draft's `extensions:` block, and every event's `metadata`. |
+| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, and nowhere else. |
+
+The run-level facts stay out of the contract because a contract outlives the run: a run id
+in a promoted contract would be stale the next night. The contract-level ones ride in the
+draft, so it arrives already tagged with what it is and who owns it.
+
+They also link the dry run to what comes after it. When you promote a draft and enforce it,
+Invaract copies a contract's `extensions` into its own events, so the same keys appear in
+`metadata` on every `CONTRACT_VALIDATION` and `WRITE` event of the real runs. Whatever you
+use to find the dry run's events, a key like `owner` or a ticket id, finds those too. Both
+prefixes can be set with `spark-submit --conf`, with no change to the job:
+
+```bash
+  --conf spark.invaract.contract.metadata.owner=orders-team \
+  --conf spark.invaract.contract.metadata.source_system=crm \
+  --conf spark.invaract.job.metadata.run_id=orders_daily__2026-10-04T02:00
+```
+
+That is what produced the examples above: look at `metadata` and `job.attributes` in each, and
+at the `extensions:` block in `contractYaml`. Values are strings.
 
 The `DRY_RUN_SUMMARY`'s `mergedContractYaml` is the job's drafts merged exactly as
 [`MergeDraftsCli`](#merging-drafts-from-a-job-with-several-writes) does, named for the job.
@@ -430,7 +458,8 @@ through the answer like this.
      or the write shape isn't recognized; don't read it as "safe".
    - `CONFLICT`: two writes disagree about one location's schema. `mergeConflicts` names it.
 5. **Review the merged draft** (`mergedContractYaml`): replace the placeholder `id`, `version` and
-   `status`, make locations portable, and add the rules dry-run can't infer, as in
+   `status` (its `extensions` already carry the contract metadata you set), make locations
+   portable, and add the rules dry-run can't infer, as in
    [Write a Contract](/guides/writing-a-contract/).
 6. **Switch to enforcement**: replace `spark.invaract.dryRun=true` with
    `spark.invaract.contract=<your reviewed contract>`. The strict toggles
