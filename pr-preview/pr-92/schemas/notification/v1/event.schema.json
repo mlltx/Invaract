@@ -126,7 +126,7 @@
         "attributes": {
           "type": "object",
           "additionalProperties": { "type": "string" },
-          "description": "Every spark.invaract.job.metadata.<key>=<value> conf entry, prefix stripped."
+          "description": "Every spark.invaract.job.metadata.<key>=<value> conf entry, prefix stripped: facts about this one run (an orchestrator run id, a DAG, a trigger). They are never written into the draft contract."
         }
       }
     },
@@ -224,7 +224,7 @@
         "diagnostics": { "type": "array", "items": { "type": "string" } },
         "fingerprints": { "oneOf": [{ "$ref": "#/$defs/TransformationFingerprint" }, { "type": "null" }] },
         "job": { "$ref": "#/$defs/JobInfo" },
-        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "The same as job.attributes." }
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "The draft contract's `extensions`: whatever the platform set with spark.invaract.contract.metadata.<key>. Facts about the contract (owner, source system), not about this run (those are job.attributes). Once the draft is promoted, ContractValidationEvent.metadata and WriteEvent.metadata carry the same keys. Empty if none were set." }
       }
     },
     "DryRunSummaryEvent": {
@@ -244,7 +244,7 @@
         "mergedContractDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
         "mergeConflicts": { "type": "array", "items": { "type": "string" } },
         "job": { "$ref": "#/$defs/JobInfo" },
-        "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Same as on ContractInferenceEvent: the contract metadata (spark.invaract.contract.metadata.*), also present in mergedContractYaml's extensions." }
       }
     }
   }
