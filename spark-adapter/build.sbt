@@ -1033,7 +1033,7 @@ Test / javaOptions ++= Seq(
   // measured 0.35-1.3 GB and ~290 threads, still passing, and slightly faster, and the whole
   // 986-test suite passes in one JVM under the same cap. SerialGC drops the parallel GC
   // worker threads a single small test JVM has no use for.
-  "-Xmx1536m",
+  "-Xmx1g",
   "-XX:+UseSerialGC",
   "--add-opens=java.base/java.lang=ALL-UNNAMED",
   "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
