@@ -3154,6 +3154,16 @@ per shard; what it does cost is five more runners' worth of checkout/Spark
 download/`publishLocal` setup per run. The split uses the same line-count proxy
 as before, so expect to re-tune it from real per-shard times.
 
+First CI run of the 10-way split (PR #92, all jobs green, no runner lost):
+shard-1 (`StructuralVerifier` alone) 93 min, shard-4 85, shard-10 69, shard-2
+(`WriteCommandSupport` alone) 63, shard-6 51, shard-8 45, shard-9 37, shard-3 22,
+shard-5 and shard-7 20 each; the incremental PR check 82. `memwatch` on shard-1
+reported a peak of 6.85 GB used (9.1 GB still available), 5.9 GB of it in Java
+processes, 694 threads — the ~6 GB the local measurement predicted, against
+~14 GB and a lost runner before. The split is lopsided (the line-count proxy again:
+shards 3, 5 and 7 finish in about a fifth of shard-1's time), so the follow-up is to
+move files from shards 1/4/10 into the short ones using these times.
+
 Two guardrails make a future loss cheaper to diagnose and recover from:
 
 - `.github/scripts/memwatch.sh` wraps every `sbt stryker` invocation and prints a
