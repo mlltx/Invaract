@@ -3152,6 +3152,35 @@ back with every finding at once. It used to be justified only by a connector tes
 a location which never matched; that test now declares its table's real location and the rule is
 pinned in `StructuralVerifierSpec`.
 
+#### Experiment: mutation-testing `StructuralVerifier` against its own spec only
+
+`StructuralVerifier.scala` was the longest mutation shard (93 min in CI). Stryker4s runs, for
+each mutant, the tests that cover it — and a mutant in `verify` is reached by most of the
+integration suites (real Delta/Iceberg/Hive sessions, minutes each). Stryker4s 1.1.1 has a
+`--test-filter` option ("a glob expression of tests to run"; found in the plugin's own CLI
+options, the docs site being unreachable from the dev environment), so the same file was
+mutated with only `StructuralVerifierSpec` selected, on identical code, 3 runners, same machine:
+
+| | tests run per mutant | wall-clock | mutants killed |
+|---|---|---|---|
+| all tests (the CI default) | whole suite | 72 min (4,325 s) | 68 / 68 (100%) |
+| `--test-filter *StructuralVerifierSpec` | the unit spec only | 3 min (175 s) | 66 / 68 (97.1%) |
+
+The two the unit spec does not kill: a performance shortcut that is semantically equivalent
+(`scopedInputs eq contract.inputs`, which the full run only "kills" by timeout) and
+`matchesAny`, a helper `ContractInference` uses and `ContractInferenceSpec` tests. So for this
+file the unit spec is within three points of the whole suite at about 1/25th of the cost. A
+filtered run can only score lower than a full one (a mutant killed solely by an integration suite
+survives), which makes it the stricter test of the *unit* suite — and the first filtered run, before
+any test was added, scored 86.8% and named seven real gaps in code written the same day (tie-breaks
+among several matching schemas/reads, the `derivedFrom` remediation wording, the single- vs
+multi-output location-mismatch wording), now covered. It was not measured which of those seven the
+integration suites would also have killed.
+
+Not adopted in CI yet: it changes what the gate means for the file (integration suites would stop
+protecting `StructuralVerifier` from mutants), and each file needs its own spec mapping and the same
+check. See the findings table in PR #92.
+
 #### Runner memory and runner loss
 
 Five of the twelve most recent `main` runs before this change had at least one
