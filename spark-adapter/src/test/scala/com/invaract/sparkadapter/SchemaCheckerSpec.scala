@@ -41,6 +41,14 @@ class SchemaCheckerSpec extends AnyFunSuite {
     assert(types(check(List(CField("amt", "decimal(12,2)")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
   }
 
+  test("a plain (non-nested) declared type must be the contract vocabulary's own keyword: 'int' is not 'integer'") {
+    // Only types written with '<' are parsed as Spark DDL; a plain keyword keeps the strict, existing comparison.
+    val schema = new StructType().add("id", IntegerType)
+    val vs = check(List(CField("id", "int")), schema)
+    assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
+    assert(vs.head.expected.contains("int") && vs.head.actual.contains("integer"))
+  }
+
   test("input and output sides differ only in violation types and wording") {
     val schema = new StructType().add("a", StringType)
     val fields = List(CField("a", "integer", required = true), CField("missing", "integer", required = true), CField("n", "string", nullable = false))
