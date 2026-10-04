@@ -234,6 +234,14 @@ cross-module graph <code dir="auto">dev/build</code> documents)</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Caching strategies (<code dir="auto">actions/cache@v4</code> plus <code dir="auto">setup-java</code>’s
 <code dir="auto">cache: 'sbt'</code>, throughout <code dir="auto">.github/workflows/test.yml</code>)</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Artifact publishing (<code dir="auto">release.yml</code>, <code dir="auto">publish-spark-jars.yml</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> CI stability under runner loss — the <code dir="auto">spark-adapter</code> mutation shards
+were being killed by memory exhaustion (“The runner has received a
+shutdown signal”). Fixed by capping the test JVM heap, running 10 shards
+at <code dir="auto">--concurrency 2</code> instead of 5 at 4, streaming memory telemetry into the
+job log (<code dir="auto">.github/scripts/memwatch.sh</code>), and re-running a run whose only
+failures are lost runners (<code dir="auto">rerun-on-runner-loss.yml</code>). Measurements and
+the open follow-up (re-tune shard balance from real per-shard times) are in
+docs/SPARK_ADAPTER.md’s “Runner memory and runner loss.”</li>
 </ul>
 </li>
 <li class="task-list-item">

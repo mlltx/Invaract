@@ -2966,7 +2966,7 @@ overhead. The two levers above reduced wasted time around that core cost
 (serialization, under-utilized cores), not the cost itself.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="sharding-spark-adapters-whole-module-run">Sharding <code dir="auto">spark-adapter</code>’s whole-module run</h4><a class="sl-anchor-link" href="#sharding-spark-adapters-whole-module-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sharding spark-adapter’s whole-module run”</span></a></div>
 <p>The bottleneck named above was addressed directly by splitting
-<code dir="auto">mutation-testing-spark-adapter</code> itself into a 5-way matrix job
+<code dir="auto">mutation-testing-spark-adapter</code> itself into a matrix job (5 legs when this was first written, 10 now — see “Runner memory and runner loss” below)
 (<code dir="auto">.github/workflows/test.yml</code>), each leg running <code dir="auto">sbt stryker --mutate</code>
 scoped to a fixed subset of the module’s source files (30 as of
 <code dir="auto">RoleConsistencyVerifier</code>, added to shard-4 — the shard smallest by line
@@ -3031,6 +3031,86 @@ entire job from scratch. Now each shard is an independent job with
 this section used to claim — see the measurements above), so a transient
 failure in one shard doesn’t cancel the others, and GitHub’s “re-run
 failed jobs” only has to redo the one shard that actually failed.</p>
+<div class="sl-heading-wrapper level-h4"><h4 id="runner-memory-and-runner-loss">Runner memory and runner loss</h4><a class="sl-anchor-link" href="#runner-memory-and-runner-loss"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Runner memory and runner loss”</span></a></div>
+<p>Five of the twelve most recent <code dir="auto">main</code> runs before this change had at least one
+mutation shard die with GitHub’s “The runner has received a shutdown signal”
+(the job ends <code dir="auto">failure</code>, with the single annotation “The operation was
+canceled.” — a real test failure instead ends “Process completed with exit
+code 1.”). It was not a flaky test: running the old shard-3 file set locally on
+a 4 vCPU / 16 GB machine (the same as <code dir="auto">ubuntu-latest</code>) with the same
+<code dir="auto">--concurrency 4</code> reproduced it, with 14 GB in use and kernel OOM kills.</p>
+<p>What the memory was: Stryker4s keeps <code dir="auto">--concurrency</code> Spark test JVMs alive
+at once, and every one of them was sitting at the JVM defaults — a heap sized
+at a quarter of the machine’s RAM (~4 GB) and G1’s many GC threads — which a
+Spark <code dir="auto">local[*]</code> session happily fills. Run alone, each suite measured:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Suite (run alone)</th><th>resident, defaults</th><th>resident, capped heap + <code dir="auto">SerialGC</code></th></tr></thead><tbody><tr><td><code dir="auto">HiveConnectorSpec</code></td><td>4.8 GB (95th percentile)</td><td>0.86 GB</td></tr><tr><td><code dir="auto">ContractEnforcementRuleSpec</code></td><td>3.4 GB</td><td>1.25 GB</td></tr><tr><td><code dir="auto">SparkAdapterListenerSpec</code></td><td>3.5-4.5 GB</td><td>0.66 GB</td></tr><tr><td><code dir="auto">SparkPlanAdapterSpec</code></td><td>4.2 GB</td><td>0.55 GB</td></tr><tr><td><code dir="auto">IcebergConnectorSpec</code></td><td>3.8 GB</td><td>0.71 GB</td></tr></tbody></table>
+<p>(Capped columns: <code dir="auto">-Xmx1536m -XX:+UseSerialGC</code> for Hive, <code dir="auto">ContractEnforcementRuleSpec</code> and <code dir="auto">SparkAdapterListenerSpec</code>; the same two plus <code dir="auto">-Xss512k</code> and metaspace, code-cache and direct-memory limits for <code dir="auto">SparkPlanAdapterSpec</code> and <code dir="auto">IcebergConnectorSpec</code> — the extra limits made no measurable difference where both variants were run, so only the two flags were kept. Thread counts roughly halved too, from 330-600 to ~290.) The heaviest suites
+were Hive, Iceberg, <code dir="auto">ContractEnforcementRuleSpec</code>, <code dir="auto">SparkAdapterListenerSpec</code>,
+<code dir="auto">SparkPlanAdapterSpec</code> and the fuzz suite — <strong>not</strong> ClickHouse, which peaked
+around 1.2 GB — so the fix is on the test JVM as a whole rather than on any
+one suite. <code dir="auto">build.sbt</code> now sets <code dir="auto">-Xmx1g -XX:+UseSerialGC</code> in
+<code dir="auto">Test / javaOptions</code>; the full 986-test suite passes under it in ~5 minutes.</p>
+<p>That was necessary but not sufficient: a real Stryker run still leaves about
+1 GB per test JVM outside the heap (class metadata, thread stacks, native
+buffers), so four of them plus sbt’s own JVM peaked at ~10 GB with the cap in
+place (and ~11.6 GB with a 1.5 GB cap), against ~14 GB without. The whole-module
+mutation job therefore also runs at <code dir="auto">--concurrency 2</code> (~6 GB peak, measured the
+same way) split across 10 shards instead of 5. Over the first 15 minutes of the
+same shard, 4 runners and 2 runners tested mutants at about the same rate — on
+4 vCPUs the extra runners mostly queue for CPU — so this costs little wall-clock
+per shard; what it does cost is five more runners’ worth of checkout/Spark
+download/<code dir="auto">publishLocal</code> setup per run. The split uses the same line-count proxy
+as before, so expect to re-tune it from real per-shard times.</p>
+<p>Two guardrails make a future loss cheaper to diagnose and recover from:</p>
+<ul>
+<li><code dir="auto">.github/scripts/memwatch.sh</code> wraps every <code dir="auto">sbt stryker</code> invocation and prints a
+<code dir="auto">[memwatch]</code> line every 30 s (memory in use/available, swap, load, Java
+process count, resident memory and threads, free disk, the three biggest
+processes) into the live job log, plus a peak summary at the end. It streams
+rather than writes a file for a later step because a killed runner never runs
+later steps; the last lines before the kill are still in the log.</li>
+<li><code dir="auto">.github/workflows/rerun-on-runner-loss.yml</code> re-runs the failed jobs of a
+finished “Test and Build” run, once, only when every failed job (besides the
+“Test Summary” gate) shows the runner-loss signature and none shows a real
+step failure — classified by <code dir="auto">.github/scripts/runner_loss.py</code>, which has unit
+tests run by the <code dir="auto">workflow-scripts</code> CI job. A <code dir="auto">workflow_run</code> workflow only
+takes effect from the default branch, so this one starts working once merged.</li>
+</ul>
 <div class="sl-heading-wrapper level-h4"><h4 id="mutation-testing-the-expression-algebra-rework">Mutation testing: the expression-algebra rework</h4><a class="sl-anchor-link" href="#mutation-testing-the-expression-algebra-rework"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Mutation testing: the expression-algebra rework”</span></a></div>
 <p>CLAUDE.md’s per-PR 70% bar, scoped to the two touched files (not a
 whole-module run):</p>
