@@ -619,7 +619,15 @@ jobs:
   mutation-testing-spark-adapter-incremental:
     name: Mutation testing (spark-adapter, incremental)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # Diffs against the PR's BASE commit, so it mutates every spark-adapter file the
+    # whole PR has changed, in one job, with the full test suite per mutant. PR #92
+    # (13 changed files, StructuralVerifier ~90 min and ContractEnforcementRule ~50
+    # min of that alone) was cancelled by the 180-minute limit this job used to have
+    # after running for 3 hours; the estimate for that file set is ~4 hours. 360 is
+    # GitHub's maximum for a hosted runner. The whole-module shards above already
+    # mutate the same files in parallel, so this is the slow, serial duplicate of
+    # them - see docs/SPARK_ADAPTER.md for the options to shrink or fold it.
+    timeout-minutes: 360
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
