@@ -3068,6 +3068,50 @@ against it whatever the write’s location (<code dir="auto">expectedOutputFor</
 back with every finding at once. It used to be justified only by a connector test that declared
 a location which never matched; that test now declares its table’s real location and the rule is
 pinned in <code dir="auto">StructuralVerifierSpec</code>.</p>
+<div class="sl-heading-wrapper level-h4"><h4 id="experiment-mutation-testing-structuralverifier-against-its-own-spec-only">Experiment: mutation-testing <code dir="auto">StructuralVerifier</code> against its own spec only</h4><a class="sl-anchor-link" href="#experiment-mutation-testing-structuralverifier-against-its-own-spec-only"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Experiment: mutation-testing StructuralVerifier against its own spec only”</span></a></div>
+<p><code dir="auto">StructuralVerifier.scala</code> was the longest mutation shard (93 min in CI). Stryker4s runs, for
+each mutant, the tests that cover it — and a mutant in <code dir="auto">verify</code> is reached by most of the
+integration suites (real Delta/Iceberg/Hive sessions, minutes each). Stryker4s 1.1.1 has a
+<code dir="auto">--test-filter</code> option (“a glob expression of tests to run”; found in the plugin’s own CLI
+options, the docs site being unreachable from the dev environment), so the same file was
+mutated with only <code dir="auto">StructuralVerifierSpec</code> selected, on identical code, 3 runners, same machine:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>tests run per mutant</th><th>wall-clock</th><th>mutants killed</th></tr></thead><tbody><tr><td>all tests (the CI default)</td><td>whole suite</td><td>72 min (4,325 s)</td><td>68 / 68 (100%)</td></tr><tr><td><code dir="auto">--test-filter *StructuralVerifierSpec</code></td><td>the unit spec only</td><td>3 min (175 s)</td><td>66 / 68 (97.1%)</td></tr></tbody></table>
+<p>The two the unit spec does not kill: a performance shortcut that is semantically equivalent
+(<code dir="auto">scopedInputs eq contract.inputs</code>, which the full run only “kills” by timeout) and
+<code dir="auto">matchesAny</code>, a helper <code dir="auto">ContractInference</code> uses and <code dir="auto">ContractInferenceSpec</code> tests. So for this
+file the unit spec is within three points of the whole suite at about 1/25th of the cost. A
+filtered run can only score lower than a full one (a mutant killed solely by an integration suite
+survives), which makes it the stricter test of the <em>unit</em> suite — and the first filtered run, before
+any test was added, scored 86.8% and named seven real gaps in code written the same day (tie-breaks
+among several matching schemas/reads, the <code dir="auto">derivedFrom</code> remediation wording, the single- vs
+multi-output location-mismatch wording), now covered. It was not measured which of those seven the
+integration suites would also have killed.</p>
+<p>Not adopted in CI yet: it changes what the gate means for the file (integration suites would stop
+protecting <code dir="auto">StructuralVerifier</code> from mutants), and each file needs its own spec mapping and the same
+check. See the findings table in PR #92.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="runner-memory-and-runner-loss">Runner memory and runner loss</h4><a class="sl-anchor-link" href="#runner-memory-and-runner-loss"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Runner memory and runner loss”</span></a></div>
 <p>Five of the twelve most recent <code dir="auto">main</code> runs before this change had at least one
 mutation shard die with GitHub’s “The runner has received a shutdown signal”
