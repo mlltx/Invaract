@@ -1881,35 +1881,41 @@ class HiveConnectorSpec extends ConnectorSpecBase {
     * same identity data, but are actually run through the same
     * `StructuralVerifier` check with the same outcome.
     */
-  private def assertBothRejectedForWrongTechnology(dfTable: String, sqlTable: String, insert: String => Unit): Unit = {
-    val yaml =
-      """id: enforcement_demo
-        |version: "1.0.0"
-        |outputs:
-        |  - name: out
-        |    location: irrelevant-to-this-check
-        |    catalog:
-        |      required: true
-        |      technology: iceberg
-        |    schema:
-        |      fields:
-        |        - name: id
-        |          type: long
-        |          required: true
-        |        - name: value
-        |          type: long
-        |          required: true
-        |""".stripMargin
-    withContract(yaml) {
-      Seq(dfTable, sqlTable).foreach { table =>
+  private def assertBothRejectedForWrongTechnology(dfTable: String, sqlTable: String, insert: String => Unit): Unit =
+    Seq(dfTable, sqlTable).foreach { table =>
+      // Each table gets a contract declaring its OWN real location, so the
+      // catalog mismatch is what rejects the write - not an incidental location
+      // mismatch that StructuralVerifier happens to keep checking past.
+      val yaml =
+        s"""id: enforcement_demo
+           |version: "1.0.0"
+           |outputs:
+           |  - name: out
+           |    location: ${tableLocation(table)}
+           |    catalog:
+           |      required: true
+           |      technology: iceberg
+           |    schema:
+           |      fields:
+           |        - name: id
+           |          type: long
+           |          required: true
+           |        - name: value
+           |          type: long
+           |          required: true
+           |""".stripMargin
+      withContract(yaml) {
         val ex = intercept[ContractViolationException](insert(table))
         assert(
           ex.result.violations.exists(_.violationType == ViolationType.OutputCatalogMismatch),
           s"expected $table to be rejected with OUTPUT_CATALOG_MISMATCH, got: ${ex.result.violations}"
         )
+        assert(
+          !ex.result.violations.exists(_.violationType == ViolationType.OutputLocationMismatch),
+          s"$table's own location was declared, so the rejection must be the catalog's alone, got: ${ex.result.violations}"
+        )
       }
     }
-  }
 
   test("PARITY (new table): .saveAsTable() and CREATE TABLE ... AS SELECT resolve identical catalog identity and validate identically - Parquet") {
     val listenerDf = new SparkAdapterListener

@@ -111,6 +111,43 @@ the current verified Delta version, and (same as above) check for an
 `Invaract is running against Delta Lake ...` warning in your job's logs if you're on a
 version new enough for the runtime compatibility guard to have run.
 
+## Dry-run reports `SKIPPED_UNRECOGNIZED` for a write that works fine
+
+With a [notification sink](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs)
+configured, dry-run mode reports every write-shaped command it couldn't infer a contract from.
+Running this through `spark-sql` is a real example:
+
+```sql
+INSERT OVERWRITE DIRECTORY '/data/out/orders_doubled' USING parquet
+SELECT id, value * 2 AS doubled FROM orders;
+```
+
+```
+"'InsertIntoDataSourceDirCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE"
+```
+
+The write itself works. The point is what enforcement would do with it: Invaract has no
+translation for that command, so with a contract active it would reject the write as an
+[`UNVERIFIABLE_WRITE`](#a-write-is-rejected-with-unverifiable_write). Dry-run is telling you
+so now, before you turn enforcement on. Write to a table or a path with the DataFrame API or
+`INSERT INTO`, or check [Connector Support](/reference/connector-support/) for the shape you need.
+(You will often see an `INFERRED` event for the same statement too: the command is executed as
+a supported write underneath.)
+
+## Dry-run reporting prints a warning and no events arrive
+
+If `spark.invaract.notifyConfig` can't be loaded, dry-run mode doesn't fail your job. It logs
+one warning, and falls back to logging the inferred contract:
+
+```
+WARN InvaractSparkSessionExtension: Invaract dry-run mode: could not set up the notification sink named by 'spark.invaract.notifyConfig=/etc/invaract/notify.properties' (java.io.FileNotFoundException: /etc/invaract/notify.properties (No such file or directory)); falling back to logging inferred contracts. The job is not affected.
+```
+
+The cause is in the parentheses: here, a path that doesn't exist on the machine where the
+driver runs. In a cluster deploy mode that is the cluster, not your laptop, so make sure the
+file is shipped there (for example with `--files`). A `sink.class` that doesn't exist, or a
+sink whose own required property is missing, is reported the same way.
+
 ## Still stuck
 
 1. Re-check [CLAUDE.md](https://github.com/mlltx/Invaract/blob/main/CLAUDE.md) in the

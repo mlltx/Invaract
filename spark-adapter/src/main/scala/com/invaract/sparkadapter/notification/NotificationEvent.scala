@@ -24,6 +24,9 @@ import com.invaract.sparkadapter.{DataQualityCheckResult, RoleConformanceCheckRe
   *     `SummarizingNotificationSink` (see its own doc for why this is a
   *     sink decorator rather than something `ContractEnforcementRule`/
   *     `SparkAdapterListener` publish themselves).
+  *   - `ContractInferenceEvent` / `DryRunSummaryEvent` — dry-run mode's
+  *     counterparts (see `DryRunReporter`): one per write dry-run mode
+  *     tried to infer a contract for, and one per job at application end.
   *
   * Plain case classes crossing a JSON boundary to an external system, the
   * same "closed vocabulary, not an open trait hierarchy a sink must
@@ -306,4 +309,122 @@ case class JobSummaryEvent(
   applicationId: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "JOB_SUMMARY"
+}
+
+/** Where a dry-run event came from - enough to tell one job's runs apart
+  * from another's, and to group one job's events together across runs.
+  *
+  * `jobId` is the stable, caller-chosen identity (`spark.invaract.jobId`);
+  * `appName` is Spark's own `spark.app.name`, which many schedulers make
+  * unique per run and so cannot serve as that identity on its own.
+  * `attributes` is whatever the platform attached via
+  * `spark.invaract.job.metadata.<key>=<value>` (team, DAG id, orchestrator
+  * run id, ...), prefix stripped. Deliberately an allowlist-by-prefix, never
+  * a dump of the whole `SparkConf`: that holds credentials.
+  */
+case class JobInfo(
+  applicationId: Option[String] = None,
+  appName: Option[String] = None,
+  jobId: Option[String] = None,
+  sparkVersion: Option[String] = None,
+  master: Option[String] = None,
+  deployMode: Option[String] = None,
+  user: Option[String] = None,
+  startTimeMs: Option[Long] = None,
+  attributes: Map[String, String] = Map.empty
+) {
+  def toMap: Map[String, Any] =
+    Map("attributes" -> attributes) ++
+      applicationId.map("applicationId" -> _) ++
+      appName.map("appName" -> _) ++
+      jobId.map("jobId" -> _) ++
+      sparkVersion.map("sparkVersion" -> _) ++
+      master.map("master" -> _) ++
+      deployMode.map("deployMode" -> _) ++
+      user.map("user" -> _) ++
+      startTimeMs.map("startTimeMs" -> _)
+}
+
+/** `ContractInferenceEvent.status` / `DryRunSummaryEvent.statusCounts` keys.
+  * Plain strings, the same convention `ContractValidationEvent.status` uses,
+  * so a sink on the far side of a JSON boundary needs no Scala types.
+  */
+object InferenceStatus {
+
+  /** A contract was inferred and nothing about the inference was degraded. */
+  val Inferred = "INFERRED"
+
+  /** A contract was inferred, but from a plan Invaract could only partly see
+    * (translation diagnostics, an unresolved `.checkpoint()`, row-level DML):
+    * treat it as a draft to review harder, not as a faithful description.
+    */
+  val InferredDegraded = "INFERRED_DEGRADED"
+
+  /** A write-like operation Invaract recognizes but deliberately does not infer
+    * from (a state-changing procedure CALL).
+    */
+  val SkippedUnsupported = "SKIPPED_UNSUPPORTED"
+
+  /** A `Command` that may write data but that Invaract has no translation for -
+    * the same plans real enforcement would fail closed on.
+    */
+  val SkippedUnrecognized = "SKIPPED_UNRECOGNIZED"
+
+  /** Inference itself threw. */
+  val InferenceError = "INFERENCE_ERROR"
+
+  /** Summary only: the application ended without a single write being seen. */
+  val NoWritesObserved = "NO_WRITES_OBSERVED"
+}
+
+/** Dry-run mode tried to infer a contract for one write (or met a write it
+  * could not infer from). Published by `DryRunReporter` as each is observed.
+  *
+  * `contractYaml` is `ContractParser.write`'s rendering of the inferred
+  * draft - present for `INFERRED`/`INFERRED_DEGRADED`, absent otherwise.
+  * `selfCheck` is the result of verifying that draft against the very plan
+  * it came from, under the options enforcement would use: `"PASSED"` means
+  * turning enforcement on with this contract would not have blocked this
+  * write; `"FAILED"` (with `selfCheckViolations`) or `"INVALID"` means the
+  * draft is not usable as-is. `None` when there was no draft to check.
+  * `reason`/`diagnostics` say why a status is not plain `INFERRED`.
+  * `fingerprints` identifies the transformation, so a consumer can recognize
+  * the same job's nightly runs as one transformation.
+  */
+case class ContractInferenceEvent(
+  status: String,
+  reason: Option[String],
+  writeLocation: Option[String],
+  contractYaml: Option[String],
+  selfCheck: Option[String],
+  selfCheckViolations: List[Violation],
+  diagnostics: List[String],
+  fingerprints: Option[TransformationFingerprint],
+  job: JobInfo,
+  timestamp: Long,
+  metadata: Map[String, Any]
+) extends NotificationEvent {
+  val eventType: String = "CONTRACT_INFERENCE"
+}
+
+/** Published once per application, at application end, by `DryRunReporter`:
+  * how many writes landed in each `InferenceStatus`, plus every draft inferred
+  * during the run merged (`ContractDraftMerger`) into one contract.
+  *
+  * `mergeStatus` is `"MERGED"` (`mergedContractYaml` present), `"CONFLICT"`
+  * (two drafts disagreed about one location's schema - `mergeConflicts` says
+  * which, and no contract is guessed at) or `"NO_DRAFTS"`. A job that wrote
+  * nothing Invaract recognized reports `NoWritesObserved` here, which is the
+  * only way that outcome is ever visible: no per-write event exists for it.
+  */
+case class DryRunSummaryEvent(
+  statusCounts: Map[String, Long],
+  mergeStatus: String,
+  mergedContractYaml: Option[String],
+  mergeConflicts: List[String],
+  job: JobInfo,
+  timestamp: Long,
+  metadata: Map[String, Any]
+) extends NotificationEvent {
+  val eventType: String = "DRY_RUN_SUMMARY"
 }

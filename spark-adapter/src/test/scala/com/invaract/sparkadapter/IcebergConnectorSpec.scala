@@ -1615,4 +1615,53 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
 
     assert(spark.table(sinkTable).count() == 5)
   }
+
+  // Dry-run reporting (DryRunReporter) against real Iceberg plans: the two write-shaped
+  // plans plain dry-run inference never surfaced - a state-changing CALL it skips, and
+  // row-level DML it infers from only weakly.
+
+  test("dry-run reporting: a state-changing CALL is reported SKIPPED_UNSUPPORTED instead of silently ignored") {
+    val tableName = "local.db.dryrun_call_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+    val firstSnapshotId =
+      spark.sql(s"SELECT snapshot_id FROM $tableName.snapshots ORDER BY committed_at").collect().head.getLong(0)
+    spark.range(5, 10).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    capturedPlans.clear()
+    spark.sql(s"CALL local.system.rollback_to_snapshot('db.dryrun_call_tbl', $firstSnapshotId)").collect()
+    val callPlan = capturedPlans.toList.find(p => StateChangingCallSupport.extract(p).isDefined)
+      .getOrElse(fail("the CALL's analyzed plan was never captured"))
+
+    val sink = new com.invaract.sparkadapter.notification.TestNotificationSink
+    val reporter = new DryRunReporter(sink, com.invaract.sparkadapter.notification.JobInfo(), VerificationOptions())
+    reporter.check(callPlan)
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractInferenceEvent => e }
+    assert(events.size == 1)
+    assert(events.head.status == com.invaract.sparkadapter.notification.InferenceStatus.SkippedUnsupported)
+    assert(events.head.reason.exists(_.contains("rollback_to_snapshot")))
+    assert(events.head.contractYaml.isEmpty)
+  }
+
+  test("dry-run reporting: row-level DML is inferred but flagged INFERRED_DEGRADED") {
+    val tableName = "local.db.dryrun_dml_tbl"
+    spark.sql(s"CREATE TABLE $tableName (id BIGINT, doubled BIGINT) USING iceberg")
+    spark.range(5).withColumn("doubled", col("id") * 2).writeTo(tableName).append()
+
+    capturedPlans.clear()
+    spark.sql(s"DELETE FROM $tableName WHERE id = 1")
+    val dmlPlan = capturedPlans.toList.find(p => RowMutationSupport.classify(p).isDefined)
+      .getOrElse(fail("the DELETE's analyzed plan was never captured"))
+
+    val sink = new com.invaract.sparkadapter.notification.TestNotificationSink
+    val reporter = new DryRunReporter(sink, com.invaract.sparkadapter.notification.JobInfo(), VerificationOptions())
+    reporter.check(dmlPlan)
+
+    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractInferenceEvent => e }
+    assert(events.size == 1)
+    assert(events.head.status == com.invaract.sparkadapter.notification.InferenceStatus.InferredDegraded)
+    assert(events.head.diagnostics.exists(_.contains("row-level DML")))
+    assert(events.head.contractYaml.exists(_.contains("dryrun_dml_tbl")))
+  }
 }

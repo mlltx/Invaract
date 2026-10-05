@@ -1204,9 +1204,188 @@ match on customer_id" from watching one execution, the way `RuleType`'s
 vocabulary expresses it. Every inferred field is marked `required: true`
 (it genuinely was present in this run) with `nullable` taken directly from
 Spark's own tracked nullability, not guessed. Row-level DML (MERGE/UPDATE/
-DELETE) is out of scope for the same reason `WriteCommandInfo`'s DML cases
-already document: those operations have no single "new output" to build a
-dataset schema from.
+DELETE) is inferred only weakly, for the reason `WriteCommandInfo`'s DML
+cases already document: those operations have no single "new output" to
+build a dataset schema from, so the draft describes the target's *current*
+schema and none of the operation's own logic. (An earlier version of this
+section, and of `dryRun`'s doc, said DML was excluded outright. It is not:
+`WriteCommandSupport.combined` includes the DML cases, so `inferOrIgnore`
+has always inferred from them - confirmed by a real Iceberg `DELETE` in
+`IcebergConnectorSpec`. `DryRunReporter` below flags such a draft
+`INFERRED_DEGRADED` rather than the exclusion that was documented.)
+
+### Reporting dry-run results to a sink (`DryRunReporter`)
+
+`dryRun(onInferred)` hands a callback each inferred contract and is silent
+about everything else. That is enough to look at one job, and not enough to
+migrate many: a platform team wants the successful drafts collected, and
+wants to know *why* the others weren't - a job whose only write Invaract
+skipped looks exactly like a job with no write at all. `DryRunReporter`
+(`DryRunReporter.scala`) is the reporting counterpart. With
+`spark.invaract.dryRun=true` **and** `spark.invaract.notifyConfig` set,
+`InvaractSparkSessionExtension` installs it instead of the log-only callback
+(no `notifyConfig` keeps the old behavior exactly). It publishes through the
+same `NotificationSink` machinery enforcement does (see "Notification sinks"),
+so every built-in sink, `FanOutNotificationSink` and a custom one work
+unchanged.
+
+**Two events.**
+
+- `ContractInferenceEvent`, one per write-shaped plan: `status`, `reason`,
+  `writeLocation`, `contractYaml` (`ContractParser.write`'s rendering of the
+  draft), `selfCheck`/`selfCheckViolations`, `diagnostics`, `fingerprints`,
+  and `job` (`JobInfo`).
+- `DryRunSummaryEvent`, once, from a `SparkListener.onApplicationEnd`: a
+  count per status, and every draft merged by `ContractDraftMerger`
+  (`mergeStatus` `MERGED`/`CONFLICT`/`NO_DRAFTS`; a schema disagreement is
+  reported, never resolved by guessing). That listener is also where the sink
+  is `flush`ed.
+
+**Statuses** (`InferenceStatus`). The classification mirrors what
+`verifyOrThrow` does with the same plan, in the same order, by reusing its
+predicates (`ContractEnforcementRule.inferOutcome` is the structured form
+`inferOrIgnore` flattens), so a plan enforcement would block is a plan dry-run
+reports:
+
+- `INFERRED` / `INFERRED_DEGRADED` - a recognized write. Degraded means:
+  an unresolved `.checkpoint()`/cache boundary (a `CheckpointRegistry.BoundarySourceTypes`
+  `UnknownPlan` left in the translation), a `CheckpointResolution` diagnostic
+  (resolution picked among candidates), a `WriteCommandInfo.diagnostic`, or
+  row-level DML. Deliberately **not** degraded: an IR node Invaract merely has
+  no translation for (`Range`, a UDF). A draft's inputs and schemas come from
+  the Catalyst plan, not the IR, so such a node does not make them less
+  trustworthy - found the hard way: a first version flagged any translation
+  diagnostic, which marked every `spark.range(...)` write degraded and would
+  have made `INFERRED` unreachable for most real jobs.
+- `SKIPPED_UNSUPPORTED` - `StateChangingCallSupport.extract` matched (a
+  procedure CALL has no output schema to infer from).
+- `SKIPPED_UNRECOGNIZED` - a `Command` that is neither a recognized write nor
+  `FailClosedCommands.isKnownSafe`: exactly what enforcement rejects as
+  `UNVERIFIABLE_WRITE`, so it is the status that blocks turning enforcement on.
+- `INFERENCE_ERROR` - anything in inference, classification, self-check,
+  fingerprinting or rendering threw (including a `StackOverflowError` on a
+  pathologically deep plan). One failure boundary wraps all of it: dry-run
+  must never fail the job's query. (The older `dryRun(onInferred)` path does
+  not have this boundary; a throwing callback still propagates.)
+- `NO_WRITES_OBSERVED` - summary only.
+
+**The self-check.** Each draft is verified with `StructuralVerifier.verify`
+against the plan it came from, under `resolveVerificationOptions(VerificationOptions(), session)` -
+the job's own `spark.invaract.*` conf, so `PASSED` means "would pass as
+configured". `ContractValidator` runs first (`INVALID`); an exception in the
+check is `ERROR`, with the cause in `diagnostics`. It is its own field, not
+folded into `status`: a draft that fails its own write is still worth
+publishing, for a human to look at.
+
+**Deduplication.** `injectCheckRule` fires per analyzed plan, so one logical
+write can arrive repeatedly (see `dryRun`'s doc on atomic CTAS). A draft is
+keyed by its rendered YAML, a skip by `(status, reason)`; each is published
+and counted once per reporter. The key is the whole YAML rather than the
+output location so two genuinely different drafts for one location both
+reach the merge, which then reports the conflict instead of one silently
+winning.
+
+**Job identity.** `JobInfo` carries the application id, app name, Spark
+version, master, deploy mode, user and start time, plus `jobId`
+(`spark.invaract.jobId`) and `attributes` (every
+`spark.invaract.job.metadata.<key>`, prefix stripped). `jobId` exists because
+`spark.app.name` is often unique per run under a scheduler, so cannot say
+"the same job as last night"; the fingerprint identifies the transformation
+itself. Metadata is allowlist-by-prefix on purpose - the whole `SparkConf`
+holds credentials. The merged contract's id is the job id (else the app
+name), sanitized for `ContractValidator`'s id rule.
+
+**Contract metadata versus run metadata.** `spark.invaract.contract.metadata.<key>` is
+attached to every inferred draft's `extensions` (`DryRunReporter.reportInferred` tags the
+draft before it is rendered, self-checked or merged, so all three see one contract) and
+echoed as each event's `metadata`; `ContractInference.infer` itself still returns
+`extensions = Map.empty`, since it has no configuration to read. `spark.invaract.job.metadata.*`
+stays on `job.attributes` only. The split is deliberate: `Contract.extensions` is the bag a
+hand-written contract keeps its owner/team/source system in, and enforcement already copies it
+into `ContractValidationEvent.metadata`/`WriteEvent.metadata`, so tagging the draft means the
+same keys reappear on the events of the real runs after promotion - one set of keys links a
+dry run to what follows. A run id, by contrast, would be stale in a contract the next night.
+(An earlier version of this section echoed `job.attributes` as `metadata`; that conflated the
+two.)
+
+**Delivery.** `NotificationSink.flush(timeoutMs)` (a default no-op, so
+existing sinks are unaffected) exists because `HttpNotificationSink` sends
+with `sendAsync`: a job ending right after its last `publish` could lose that
+request. `HttpNotificationSink` tracks its in-flight requests and `flush`
+waits for them, bounded (`DryRunReporter.FlushTimeoutMs`, 10s - this runs on
+Spark's listener thread during shutdown and must not be able to hang it).
+Every wrapper sink delegates `flush`. `HttpNotificationSink` also gained
+`sink.property.header.<Name>` and `sink.property.bearerTokenEnv` (the token
+is read from the environment, never from the properties file; an unset
+variable or a malformed header name fails at setup rather than sending
+unauthenticated requests forever).
+
+**Configuration failure never fails a dry-run job.** Enforcement mode treats a
+`notifyConfig` that cannot be loaded (a missing file, a typo'd `sink.class`, a sink
+rejecting its own properties) as a real misconfiguration and fails loudly at setup,
+which is right when a contract is gating writes. Dry-run's promise is that it is safe
+to attach to a job nobody here owns, so `InvaractSparkSessionExtension.dryRunSink`
+catches the same failure, logs one WARN naming the cause, and falls back to the
+log-only behavior. Found by asking "what could a first-time user's typo do to a prod
+job" of the original implementation, which would have propagated the exception out of
+session construction.
+
+**The event envelope.** `NotificationJson.toJson` adds, to every event type,
+`schemaVersion` (`NotificationJson.SchemaVersion`, currently 1) and `eventId`. Both are
+added at the JSON layer, not as case-class fields, so the event classes - and
+MiMa - are untouched. `eventId` is the SHA-256 of the event's content rendered with
+every object's keys sorted (so it does not depend on `Map` iteration order, which is
+insertion order for up to four entries and hash order beyond), which makes it
+deterministic: a retry or a dead-letter replay of an event carries the same id, and a
+receiver can deduplicate on it. `timestamp` is part of the content, so two distinct
+events do not collide. `ContractInferenceEvent` additionally renders `contractDigest`
+and `DryRunSummaryEvent` `mergedContractDigest` (SHA-256 of the YAML), so identical
+drafts are recognizable without diffing YAML. `schemaVersion` bumps only for a change
+that could break a receiver that ignores unknown fields: a removed or renamed field or
+a changed type. A new field or a new `status` value does not.
+
+**The JSON Schema.** `docs-site/public/schemas/notification/v1/event.schema.json`
+(draft 2020-12, published on the docs site) describes every event; the files in
+`.../v1/examples/` are real events from real runs. Unlike `demo/output/report.json`,
+this one *is* something external consumers bind to, which is why it is versioned and
+tested rather than documented in prose. Two checkers, deliberately different:
+
+- **JVM** (`EventSchema.scala`, tests): a small validator over the keyword subset the
+  schema uses. It throws on any validation keyword it does not implement, so the schema
+  cannot gain a constraint it would silently skip. `TestNotificationSink.publish`
+  validates every event it receives against the schema, so the entire existing suite -
+  real writes, real checks, real dry-run runs - doubles as a test that the schema
+  describes what the engine really emits. It is hand-written because this module's
+  Jackson versions are pinned together with Spark's (see `build.sbt`'s
+  `dependencyOverrides`), and a JSON Schema library brings Jackson modules of its own
+  into that pinning.
+- **Docs build** (`docs-site/scripts/check-schemas.mjs`, run as `prebuild`): Ajv, a real
+  implementation of the specification, in strict mode, compiles the schema and validates
+  every example as the event type it claims to be, and fails if an event type has no
+  example. That is the second opinion that the schema means what the JVM checker thinks.
+
+**Retry and dead letter in `HttpNotificationSink`.** Previously a failed request was
+logged and the event was gone. Now each event is a chain of attempts: a failure that
+another try could fix (a connection failure or timeout, `408`, `429`, `5xx`) is retried
+after a capped exponential backoff (`retry.*`, default 3 attempts), using
+`CompletableFuture.delayedExecutor` so no thread is held and the caller is never
+blocked; any other non-2xx is a refusal and goes straight to the dead letter. An event
+that is given up on is handed to `deadLetter.path`'s sink: `FileNotificationSink` for a
+plain path, `HadoopFsNotificationSink` for a `scheme://` one (`deadLetter.*` is passed
+through with the prefix stripped, so Hadoop keys work). `flush` waits on the whole
+chain, and an event still unfinished when its time runs out is handed to the dead
+letter immediately and marked abandoned so its late completion neither retries nor
+hands it over twice - the JVM is about to exit and would otherwise take it along. The
+cost is that an event can, rarely, be both delivered and dead-lettered; delivery is
+at-least-once, which `eventId` exists to absorb. `RetryingNotificationSink` remains for
+code that wants to compose its own sinks; it could not be reached from a properties
+file, which is the gap this closes.
+
+**Not done, deliberately.** Redaction of locations/schemas in events (they
+leave the cluster; a hashing knob is a follow-up). Retrying a failed HTTP
+delivery beyond what `RetryingNotificationSink` already offers around it. A
+reporter per `SparkSession`: a job that creates child sessions publishes one
+summary per session.
 
 **A real bug this caught.** The first implementation inferred a write's
 raw `WriteCommandInfo.location` verbatim — for a local path, that includes
@@ -2862,7 +3041,7 @@ overhead. The two levers above reduced wasted time around that core cost
 #### Sharding `spark-adapter`'s whole-module run
 
 The bottleneck named above was addressed directly by splitting
-`mutation-testing-spark-adapter` itself into a 5-way matrix job
+`mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 now — see "Runner memory and runner loss" below)
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
 scoped to a fixed subset of the module's source files (30 as of
 `RoleConsistencyVerifier`, added to shard-4 — the shard smallest by line
@@ -2932,6 +3111,155 @@ entire job from scratch. Now each shard is an independent job with
 this section used to claim — see the measurements above), so a transient
 failure in one shard doesn't cancel the others, and GitHub's "re-run
 failed jobs" only has to redo the one shard that actually failed.
+
+#### `StructuralVerifier` internals: schema checking, location matching, plan facts
+
+`StructuralVerifier.verify` is the entry point; three helpers carry the logic that used to
+be inline, each with its own spec:
+
+- **`SchemaChecker`** compares a declared schema with the actual `StructType`. Names are
+  matched by the session's `spark.sql.caseSensitive` (`ContractEnforcementRule` reads
+  `SQLConf.get.caseSensitiveAnalysis` per check and passes it down; `verify`'s own default is
+  Spark's, `false`). Types are compared structurally where the contract says more than a
+  keyword: a field's `properties` recurse into the actual struct (findings carry the dotted
+  path), and a type written as Spark DDL (`array<int>`, `map<string,long>`,
+  `struct<a:int>`) is parsed with `DataType.fromDDL` and compared ignoring inner nullability.
+  A bare `array`/`map`/`struct` keeps its shallow meaning. Before this, only
+  `DataType.typeName` was compared — `array` for every array — so a changed element type
+  passed. See docs-site's contract-format reference for the user-facing rules.
+- **`LocationMatching` / `LocationIndex`** hold the one definition of "declared location
+  matches actual location" (normalize both sides, then equal or `/`-boundary suffix) and an
+  index that buckets declared locations by their last path segment, so each question is a
+  lookup instead of a scan. `verify` used to normalize and test every declared input against
+  every read in four separate loops (missing, undeclared, schema, catalog) — quadratic in
+  contract size × plan size. Measured on one machine with a replica of the old loops: 3,000
+  declared inputs and 3,000 reads, ~1.1 s of matching per checked write before, ~24 ms for the
+  whole of `verify` after (200 inputs: 13 ms vs 6 ms). The matching *rule* is unchanged;
+  `LocationMatchingSpec` checks the index against the old rule on thousands of generated paths.
+- **`PlanFacts`** gathers an `ir.Plan`'s reads, unknown nodes, aggregates, joins and
+  filters in one iterative pre-order pass. `ContractEnforcementRule` builds one per checked
+  write and hands it to `StructuralVerifier`, `PlanRuleVerifier` (previously one full walk
+  per declared rule), `StaticDataQualityVerifier` and `RoleConsistencyVerifier`. Order is the
+  same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
+
+Not changed here: `ContractInference` (dry-run only) still matches observed qualifiers to
+inferred inputs with the linear `matchesAny`, and `Lineage.trace` (in `ir`) walks the plan
+itself.
+
+The single-output rule is deliberate: a contract with one declared output checks a write
+against it whatever the write's location (`expectedOutputFor`), so a mistyped location comes
+back with every finding at once. It used to be justified only by a connector test that declared
+a location which never matched; that test now declares its table's real location and the rule is
+pinned in `StructuralVerifierSpec`.
+
+#### Experiment: mutation-testing `StructuralVerifier` against its own spec only
+
+`StructuralVerifier.scala` was the longest mutation shard (93 min in CI). Stryker4s runs, for
+each mutant, the tests that cover it — and a mutant in `verify` is reached by most of the
+integration suites (real Delta/Iceberg/Hive sessions, minutes each). Stryker4s 1.1.1 has a
+`--test-filter` option ("a glob expression of tests to run"; found in the plugin's own CLI
+options, the docs site being unreachable from the dev environment), so the same file was
+mutated with only `StructuralVerifierSpec` selected, on identical code, 3 runners, same machine:
+
+| | tests run per mutant | wall-clock | mutants killed |
+|---|---|---|---|
+| all tests (the CI default) | whole suite | 72 min (4,325 s) | 68 / 68 (100%) |
+| `--test-filter *StructuralVerifierSpec` | the unit spec only | 3 min (175 s) | 66 / 68 (97.1%) |
+
+The two the unit spec does not kill: a performance shortcut that is semantically equivalent
+(`scopedInputs eq contract.inputs`, which the full run only "kills" by timeout) and
+`matchesAny`, a helper `ContractInference` uses and `ContractInferenceSpec` tests. So for this
+file the unit spec is within three points of the whole suite at about 1/25th of the cost. A
+filtered run can only score lower than a full one (a mutant killed solely by an integration suite
+survives), which makes it the stricter test of the *unit* suite — and the first filtered run, before
+any test was added, scored 86.8% and named seven real gaps in code written the same day (tie-breaks
+among several matching schemas/reads, the `derivedFrom` remediation wording, the single- vs
+multi-output location-mismatch wording), now covered. It was not measured which of those seven the
+integration suites would also have killed.
+
+Not adopted in CI yet: it changes what the gate means for the file (integration suites would stop
+protecting `StructuralVerifier` from mutants), and each file needs its own spec mapping and the same
+check. See the findings table in PR #92.
+
+#### Runner memory and runner loss
+
+Five of the twelve most recent `main` runs before this change had at least one
+mutation shard die with GitHub's "The runner has received a shutdown signal"
+(the job ends `failure`, with the single annotation "The operation was
+canceled." — a real test failure instead ends "Process completed with exit
+code 1."). It was not a flaky test: running the old shard-3 file set locally on
+a 4 vCPU / 16 GB machine (the same as `ubuntu-latest`) with the same
+`--concurrency 4` reproduced it, with 14 GB in use and kernel OOM kills.
+
+What the memory was: Stryker4s keeps `--concurrency` Spark test JVMs alive
+at once, and every one of them was sitting at the JVM defaults — a heap sized
+at a quarter of the machine's RAM (~4 GB) and G1's many GC threads — which a
+Spark `local[*]` session happily fills. Run alone, each suite measured:
+
+| Suite (run alone) | resident, defaults | resident, capped heap + `SerialGC` |
+|---|---|---|
+| `HiveConnectorSpec` | 4.8 GB (95th percentile) | 0.86 GB |
+| `ContractEnforcementRuleSpec` | 3.4 GB | 1.25 GB |
+| `SparkAdapterListenerSpec` | 3.5-4.5 GB | 0.66 GB |
+| `SparkPlanAdapterSpec` | 4.2 GB | 0.55 GB |
+| `IcebergConnectorSpec` | 3.8 GB | 0.71 GB |
+
+(Capped columns: `-Xmx1536m -XX:+UseSerialGC` for Hive, `ContractEnforcementRuleSpec` and `SparkAdapterListenerSpec`; the same two plus `-Xss512k` and metaspace, code-cache and direct-memory limits for `SparkPlanAdapterSpec` and `IcebergConnectorSpec` — the extra limits made no measurable difference where both variants were run, so only the two flags were kept. Thread counts roughly halved too, from 330-600 to ~290.) The heaviest suites
+were Hive, Iceberg, `ContractEnforcementRuleSpec`, `SparkAdapterListenerSpec`,
+`SparkPlanAdapterSpec` and the fuzz suite — **not** ClickHouse, which peaked
+around 1.2 GB — so the fix is on the test JVM as a whole rather than on any
+one suite. `build.sbt` now sets `-Xmx1g -XX:+UseSerialGC` in
+`Test / javaOptions`; the full 986-test suite passes under it in ~5 minutes.
+
+That was necessary but not sufficient: a real Stryker run still leaves about
+1 GB per test JVM outside the heap (class metadata, thread stacks, native
+buffers), so four of them plus sbt's own JVM peaked at ~10 GB with the cap in
+place (and ~11.6 GB with a 1.5 GB cap), against ~14 GB without. The whole-module
+mutation job therefore also runs at `--concurrency 2` (~6 GB peak, measured the
+same way) split across 10 shards instead of 5. A local 15-minute comparison on one shard suggested
+4 and 2 runners test mutants at about the same rate, but the first CI run showed
+that was too optimistic: the ten shards summed to ~505 runner-minutes against
+~360 for the old five at `--concurrency 4` (about 1.4x the compute), plus five
+more runners' worth of checkout/Spark download/`publishLocal` setup.
+
+First CI run of the 10-way split (PR #92, all green, no runner lost), with the
+line-count assignment: shard-1 (`StructuralVerifier` alone) 93 min, shard-4 85,
+shard-10 69, shard-2 (`WriteCommandSupport` alone) 63, shard-6 51, shard-8 45,
+shard-9 37, shard-3 22, shard-5 and shard-7 20 each; the incremental PR check 82.
+`memwatch` on shard-1 reported a peak of 6.85 GB used (9.1 GB still available),
+5.9 GB of it in Java processes, 694 threads — the ~6 GB the local measurement
+predicted, against ~14 GB and a lost runner before.
+
+The files were then reassigned from those times. Only shard totals are measured,
+so per-file costs were estimated: the new run's ten shard times and the two
+earlier `main` runs' times for the old five-way grouping (scaled by 1.35 for
+the concurrency change) were fitted to per-file costs by non-negative least
+squares, with line count as a weak prior. The ranking was stable when that scale
+was varied between 1.2 and 1.5: `StructuralVerifier` (~90 min), `WriteCommandSupport`
+(~63), `ContractEnforcementRule` (~50) and `SparkPlanAdapter` (~48) now each sit in
+their own shard, and the other 30 files are packed into six shards of ~41-43 min.
+Since `StructuralVerifier` alone is ~90 min, the wall-clock floor is unchanged;
+rebalancing evens out runner usage and lowers the chance one long shard is the
+only thing left running, but it does not shorten the run. Splitting
+`StructuralVerifier` itself (Stryker4s accepts a line range after the file
+name) is the lever that would, and `mutation-shard-drift-check` would need to
+learn that a file may then appear in more than one shard. Re-fit from the next
+run's shard times.
+
+Two guardrails make a future loss cheaper to diagnose and recover from:
+
+- `.github/scripts/memwatch.sh` wraps every `sbt stryker` invocation and prints a
+  `[memwatch]` line every 30 s (memory in use/available, swap, load, Java
+  process count, resident memory and threads, free disk, the three biggest
+  processes) into the live job log, plus a peak summary at the end. It streams
+  rather than writes a file for a later step because a killed runner never runs
+  later steps; the last lines before the kill are still in the log.
+- `.github/workflows/rerun-on-runner-loss.yml` re-runs the failed jobs of a
+  finished "Test and Build" run, once, only when every failed job (besides the
+  "Test Summary" gate) shows the runner-loss signature and none shows a real
+  step failure — classified by `.github/scripts/runner_loss.py`, which has unit
+  tests run by the `workflow-scripts` CI job. A `workflow_run` workflow only
+  takes effect from the default branch, so this one starts working once merged.
 
 #### Mutation testing: the expression-algebra rework
 

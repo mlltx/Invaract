@@ -4,12 +4,14 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
+import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory}
 import com.invaract.sparkadapter.registry.ContractSource
 
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.slf4j.LoggerFactory
+
+import scala.util.control.NonFatal
 
 /** Installs Invaract with **no code at all** in the job it's attached to —
   * only `spark-submit --conf`:
@@ -83,10 +85,36 @@ object InvaractSparkSessionExtension {
     */
   val NotifyConfigConfKey = "spark.invaract.notifyConfig"
 
+  /** In dry-run mode, `NotifyConfigConfKey` takes on a second meaning: the sink receives a
+    * `ContractInferenceEvent` per write and a `DryRunSummaryEvent` at application end
+    * instead of the enforcement-mode events (see [[DryRunReporter]]). These two keys
+    * describe the job in those events: `JobIdConfKey` is its stable identity across runs
+    * and every `JobMetadataConfPrefix` entry rides along as an attribute.
+    */
+  val JobIdConfKey: String = DryRunReporter.JobIdConfKey
+  val JobMetadataConfPrefix: String = DryRunReporter.JobMetadataConfPrefix
+
+  /** Also in dry-run mode: `spark.invaract.contract.metadata.<key>=<value>` is attached to every
+    * inferred draft's `extensions` (and echoed as each event's `metadata`), so a draft arrives
+    * already tagged with what it is and who owns it, and - because enforcement copies a contract's
+    * `extensions` into its own events - the same keys later link those events back to the dry run.
+    * `JobMetadataConfPrefix` entries, by contrast, describe one run and stay out of the contract.
+    */
+  val ContractMetadataConfPrefix: String = DryRunReporter.ContractMetadataConfPrefix
+
   private[sparkadapter] def checkRuleFor: SparkSession => LogicalPlan => Unit =
     session => {
       if (session.conf.getOption(DryRunConfKey).exists(_.toBoolean)) {
-        ContractEnforcementRule.dryRun(logInferredContract)(session)
+        // A configured sink turns dry-run into reporting mode (DryRunReporter): every
+        // write-shaped plan, inferred or not, is published, plus one summary at application
+        // end. With no sink it stays the log-only behavior it always was.
+        dryRunSink(session) match {
+          case Some(sink) =>
+            val reporter = DryRunReporter.installFor(session, sink)
+            (plan: LogicalPlan) => reporter.check(plan)
+          case None =>
+            ContractEnforcementRule.dryRun(logInferredContract)(session)
+        }
       } else {
         val contractPath = session.conf.getOption(ContractConfKey).getOrElse(
           throw new IllegalStateException(
@@ -105,6 +133,27 @@ object InvaractSparkSessionExtension {
           case None =>
             ContractEnforcementRule.forContract(contract)(session)
         }
+      }
+    }
+
+  /** The sink dry-run mode should report to, or `None` for the log-only behavior.
+    *
+    * Unlike enforcement mode - where a `notifyConfig` that cannot be loaded is a real
+    * misconfiguration worth failing the job over - dry-run's whole promise is that it
+    * is safe to attach to a job nobody here owns. A missing file, an unreadable one, or
+    * a typo'd `sink.class` therefore costs one WARN and a fallback to logging the
+    * inferred contract, never the job itself. (Enforcement mode keeps failing loudly.)
+    */
+  private[sparkadapter] def dryRunSink(session: SparkSession): Option[NotificationSink] =
+    session.conf.getOption(NotifyConfigConfKey).flatMap { path =>
+      try NotificationSinkFactory.create(NotificationConfig.load(path))
+      catch {
+        case NonFatal(e) =>
+          logger.warn(
+            s"Invaract dry-run mode: could not set up the notification sink named by '$NotifyConfigConfKey=$path' " +
+              s"($e); falling back to logging inferred contracts. The job is not affected."
+          )
+          None
       }
     }
 

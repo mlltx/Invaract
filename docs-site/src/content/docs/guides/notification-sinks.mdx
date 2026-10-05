@@ -74,17 +74,122 @@ Code](/guides/calling-invaract-explicitly/#wire-a-notification-sink).
 
 ## What an event looks like
 
-Both event types are plain JSON. A `ContractValidationEvent`, from a passing check:
+Every event is one JSON object, and its `eventType` says which. These are real events,
+copied from real runs; they are published as files next to the
+[JSON Schema](#validate-events-and-build-an-endpoint-to-receive-them). A
+`ContractValidationEvent` (`CONTRACT_VALIDATION`), from a passing check:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1735689600000, "contract": "invaract_demo_output@1.0.0", "status": "PASSED", "violations": [], "metadata": {}, "applicationId": "local-1735689599000", "fingerprints": null, "dataQuality": [], "roleConformance": [], "unverifiableInputs": []}
+{
+  "eventType": "CONTRACT_VALIDATION",
+  "timestamp": 1791068443057,
+  "applicationId": "local-1791068436169",
+  "unverifiableInputs": [],
+  "eventId": "7b0fe8272d75fe85301c355d214220e6b10ca9032c0f21f40b456d2f7c62f940",
+  "fingerprints": null,
+  "status": "PASSED",
+  "metadata": {
+    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "owner": "invaract-demo"
+  },
+  "violations": [],
+  "schemaVersion": 1,
+  "roleConformance": [],
+  "dataQuality": [],
+  "contract": "invaract_demo_output@1.0.0"
+}
 ```
 
-...and a `WriteEvent`, once the write completes:
+A failed check carries its violations (this one is from the regression pack, which
+deliberately breaks a contract):
 
 ```json
-{"eventType": "WRITE", "timestamp": 1735689600120, "contract": "invaract_demo_output@1.0.0", "location": "file:/demo/output/result.parquet", "format": "parquet", "saveMode": "overwrite", "operation": null, "schema": [{"name": "id", "type": "long", "nullable": true}], "metadata": {}, "durationMs": 342, "rowCount": 10, "bytesWritten": 1024, "fileCount": 1, "applicationId": "local-1735689599000", "deltaVersion": null, "icebergSnapshotId": null, "catalog": null, "partitionColumns": [], "datasetType": null}
+{
+  "eventType": "CONTRACT_VALIDATION",
+  "timestamp": 1791068923606,
+  "applicationId": "local-1791068917299",
+  "unverifiableInputs": [],
+  "eventId": "de1cb5da9ff70da2846108b7a6c2b921f5d72d7975c9cdfe82a50758ea5825cb",
+  "fingerprints": null,
+  "status": "FAILED",
+  "metadata": {
+    "description": "{purpose=A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n}",
+    "owner": "invaract-demo"
+  },
+  "violations": [
+    {
+      "type": "MISSING_OUTPUT_FIELD",
+      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
+      "column": "customer_name"
+    }
+  ],
+  "schemaVersion": 1,
+  "roleConformance": [],
+  "dataQuality": [],
+  "contract": "invaract_demo_output@1.0.0"
+}
 ```
+
+...and a `WriteEvent` (`WRITE`), once the write completes:
+
+```json
+{
+  "format": "parquet",
+  "icebergSnapshotId": null,
+  "eventType": "WRITE",
+  "catalog": null,
+  "location": "file:/home/user/Invaract/demo/output/result.parquet",
+  "timestamp": 1791068443839,
+  "rowCount": 10,
+  "bytesWritten": 1324,
+  "applicationId": "local-1791068436169",
+  "eventId": "450619958edd30ec5232f4fc1e15c47fbc59dbe75ea6ee067e8077fd472298cc",
+  "operation": null,
+  "partitionColumns": [],
+  "schema": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value_squared",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value_tier",
+      "type": "string",
+      "nullable": false
+    }
+  ],
+  "fileCount": 1,
+  "durationMs": 769,
+  "deltaVersion": null,
+  "metadata": {
+    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "owner": "invaract-demo"
+  },
+  "saveMode": "overwrite",
+  "schemaVersion": 1,
+  "contract": "invaract_demo_output@1.0.0",
+  "datasetType": null
+}
+```
+
+Dry-run mode, when pointed at a sink, publishes two more event types
+(`CONTRACT_INFERENCE` and `DRY_RUN_SUMMARY`) — see
+[Infer a Starting Contract with Dry-Run Mode](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs).
+
+On the dry-run events, `metadata` is the draft's `extensions`, which come from
+`spark.invaract.contract.metadata.*`; once a draft is promoted, the enforcement events below
+carry the same keys. See [Tag the draft, and link events back to the run](/guides/dry-run-mode/#tag-the-draft-and-link-events-back-to-the-run).
 
 `metadata` is copied verbatim from your contract's own `extensions:` block — see
 [Contract Format](/reference/contract-format/) — so anything you've already recorded
@@ -204,6 +309,118 @@ error), so `operation` is the field that tells them apart:
 {"...": "...", "saveMode": null, "operation": "delete"}
 ```
 
+## Fields on every event
+
+Every event, of every type, carries three common fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | The version of this JSON shape: currently `1`. A new field, or a new `status` value, does **not** change it, so ignore fields you don't know. Only a removed or renamed field, or a changed type, would. |
+| `eventId` | The SHA-256 of the event's own content, as 64 hex characters. It is **deterministic**: sending the same event again (a retry, or a replay from a [dead-letter file](#delivery-retries-the-dead-letter-and-duplicates)) gives the same `eventId`, so deduplicate on it. |
+| `timestamp` | Milliseconds since the Unix epoch, when the event was created. |
+
+## Validate events and build an endpoint to receive them
+
+A JSON Schema covering every event type is published at:
+
+```
+https://mlltx.github.io/Invaract/schemas/notification/v1/event.schema.json
+```
+
+It is one file (JSON Schema 2020-12). Validate any event against it, or point at a single
+definition, such as `event.schema.json#/$defs/ContractInferenceEvent`, to generate types
+in your language. Real example events, one per event type, sit beside it under
+`schemas/notification/v1/examples/`. Both are checked on every change: the engine's own
+test suite validates every event it sees against the schema, and the docs build validates
+the schema and the examples with [Ajv](https://ajv.js.org/).
+
+### What your endpoint has to do
+
+`HttpNotificationSink` sends one event per request: a `POST` to your URL, with
+`Content-Type: application/json`, the body being the event, plus any
+`sink.property.header.*` headers you configured.
+
+| Your endpoint answers | What Invaract does |
+| --- | --- |
+| `2xx` | The event is delivered. |
+| `408`, `429`, any `5xx`, a connection failure or a timeout | Retries with backoff (three attempts by default), then saves it to the [dead letter](#delivery-retries-the-dead-letter-and-duplicates). |
+| Any other status (`400`, `401`, `403`, `404`, `422`, ...) | Treats it as a refusal that retrying cannot fix: no retry, saved to the dead letter at once. |
+
+Beyond the status codes:
+
+- **Answer quickly.** The default request timeout is five seconds (`sink.property.timeoutMs`).
+  Accept the event, then do any slow work afterwards.
+- **Deduplicate on `eventId`.** Delivery is at-least-once, so the same event can arrive twice.
+- **Ignore fields you don't know, and expect new `status` values.** Switch on `eventType`.
+- **Don't assume ordering.** Events from many jobs arrive concurrently; order by `timestamp`.
+
+### A complete minimal receiver
+
+This Python receiver (standard library only) refuses what isn't an Invaract event, accepts
+what is, and prints each event once:
+
+```python
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+seen = set()  # eventIds already handled; use a real store in production
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        try:
+            event = json.loads(body)
+            event_id = event["eventId"]
+            event_type = event["eventType"]
+        except (ValueError, KeyError, TypeError):
+            self.send_response(400)  # a refusal: Invaract will not retry it
+            self.end_headers()
+            return
+        if event_id not in seen:
+            seen.add(event_id)
+            print(event_type, event.get("status", ""), event_id[:12], flush=True)
+        self.send_response(200)  # also for a duplicate: it was already handled
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+HTTPServer(("", int(sys.argv[1]) if len(sys.argv) > 1 else 8080), Handler).serve_forever()
+```
+
+Run it, then point the sink at it with `sink.property.url=http://localhost:8080/events`.
+
+### Describing the endpoint in OpenAPI
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Invaract event receiver
+  version: 1.0.0
+paths:
+  /events:
+    post:
+      summary: Receive one Invaract notification event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: https://mlltx.github.io/Invaract/schemas/notification/v1/event.schema.json
+      responses:
+        '2XX':
+          description: Accepted. Answer this for a duplicate as well.
+        '429':
+          description: Slow down. Invaract retries with backoff.
+        '5XX':
+          description: Try again later. Invaract retries with backoff.
+        '4XX':
+          description: Refused. Invaract does not retry; the event is saved to its dead letter.
+```
+
 ## Built-in sinks
 
 Four ship in `spark-adapter` itself, all with no extra dependency:
@@ -217,13 +434,32 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
   optional `sink.property.timeoutMs` (default `5000`). Built on
   `java.net.http.HttpClient`, part of the JDK since Java 11 — no extra dependency here
   either. Requests are sent asynchronously, so a slow or unreachable endpoint doesn't
-  block your job; a connection failure or non-2xx response is logged, not thrown.
+  block your job; a connection failure or non-2xx response is logged, not thrown. Dry-run
+  reporting waits (up to ten seconds) for requests still in flight when the application
+  ends, so a short job doesn't lose its last events.
 
   ```properties
   sink.enabled=true
   sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
   sink.property.url=https://example.com/invaract-events
   ```
+
+  To authenticate, add request headers with `sink.property.header.<Name>`, or let the sink
+  send `Authorization: Bearer <token>` with `sink.property.bearerTokenEnv`, which names an
+  **environment variable** to read the token from:
+
+  ```properties
+  sink.property.header.X-Tenant=acme
+  sink.property.bearerTokenEnv=INVARACT_TOKEN
+  ```
+
+  Failed requests are retried and, if they still fail, saved to a dead letter: see
+  [Delivery](#delivery-retries-the-dead-letter-and-duplicates).
+
+  The token is read from the environment rather than the properties file on purpose: that
+  file is the kind of thing that gets copied, committed and attached to tickets. A
+  `bearerTokenEnv` naming a variable that isn't set — and a malformed header name — fail
+  when the job starts, rather than silently sending unauthenticated requests forever.
 
 - **`HadoopFsNotificationSink`** — writes each event as its own JSON object under
   `sink.property.path`, on **any filesystem Hadoop's own `FileSystem` API supports**:
@@ -252,6 +488,75 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
   instead of appending to one growing file, so it behaves the same way on every
   backend the path might point at.
   </Aside>
+
+## Send events to more than one place
+
+`FanOutNotificationSink` publishes every event to several sinks, configured from the same
+properties file. `sink.property.sinks` lists the targets in order; each target `x` takes
+`x.class` and its own `x.property.*`:
+
+```properties
+sink.enabled=true
+sink.class=com.invaract.sparkadapter.notification.FanOutNotificationSink
+sink.property.sinks=registry,audit
+sink.property.registry.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.registry.property.url=https://registry.corp.internal/events
+sink.property.registry.property.bearerTokenEnv=INVARACT_TOKEN
+sink.property.audit.class=com.invaract.sparkadapter.notification.FileNotificationSink
+sink.property.audit.property.path=/var/log/invaract-events.jsonl
+```
+
+An optional `x.statuses=A,B` limits a target to events whose `status` is in the list — for
+[dry-run reporting](/guides/dry-run-mode/#report-dry-run-results-to-a-sink-to-roll-invaract-out-across-many-jobs)'s
+inference statuses, or `PASSED`/`FAILED` on contract checks. An event with no status (a
+write, or any summary) always passes. One target failing never stops the others, and a
+target that can't be built fails when the job starts, like any single sink does.
+
+## Delivery: retries, the dead letter, and duplicates
+
+`HttpNotificationSink` never blocks your job on the network, and it doesn't quietly lose
+an event it couldn't deliver. These properties (all optional) control that:
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `sink.property.retry.maxAttempts` | `3` | Total tries, counting the first. `1` means no retries. |
+| `sink.property.retry.initialBackoffMs` | `200` | Wait before the second try. |
+| `sink.property.retry.backoffMultiplier` | `2.0` | Each wait is this many times the last. |
+| `sink.property.retry.maxBackoffMs` | `5000` | Upper limit on a single wait. |
+| `sink.property.deadLetter.path` | none | Where an event goes when it can't be delivered. |
+
+```properties
+sink.enabled=true
+sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.url=https://example.com/invaract-events
+sink.property.bearerTokenEnv=INVARACT_TOKEN
+sink.property.retry.maxAttempts=5
+sink.property.deadLetter.path=s3a://my-bucket/invaract-dead-letter/
+```
+
+**The dead letter.** A plain path is appended to as a local file, one event per line. A
+path with a scheme (`s3a://`, `hdfs://`, `gs://`, `file://`) goes through Hadoop's
+`FileSystem` instead, as one object per event, and `sink.property.deadLetter.hadoop.<key>`
+sets Hadoop configuration keys exactly as for
+[`HadoopFsNotificationSink`](#built-in-sinks). Prefer the scheme form on a cluster: a local
+file on the driver's disk disappears with the driver.
+
+**When the application ends.** Dry-run reporting asks the sink to finish, waiting up to ten
+seconds, retries included. Whatever is still undelivered at that point is saved to the dead
+letter right then, because the JVM is about to exit. With no `deadLetter.path`, it is
+logged and dropped.
+
+**Duplicates.** Delivery is at-least-once: an event can be delivered and, a moment later,
+also saved to the dead letter if the application was ending. That is what `eventId` is for.
+
+**Replaying a local dead-letter file** is a loop over its lines; the receiver deduplicates
+on `eventId`, so replaying events that did arrive is harmless:
+
+```bash
+while IFS= read -r event; do
+  curl -sS -X POST -H 'Content-Type: application/json' --data "$event" https://example.com/invaract-events
+done < /var/log/invaract/dead-letter.jsonl
+```
 
 ## Summaries and failure-only filtering
 
@@ -403,10 +708,15 @@ class MySink extends NotificationSink {
     endpoint = properties("endpoint")
 
   override def publish(event: NotificationEvent): Unit = {
-    // event is one of ContractValidationEvent, WriteEvent, or (if you're
-    // behind a SummarizingNotificationSink) JobSummaryEvent - send it
-    // however your destination expects.
+    // event is one of ContractValidationEvent, WriteEvent, ContractInferenceEvent or
+    // DryRunSummaryEvent (dry-run reporting), or (if you're behind a
+    // SummarizingNotificationSink) JobSummaryEvent - send it however your
+    // destination expects.
   }
+
+  // Optional. A sink that delivers asynchronously can wait here, for at most
+  // timeoutMs, for what it has already accepted - called once at application end.
+  override def flush(timeoutMs: Long): Unit = ()
 }
 ```
 

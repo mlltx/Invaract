@@ -530,10 +530,9 @@ object VerificationResult {
   *     behavior unchanged: format/saveMode/catalog/schema are all checked
   *     against that one output regardless of whether its location matches
   *     the actual write (a location mismatch is reported *in addition to*,
-  *     not instead of, those other checks) — a real test relies on this
-  *     (a contract deliberately declaring a location that never matches
-  *     any real write, purely to check catalog identity independent of
-  *     location).
+  *     not instead of, those other checks): with one declared output there is
+  *     no ambiguity about which output the author meant, so every finding is
+  *     reported in one run.
   *   - A contract with more than one declared output has no such single
   *     default to fall back to. Exactly one declared output matching the
   *     write's location → every other check (format, saveMode, catalog,
@@ -628,15 +627,41 @@ object VerificationResult {
   */
 private[sparkadapter] object StructuralVerifier {
 
+  /** `caseSensitive` is the session's `spark.sql.caseSensitive` (see
+    * `SchemaChecker`'s class doc): it decides how declared field names are
+    * matched against the plan's actual columns. It defaults to Spark's own
+    * default, `false`; `ContractEnforcementRule` always passes the real setting.
+    */
   def verify(
     contract: Contract,
     plan: Plan,
     inputSchemas: List[(String, StructType)],
     outputSchema: StructType,
-    options: VerificationOptions = VerificationOptions()
+    options: VerificationOptions = VerificationOptions(),
+    caseSensitive: Boolean = false
+  ): VerificationResult =
+    verify(contract, PlanFacts.of(plan), inputSchemas, outputSchema, options, caseSensitive)
+
+  /** The same check over a plan whose shape `ContractEnforcementRule` has
+    * already gathered once for every verifier it runs (see `PlanFacts`).
+    */
+  def verify(
+    contract: Contract,
+    facts: PlanFacts,
+    inputSchemas: List[(String, StructType)],
+    outputSchema: StructType,
+    options: VerificationOptions,
+    caseSensitive: Boolean
   ): VerificationResult = {
-    val actualReads = collectReads(plan)
+    val plan = facts.plan
+    val actualReads = facts.reads
     val actualReadLocations = actualReads.map(_.dataset.location).distinct
+
+    // Declared locations are normalized and bucketed once here; every "which
+    // declared dataset does this actual location belong to" question below is
+    // then a lookup instead of a scan that re-normalizes both sides. Results
+    // keep declaration order, so the violations come out in the same order.
+    val inputIndex = LocationIndex(contract.inputs.map(i => i.location -> i))
 
     // Which declared inputs THIS write is expected to draw on: everything
     // the contract declares, unless the output this write lands on says
@@ -658,11 +683,13 @@ private[sparkadapter] object StructuralVerifier {
     // unverifiableEvidenceFor's own doc). That covered case is reported as
     // UnverifiableInput instead - honest uncertainty, not a false-positive
     // MissingInput violation blocking a job that reads its input just fine.
-    val declaredButNotRead = scopedInputs.filterNot(input => actualReadLocations.exists(locationsMatch(input.location, _)))
+    val scopedIndex = if (scopedInputs eq contract.inputs) inputIndex else LocationIndex(scopedInputs.map(i => i.location -> i))
+    val scopedInputsRead: Set[Int] = actualReadLocations.flatMap(scopedIndex.matchingIndices).toSet
+    val declaredButNotRead = scopedInputs.zipWithIndex.collect { case (input, i) if !scopedInputsRead.contains(i) => input }
 
     val (missingInputs, unverifiableInputs) = {
       // lazy: only walked when some declared input really is unread.
-      lazy val unknownPlans = collectUnknownPlans(plan)
+      lazy val unknownPlans = facts.unknownPlans
       val classified = declaredButNotRead.map(input =>
         input -> unverifiableEvidenceFor(unknownPlans)
       )
@@ -687,14 +714,14 @@ private[sparkadapter] object StructuralVerifier {
     val undeclaredInputs =
       if (options.rejectUndeclaredInputs)
         actualReadLocations
-          .filterNot(loc => scopedInputs.exists(input => locationsMatch(input.location, loc)))
+          .filterNot(scopedIndex.matchesAny)
           .map { loc =>
             // A read that IS a declared contract input, just not one the
             // write's own output is derivedFrom, is a different mistake
             // from a wholly undeclared read: the fix is to the mapping
             // (or the transformation), not to add another input.
             val notThisOutputsInput = for {
-              declared <- contract.inputs.find(input => locationsMatch(input.location, loc))
+              declared <- inputIndex.first(loc)
               output   <- scopedOutput
             } yield (declared, output)
             notThisOutputsInput match {
@@ -718,10 +745,16 @@ private[sparkadapter] object StructuralVerifier {
           }
       else Nil
 
-    val inputSchemaViolations = contract.inputs.flatMap { input =>
-      inputSchemas.find { case (loc, _) => locationsMatch(input.location, loc) } match {
-        case Some((_, schema)) =>
-          checkSchema(input.schema.fields, schema, "INPUT", options.rejectUndeclaredFields)
+    // The first supplied schema (in the caller's order) whose location matches
+    // each declared input.
+    val schemaForInput: Map[Int, StructType] =
+      inputSchemas.foldLeft(Map.empty[Int, StructType]) { case (acc, (loc, schema)) =>
+        inputIndex.matchingIndices(loc).foldLeft(acc)((m, i) => if (m.contains(i)) m else m + (i -> schema))
+      }
+    val inputSchemaViolations = contract.inputs.zipWithIndex.flatMap { case (input, i) =>
+      schemaForInput.get(i) match {
+        case Some(schema) =>
+          SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, options.rejectUndeclaredFields, caseSensitive)
         case None =>
           Nil // no actual schema supplied for this input; existence was already checked above
       }
@@ -734,11 +767,16 @@ private[sparkadapter] object StructuralVerifier {
     // at translation time), so no extra plumbing is needed beyond what
     // `collectReads` already gathers - unlike schema, which the IR
     // deliberately doesn't carry and callers must supply separately.
-    val inputCatalogViolations = contract.inputs.flatMap { input =>
+    // The first read (in plan order) whose location matches each declared input.
+    val readForInput: Map[Int, Read] =
+      actualReads.foldLeft(Map.empty[Int, Read]) { (acc, read) =>
+        inputIndex.matchingIndices(read.dataset.location).foldLeft(acc)((m, i) => if (m.contains(i)) m else m + (i -> read))
+      }
+    val inputCatalogViolations = contract.inputs.zipWithIndex.flatMap { case (input, i) =>
       input.catalog match {
         case None => Nil
         case Some(req) =>
-          actualReads.find(r => locationsMatch(input.location, r.dataset.location)) match {
+          readForInput.get(i) match {
             case Some(read) => catalogViolations(req, read.catalog, input.location, "INPUT")
             // No matching read at all: already reported as MissingInput
             // above: nothing more useful to say about its catalog identity.
@@ -750,17 +788,14 @@ private[sparkadapter] object StructuralVerifier {
     val (outputExistenceViolations, outputSchemaViolations) = plan match {
       case Write(dataset, _, actualFormat, actualSaveMode, actualCatalog) =>
         val matched = matchOutput(contract.outputs, dataset.location)
-        // A single-output contract keeps its pre-existing behavior exactly:
-        // format/saveMode/catalog/schema are always checked against
-        // contract.outputs.head, regardless of whether the location itself
-        // matches - a real test relies on this (a contract deliberately
-        // declaring a location that never matches any real write, purely to
-        // check catalog identity independent of location - see
-        // HiveConnectorSpec's `assertBothRejectedForWrongTechnology`).
-        // A multi-output contract has no such single default to fall back
-        // to: if the write's location doesn't identify which declared
-        // output it belongs to, there is no non-ambiguous output left to
-        // check the rest against.
+        // A single-output contract checks format/saveMode/catalog/schema
+        // against its only declared output whether or not the location itself
+        // matches (see `expectedOutputFor`: one declared output leaves no
+        // ambiguity about which output the author meant, so every finding is
+        // reported in one run). A multi-output contract has no such single
+        // default to fall back to: if the write's location doesn't identify
+        // which declared output it belongs to, there is no non-ambiguous
+        // output left to check the rest against.
         val expectedOutputOpt: Option[Dataset] = expectedOutputFor(contract.outputs, dataset.location)
 
         val locationViolation = matched match {
@@ -830,7 +865,7 @@ private[sparkadapter] object StructuralVerifier {
               case Some(req) => catalogViolations(req, actualCatalog, dataset.location, "OUTPUT")
               case None       => Nil
             }
-            val schema = checkSchema(expectedOutput.schema.fields, outputSchema, "OUTPUT", options.rejectUndeclaredFields)
+            val schema = SchemaChecker.check(expectedOutput.schema.fields, outputSchema, SchemaChecker.Side.Output, options.rejectUndeclaredFields, caseSensitive)
             (format, saveMode, catalog, schema)
         }
 
@@ -877,7 +912,7 @@ private[sparkadapter] object StructuralVerifier {
     * (`IcebergConnectorSpec`'s "rollback_to_snapshot on a table the active
     * contract doesn't govern") that first caught this getting it backwards.
     * Schema checking only happens once location scoping says this
-    * operation IS the contract's concern - reuses `checkSchema` directly
+    * operation IS the contract's concern - reuses `SchemaChecker.check` directly
     * rather than duplicating it, same rules/violation types/remediation
     * wording as every other output check in this file.
     *
@@ -891,14 +926,29 @@ private[sparkadapter] object StructuralVerifier {
     contract: Contract,
     location: String,
     resultingSchema: StructType,
-    options: VerificationOptions = VerificationOptions()
+    options: VerificationOptions = VerificationOptions(),
+    caseSensitive: Boolean = false
   ): VerificationResult =
     matchOutput(contract.outputs, location) match {
       case None => VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
       case Some(expectedOutput) =>
-        val schemaViolations = checkSchema(expectedOutput.schema.fields, resultingSchema, "OUTPUT", options.rejectUndeclaredFields)
+        val schemaViolations =
+          SchemaChecker.check(expectedOutput.schema.fields, resultingSchema, SchemaChecker.Side.Output, options.rejectUndeclaredFields, caseSensitive)
         VerificationResult.of(s"${contract.id}@${contract.version}", schemaViolations)
     }
+
+  /** The declared output a write to `actualLocation` is checked against: a
+    * single-output contract's only output regardless of location (its
+    * location mismatch is reported in addition to, not instead of, every
+    * other check), otherwise whichever declared output matches by location.
+    * That single-output rule is deliberate, not an accident of any test: with
+    * one declared output there is no ambiguity about which output the author
+    * meant, so a write that missed the location (a typo, a moved path) is
+    * checked against it and reported with *every* finding at once, rather than
+    * one finding per fix-and-rerun. `StructuralVerifierSpec` pins it.
+    */
+  private def expectedOutputFor(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
+    if (outputs.size == 1) Some(outputs.head) else matchOutput(outputs, actualLocation)
 
   /** The declared output (if any) whose location matches `actualLocation`,
     * via the same `locationsMatch` normalized-suffix rule every other
@@ -909,14 +959,6 @@ private[sparkadapter] object StructuralVerifier {
     * (see `verify`'s "Multi-output contracts" doc) - `outputs` is a `List`,
     * not a `Set`, specifically so this stays deterministic.
     */
-  /** The declared output a write to `actualLocation` is checked against: a
-    * single-output contract's only output regardless of location (its
-    * location mismatch is reported in addition to, not instead of, every
-    * other check), otherwise whichever declared output matches by location.
-    */
-  private def expectedOutputFor(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
-    if (outputs.size == 1) Some(outputs.head) else matchOutput(outputs, actualLocation)
-
   private def matchOutput(outputs: List[Dataset], actualLocation: String): Option[Dataset] =
     outputs.find(o => locationsMatch(o.location, actualLocation))
 
@@ -924,10 +966,7 @@ private[sparkadapter] object StructuralVerifier {
     * discover a plan's real `Read` scopes before matching them against
     * `contract.inputs` — the same reason `locationsMatch` below is widened.
     */
-  private[sparkadapter] def collectReads(plan: Plan): List[Read] = plan match {
-    case r: Read => List(r)
-    case other    => other.children.flatMap(collectReads)
-  }
+  private[sparkadapter] def collectReads(plan: Plan): List[Read] = PlanFacts.of(plan).reads
 
   /** Every `ir.UnknownPlan` node found anywhere in `plan` — feeds
     * `unverifiableEvidenceFor`.
@@ -939,10 +978,7 @@ private[sparkadapter] object StructuralVerifier {
     * re-derive" reasoning `collectReads`'s own widened visibility above
     * already documents.
     */
-  private[sparkadapter] def collectUnknownPlans(plan: Plan): List[UnknownPlan] = plan match {
-    case u: UnknownPlan => u :: u.children.flatMap(collectUnknownPlans)
-    case other          => other.children.flatMap(collectUnknownPlans)
-  }
+  private[sparkadapter] def collectUnknownPlans(plan: Plan): List[UnknownPlan] = PlanFacts.of(plan).unknownPlans
 
   /** `Some(sourceTypes)` when `unknownPlans` contains an unresolved lineage
     * boundary (see `CheckpointRegistry.BoundarySourceTypes`) - the only
@@ -962,16 +998,14 @@ private[sparkadapter] object StructuralVerifier {
   // the same normalized-suffix rule this method already documents, not a
   // second copy of it (mirrors why normalizeSparkLocation below already
   // has this same widened visibility, for ContractInference's reuse).
-  private[sparkadapter] def locationsMatch(declared: String, actual: String): Boolean = {
-    // A contract's declared location can come from anywhere (a config file
-    // authored on Windows, e.g.), while Spark always reports actual plan
-    // locations with forward slashes regardless of OS. Normalize both
-    // sides so a Windows-style declared path (C:\...\out.parquet) still
-    // matches Spark's file:/C:/.../out.parquet.
-    val normalizedDeclared = declared.replace('\\', '/')
-    val normalizedActual = normalizeSparkLocation(actual)
-    normalizedActual == normalizedDeclared || normalizedActual.endsWith("/" + normalizedDeclared)
-  }
+  //
+  // A contract's declared location can come from anywhere (a config file
+  // authored on Windows, e.g.), while Spark always reports actual plan
+  // locations with forward slashes regardless of OS; the rule (both sides
+  // normalized, then equal-or-suffix) lives in `LocationMatching`, shared with
+  // the `LocationIndex` the bulk checks in `verify` use.
+  private[sparkadapter] def locationsMatch(declared: String, actual: String): Boolean =
+    LocationMatching.matches(declared, actual)
 
   /** `location` against every member of `qualifiers` via `locationsMatch` —
     * factored out since `RoleConsistencyVerifier`/`ContractInference` both
@@ -996,118 +1030,11 @@ private[sparkadapter] object StructuralVerifier {
     * fixed to call this instead of its own separate copy.
     */
   private[sparkadapter] def normalizeSparkLocation(actual: String): String =
-    actual.stripPrefix("file:").replace('\\', '/')
-
-  /** Shared by both input and output checking — "Schema" in the check list
-    * is one set of rules, applied twice (once per side), not two separate
-    * rule sets. `contextPrefix` ("INPUT"/"OUTPUT") only changes which
-    * violation type and wording each finding gets.
-    */
-  private def checkSchema(
-    contractFields: List[ContractField],
-    actualSchema: StructType,
-    contextPrefix: String,
-    rejectUndeclaredFields: Boolean
-  ): List[Violation] = {
-    val actualByName = actualSchema.fields.map(f => f.name -> f).toMap
-    val declaredNames = contractFields.map(_.name).toSet
-
-    val (missingFieldType, undeclaredColumnType, typeMismatchType, nullabilityMismatchType) =
-      if (contextPrefix == "INPUT")
-        (
-          ViolationType.MissingInputField,
-          ViolationType.UndeclaredInputColumn,
-          ViolationType.InputFieldTypeMismatch,
-          ViolationType.InputFieldNullabilityMismatch
-        )
-      else
-        (
-          ViolationType.MissingOutputField,
-          ViolationType.UndeclaredOutputColumn,
-          ViolationType.OutputFieldTypeMismatch,
-          ViolationType.OutputFieldNullabilityMismatch
-        )
-
-    val datasetNoun = if (contextPrefix == "INPUT") "input" else "output"
-
-    val fieldViolations = contractFields.flatMap { field =>
-      actualByName.get(field.name) match {
-        case None =>
-          if (field.required)
-            List(
-              Violation(
-                missingFieldType,
-                s"required field '${field.name}' is absent from the actual $contextPrefix schema",
-                remediation =
-                  s"Add a '${field.name}' column (type '${field.fieldType}') to the $datasetNoun, or mark it optional in the contract if it isn't always produced.",
-                column = Some(field.name)
-              )
-            )
-          else Nil
-
-        case Some(actualField) =>
-          val actualType = actualField.dataType.typeName
-          val typeViolation =
-            if (actualType != field.fieldType.toLowerCase)
-              List(
-                Violation(
-                  typeMismatchType,
-                  s"field '${field.name}' declares type '${field.fieldType}' but the actual $contextPrefix schema has type '$actualType'",
-                  remediation =
-                    s"Cast '${field.name}' to '${field.fieldType}' in the transformation, or update the contract to declare '$actualType' if the new type is intentional.",
-                  column = Some(field.name),
-                  expected = Some(field.fieldType),
-                  actual = Some(actualType)
-                )
-              )
-            else Nil
-
-          // Compatible, not identical: a contract requiring non-null
-          // (nullable = false) is violated by an actual column that
-          // permits nulls; the reverse (contract allows null, actual
-          // guarantees non-null) is a stricter-than-required guarantee,
-          // not a violation.
-          val nullabilityViolation =
-            if (!field.nullable && actualField.nullable)
-              List(
-                Violation(
-                  nullabilityMismatchType,
-                  s"field '${field.name}' is declared non-nullable but the actual $contextPrefix schema permits nulls",
-                  remediation =
-                    s"Filter or coalesce nulls out of '${field.name}' before the $datasetNoun is produced, or relax the contract to allow nulls if they're expected.",
-                  column = Some(field.name),
-                  expected = Some("not null"),
-                  actual = Some("nullable")
-                )
-              )
-            else Nil
-
-          typeViolation ++ nullabilityViolation
-      }
-    }
-
-    val undeclaredViolations =
-      if (rejectUndeclaredFields)
-        actualSchema.fieldNames
-          .filterNot(declaredNames.contains)
-          .map(name =>
-            Violation(
-              undeclaredColumnType,
-              s"column '$name' is present in the actual $contextPrefix schema but not declared by the contract",
-              remediation =
-                s"Remove '$name' from the transformation's $datasetNoun, or add it to the contract's declared schema if it's intentional.",
-              column = Some(name)
-            )
-          )
-          .toList
-      else Nil
-
-    fieldViolations ++ undeclaredViolations
-  }
+    LocationMatching.normalizeActual(actual)
 
   /** Checks one dataset's actual `CatalogIdentity` against the contract's
     * declared `CatalogRequirement` — shared by both input and output
-    * checking, the same "one rule set applied twice" pattern `checkSchema`
+    * checking, the same "one rule set applied twice" pattern `SchemaChecker`
     * above already uses for schema. `req.required == false` means the
     * contract declares an *expected* shape without gating on it
     * (informational only, accepted by `ContractValidator`) — never a

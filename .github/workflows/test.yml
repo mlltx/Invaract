@@ -295,7 +295,7 @@ jobs:
 
       - name: Mutation test ir
         shell: bash
-        run: cd ir && sbt "stryker --concurrency 4"
+        run: cd ir && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
       # See the shared comment on CLAUDE.md's "Mutation Testing
       # Requirement" / the base-commit-not-previous-push reasoning on the
@@ -322,7 +322,7 @@ jobs:
 
             echo "=== ir: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd ir && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd ir && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -376,7 +376,7 @@ jobs:
 
       - name: Mutation test fingerprint
         shell: bash
-        run: cd fingerprint && sbt "stryker --concurrency 4"
+        run: cd fingerprint && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
       # See the shared comment on CLAUDE.md's "Mutation Testing
       # Requirement" / the base-commit-not-previous-push reasoning on the
@@ -403,7 +403,7 @@ jobs:
 
             echo "=== fingerprint: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd fingerprint && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd fingerprint && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -449,6 +449,28 @@ jobs:
   # shard" figure this comment used to quote was stale by roughly an order of
   # magnitude.
   #
+  # Re-sharded from 5 to 10 legs, each at `--concurrency 2` instead of 4, to
+  # stop runners being lost to memory exhaustion ("The runner has received a
+  # shutdown signal", 5 of the last 12 main runs before this change). Measured
+  # on a 4 vCPU / 16 GB machine, the same as ubuntu-latest, running the old
+  # shard-3 files: 4 test runners peaked at ~10 GB used with the test JVM
+  # heap already capped at 1 GB (build.sbt's Test / javaOptions; ~14 GB and
+  # kernel OOM kills before the cap), 2 test runners at ~6 GB. (A local 15-minute
+  # comparison suggested the two settings test mutants at about the same rate;
+  # the first real CI run did not bear that out: the shards summed to ~505
+  # runner-minutes against ~360 at --concurrency 4, i.e. about 1.4x the
+  # compute, plus five more runners' setup.) File-to-shard assignment comes
+  # from that run's measured shard times (93/85/69/63/51/45/37/22/20/20 min)
+  # combined with the two earlier main runs' times for the old 5-way grouping,
+  # fitted to per-file costs (non-negative least squares, line count as a weak
+  # prior) and packed into 10 bins of ~40-50 min; StructuralVerifier (~90 min),
+  # WriteCommandSupport (~63), ContractEnforcementRule (~50) and
+  # SparkPlanAdapter (~48) each get a shard to themselves. StructuralVerifier
+  # alone sets the wall-clock floor until it is split.
+  # memwatch.sh prints per-30s memory/thread samples into each job's log
+  # and rerun-on-runner-loss.yml re-runs a run whose only failures are lost
+  # runners, once.
+  #
   # Because Stryker4s's mutation score is a mutant-count-weighted average,
   # every shard clearing build.sbt's existing 70% break threshold on its
   # own subset is a *sufficient* condition for the whole module clearing
@@ -486,20 +508,33 @@ jobs:
   mutation-testing-spark-adapter:
     name: Mutation testing (spark-adapter, ${{ matrix.name }})
     runs-on: ubuntu-latest
+    # Shards take 50-90 min. Without this the 360-minute default would let a hung runner
+    # (or a Stryker run wedged on a stuck test JVM) hold a slot for six hours.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: shard-1
-            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala,src/main/scala/com/invaract/sparkadapter/MutationKind.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifierFactory.scala,src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala"
           - name: shard-2
-            files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala,src/main/scala/com/invaract/sparkadapter/StaticDataQualityVerifier.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"
           - name: shard-3
-            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala"
           - name: shard-4
-            files: "src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala,src/main/scala/com/invaract/sparkadapter/ContractEnforcementRule.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala,src/main/scala/com/invaract/sparkadapter/location/LocationResolver.scala,src/main/scala/com/invaract/sparkadapter/location/ContractLocationResolution.scala,src/main/scala/com/invaract/sparkadapter/RoleConsistencyVerifier.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala"
           - name: shard-5
-            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/location/LocationResolver.scala,src/main/scala/com/invaract/sparkadapter/SchemaChecker.scala"
+          - name: shard-6
+            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala"
+          - name: shard-7
+            files: "src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/LocationMatching.scala"
+          - name: shard-8
+            files: "src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala,src/main/scala/com/invaract/sparkadapter/StaticDataQualityVerifier.scala"
+          - name: shard-9
+            files: "src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifierFactory.scala,src/main/scala/com/invaract/sparkadapter/RoleConsistencyVerifier.scala,src/main/scala/com/invaract/sparkadapter/PlanFacts.scala"
+          - name: shard-10
+            files: "src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/DryRunReporter.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala,src/main/scala/com/invaract/sparkadapter/MutationKind.scala,src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/location/ContractLocationResolution.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -564,7 +599,7 @@ jobs:
         shell: bash
         run: |
           cd spark-adapter
-          sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 4"
+          "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"{${{ matrix.files }}}\" --concurrency 2"
 
       - name: Upload mutation report
         if: always()
@@ -584,6 +619,15 @@ jobs:
   mutation-testing-spark-adapter-incremental:
     name: Mutation testing (spark-adapter, incremental)
     runs-on: ubuntu-latest
+    # Diffs against the PR's BASE commit, so it mutates every spark-adapter file the
+    # whole PR has changed, in one job, with the full test suite per mutant. PR #92
+    # (13 changed files, StructuralVerifier ~90 min and ContractEnforcementRule ~50
+    # min of that alone) was cancelled by the 180-minute limit this job used to have
+    # after running for 3 hours; the estimate for that file set is ~4 hours. 360 is
+    # GitHub's maximum for a hosted runner. The whole-module shards above already
+    # mutate the same files in parallel, so this is the slow, serial duplicate of
+    # them - see docs/SPARK_ADAPTER.md for the options to shrink or fold it.
+    timeout-minutes: 360
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -690,7 +734,7 @@ jobs:
 
             echo "=== spark-adapter: mutation-testing changed file(s) ==="
             echo "$CHANGED"
-            (cd spark-adapter && sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+            (cd spark-adapter && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 2 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
           fi
 
       - name: Upload mutation report
@@ -1110,6 +1154,33 @@ jobs:
         shell: bash
         run: ./dev/generate-version-docs --check
 
+  # Unit tests for the scripts CI itself runs: runner_loss.py (decides whether a failed run is
+  # re-run by rerun-on-runner-loss.yml - a wrong answer would either hide a real failure behind a
+  # lucky re-run or leave a runner loss red) and memwatch.sh (wraps every mutation job; a bug here
+  # would break those jobs' exit status).
+  workflow-scripts:
+    name: Workflow script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Unit-test runner_loss.py
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_runner_loss
+
+      - name: memwatch.sh passes the wrapped command's exit status through
+        shell: bash
+        run: |
+          bash -n .github/scripts/memwatch.sh
+          .github/scripts/memwatch.sh --interval 1 -- bash -c 'exit 0'
+          set +e
+          .github/scripts/memwatch.sh --interval 1 -- bash -c 'exit 7'
+          status=$?
+          set -e
+          test "$status" -eq 7 || { echo "expected exit status 7, got $status"; exit 1; }
+
   api-compatibility:
     name: API compatibility (contract, ir, spark-adapter, fingerprint)
     runs-on: ubuntu-latest
@@ -1512,12 +1583,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

@@ -127,6 +127,14 @@ The goal of Phase 0 is to establish the organizational, legal, and technical inf
   - [x] Caching strategies (`actions/cache@v4` plus `setup-java`'s
     `cache: 'sbt'`, throughout `.github/workflows/test.yml`)
   - [x] Artifact publishing (`release.yml`, `publish-spark-jars.yml`)
+  - [x] CI stability under runner loss — the `spark-adapter` mutation shards
+    were being killed by memory exhaustion ("The runner has received a
+    shutdown signal"). Fixed by capping the test JVM heap, running 10 shards
+    at `--concurrency 2` instead of 5 at 4, streaming memory telemetry into the
+    job log (`.github/scripts/memwatch.sh`), and re-running a run whose only
+    failures are lost runners (`rerun-on-runner-loss.yml`). Measurements and
+    the open follow-up (re-tune shard balance from real per-shard times) are in
+    docs/SPARK_ADAPTER.md's "Runner memory and runner loss."
 
 - [ ] **Quality gates** — mostly done; style enforcement is the one real
   gap.
@@ -3891,6 +3899,30 @@ first written: one field's value compared against *another field on the same row
       merged names, outputs kept distinct by location, conflicting schemas for
       one location reported (`MergeConflict`) rather than guessed at, result
       round-trips through `ContractParser` and passes `ContractValidator`.
+- [x] **Follow-up: dry-run reporting to a sink (`DryRunReporter`)** (`spark-adapter`,
+      additive): with `spark.invaract.dryRun=true` + `spark.invaract.notifyConfig`, dry-run
+      publishes a `ContractInferenceEvent` per write-shaped plan (`INFERRED`/
+      `INFERRED_DEGRADED`/`SKIPPED_UNSUPPORTED`/`SKIPPED_UNRECOGNIZED`/`INFERENCE_ERROR`,
+      each draft self-checked against its own write) and, at application end, a
+      `DryRunSummaryEvent` (counts per status, `NO_WRITES_OBSERVED`, all drafts merged by
+      `ContractDraftMerger`). Purpose: roll Invaract out across many jobs - collect the
+      drafts, and learn from the skips/self-checks how safe turning enforcement on is.
+      Job identity via `spark.invaract.jobId` / `spark.invaract.job.metadata.*`. Delivery:
+      `NotificationSink.flush`, `HttpNotificationSink` auth headers/`bearerTokenEnv` and
+      in-flight draining, `FanOutNotificationSink` with per-target `statuses` routing.
+      Follow-ups in the same PR: a bad `notifyConfig` no longer fails a dry-run job (WARN and
+      log-only fallback); `schemaVersion` + deterministic `eventId` (+ `contractDigest`) on every
+      event; a published JSON Schema (`docs-site/public/schemas/notification/v1/`) with real
+      examples, checked by the whole Scala suite and by Ajv in the docs build; `HttpNotificationSink`
+      retry with backoff and a dead letter (`deadLetter.path`, local or any Hadoop FS), configurable
+      from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
+      reference receiver, two troubleshooting entries.
+      `spark.invaract.contract.metadata.*` tags every inferred draft's `extensions` (and each
+      event's `metadata`), so enforcement's own events later carry the same keys and link back to
+      the dry run; run-level facts stay on `spark.invaract.job.metadata.*` / `job.attributes`.
+      Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
+      weakly). Open: redaction of locations/schemas in events; the receiving contract
+      repository (separate repo).
 
 ---
 

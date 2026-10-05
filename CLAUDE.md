@@ -178,7 +178,7 @@ docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 
 **Adding a new file under `spark-adapter/src/main/scala` also means updating
 `.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
-sharded across a 5-way matrix job (`mutation-testing-spark-adapter`), and each
+sharded across a 10-way matrix job (`mutation-testing-spark-adapter`), and each
 shard's file list is hand-written (`strategy.matrix.include`, one
 comma-separated `files:` string per shard) — see docs/SPARK_ADAPTER.md's
 "Sharding `spark-adapter`'s whole-module run." A new source file isn't
@@ -502,8 +502,12 @@ would be.
 │   ├── src/main/scala/com/invaract/sparkadapter/
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
+│   │   ├── SchemaChecker.scala        # declared vs. actual schema (nested types, spark.sql.caseSensitive)
+│   │   ├── LocationMatching.scala     # declared-vs-actual location rule + LocationIndex (bulk lookups)
+│   │   ├── PlanFacts.scala            # one traversal of an ir.Plan shared by every verifier
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
 │   │   ├── ContractInference.scala    # dry-run mode: infers a Contract from a real write
+│   │   ├── DryRunReporter.scala       # dry-run mode + a sink: per-write inference events + job summary
 │   │   ├── SparkAdapterListener.scala # QueryExecutionListener (observes writes)
 │   │   ├── location/                  # Resolves a contract's ref://<id> locations
 │   │   │   ├── LocationRef.scala            # recognizes the ref://<id> shape

@@ -42,12 +42,15 @@ private[sparkadapter] object StaticDataQualityVerifier {
     * `MissingOutput`/an unmatched write elsewhere). `Nil` for any plan that
     * isn't a `Write` at all.
     */
-  def verify(contract: Contract, plan: Plan): List[DataQualityCheckResult] = plan match {
-    case Write(dataset, _, _, _, _) =>
+  def verify(contract: Contract, plan: Plan): List[DataQualityCheckResult] = verify(contract, PlanFacts.of(plan))
+
+  /** The same check over a plan whose shape `ContractEnforcementRule` already gathered (see `PlanFacts`). */
+  def verify(contract: Contract, facts: PlanFacts): List[DataQualityCheckResult] = facts.plan match {
+    case plan @ Write(dataset, _, _, _, _) =>
       contract.outputs.find(o => StructuralVerifier.locationsMatch(o.location, dataset.location)) match {
         case None => Nil
         case Some(output) =>
-          val axioms = buildAxioms(contract, plan)
+          val axioms = buildAxioms(contract, facts)
           val analyzed = PropertyAnalysis.analyze(plan, axioms).map(r => r.output.name -> r.state).toMap
           output.schema.fields.flatMap { field =>
             val definingExpr = PropertyAnalysis.definingExpr(plan, field.name)
@@ -149,14 +152,16 @@ private[sparkadapter] object StaticDataQualityVerifier {
     * location) — never keyed by the contract's own declared, portable
     * location string, which would simply never match.
     */
-  private def buildAxioms(contract: Contract, plan: Plan): Map[ColumnRef, ColumnPropertyState] =
-    StructuralVerifier.collectReads(plan).flatMap { read =>
+  private def buildAxioms(contract: Contract, facts: PlanFacts): Map[ColumnRef, ColumnPropertyState] = {
+    val inputIndex = LocationIndex(contract.inputs.map(i => i.location -> i))
+    facts.reads.flatMap { read =>
       val scope = read.alias.getOrElse(read.dataset.location)
-      contract.inputs.find(input => StructuralVerifier.locationsMatch(input.location, read.dataset.location)) match {
+      inputIndex.first(read.dataset.location) match {
         case Some(input) => input.schema.fields.map(f => ColumnRef(f.name, Some(scope)) -> fieldAxiomState(f))
         case None         => Nil
       }
     }.toMap
+  }
 
   private def fieldAxiomState(field: Field): ColumnPropertyState = {
     val interpreted = field.constraints.flatMap(_.interpret)

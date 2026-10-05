@@ -28,7 +28,7 @@ flag in the same case class, the identical way).
 | `UNDECLARED_INPUT` | The plan read a dataset the contract doesn't declare as an input. Only checked when `rejectUndeclaredInputs` is enabled. Also raised, under the same option, for a read of an input the contract does declare but not as a source of the output being written (via that output's [`derivedFrom`](/guides/mapping-outputs-to-inputs/)). |
 | `MISSING_INPUT_FIELD` | A required input field is absent from the actual input schema. |
 | `UNDECLARED_INPUT_COLUMN` | The actual input schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
-| `INPUT_FIELD_TYPE_MISMATCH` | An input field's actual type doesn't match the contract's declared type. |
+| `INPUT_FIELD_TYPE_MISMATCH` | An input field's actual type doesn't match the contract's declared type — including the contents of an `array<...>`/`map<...>`/`struct<...>` type or a struct's `properties` (the violation's `column` is then a dotted path such as `address.zip`). |
 | `INPUT_FIELD_NULLABILITY_MISMATCH` | The contract requires an input field to be non-null, but the actual schema permits nulls. |
 | `MISSING_INPUT_CATALOG_REGISTRATION` | The contract's input declares `catalog: { required: true }`, but the actual read has no catalog registration at all. |
 | `INPUT_CATALOG_MISMATCH` | The input is catalog-registered, but a declared `catalog` sub-field (`technology`/`catalogName`/`location`/`namespace`/`table`) disagrees with the actual registration. |
@@ -43,7 +43,7 @@ flag in the same case class, the identical way).
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |
 | `MISSING_OUTPUT_FIELD` | A required output field is absent from the actual output schema. |
 | `UNDECLARED_OUTPUT_COLUMN` | The actual output schema has a column the contract doesn't declare. Only checked when `rejectUndeclaredFields` is enabled. |
-| `OUTPUT_FIELD_TYPE_MISMATCH` | An output field's actual type doesn't match the contract's declared type. |
+| `OUTPUT_FIELD_TYPE_MISMATCH` | An output field's actual type doesn't match the contract's declared type — including the contents of an `array<...>`/`map<...>`/`struct<...>` type or a struct's `properties` (the violation's `column` is then a dotted path such as `address.zip`). |
 | `OUTPUT_FIELD_NULLABILITY_MISMATCH` | The contract requires an output field to be non-null, but the actual schema permits nulls. |
 | `MISSING_OUTPUT_CATALOG_REGISTRATION` | The contract's output declares `catalog: { required: true }`, but the actual write has no catalog registration at all. |
 | `OUTPUT_CATALOG_MISMATCH` | The output is catalog-registered, but a declared `catalog` sub-field (`technology`/`catalogName`/`location`/`namespace`/`table`) disagrees with the actual registration — e.g. the write went through a different Hive metastore than the contract declares. |

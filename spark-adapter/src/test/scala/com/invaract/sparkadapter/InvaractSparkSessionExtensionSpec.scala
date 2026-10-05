@@ -212,4 +212,193 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
       spark.stop()
     }
   }
+
+  private def writeNotifyProps(entries: (String, String)*): Path = {
+    val file = Files.createTempFile(scratchDir, "notify", ".properties")
+    val props = new java.util.Properties()
+    entries.foreach { case (k, v) => props.setProperty(k, v) }
+    val out = new java.io.FileOutputStream(file.toFile)
+    try props.store(out, null)
+    finally out.close()
+    file
+  }
+
+  private def fileSinkProps(eventsFile: Path): Path =
+    writeNotifyProps(
+      "sink.enabled" -> "true",
+      "sink.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.property.path" -> eventsFile.toString
+    )
+
+  private def eventLines(eventsFile: Path): List[String] =
+    if (Files.exists(eventsFile)) new String(Files.readAllBytes(eventsFile), "UTF-8").split("\n").toList.filter(_.nonEmpty)
+    else Nil
+
+  test("dry-run + spark.invaract.notifyConfig reports every write and a job summary at application end, purely via conf") {
+    val outputPath = scratchDir.resolve("dry_run_reporting.parquet").toString
+    val eventsFile = scratchDir.resolve("dry_run_events.jsonl")
+
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> fileSinkProps(eventsFile).toString,
+      InvaractSparkSessionExtension.JobIdConfKey -> "e2e_job",
+      InvaractSparkSessionExtension.JobMetadataConfPrefix + "team" -> "orders",
+      InvaractSparkSessionExtension.ContractMetadataConfPrefix + "owner" -> "orders-team"
+    )
+    try {
+      spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)), "dry-run never blocks the write")
+    } finally {
+      spark.stop() // posts SparkListenerApplicationEnd: this is what publishes the summary
+    }
+
+    val lines = eventLines(eventsFile)
+    val inference = lines.filter(_.contains("\"eventType\": \"CONTRACT_INFERENCE\""))
+    val summary = lines.filter(_.contains("\"eventType\": \"DRY_RUN_SUMMARY\""))
+    assert(inference.size == 1, s"expected one inference event, got: $lines")
+    assert(inference.head.contains("\"status\": \"INFERRED\""))
+    assert(inference.head.contains("\"selfCheck\": \"PASSED\""))
+    assert(inference.head.contains("\"jobId\": \"e2e_job\""))
+    assert(inference.head.contains("\"team\": \"orders\""))
+    assert(inference.head.contains("owner: orders-team"), "the published draft is tagged: its YAML carries an extensions block")
+    assert(inference.head.contains("\"metadata\": {\"owner\": \"orders-team\"}"), "and the event's metadata is the contract's")
+    assert(inference.head.contains("\"attributes\": {\"team\": \"orders\"}"), "while the run's own facts stay on job.attributes")
+    assert(inference.head.contains("dry_run_reporting.parquet"))
+    assert(summary.size == 1, s"expected exactly one summary at application end, got: $lines")
+    assert(summary.head.contains("\"mergeStatus\": \"MERGED\""))
+    assert(summary.head.contains("owner: orders-team"), "the merged contract keeps the tag")
+    assert(summary.head.contains("\"statusCounts\": {\"INFERRED\": 1}"))
+    assert(lines.indexWhere(_.contains("CONTRACT_INFERENCE")) < lines.indexWhere(_.contains("DRY_RUN_SUMMARY")))
+  }
+
+  test("dry-run + notifyConfig on a job that writes nothing still reports NO_WRITES_OBSERVED at application end") {
+    val eventsFile = scratchDir.resolve("dry_run_no_writes.jsonl")
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> fileSinkProps(eventsFile).toString
+    )
+    try assert(spark.range(5).count() == 5L)
+    finally spark.stop()
+
+    val lines = eventLines(eventsFile)
+    assert(lines.size == 1, s"only the summary expected, got: $lines")
+    assert(lines.head.contains("\"eventType\": \"DRY_RUN_SUMMARY\""))
+    assert(lines.head.contains("\"NO_WRITES_OBSERVED\": 1"))
+    assert(lines.head.contains("\"mergeStatus\": \"NO_DRAFTS\""))
+  }
+
+  test("dry-run with a disabled notifyConfig keeps the log-only behavior: no events, write still goes through") {
+    val outputPath = scratchDir.resolve("dry_run_disabled_sink.parquet").toString
+    val eventsFile = scratchDir.resolve("dry_run_disabled_events.jsonl")
+    val disabled = writeNotifyProps("sink.enabled" -> "false", "sink.property.path" -> eventsFile.toString)
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> disabled.toString
+    )
+    try spark.range(3).write.mode("overwrite").parquet(outputPath)
+    finally spark.stop()
+    assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    assert(eventLines(eventsFile).isEmpty)
+  }
+
+  test("a fan-out sink named in notifyConfig delivers dry-run events to every target, purely via conf") {
+    val outputPath = scratchDir.resolve("dry_run_fanout.parquet").toString
+    val everything = scratchDir.resolve("fanout_everything.jsonl")
+    val problems = scratchDir.resolve("fanout_problems.jsonl")
+    val notify = writeNotifyProps(
+      "sink.enabled" -> "true",
+      "sink.class" -> "com.invaract.sparkadapter.notification.FanOutNotificationSink",
+      "sink.property.sinks" -> "all,problems",
+      "sink.property.all.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.property.all.property.path" -> everything.toString,
+      "sink.property.problems.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.property.problems.property.path" -> problems.toString,
+      "sink.property.problems.statuses" -> "INFERRED_DEGRADED,SKIPPED_UNSUPPORTED,SKIPPED_UNRECOGNIZED,INFERENCE_ERROR"
+    )
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> notify.toString
+    )
+    try spark.range(3).write.mode("overwrite").parquet(outputPath)
+    finally spark.stop()
+
+    val all = eventLines(everything)
+    assert(all.exists(_.contains("CONTRACT_INFERENCE")) && all.exists(_.contains("DRY_RUN_SUMMARY")))
+    val onlyProblems = eventLines(problems)
+    assert(!onlyProblems.exists(_.contains("CONTRACT_INFERENCE")), "a clean INFERRED draft is not a problem")
+    assert(onlyProblems.exists(_.contains("DRY_RUN_SUMMARY")), "the end-of-job summary always passes")
+  }
+
+  test("dry-run with a notifyConfig that cannot be loaded warns and falls back to log-only instead of failing the job") {
+    val outputPath = scratchDir.resolve("dry_run_bad_config.parquet").toString
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> scratchDir.resolve("does-not-exist.properties").toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dry-run with a sink.class that cannot be built falls back the same way") {
+    val outputPath = scratchDir.resolve("dry_run_bad_class.parquet").toString
+    val badClass = writeNotifyProps("sink.enabled" -> "true", "sink.class" -> "com.example.NoSuchSink")
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> badClass.toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dry-run with a sink whose own configuration is invalid (a missing required property) falls back too") {
+    val outputPath = scratchDir.resolve("dry_run_bad_sink_props.parquet").toString
+    val noPath = writeNotifyProps(
+      "sink.enabled" -> "true",
+      "sink.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink" // requires sink.property.path
+    )
+    val spark = buildSession(
+      InvaractSparkSessionExtension.DryRunConfKey -> "true",
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> noPath.toString
+    )
+    try {
+      spark.range(3).write.mode("overwrite").parquet(outputPath) // must not throw
+      assert(Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
+
+  test("dryRunSink: none when notifyConfig is unset or disabled, a sink when it is valid, none when it is not") {
+    val spark = buildSession(InvaractSparkSessionExtension.DryRunConfKey -> "true")
+    try {
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, writeNotifyProps("sink.enabled" -> "false").toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, fileSinkProps(scratchDir.resolve("sink_probe.jsonl")).toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isDefined)
+
+      spark.conf.set(InvaractSparkSessionExtension.NotifyConfigConfKey, scratchDir.resolve("missing.properties").toString)
+      assert(InvaractSparkSessionExtension.dryRunSink(spark).isEmpty)
+    } finally spark.stop()
+  }
+
+  test("enforcement mode still fails loudly on a notifyConfig that cannot be loaded (only dry-run is lenient)") {
+    val outputPath = scratchDir.resolve("enforce_bad_config.parquet").toString
+    val contractFile = Files.createTempFile(scratchDir, "contract", ".yaml")
+    Files.write(contractFile, passingContractYaml.replace("OUTPUT_PATH", outputPath).getBytes("UTF-8"))
+    val spark = buildSession(
+      InvaractSparkSessionExtension.ContractConfKey -> contractFile.toString,
+      InvaractSparkSessionExtension.NotifyConfigConfKey -> scratchDir.resolve("does-not-exist.properties").toString
+    )
+    try {
+      intercept[Exception] {
+        spark.range(3).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+      }
+      assert(!Files.exists(java.nio.file.Paths.get(outputPath)))
+    } finally spark.stop()
+  }
 }

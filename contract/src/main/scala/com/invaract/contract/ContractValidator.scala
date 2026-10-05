@@ -35,6 +35,17 @@ object ContractValidator {
     "boolean", "date", "timestamp", "binary", "struct", "array", "map"
   )
 
+  /** The type's own keyword, lower-cased, ignoring any parameters: `decimal(10,2)`
+    * is a `decimal`, `array<struct<a:int>>` is an `array`. Parameterized and
+    * nested types are written in Spark's DDL syntax and compared structurally by
+    * `spark-adapter`'s `StructuralVerifier`; here only the keyword is checked.
+    */
+  private def baseType(fieldType: String): String = {
+    val trimmed = fieldType.trim.toLowerCase
+    val end = trimmed.indexWhere(c => c == '<' || c == '(')
+    if (end < 0) trimmed else trimmed.substring(0, end).trim
+  }
+
   def validate(contract: Contract): ValidationResult = {
     val issues = List.newBuilder[ValidationIssue]
 
@@ -239,7 +250,7 @@ object ContractValidator {
 
     if (field.fieldType.trim.isEmpty) {
       issues += ValidationIssue(ValidationSeverity.Error, path, "Field type must not be empty")
-    } else if (!field.isStruct && !KnownTypes.contains(field.fieldType.toLowerCase)) {
+    } else if (!field.isStruct && !KnownTypes.contains(baseType(field.fieldType))) {
       issues += ValidationIssue(
         ValidationSeverity.Warning,
         path,
