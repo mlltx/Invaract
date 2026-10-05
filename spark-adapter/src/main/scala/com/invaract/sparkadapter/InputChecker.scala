@@ -81,18 +81,8 @@ private[sparkadapter] object InputChecker {
     // and only if some declared input really is unread.
     lazy val evidence = unverifiableEvidenceFor(unknownPlans)
     val classified = unread.map(input => input -> evidence)
-    val missing = classified.collect { case (input, None) =>
-      Violation(
-        ViolationType.MissingInput,
-        s"declared input '${input.name}' (${input.location}) was not read by this plan",
-        remediation =
-          s"Add a read of '${input.location}' to the transformation, or remove '${input.name}' from the contract's inputs if it is no longer needed." +
-            (if (scopedOutput.exists(_.derivedFrom.isEmpty) && declaredOutputCount > 1)
-               s" If '${input.name}' feeds only some of this contract's outputs, list the inputs each output is built from in that output's 'derivedFrom' instead."
-             else ""),
-        location = Some(input.location)
-      )
-    }
+    val nudge = scopedOutput.exists(_.derivedFrom.isEmpty) && declaredOutputCount > 1
+    val missing = classified.collect { case (input, None) => Violations.missingInput(input, nudge) }
     val unverifiable = classified.collect { case (input, Some(sourceTypes)) =>
       UnverifiableInput(input.name, input.location, sourceTypes)
     }
@@ -126,22 +116,8 @@ private[sparkadapter] object InputChecker {
           output   <- scopedOutput
         } yield (declared, output)
         notThisOutputsInput match {
-          case Some((declared, output)) =>
-            Violation(
-              ViolationType.UndeclaredInput,
-              s"plan reads '$loc' (input '${declared.name}'), which this contract declares but not as a source of " +
-                s"output '${output.name}' (its derivedFrom lists ${output.derivedFrom.filter(_.nonEmpty).map(_.map(n => s"'$n'").mkString(", ")).getOrElse("no inputs")})",
-              remediation =
-                s"Add '${declared.name}' to output '${output.name}''s derivedFrom if it is genuinely one of its sources, or remove this read from the transformation.",
-              location = Some(loc)
-            )
-          case None =>
-            Violation(
-              ViolationType.UndeclaredInput,
-              s"plan reads '$loc' which is not declared as a contract input",
-              remediation = s"Declare '$loc' as an input in the contract, or remove this read from the transformation.",
-              location = Some(loc)
-            )
+          case Some((declared, output)) => Violations.undeclaredInputNotSourceOf(loc, declared, output)
+          case None                     => Violations.undeclaredInput(loc)
         }
       }
 
@@ -162,7 +138,7 @@ private[sparkadapter] object InputChecker {
       }
     all.inputs.zipWithIndex.flatMap { case (input, i) =>
       schemaForInput.get(i) match {
-        case Some(schema) => SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, rejectUndeclaredFields, caseSensitive)
+        case Some(schema) => SchemaChecker.check(input.schema.fields, schema, SchemaChecker.Side.Input, input.location, rejectUndeclaredFields, caseSensitive)
         case None         => Nil
       }
     }

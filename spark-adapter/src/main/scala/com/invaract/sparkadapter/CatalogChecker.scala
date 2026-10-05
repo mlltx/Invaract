@@ -36,33 +36,11 @@ private[sparkadapter] object CatalogChecker {
     if (!req.required) Nil
     else
       actual match {
-        case None =>
-          List(
-            Violation(
-              if (side == SchemaChecker.Side.Input) ViolationType.MissingInputCatalogRegistration
-              else ViolationType.MissingOutputCatalogRegistration,
-              s"contract requires the ${side.noun} at '$location' to be registered in a catalog, but it has no catalog registration",
-              remediation =
-                s"Register '$location' in a catalog (e.g. CREATE EXTERNAL TABLE, .saveAsTable(), or a DSv2 catalog read/write) instead of a bare path, or set catalog.required to false in the contract if registration isn't actually required.",
-              location = Some(location)
-            )
-          )
+        case None => List(Violations.missingCatalogRegistration(side, location))
         case Some(actualCatalog) =>
           val mismatches = catalogFieldMismatches(req, actualCatalog)
           if (mismatches.isEmpty) Nil
-          else
-            List(
-              Violation(
-                if (side == SchemaChecker.Side.Input) ViolationType.InputCatalogMismatch else ViolationType.OutputCatalogMismatch,
-                s"contract's declared catalog registration for the ${side.noun} at '$location' does not match the actual registration: ${mismatches
-                  .mkString("; ")}",
-                remediation =
-                  s"Update the catalog registration for '$location' to match the contract's declared catalog fields, or update the contract if this change is intentional.",
-                location = Some(location),
-                expected = Some(describeCatalogRequirement(req)),
-                actual = Some(describeCatalogIdentity(actualCatalog))
-              )
-            )
+          else List(Violations.catalogMismatch(side, location, mismatches, describeCatalogRequirement(req), describeCatalogIdentity(actualCatalog)))
       }
   }
 

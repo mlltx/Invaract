@@ -136,14 +136,7 @@ private[sparkadapter] object StaticDataQualityVerifier {
   def violations(results: List[DataQualityCheckResult]): List[Violation] =
     results.filter(_.verdict == DataQualityVerdict.Violated).map(toViolation)
 
-  private def toViolation(result: DataQualityCheckResult): Violation = Violation(
-    ViolationType.DataQualityViolation,
-    s"the transformation's own semantics prove that output field '${result.field}' cannot always satisfy its declared ${result.constraint} property",
-    remediation =
-      s"Review the transformation logic producing '${result.field}' — it can produce a value that violates the contract's declared constraint. " +
-        "If the constraint is no longer correct, relax or remove it from the contract instead.",
-    column = Some(result.field)
-  )
+  private def toViolation(result: DataQualityCheckResult): Violation = Violations.dataQuality(result.field, result.constraint)
 
   /** Trusted axioms for every real `Read` scope the plan contains, keyed
     * exactly the way `PropertyAnalysis`'s own `Read` case looks them up

@@ -466,7 +466,8 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
           ViolationType.UndeclaredOutputColumn,
           result.violations.head.message,
           result.violations.head.remediation,
-          column = Some("country")
+          column = Some("country"),
+          location = Some("gold.customer_orders") // the write this finding is about (the spec's example had none)
         )
       )
     )

@@ -20,6 +20,19 @@ its source, via `spark-submit --conf spark.invaract.rejectUndeclaredInputs=true`
 for both mechanisms worked through in full (it documents `computeFingerprint`, the third
 flag in the same case class, the identical way).
 
+## What each violation carries
+
+`column`, `location`, `expected` and `actual` mean the same thing on every violation that
+sets them, so a consumer can group or route findings without special-casing each type:
+
+- `location` — the dataset the finding is about. For a missing input or output it is the
+  location the contract *declares*; for everything the plan really did (an output's
+  location, format, save mode, catalog or schema) it is the write's *actual* location, so
+  a contract with several outputs can tell which write a field-level finding belongs to.
+  Input-schema and input-catalog findings carry the input's declared location.
+- `column` — the field path, dotted for a nested field (`address.zip`).
+- `expected` / `actual` — the contract's value and what the plan really did, as a pair.
+
 ## Structural violations — inputs
 
 | Type | Meaning |

@@ -503,6 +503,7 @@ would be.
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
 │   │   ├── VerificationModel.scala    # Violation/ViolationType, VerificationOptions/Result, verdict types
+│   │   ├── Violations.scala           # one constructor per kind of violation (consistent field usage)
 │   │   ├── InputChecker.scala         # input half of verify: missing/undeclared reads, input schema + catalog
 │   │   ├── OutputChecker.scala        # output half of verify: location, format, save mode, catalog, schema
 │   │   ├── CatalogChecker.scala       # declared vs. actual catalog registration (inputs and outputs)

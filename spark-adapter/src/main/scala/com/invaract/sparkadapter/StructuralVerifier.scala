@@ -254,7 +254,7 @@ private[sparkadapter] object StructuralVerifier {
       case None => VerificationResult.of(s"${contract.id}@${contract.version}", Nil)
       case Some(expectedOutput) =>
         val schemaViolations =
-          SchemaChecker.check(expectedOutput.schema.fields, resultingSchema, SchemaChecker.Side.Output, options.rejectUndeclaredFields, caseSensitive)
+          SchemaChecker.check(expectedOutput.schema.fields, resultingSchema, SchemaChecker.Side.Output, location, options.rejectUndeclaredFields, caseSensitive)
         VerificationResult.of(s"${contract.id}@${contract.version}", schemaViolations)
     }
 

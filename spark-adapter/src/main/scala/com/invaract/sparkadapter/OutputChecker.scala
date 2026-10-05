@@ -58,14 +58,7 @@ private[sparkadapter] object OutputChecker {
     * contract reduces to exactly one violation).
     */
   private[sparkadapter] def missingOutputs(outputs: List[Dataset]): List[Violation] =
-    outputs.map(expectedOutput =>
-      Violation(
-        ViolationType.MissingOutput,
-        s"the plan does not produce a write; expected output '${expectedOutput.name}' (${expectedOutput.location})",
-        remediation = s"Add a write to '${expectedOutput.location}' to the transformation.",
-        location = Some(expectedOutput.location)
-      )
-    )
+    outputs.map(Violations.missingOutput)
 
   private def checkWrite(contract: Contract, write: Write, outputSchema: StructType, options: VerificationOptions, caseSensitive: Boolean): List[Violation] = {
     val location = locationFinding(contract.outputs, write.dataset.location)
@@ -77,10 +70,10 @@ private[sparkadapter] object OutputChecker {
     val rest = expectedOutputFor(contract.outputs, write.dataset.location) match {
       case None => Nil
       case Some(expectedOutput) =>
-        formatFinding(expectedOutput, write.format) ++
-          saveModeFinding(expectedOutput, write.saveMode) ++
+        formatFinding(expectedOutput, write.format, write.dataset.location) ++
+          saveModeFinding(expectedOutput, write.saveMode, write.dataset.location) ++
           catalogFinding(expectedOutput, write) ++
-          SchemaChecker.check(expectedOutput.schema.fields, outputSchema, SchemaChecker.Side.Output, options.rejectUndeclaredFields, caseSensitive)
+          SchemaChecker.check(expectedOutput.schema.fields, outputSchema, SchemaChecker.Side.Output, write.dataset.location, options.rejectUndeclaredFields, caseSensitive)
     }
     location ++ rest
   }
@@ -89,25 +82,7 @@ private[sparkadapter] object OutputChecker {
   private[sparkadapter] def locationFinding(outputs: List[Dataset], actualLocation: String): List[Violation] =
     matchOutput(outputs, actualLocation) match {
       case Some(_) => Nil
-      case None =>
-        val candidateLocations = outputs.map(_.location)
-        List(
-          Violation(
-            ViolationType.OutputLocationMismatch,
-            if (outputs.size == 1)
-              s"contract declares output location '${candidateLocations.head}' but the plan writes to '$actualLocation'"
-            else
-              s"the plan writes to '$actualLocation', which does not match any of the contract's " +
-                s"${outputs.size} declared output locations (${candidateLocations.mkString(", ")})",
-            remediation =
-              if (outputs.size == 1)
-                s"Write to '${candidateLocations.head}' instead, or update the contract's declared output location to '$actualLocation' if this location change is intentional."
-              else
-                s"Write to one of the contract's declared output locations (${candidateLocations.mkString(", ")}) instead, or add '$actualLocation' as a new declared output if this is intentional.",
-            expected = Some(candidateLocations.mkString(", ")),
-            actual = Some(actualLocation)
-          )
-        )
+      case None    => List(Violations.outputLocationMismatch(outputs.map(_.location), actualLocation))
     }
 
   /** Only checked when both sides are known: a contract that doesn't declare a
@@ -116,36 +91,18 @@ private[sparkadapter] object OutputChecker {
     * rejection on a write this IR simply doesn't have precise format
     * information for yet.
     */
-  private[sparkadapter] def formatFinding(expectedOutput: Dataset, actualFormat: Option[String]): List[Violation] =
+  private[sparkadapter] def formatFinding(expectedOutput: Dataset, actualFormat: Option[String], writeLocation: String): List[Violation] =
     (expectedOutput.format, actualFormat) match {
       case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
-        List(
-          Violation(
-            ViolationType.OutputFormatMismatch,
-            s"contract declares output format '$expected' but the plan writes in format '$actual'",
-            remediation =
-              s"Write in '$expected' format instead, or update the contract's declared format to '$actual' if this format change is intentional.",
-            expected = Some(expected),
-            actual = Some(actual)
-          )
-        )
+        List(Violations.outputFormatMismatch(expected, actual, writeLocation))
       case _ => Nil
     }
 
   /** Same both-sides-known convention as `formatFinding`. */
-  private[sparkadapter] def saveModeFinding(expectedOutput: Dataset, actualSaveMode: Option[String]): List[Violation] =
+  private[sparkadapter] def saveModeFinding(expectedOutput: Dataset, actualSaveMode: Option[String], writeLocation: String): List[Violation] =
     (expectedOutput.saveMode, actualSaveMode) match {
       case (Some(expected), Some(actual)) if !expected.equalsIgnoreCase(actual) =>
-        List(
-          Violation(
-            ViolationType.OutputSaveModeMismatch,
-            s"contract declares output save mode '$expected' but the plan writes with save mode '$actual'",
-            remediation =
-              s"Write with save mode '$expected' instead, or update the contract's declared saveMode to '$actual' if this change is intentional.",
-            expected = Some(expected),
-            actual = Some(actual)
-          )
-        )
+        List(Violations.outputSaveModeMismatch(expected, actual, writeLocation))
       case _ => Nil
     }
 

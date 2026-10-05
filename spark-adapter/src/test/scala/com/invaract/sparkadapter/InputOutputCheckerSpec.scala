@@ -60,19 +60,21 @@ class InputOutputCheckerSpec extends AnyFunSuite {
 
   test("formatFinding and saveModeFinding: compared case-insensitively, and only when both sides are known") {
     val out = ds("o", "gold/o", format = Some("parquet"), saveMode = Some("overwrite"))
-    assert(OutputChecker.formatFinding(out, Some("PARQUET")).isEmpty)
-    assert(OutputChecker.formatFinding(out, None).isEmpty)
-    assert(OutputChecker.formatFinding(ds("o", "gold/o"), Some("csv")).isEmpty)
-    val f = OutputChecker.formatFinding(out, Some("csv")).head
+    assert(OutputChecker.formatFinding(out, Some("PARQUET"), "w/o").isEmpty)
+    assert(OutputChecker.formatFinding(out, None, "w/o").isEmpty)
+    assert(OutputChecker.formatFinding(ds("o", "gold/o"), Some("csv"), "w/o").isEmpty)
+    val f = OutputChecker.formatFinding(out, Some("csv"), "w/o").head
     assert(f.violationType == ViolationType.OutputFormatMismatch && f.expected.contains("parquet") && f.actual.contains("csv"))
     assert(f.message == "contract declares output format 'parquet' but the plan writes in format 'csv'")
+    assert(f.location.contains("w/o"))
 
-    assert(OutputChecker.saveModeFinding(out, Some("OVERWRITE")).isEmpty)
-    assert(OutputChecker.saveModeFinding(out, None).isEmpty)
-    assert(OutputChecker.saveModeFinding(ds("o", "gold/o"), Some("append")).isEmpty)
-    val m = OutputChecker.saveModeFinding(out, Some("append")).head
+    assert(OutputChecker.saveModeFinding(out, Some("OVERWRITE"), "w/o").isEmpty)
+    assert(OutputChecker.saveModeFinding(out, None, "w/o").isEmpty)
+    assert(OutputChecker.saveModeFinding(ds("o", "gold/o"), Some("append"), "w/o").isEmpty)
+    val m = OutputChecker.saveModeFinding(out, Some("append"), "w/o").head
     assert(m.violationType == ViolationType.OutputSaveModeMismatch && m.expected.contains("overwrite") && m.actual.contains("append"))
     assert(m.message == "contract declares output save mode 'overwrite' but the plan writes with save mode 'append'")
+    assert(m.location.contains("w/o"))
   }
 
   test("catalogFinding: only when the output declares a catalog block") {

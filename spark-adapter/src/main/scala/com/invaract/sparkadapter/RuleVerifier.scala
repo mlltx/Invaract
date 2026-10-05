@@ -209,32 +209,13 @@ private[sparkadapter] object RuleVerifier {
         val missing = declaredColumns.filterNot(paired.contains)
         if (missing.isEmpty) Nil
         else
-          List(
-            Violation(
-              ViolationType.RuleMergeConditionViolation,
-              s"contract requires the MERGE to match on ${declaredColumns.mkString(", ")}, but its ON condition " +
-                s"does not include an equality match on ${missing.mkString(", ")}",
-              remediation =
-                s"Add a 'target.${missing.head} = source.${missing.head}'-style equality to the MERGE's ON " +
-                  s"condition for ${missing.mkString(", ")}, or update the contract's merge_condition rule if " +
-                  "matching on fewer columns is intentional.",
-              expected = Some(declaredColumns.mkString(", ")),
-              actual = Some(paired.mkString(", "))
-            )
-          )
+          List(Violations.mergeConditionRule(declaredColumns, missing, paired))
     }
 
   private def checkForbidUnconditionalDelete(mutation: RowMutation): List[Violation] =
     mutation.delete match {
       case DeleteScope.Unconditional =>
-        List(
-          Violation(
-            ViolationType.RuleUnconditionalDelete,
-            "contract forbids an unconditional DELETE, but this operation deletes every row it reaches with no filtering predicate",
-            remediation =
-              "Add a WHERE predicate to the DELETE, or remove the forbid_unconditional_delete rule if deleting every row is intentional."
-          )
-        )
+        List(Violations.unconditionalDeleteRule())
       case _ => Nil
     }
 
@@ -243,16 +224,6 @@ private[sparkadapter] object RuleVerifier {
     val disallowed = mutation.updatedColumns.filterNot(allowed.contains)
     if (disallowed.isEmpty) Nil
     else
-      List(
-        Violation(
-          ViolationType.RuleDisallowedUpdateColumn,
-          s"contract only allows UPDATE to assign ${allowedColumns.mkString(", ")}, but this operation also assigns ${disallowed.mkString(", ")}",
-          remediation =
-            s"Remove ${disallowed.mkString(", ")} from the UPDATE's SET clause, or add ${disallowed.mkString(", ")} " +
-              "to the contract's allowed_update_columns rule if assigning them is intentional.",
-          expected = Some(allowedColumns.mkString(", ")),
-          actual = Some(mutation.updatedColumns.mkString(", "))
-        )
-      )
+      List(Violations.disallowedUpdateColumnRule(allowedColumns, disallowed, mutation.updatedColumns))
   }
 }

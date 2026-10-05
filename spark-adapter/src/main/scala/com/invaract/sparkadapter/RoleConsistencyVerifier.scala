@@ -113,17 +113,14 @@ private[sparkadapter] object RoleConsistencyVerifier {
     * own doc for why `Conforms`/`CannotDetermine` never reach here. Mirrors
     * `StaticDataQualityVerifier.violations`'s identical shape.
     */
-  def violations(results: List[RoleConformanceCheckResult]): List[Violation] =
-    results.filter(_.verdict == RoleConformanceVerdict.Contradicts).map(toViolation)
+  def violations(contract: Contract, results: List[RoleConformanceCheckResult]): List[Violation] =
+    results.filter(_.verdict == RoleConformanceVerdict.Contradicts).map(toViolation(contract, _))
 
-  private def toViolation(result: RoleConformanceCheckResult): Violation = Violation(
-    ViolationType.RoleConsistencyViolation,
-    s"input '${result.dataset}' is declared ${result.datasetType.name} but ${result.detail}",
-    remediation =
-      s"Review the transformation logic deriving output data from '${result.dataset}' - either declare it " +
-        "DATA_ASSET/SOURCE instead of CONTROL if it genuinely is substantive business data, or remove the output " +
-        "column(s) that derive from it if it is meant to remain control-only.",
-    column = None,
-    location = Some(result.dataset)
-  )
+  /** The result names its input; the violation also carries that input's declared
+    * location (it used to put the input's *name* in the `location` field).
+    */
+  private def toViolation(contract: Contract, result: RoleConformanceCheckResult): Violation = {
+    val location = contract.inputs.find(_.name == result.dataset).map(_.location).getOrElse(result.dataset)
+    Violations.roleConsistency(result.dataset, location, result.datasetType, result.detail)
+  }
 }

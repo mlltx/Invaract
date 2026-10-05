@@ -160,13 +160,7 @@ private[sparkadapter] final class DryRunReporter(
     try {
       val validation = ContractValidator.validate(inferred.contract)
       if (!validation.isValid) {
-        val violations = validation.errors.map { issue =>
-          Violation(
-            ViolationType.InvalidContract,
-            s"the inferred contract is invalid at '${issue.path}': ${issue.message}",
-            "Report this: an inferred contract should always be structurally valid."
-          )
-        }
+        val violations = validation.errors.map(issue => Violations.invalidInferredContract(issue.path, issue.message))
         (SelfCheckInvalid, violations, Nil)
       } else {
         val result = StructuralVerifier.verify(

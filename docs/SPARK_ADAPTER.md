@@ -1015,14 +1015,17 @@ non-null — is a stricter-than-required guarantee, not a violation.
 both off by default — matching how most contract/schema tooling treats an
 unlisted extra column: permitted unless a caller opts into strict mode.
 
-The result matches the spec's exact shape:
+The result matches the spec's shape, plus one field the spec's example did not have — `location`,
+the dataset the finding is about, now on every field-level finding (it was only on some kinds of
+violation, which left a multi-output contract's field-level findings unable to say which output they
+were about; see `Violations` for the full table of what each kind carries):
 
 ```json
 {
   "status": "PASSED" | "FAILED",
   "contract": "invaract_demo_output@1.0.0",
   "violations": [
-    { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country" }
+    { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country", "location": "gold.customer_orders" }
   ]
 }
 ```
@@ -1058,7 +1061,7 @@ Contract verification: PASSED (invaract_demo_output@1.0.0)
 type fires at least once against real or realistically-constructed
 schemas, both `VerificationOptions` toggles are exercised on and off, and
 a golden test reproduces the Phase 4 spec's own worked example
-(`UNDECLARED_OUTPUT_COLUMN`, column `"country"`) exactly.
+(`UNDECLARED_OUTPUT_COLUMN`, column `"country"`) with the added `location`.
 
 Supersedes the earlier `ContractVerifier` (output schema only, no inputs,
 no nullability, no undeclared-column rejection) — removed rather than kept
