@@ -3116,7 +3116,8 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     // the finding says which rule and which write it is about
     val v = ex.result.violations.find(_.violationType == ViolationType.RuleRequiredGroupByViolation).get
     assert(v.rule.contains("required_group_by"))
-    assert(v.location.exists(_.endsWith(outputPath)), s"location was ${v.location}")
+    // by file name with a forward slash: Spark reports a file: URI, while outputPath is OS-native (backslashes on Windows)
+    assert(v.location.exists(_.endsWith("/rule_group_by_fail.parquet")), s"location was ${v.location}")
   }
 
   test("PASS: a conditioned join satisfying its contract's forbid_cross_join rule executes normally") {
@@ -3942,7 +3943,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(ex.result.violations.exists(v => v.violationType == ViolationType.DataQualityViolation && v.column.contains("currency")))
     val dq = ex.result.violations.find(_.violationType == ViolationType.DataQualityViolation).get
-    assert(dq.location.exists(_.endsWith(outputPath)), s"location was ${dq.location}")
+    assert(dq.location.exists(_.endsWith("/dq_violated.parquet")), s"location was ${dq.location}")
     assert(dq.expected.exists(_.nonEmpty), s"expected was ${dq.expected}")
     assert(ex.getMessage.contains("DATA_QUALITY_VIOLATION"))
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
