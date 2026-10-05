@@ -57,6 +57,25 @@ class PlanRuleVerifierSpec extends AnyFunSuite {
     assert(violations.head.message.contains("no aggregation"))
   }
 
+  test("a plan-shape finding names the rule that raised it, and the write when the plan ends in one") {
+    val rules = requiredGroupBy("customer_id")
+    // a bare read has no write: the rule is recorded, the location left unset
+    val noWrite = PlanRuleVerifier.verify(rules, baseRead).head
+    assert(noWrite.rule.contains("required_group_by"))
+    assert(noWrite.location.isEmpty)
+    // the same plan wrapped in a write: the finding is about that write
+    val written = PlanRuleVerifier.verify(rules, Write(DatasetRef("gold/out"), baseRead)).head
+    assert(written.location.contains("gold/out"))
+    assert(written.rule.contains("required_group_by"))
+    // each rule reports itself, not its neighbour
+    val both = PlanRuleVerifier.verify(
+      rules ++ List(ContractRule("forbid_cross_join", Map.empty)),
+      Write(DatasetRef("gold/out"), Join(baseRead, baseRead, JoinType.Cross, None))
+    )
+    assert(both.map(_.rule.get).toSet == Set("required_group_by", "forbid_cross_join"))
+    assert(both.forall(_.location.contains("gold/out")))
+  }
+
   test("required_group_by passes when an Aggregate groups by exactly the declared column") {
     val plan = Aggregate(baseRead, groupBy = List(col("customer_id")), aggregates = List(NamedExpr("customer_id", col("customer_id"))))
     assert(PlanRuleVerifier.verify(requiredGroupBy("customer_id"), plan).isEmpty)

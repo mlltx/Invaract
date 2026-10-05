@@ -150,8 +150,24 @@ private[sparkadapter] object RuleVerifier {
     rules.exists(rule => resolveVerifier(rule.ruleType, customRuleTypes).exists(_.appliesTo(mutationKind)))
   }
 
-  def verify(rules: List[ContractRule], mutation: RowMutation, customRuleTypes: Map[String, String] = Map.empty): List[Violation] =
-    rules.flatMap(rule => resolveVerifier(rule.ruleType, customRuleTypes).map(_.verify(rule, mutation)).getOrElse(Nil))
+  /** `location`: the write the mutation targets — every finding is about it, so it is stamped on each
+    * (custom rule verifiers included) along with the `rule` that raised it.
+    */
+  def verify(
+      rules: List[ContractRule],
+      mutation: RowMutation,
+      customRuleTypes: Map[String, String] = Map.empty,
+      location: Option[String] = None
+  ): List[Violation] =
+    rules.flatMap { rule =>
+      resolveVerifier(rule.ruleType, customRuleTypes).map(_.verify(rule, mutation)).getOrElse(Nil).map(stamp(_, rule, location))
+    }
+
+  /** Fills in what only the caller knows — which rule raised a finding and which write it is about —
+    * without overriding anything the verifier set itself (a custom verifier may know better).
+    */
+  private[sparkadapter] def stamp(violation: Violation, rule: ContractRule, location: Option[String]): Violation =
+    violation.copy(location = violation.location.orElse(location), rule = violation.rule.orElse(Some(rule.ruleType)))
 
   /** Predicate-aware, not just "referenced somewhere": a declared column
     * must appear as a bare operand of a required, top-level equality

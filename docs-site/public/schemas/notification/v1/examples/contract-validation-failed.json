@@ -1,9 +1,9 @@
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791196297652,
-  "applicationId": "local-1791196291720",
+  "timestamp": 1791231567062,
+  "applicationId": "local-1791231561015",
   "unverifiableInputs": [],
-  "eventId": "db84f599aa896a158c708ecd50077eb6607879913eab159e969788cebaf13f7e",
+  "eventId": "6f4922abb565180fd4773a7d273c8a9e760a8b193fd97f99ee72c89957f837cb",
   "fingerprints": null,
   "status": "FAILED",
   "metadata": {
@@ -12,11 +12,12 @@
   },
   "violations": [
     {
-      "location": "file:/workspace/demo/output/result_broken_example.parquet",
-      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
+      "type": "MISSING_OUTPUT_FIELD",
       "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
       "column": "customer_name",
-      "type": "MISSING_OUTPUT_FIELD"
+      "location": "file:/workspace/demo/output/result_broken_example.parquet",
+      "expected": "string"
     }
   ],
   "schemaVersion": 1,

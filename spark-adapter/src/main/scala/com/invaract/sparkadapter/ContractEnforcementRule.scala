@@ -353,7 +353,7 @@ object ContractEnforcementRule {
         val evaluation = OrgPolicyEvaluator.evaluateLayers(governedContract, policies)
 
         if (evaluation.hasBlockingViolations) {
-          val violations = evaluation.enforceViolations.map(toViolation)
+          val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
           publishValidation(governedContract, result, sink, applicationId)
           // No parenthesized fragment here: PlanPrinter renders UnknownPlan
@@ -377,7 +377,7 @@ object ContractEnforcementRule {
           val result = VerificationResult(
             "PASSED",
             s"${governedContract.id}@${governedContract.version}",
-            evaluation.warnViolations.map(toViolation)
+            evaluation.warnViolations.map(toViolation(governedContract, _))
           )
           publishValidation(governedContract, result, sink, applicationId)
         }
@@ -449,8 +449,10 @@ object ContractEnforcementRule {
     * any) is named in `message`/`remediation` themselves, via
     * `PolicyViolation.dataset`.
     */
-  private def toViolation(violation: PolicyViolation): Violation =
-    Violations.orgPolicy(violation.message, violation.remediation)
+  private def toViolation(contract: Contract, violation: PolicyViolation): Violation = {
+    val location = violation.dataset.flatMap(name => (contract.inputs ++ contract.outputs).find(_.name == name)).map(_.location)
+    Violations.orgPolicy(violation.message, violation.remediation, location, violation.policyId)
+  }
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -668,6 +670,8 @@ object ContractEnforcementRule {
         // gathered once here and shared by every verifier below, instead of each
         // walking the plan itself - see `PlanFacts`.
         val planFacts = PlanFacts.of(translated.plan)
+        // Every rule/data-quality finding below is about this write.
+        val writeLocation = PlanRuleVerifier.writeLocation(planFacts)
         // Declared field names are matched the way Spark matches columns: by the
         // session's `spark.sql.caseSensitive` (read per check, so a runtime change
         // is honoured). `SQLConf.get` is the active session's conf on the analyzer
@@ -698,9 +702,9 @@ object ContractEnforcementRule {
         val rowMutationClassification = RowMutationSupport.classify(plan)
         val ruleViolations = rowMutationClassification match {
           case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
-            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes)
+            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes, writeLocation)
           case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
-            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind)) else Nil
+            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind, writeLocation)) else Nil
           case None => Nil
         }
         // Independent of the DML-shaped ruleViolations above: PlanRuleVerifier
@@ -767,7 +771,7 @@ object ContractEnforcementRule {
         // fail this check and abort the write - the same "distinct from
         // NotGuaranteed" principle DataQualityVerdict's own doc explains.
         val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, planFacts) else Nil
-        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults)
+        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults, writeLocation)
         // See VerificationOptions.roleConsistency's own doc and
         // docs/CONTRACT_MODEL.md's "Input and Output Types" section:
         // roleConformanceResults is report-only (every verdict, kept for
@@ -1068,12 +1072,12 @@ object ContractEnforcementRule {
       .map(f => s"${f.name}: ${f.fieldType}" + (if (f.required) "" else " (optional)"))
       .mkString(", ")
 
-  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind): Violation = {
+  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind, location: Option[String]): Violation = {
     val kindName = kind match {
       case RowMutationSupport.Kind.Merge  => "MERGE"
       case RowMutationSupport.Kind.Update => "UPDATE"
       case RowMutationSupport.Kind.Delete => "DELETE"
     }
-    Violations.unverifiableDml(kindName)
+    Violations.unverifiableDml(kindName, location)
   }
 }

@@ -22,16 +22,41 @@ flag in the same case class, the identical way).
 
 ## What each violation carries
 
-`column`, `location`, `expected` and `actual` mean the same thing on every violation that
-sets them, so a consumer can group or route findings without special-casing each type:
+`column`, `location`, `expected`, `actual` and `rule` mean the same thing on every violation
+that sets them, so a consumer can group or route findings without special-casing each type:
 
 - `location` — the dataset the finding is about. For a missing input or output it is the
   location the contract *declares*; for everything the plan really did (an output's
-  location, format, save mode, catalog or schema) it is the write's *actual* location, so
-  a contract with several outputs can tell which write a field-level finding belongs to.
-  Input-schema and input-catalog findings carry the input's declared location.
+  location, format, save mode, catalog or schema, and every rule, data-quality and
+  unverifiable-operation finding) it is the write's *actual* location, so a contract with
+  several outputs can tell which write a finding belongs to. Input-schema and input-catalog
+  findings carry the input's declared location; an organizational-policy finding carries the
+  declared location of the dataset it faulted, when it names one.
 - `column` — the field path, dotted for a nested field (`address.zip`).
-- `expected` / `actual` — the contract's value and what the plan really did, as a pair.
+- `expected` / `actual` — each is set when the finding has that value to report. A
+  comparison sets both (declared type vs. actual type, declared format vs. actual format).
+  A missing field reports only the `expected` type; an undeclared column only its `actual`
+  type; a data-quality violation the declared constraint as `expected`; an unverifiable
+  operation the kind of operation or command as `actual`.
+- `rule` — the contract rule type (`required_group_by`, `forbid_cross_join`, ...) or the
+  organizational policy id that raised the finding.
+
+| Kind | `location` | `column` | `expected` / `actual` | `rule` |
+|---|---|---|---|---|
+| `MISSING_INPUT`, `MISSING_OUTPUT` | declared | — | — | — |
+| `UNDECLARED_INPUT` | the read | — | — | — |
+| `OUTPUT_LOCATION_MISMATCH` / `_FORMAT_` / `_SAVE_MODE_` | write | — | declared / actual | — |
+| `*_CATALOG_REGISTRATION`, `*_CATALOG_MISMATCH` | dataset | — | catalog (mismatch only) | — |
+| `MISSING_*_FIELD` | dataset | path | declared type / — | — |
+| `UNDECLARED_*_COLUMN` | dataset | path | — / actual type | — |
+| `*_FIELD_TYPE_MISMATCH`, `*_FIELD_NULLABILITY_MISMATCH` | dataset | path | declared / actual | — |
+| `ROLE_CONSISTENCY_VIOLATION` | the input | — | — | — |
+| `DATA_QUALITY_VIOLATION` | write | field | declared constraint / — | — |
+| `RULE_*` | write | — | the rule's own columns / what the plan has | rule type |
+| `RULE_UNVERIFIABLE_DML` | write | — | — / operation kind | — |
+| `ORG_POLICY_VIOLATION` | dataset, when named | — | — | policy id |
+| `UNVERIFIABLE_WRITE` | — | — | — / command class | — |
+| `INVALID_CONTRACT` | — | — | — | — |
 
 ## Structural violations — inputs
 

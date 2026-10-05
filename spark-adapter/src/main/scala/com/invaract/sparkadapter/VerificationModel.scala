@@ -22,14 +22,16 @@ case class Violation(
   column: Option[String] = None,
   location: Option[String] = None,
   expected: Option[String] = None,
-  actual: Option[String] = None
+  actual: Option[String] = None,
+  rule: Option[String] = None
 ) {
   def toMap: Map[String, Any] =
     Map("type" -> violationType, "message" -> message, "remediation" -> remediation) ++
       column.map("column" -> _) ++
       location.map("location" -> _) ++
       expected.map("expected" -> _) ++
-      actual.map("actual" -> _)
+      actual.map("actual" -> _) ++
+      rule.map("rule" -> _)
 }
 
 /** The violation type vocabulary `StructuralVerifier` produces. Plain

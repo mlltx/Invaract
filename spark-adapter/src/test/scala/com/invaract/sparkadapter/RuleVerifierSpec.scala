@@ -311,6 +311,17 @@ class RuleVerifierSpec extends AnyFunSuite {
     assert(violations.head.violationType == ViolationType.RuleUnconditionalDelete)
   }
 
+  test("a DML rule finding names the rule and, when the caller knows it, the write") {
+    val rules = List(ContractRule("forbid_unconditional_delete", Map.empty))
+    val mutation = RowMutation(delete = DeleteScope.Unconditional)
+    val unlocated = RuleVerifier.verify(rules, mutation).head
+    assert(unlocated.rule.contains("forbid_unconditional_delete"))
+    assert(unlocated.location.isEmpty)
+    val located = RuleVerifier.verify(rules, mutation, location = Some("gold/out")).head
+    assert(located.location.contains("gold/out"))
+    assert(located.rule.contains("forbid_unconditional_delete"))
+  }
+
   test("allowed_update_columns is inapplicable to a mutation that updates no columns") {
     val rules = List(ContractRule("allowed_update_columns", Map("columns" -> java.util.Arrays.asList("status"))))
     assert(RuleVerifier.verify(rules, RowMutation(updatedColumns = Nil)).isEmpty)

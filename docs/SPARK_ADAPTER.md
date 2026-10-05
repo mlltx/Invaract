@@ -1015,17 +1015,18 @@ non-null — is a stricter-than-required guarantee, not a violation.
 both off by default — matching how most contract/schema tooling treats an
 unlisted extra column: permitted unless a caller opts into strict mode.
 
-The result matches the spec's shape, plus one field the spec's example did not have — `location`,
-the dataset the finding is about, now on every field-level finding (it was only on some kinds of
-violation, which left a multi-output contract's field-level findings unable to say which output they
-were about; see `Violations` for the full table of what each kind carries):
+The result matches the spec's shape, plus fields the spec's example did not have: `location`, the
+dataset the finding is about (now on every field-level, rule, data-quality and unverifiable-operation
+finding, which left a multi-output contract unable to say which output a finding was about), `actual`
+(here the stray column's type), and `rule` on rule and org-policy findings (the rule type or policy id
+that raised it). See `Violations` for the full table of what each kind carries:
 
 ```json
 {
   "status": "PASSED" | "FAILED",
   "contract": "invaract_demo_output@1.0.0",
   "violations": [
-    { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country", "location": "gold.customer_orders" }
+    { "type": "UNDECLARED_OUTPUT_COLUMN", "message": "...", "column": "country", "location": "gold.customer_orders", "actual": "string" }
   ]
 }
 ```
@@ -1061,7 +1062,7 @@ Contract verification: PASSED (invaract_demo_output@1.0.0)
 type fires at least once against real or realistically-constructed
 schemas, both `VerificationOptions` toggles are exercised on and off, and
 a golden test reproduces the Phase 4 spec's own worked example
-(`UNDECLARED_OUTPUT_COLUMN`, column `"country"`) with the added `location`.
+(`UNDECLARED_OUTPUT_COLUMN`, column `"country"`) with the added `location` and `actual` (the stray column's type).
 
 Supersedes the earlier `ContractVerifier` (output schema only, no inputs,
 no nullability, no undeclared-column rejection) — removed rather than kept

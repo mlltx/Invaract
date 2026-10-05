@@ -48,7 +48,15 @@ private[sparkadapter] object PlanRuleVerifier {
     * (see `PlanFacts`) — each rule used to walk the whole plan itself.
     */
   def verify(rules: List[ContractRule], facts: PlanFacts): List[Violation] =
-    rules.flatMap(rule => rule.interpret.toList.flatMap(checkOne(_, facts)))
+    rules.flatMap { rule =>
+      rule.interpret.toList.flatMap(checkOne(_, facts)).map(RuleVerifier.stamp(_, rule, PlanRuleVerifier.writeLocation(facts)))
+    }
+
+  /** The location of the write this plan ends in — every plan-shape finding is about that write. */
+  private[sparkadapter] def writeLocation(facts: PlanFacts): Option[String] = facts.plan match {
+    case w: com.invaract.ir.Write => Some(w.dataset.location)
+    case _                        => None
+  }
 
   private def checkOne(rule: InterpretedRule, facts: PlanFacts): List[Violation] = rule match {
     case InterpretedRule.RequiredGroupBy(columns)       => checkRequiredGroupBy(columns, facts)

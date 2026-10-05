@@ -20,27 +20,37 @@ import com.invaract.sparkadapter.SchemaChecker.Side
   * location for a finding about a declared dataset that has no actual
   * counterpart (a missing input/output, an input's schema or catalog), and the
   * write's actual location for a finding about the write (an output's location,
-  * format, save mode, catalog, schema). `column` is a field path (`address.zip`
-  * for a nested one). `expected`/`actual` are present exactly when the finding
-  * compares two values.
+  * format, save mode, catalog, schema, and every rule, data-quality and
+  * unverifiable-operation finding). `column` is a field path (`address.zip` for a
+  * nested one). `expected`/`actual` are each filled when the finding has that
+  * value to report — a comparison fills both; a missing field reports only the
+  * `expected` type, a stray column only its `actual` type. `rule` names the
+  * contract rule type (or org policy id) that raised the finding.
+  *
+  * Rule findings are built here without `location`/`rule` — only the caller
+  * (`RuleVerifier`/`PlanRuleVerifier`) knows the write and which rule it was
+  * running, so it stamps them (`RuleVerifier.stamp`), custom rule verifiers' too.
   *
   * {{{
-  * kind                                   location  column  expected/actual
-  * MISSING_INPUT                          declared  -       -
-  * UNDECLARED_INPUT                       read      -       -
-  * MISSING_OUTPUT                         declared  -       -
-  * OUTPUT_LOCATION_MISMATCH               write     -       declared locations / write
-  * OUTPUT_FORMAT_MISMATCH                 write     -       format / format
-  * OUTPUT_SAVE_MODE_MISMATCH              write     -       save mode / save mode
-  * *_CATALOG_REGISTRATION / *_MISMATCH    dataset   -       (mismatch only) catalog / catalog
-  * *_FIELD missing, *_UNDECLARED_COLUMN   dataset   path    -
-  * *_FIELD_TYPE_MISMATCH                  dataset   path    declared type / actual type
-  * *_FIELD_NULLABILITY_MISMATCH           dataset   path    "not null" / "nullable"
-  * ROLE_CONSISTENCY_VIOLATION             input     -       -
-  * DATA_QUALITY_VIOLATION                 -         field   -
-  * RULE_* (plan and DML rules)             -         -       the rule's own columns / what the plan has
-  * INVALID_CONTRACT, ORG_POLICY_VIOLATION,
-  *   UNVERIFIABLE_WRITE, RULE_UNVERIFIABLE_DML   -    -       -        (about the whole contract or operation)
+  * kind                                   location  column  expected / actual              rule
+  * MISSING_INPUT                          declared  -       -                              -
+  * UNDECLARED_INPUT                       read      -       -                              -
+  * MISSING_OUTPUT                         declared  -       -                              -
+  * OUTPUT_LOCATION_MISMATCH               write     -       declared locations / write     -
+  * OUTPUT_FORMAT_MISMATCH                 write     -       format / format                -
+  * OUTPUT_SAVE_MODE_MISMATCH              write     -       save mode / save mode          -
+  * *_CATALOG_REGISTRATION / *_MISMATCH    dataset   -       (mismatch only) catalog / catalog  -
+  * MISSING_*_FIELD                        dataset   path    declared type / -              -
+  * *_UNDECLARED_COLUMN                    dataset   path    - / actual type                -
+  * *_FIELD_TYPE_MISMATCH                  dataset   path    declared type / actual type    -
+  * *_FIELD_NULLABILITY_MISMATCH           dataset   path    "not null" / "nullable"        -
+  * ROLE_CONSISTENCY_VIOLATION             input     -       -                              -
+  * DATA_QUALITY_VIOLATION                 write     field   the declared constraint / -    -
+  * RULE_* (plan and DML rules)             write     -       the rule's columns / what the plan has  rule type
+  * RULE_UNVERIFIABLE_DML                  write     -       - / the operation kind         -
+  * ORG_POLICY_VIOLATION                   dataset   -       -                              policy id
+  * UNVERIFIABLE_WRITE                     -         -       - / the command class          -
+  * INVALID_CONTRACT                       -         -       -                              -
   * }}}
   */
 private[sparkadapter] object Violations {
@@ -167,7 +177,8 @@ private[sparkadapter] object Violations {
       remediation =
         s"Add a '$path' column (type '$fieldType') to the ${side.noun}, or mark it optional in the contract if it isn't always produced.",
       column = Some(path),
-      location = Some(location)
+      location = Some(location),
+      expected = Some(fieldType)
     )
 
   def fieldTypeMismatch(side: Side, location: String, path: String, declaredType: String, actualType: String): Violation =
@@ -194,14 +205,16 @@ private[sparkadapter] object Violations {
       actual = Some("nullable")
     )
 
-  def undeclaredColumn(side: Side, location: String, path: String): Violation =
+  /** `actualType`: the stray column's type as Spark reports it. */
+  def undeclaredColumn(side: Side, location: String, path: String, actualType: String): Violation =
     Violation(
       side.undeclaredColumn,
       s"column '$path' is present in the actual ${side.label} schema but not declared by the contract",
       remediation =
         s"Remove '$path' from the transformation's ${side.noun}, or add it to the contract's declared schema if it's intentional.",
       column = Some(path),
-      location = Some(location)
+      location = Some(location),
+      actual = Some(actualType)
     )
 
   // ---- row-level DML rules ------------------------------------------------------------------------
@@ -238,7 +251,8 @@ private[sparkadapter] object Violations {
       actual = Some(updatedColumns.mkString(", "))
     )
 
-  def unverifiableDml(kindName: String): Violation =
+  /** `location`: the write the operation targets; `kindName` is also reported as `actual`. */
+  def unverifiableDml(kindName: String, location: Option[String]): Violation =
     Violation(
       ViolationType.RuleUnverifiableDml,
       s"this operation is a $kindName the active contract declares a rule for, but Invaract could not " +
@@ -246,7 +260,9 @@ private[sparkadapter] object Violations {
       remediation =
         "This is likely a genuine gap in Invaract's support for this operation's exact shape (e.g. an " +
           "Iceberg merge-on-read UPDATE, whose rewritten plan doesn't expose which columns changed) - open " +
-          "an issue/PR. If the rule doesn't need to apply to this operation, remove it from the contract."
+          "an issue/PR. If the rule doesn't need to apply to this operation, remove it from the contract.",
+      location = location,
+      actual = Some(kindName)
     )
 
   // ---- plan-shape rules ----------------------------------------------------------------------------
@@ -301,14 +317,17 @@ private[sparkadapter] object Violations {
 
   // ---- static analysis ------------------------------------------------------------------------------
 
-  def dataQuality(field: String, constraint: String): Violation =
+  /** `location`: the output the field belongs to; `constraint` (the declared property) is also reported as `expected`. */
+  def dataQuality(field: String, constraint: String, location: Option[String]): Violation =
     Violation(
       ViolationType.DataQualityViolation,
       s"the transformation's own semantics prove that output field '$field' cannot always satisfy its declared $constraint property",
       remediation =
         s"Review the transformation logic producing '$field' — it can produce a value that violates the contract's declared constraint. " +
           "If the constraint is no longer correct, relax or remove it from the contract instead.",
-      column = Some(field)
+      column = Some(field),
+      location = location,
+      expected = Some(constraint)
     )
 
   /** `inputName`/`inputLocation`: the declared input whose observed role contradicts its declared type. */
@@ -348,9 +367,13 @@ private[sparkadapter] object Violations {
       "Report this: an inferred contract should always be structurally valid."
     )
 
-  def orgPolicy(message: String, remediation: String): Violation =
-    Violation(ViolationType.OrgPolicyViolation, message, remediation)
+  /** `location`: the declared location of the dataset the policy found fault with, when it names one;
+    * `policyId`: the policy that was violated (reported as `rule`).
+    */
+  def orgPolicy(message: String, remediation: String, location: Option[String], policyId: String): Violation =
+    Violation(ViolationType.OrgPolicyViolation, message, remediation, location = location, rule = Some(policyId))
 
+  /** `commandClassName` is also reported as `actual`. */
   def unverifiableWrite(commandClassName: String, contractRef: String): Violation =
     Violation(
       ViolationType.UnverifiableWrite,
@@ -360,6 +383,7 @@ private[sparkadapter] object Violations {
         "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
           "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
           "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-          "\"Fail-closed on unverifiable writes\" section."
+          "\"Fail-closed on unverifiable writes\" section.",
+      actual = Some(commandClassName)
     )
 }

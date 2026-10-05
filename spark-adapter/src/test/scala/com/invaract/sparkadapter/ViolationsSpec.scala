@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Dataset, DatasetType, Schema}
+import com.invaract.contract.{ContractRule, Dataset, DatasetType, Schema}
 import com.invaract.sparkadapter.SchemaChecker.Side
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -21,11 +21,15 @@ class ViolationsSpec extends AnyFunSuite {
   private val in = Dataset("in", "bronze/in", None, Schema(Nil), derivedFrom = None)
   private val out = Dataset("out", "gold/out", None, Schema(Nil))
 
-  /** `L` = location, `C` = column, `E` = expected and actual together (never one without the other). */
-  private def shape(v: Violation): String = {
-    assert(v.expected.isDefined == v.actual.isDefined, s"expected and actual must come as a pair: $v")
-    List(v.location.map(_ => "L"), v.column.map(_ => "C"), v.expected.map(_ => "E")).flatten.mkString
-  }
+  /** Which fields a violation fills, always in the order `L`ocation, `C`olumn, `E`xpected, `A`ctual, `R`ule. */
+  private def shape(v: Violation): String =
+    List(
+      v.location.map(_ => "L"),
+      v.column.map(_ => "C"),
+      v.expected.map(_ => "E"),
+      v.actual.map(_ => "A"),
+      v.rule.map(_ => "R")
+    ).flatten.mkString
 
   // kind -> (the violation a constructor builds, the shape it must have)
   private val sample: List[(Violation, String)] = List(
@@ -33,47 +37,41 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.undeclaredInput("bronze/x") -> "L",
     Violations.undeclaredInputNotSourceOf("bronze/in", in, out) -> "L",
     Violations.missingOutput(out) -> "L",
-    Violations.outputLocationMismatch(List("gold/a"), "gold/b") -> "LE",
-    Violations.outputFormatMismatch("parquet", "csv", "gold/out") -> "LE",
-    Violations.outputSaveModeMismatch("overwrite", "append", "gold/out") -> "LE",
+    Violations.outputLocationMismatch(List("gold/a"), "gold/b") -> "LEA",
+    Violations.outputFormatMismatch("parquet", "csv", "gold/out") -> "LEA",
+    Violations.outputSaveModeMismatch("overwrite", "append", "gold/out") -> "LEA",
     Violations.missingCatalogRegistration(Side.Input, "bronze/in") -> "L",
     Violations.missingCatalogRegistration(Side.Output, "gold/out") -> "L",
-    Violations.catalogMismatch(Side.Input, "bronze/in", List("table (expected 'a', actual 'b')"), "table=a", "table=b") -> "LE",
-    Violations.catalogMismatch(Side.Output, "gold/out", List("table (expected 'a', actual 'b')"), "table=a", "table=b") -> "LE",
-    Violations.missingField(Side.Input, "bronze/in", "id", "integer") -> "LC",
-    Violations.missingField(Side.Output, "gold/out", "id", "integer") -> "LC",
-    Violations.fieldTypeMismatch(Side.Input, "bronze/in", "id", "integer", "string") -> "LCE",
-    Violations.fieldTypeMismatch(Side.Output, "gold/out", "id", "integer", "string") -> "LCE",
-    Violations.fieldNullabilityMismatch(Side.Input, "bronze/in", "id") -> "LCE",
-    Violations.fieldNullabilityMismatch(Side.Output, "gold/out", "id") -> "LCE",
-    Violations.undeclaredColumn(Side.Input, "bronze/in", "x") -> "LC",
-    Violations.undeclaredColumn(Side.Output, "gold/out", "x") -> "LC",
-    Violations.mergeConditionRule(List("id"), List("id"), Set.empty) -> "E",
+    Violations.catalogMismatch(Side.Input, "bronze/in", List("table (expected 'a', actual 'b')"), "table=a", "table=b") -> "LEA",
+    Violations.catalogMismatch(Side.Output, "gold/out", List("table (expected 'a', actual 'b')"), "table=a", "table=b") -> "LEA",
+    Violations.missingField(Side.Input, "bronze/in", "id", "integer") -> "LCE",
+    Violations.missingField(Side.Output, "gold/out", "id", "integer") -> "LCE",
+    Violations.fieldTypeMismatch(Side.Input, "bronze/in", "id", "integer", "string") -> "LCEA",
+    Violations.fieldTypeMismatch(Side.Output, "gold/out", "id", "integer", "string") -> "LCEA",
+    Violations.fieldNullabilityMismatch(Side.Input, "bronze/in", "id") -> "LCEA",
+    Violations.fieldNullabilityMismatch(Side.Output, "gold/out", "id") -> "LCEA",
+    Violations.undeclaredColumn(Side.Input, "bronze/in", "x", "string") -> "LCA",
+    Violations.undeclaredColumn(Side.Output, "gold/out", "x", "string") -> "LCA",
+    Violations.mergeConditionRule(List("id"), List("id"), Set.empty) -> "EA",
     Violations.unconditionalDeleteRule() -> "",
-    Violations.disallowedUpdateColumnRule(List("a"), List("b"), List("a", "b")) -> "E",
-    Violations.unverifiableDml("MERGE") -> "",
-    Violations.requiredGroupByRule(List("k"), Nil) -> "E",
+    Violations.disallowedUpdateColumnRule(List("a"), List("b"), List("a", "b")) -> "EA",
+    Violations.unverifiableDml("MERGE", Some("gold/out")) -> "LA",
+    Violations.requiredGroupByRule(List("k"), Nil) -> "EA",
     Violations.crossJoinRule(1) -> "",
-    Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = true) -> "",
-    Violations.requiredFilterColumnsRule(List("k"), List("k"), Set.empty) -> "E",
-    Violations.dataQuality("amount", "range") -> "C",
+    Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = true) -> "E",
+    Violations.requiredFilterColumnsRule(List("k"), List("k"), Set.empty) -> "EA",
+    Violations.dataQuality("amount", "range", Some("gold/out")) -> "LCE",
     Violations.roleConsistency("cal", "raw.cal", DatasetType.Control, "detail") -> "L",
     Violations.invalidContract("c@1.0.0", "outputs", "empty") -> "",
     Violations.unresolvableCustomRuleType("c@1.0.0", "t", "x.Y", "boom") -> "",
     Violations.invalidInferredContract("outputs", "empty") -> "",
-    Violations.orgPolicy("m", "r") -> "",
-    Violations.unverifiableWrite("SomeCommand", "c@1.0.0") -> ""
+    Violations.orgPolicy("m", "r", Some("gold/out"), "p1") -> "LR",
+    Violations.unverifiableWrite("SomeCommand", "c@1.0.0") -> "A"
   )
 
   test("every constructor builds the shape the table in Violations' doc promises") {
-    // requiredJoinColumns carries `expected` only by design (the plan has no single 'actual' to name):
-    val special = Set(ViolationType.RuleRequiredJoinColumnsViolation)
     sample.foreach { case (v, wanted) =>
-      if (special.contains(v.violationType)) {
-        assert(v.expected.isDefined && v.actual.isEmpty && v.location.isEmpty && v.column.isEmpty, v.toString)
-      } else {
-        assert(shape(v) == wanted, s"${v.violationType}: expected shape '$wanted', got '${shape(v)}': $v")
-      }
+      assert(shape(v) == wanted, s"${v.violationType}: expected shape '$wanted', got '${shape(v)}': $v")
       assert(v.message.nonEmpty && v.remediation.nonEmpty, v.toString)
     }
   }
@@ -82,8 +80,8 @@ class ViolationsSpec extends AnyFunSuite {
     val types = List(
       Violations.missingField(Side.Input, "l", "p", "t").violationType -> ViolationType.MissingInputField,
       Violations.missingField(Side.Output, "l", "p", "t").violationType -> ViolationType.MissingOutputField,
-      Violations.undeclaredColumn(Side.Input, "l", "p").violationType -> ViolationType.UndeclaredInputColumn,
-      Violations.undeclaredColumn(Side.Output, "l", "p").violationType -> ViolationType.UndeclaredOutputColumn,
+      Violations.undeclaredColumn(Side.Input, "l", "p", "t").violationType -> ViolationType.UndeclaredInputColumn,
+      Violations.undeclaredColumn(Side.Output, "l", "p", "t").violationType -> ViolationType.UndeclaredOutputColumn,
       Violations.fieldTypeMismatch(Side.Input, "l", "p", "a", "b").violationType -> ViolationType.InputFieldTypeMismatch,
       Violations.fieldTypeMismatch(Side.Output, "l", "p", "a", "b").violationType -> ViolationType.OutputFieldTypeMismatch,
       Violations.fieldNullabilityMismatch(Side.Input, "l", "p").violationType -> ViolationType.InputFieldNullabilityMismatch,
@@ -107,7 +105,7 @@ class ViolationsSpec extends AnyFunSuite {
     assert(Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = false).message.endsWith("the plan contains no join at all"))
     assert(Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = true).message.endsWith("establishes an equality match on all of them"))
     assert(Violations.crossJoinRule(3).message.contains("3 join(s) with no condition"))
-    assert(Violations.unverifiableDml("UPDATE").message.startsWith("this operation is a UPDATE"))
+    assert(Violations.unverifiableDml("UPDATE", None).message.startsWith("this operation is a UPDATE"))
     assert(Violations.unverifiableWrite("Foo", "c@1").message.startsWith("'Foo' looks like it may write"))
     assert(Violations.unverifiableWrite("Foo", "c@1").message.contains("against contract 'c@1'"))
   }
@@ -150,6 +148,39 @@ class ViolationsSpec extends AnyFunSuite {
     val v = Violations.undeclaredInputNotSourceOf("bronze/in", in, out)
     assert(v.message.startsWith("plan reads 'bronze/in' (input 'in'), which this contract declares but not as a source of output 'out'"))
     assert(v.remediation.startsWith("Add 'in' to output 'out''s derivedFrom"))
+  }
+
+  test("a rule's findings are stamped with the write they are about and the rule that raised them") {
+    val raw = Violations.requiredGroupByRule(List("k"), Nil)
+    val stamped = RuleVerifier.stamp(raw, ContractRule("required_group_by", Map.empty), Some("gold/out"))
+    assert(stamped.location.contains("gold/out"))
+    assert(stamped.rule.contains("required_group_by"))
+    assert(stamped.copy(location = None, rule = None) == raw)
+    // no write known: location stays unset, rule is still recorded
+    val noWrite = RuleVerifier.stamp(raw, ContractRule("required_group_by", Map.empty), None)
+    assert(noWrite.location.isEmpty && noWrite.rule.contains("required_group_by"))
+    // a verifier that already filled either field keeps its own value
+    val own = raw.copy(location = Some("custom/loc"), rule = Some("custom-rule"))
+    val kept = RuleVerifier.stamp(own, ContractRule("required_group_by", Map.empty), Some("gold/out"))
+    assert(kept.location.contains("custom/loc") && kept.rule.contains("custom-rule"))
+  }
+
+  test("new fields carry the values the checker has: missing field's declared type, stray column's actual type, unverifiable kinds") {
+    assert(Violations.missingField(Side.Output, "gold/out", "id", "integer").expected.contains("integer"))
+    assert(Violations.undeclaredColumn(Side.Input, "bronze/in", "x", "array<int>").actual.contains("array<int>"))
+    val dml = Violations.unverifiableDml("UPDATE", Some("gold/out"))
+    assert(dml.location.contains("gold/out") && dml.actual.contains("UPDATE"))
+    assert(Violations.unverifiableDml("UPDATE", None).location.isEmpty)
+    assert(Violations.unverifiableWrite("SomeCommand", "c@1").actual.contains("SomeCommand"))
+    val dq = Violations.dataQuality("amount", "range >= 0", Some("gold/out"))
+    assert(dq.expected.contains("range >= 0") && dq.location.contains("gold/out") && dq.column.contains("amount"))
+    val policy = Violations.orgPolicy("m", "r", None, "pol-1")
+    assert(policy.rule.contains("pol-1") && policy.location.isEmpty)
+  }
+
+  test("rule is part of toMap only when set") {
+    assert(!Violations.missingOutput(out).toMap.contains("rule"))
+    assert(Violations.orgPolicy("m", "r", None, "pol-1").toMap("rule") == "pol-1")
   }
 
   // --- the vocabulary, the constructors and the docs cannot drift apart --------------------------------

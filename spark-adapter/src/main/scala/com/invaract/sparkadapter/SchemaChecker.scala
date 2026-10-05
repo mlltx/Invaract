@@ -147,7 +147,7 @@ private[sparkadapter] object SchemaChecker {
       if (rejectUndeclaredFields)
         actualFields.toList
           .filterNot(f => declaredNames.contains(key(f.name, caseSensitive)))
-          .map(f => Violations.undeclaredColumn(side, location, pathPrefix + f.name))
+          .map(f => Violations.undeclaredColumn(side, location, pathPrefix + f.name, f.dataType.catalogString))
       else Nil
 
     fieldViolations ++ undeclaredViolations

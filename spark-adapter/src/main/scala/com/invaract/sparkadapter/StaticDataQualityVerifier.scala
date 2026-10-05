@@ -133,10 +133,11 @@ private[sparkadapter] object StaticDataQualityVerifier {
     * own doc for why `NotGuaranteed`/`NotStaticallyVerifiable` never reach
     * here.
     */
-  def violations(results: List[DataQualityCheckResult]): List[Violation] =
-    results.filter(_.verdict == DataQualityVerdict.Violated).map(toViolation)
+  def violations(results: List[DataQualityCheckResult], location: Option[String] = None): List[Violation] =
+    results.filter(_.verdict == DataQualityVerdict.Violated).map(toViolation(_, location))
 
-  private def toViolation(result: DataQualityCheckResult): Violation = Violations.dataQuality(result.field, result.constraint)
+  private def toViolation(result: DataQualityCheckResult, location: Option[String]): Violation =
+    Violations.dataQuality(result.field, result.constraint, location)
 
   /** Trusted axioms for every real `Read` scope the plan contains, keyed
     * exactly the way `PropertyAnalysis`'s own `Read` case looks them up

@@ -192,6 +192,10 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
       intercept[ContractViolationException] { rule(spark) }
     }
     assert(ex.result.violations.exists(v => v.violationType == ViolationType.OrgPolicyViolation && v.message.contains("id-must-be-string")))
+    // the finding names the policy and the dataset it faulted, by that dataset's declared location
+    val violation = ex.result.violations.find(_.violationType == ViolationType.OrgPolicyViolation).get
+    assert(violation.rule.contains("id-must-be-string"))
+    assert(violation.location.contains("some/output/path"))
   }
 
   test("enforce mode: an unexpired exemption suppresses the violation, real conf-driven end to end") {

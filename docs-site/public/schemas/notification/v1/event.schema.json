@@ -37,7 +37,8 @@
         "column": { "type": "string" },
         "location": { "type": "string" },
         "expected": { "type": "string" },
-        "actual": { "type": "string" }
+        "actual": { "type": "string" },
+        "rule": { "type": "string" }
       }
     },
     "Fingerprint": {

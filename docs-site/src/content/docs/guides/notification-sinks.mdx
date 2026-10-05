@@ -82,17 +82,26 @@ copied from real runs; they are published as files next to the
 ```json
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791068443057,
-  "applicationId": "local-1791068436169",
+  "timestamp": 1791231567062,
+  "applicationId": "local-1791231561015",
   "unverifiableInputs": [],
-  "eventId": "7b0fe8272d75fe85301c355d214220e6b10ca9032c0f21f40b456d2f7c62f940",
+  "eventId": "6f4922abb565180fd4773a7d273c8a9e760a8b193fd97f99ee72c89957f837cb",
   "fingerprints": null,
-  "status": "PASSED",
+  "status": "FAILED",
   "metadata": {
-    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "description": "{purpose=A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n}",
     "owner": "invaract-demo"
   },
-  "violations": [],
+  "violations": [
+    {
+      "type": "MISSING_OUTPUT_FIELD",
+      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
+      "column": "customer_name",
+      "location": "file:/workspace/demo/output/result_broken_example.parquet",
+      "expected": "string"
+    }
+  ],
   "schemaVersion": 1,
   "roleConformance": [],
   "dataQuality": [],
