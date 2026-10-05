@@ -112,6 +112,46 @@ class ViolationsSpec extends AnyFunSuite {
     assert(Violations.unverifiableWrite("Foo", "c@1").message.contains("against contract 'c@1'"))
   }
 
+  test("missingInput only points at derivedFrom when asked to") {
+    val plain = Violations.missingInput(in, nudgeTowardDerivedFrom = false)
+    val nudged = Violations.missingInput(in, nudgeTowardDerivedFrom = true)
+    assert(!plain.remediation.contains("derivedFrom"))
+    assert(plain.remediation.endsWith("if it is no longer needed."))
+    assert(nudged.remediation.startsWith(plain.remediation))
+    assert(nudged.remediation.contains("'derivedFrom'"))
+    assert(nudged.remediation.contains("'in' feeds only some"))
+    assert(nudged.message == plain.message)
+  }
+
+  test("outputLocationMismatch words one declared location and several differently, and joins them for `expected`") {
+    val one = Violations.outputLocationMismatch(List("gold/a"), "gold/b")
+    assert(one.message == "contract declares output location 'gold/a' but the plan writes to 'gold/b'")
+    assert(one.remediation.startsWith("Write to 'gold/a' instead"))
+    assert(one.remediation.contains("update the contract's declared output location to 'gold/b'"))
+    assert(one.expected.contains("gold/a"))
+    assert(one.actual.contains("gold/b"))
+    assert(one.location.contains("gold/b"))
+
+    val many = Violations.outputLocationMismatch(List("gold/a", "gold/c"), "gold/b")
+    assert(many.message.contains("does not match any of the contract's 2 declared output locations (gold/a, gold/c)"))
+    assert(many.remediation.startsWith("Write to one of the contract's declared output locations (gold/a, gold/c)"))
+    assert(many.remediation.contains("add 'gold/b' as a new declared output"))
+    assert(many.expected.contains("gold/a, gold/c"))
+    assert(!many.message.contains("contract declares output location"))
+  }
+
+  test("undeclaredInputNotSourceOf names the output's derivedFrom list, or says it lists none") {
+    def msg(derivedFrom: Option[List[String]]) =
+      Violations.undeclaredInputNotSourceOf("bronze/in", in, out.copy(derivedFrom = derivedFrom)).message
+    assert(msg(Some(List("a", "b"))).endsWith("(its derivedFrom lists 'a', 'b')"))
+    assert(msg(Some(List("a"))).endsWith("(its derivedFrom lists 'a')"))
+    assert(msg(None).endsWith("(its derivedFrom lists no inputs)"))
+    assert(msg(Some(Nil)).endsWith("(its derivedFrom lists no inputs)"))
+    val v = Violations.undeclaredInputNotSourceOf("bronze/in", in, out)
+    assert(v.message.startsWith("plan reads 'bronze/in' (input 'in'), which this contract declares but not as a source of output 'out'"))
+    assert(v.remediation.startsWith("Add 'in' to output 'out''s derivedFrom"))
+  }
+
   // --- the vocabulary, the constructors and the docs cannot drift apart --------------------------------
 
   private def allViolationTypes: Set[String] =
@@ -128,8 +168,15 @@ class ViolationsSpec extends AnyFunSuite {
   }
 
   test("every ViolationType is documented in docs-site's violation-types reference") {
-    val docs = new File("../docs-site/src/content/docs/reference/violation-types.md")
-    assert(docs.exists(), s"docs not found at ${docs.getAbsolutePath} (tests run from spark-adapter/)")
+    // Walk up from the working directory: tests run from spark-adapter/, but Stryker4s runs them
+    // from a copy of it under target/, one or two levels deeper.
+    val rel = "docs-site/src/content/docs/reference/violation-types.md"
+    val docs = Iterator
+      .iterate(new File(".").getAbsoluteFile.getParentFile)(_.getParentFile)
+      .takeWhile(_ != null)
+      .map(new File(_, rel))
+      .find(_.exists())
+      .getOrElse(fail(s"$rel not found in any parent of ${new File(".").getAbsolutePath}"))
     val text = Source.fromFile(docs, "UTF-8").mkString
     val undocumented = allViolationTypes.filterNot(t => text.contains(s"`$t`"))
     assert(undocumented.isEmpty, s"ViolationTypes missing from violation-types.md: $undocumented")
