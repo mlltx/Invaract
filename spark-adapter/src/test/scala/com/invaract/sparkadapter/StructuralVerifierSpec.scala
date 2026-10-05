@@ -1861,4 +1861,10 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(multi.remediation.startsWith("Write to one of the contract's declared output locations (warehouse/silver.parquet, warehouse/gold.parquet)"))
     assert(multi.expected.contains("warehouse/silver.parquet, warehouse/gold.parquet"))
   }
+
+  test("matchesAny: true when any qualifier matches the declared location, false when none does or there are none") {
+    assert(StructuralVerifier.matchesAny("bronze/src", Set("s3://b/other", "file:/x/bronze/src")))
+    assert(!StructuralVerifier.matchesAny("bronze/src", Set("s3://b/other", "file:/x/bronze/src2")))
+    assert(!StructuralVerifier.matchesAny("bronze/src", Set.empty[String]))
+  }
 }

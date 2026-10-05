@@ -3142,6 +3142,31 @@ be inline, each with its own spec:
   per declared rule), `StaticDataQualityVerifier` and `RoleConsistencyVerifier`. Order is the
   same as the recursive walks it replaced, and a very deep plan no longer risks a stack overflow.
 
+`StructuralVerifier.scala` was one 1,200-line file holding the result model, the violation
+vocabulary, `verify` (a ~230-line method) and the catalog checks. It is now an orchestrator over:
+
+- **`VerificationModel.scala`** — `Violation`, `ViolationType`, `VerificationOptions`,
+  `VerificationResult`, `UnverifiableInput` and the role/data-quality verdict types, moved
+  verbatim (same package, same class names, so binary compatibility is unaffected). Almost no
+  mutants live here: the vocabulary is string constants.
+- **`InputChecker.scala`** — the input half of `verify`: which declared inputs weren't read
+  (and which of those are unverifiable rather than missing), undeclared reads, input schemas,
+  input catalog registrations. Small named functions, strung together in report order.
+- **`OutputChecker.scala`** — the output half: location, format, save mode, catalog, schema,
+  plus `expectedOutputFor`/`matchOutput`, the one home of "which declared output does this
+  location belong to". This replaced a four-element tuple of `List[Violation]` (which the compiler
+  could not tell apart) with a flat, ordered list.
+- **`CatalogChecker.scala`** — declared vs. actual catalog registration, for inputs and outputs,
+  typed by the same `SchemaChecker.Side` the schema check uses.
+
+`verify` itself is now about 15 lines. The split was behavior-neutral: the same 76 end-to-end
+`StructuralVerifierSpec` tests passed unchanged before any new test was added. Each new file also has
+a spec that calls its small functions directly (`CatalogCheckerSpec`, `InputOutputCheckerSpec`).
+Mutation-tested against `StructuralVerifierSpec` alone (see "Experiment: mutation-testing
+`StructuralVerifier` against its own spec only"), `CatalogChecker`, `InputChecker` and `OutputChecker`
+each scored 100% in about 3 minutes for all four files together; `StructuralVerifier.scala` is down to 4
+mutants, so its shard is no longer the longest.
+
 Not changed here: `ContractInference` (dry-run only) still matches observed qualifiers to
 inferred inputs with the linear `matchesAny`, and `Lineage.trace` (in `ir`) walks the plan
 itself.
