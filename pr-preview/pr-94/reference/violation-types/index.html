@@ -88,17 +88,136 @@ its source, via <code dir="auto">spark-submit --conf spark.invaract.rejectUndecl
 for both mechanisms worked through in full (it documents <code dir="auto">computeFingerprint</code>, the third
 flag in the same case class, the identical way).</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="what-each-violation-carries">What each violation carries</h2><a class="sl-anchor-link" href="#what-each-violation-carries"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What each violation carries”</span></a></div>
-<p><code dir="auto">column</code>, <code dir="auto">location</code>, <code dir="auto">expected</code> and <code dir="auto">actual</code> mean the same thing on every violation that
-sets them, so a consumer can group or route findings without special-casing each type:</p>
+<p><code dir="auto">column</code>, <code dir="auto">location</code>, <code dir="auto">expected</code>, <code dir="auto">actual</code> and <code dir="auto">rule</code> mean the same thing on every violation
+that sets them, so a consumer can group or route findings without special-casing each type:</p>
 <ul>
 <li><code dir="auto">location</code> — the dataset the finding is about. For a missing input or output it is the
 location the contract <em>declares</em>; for everything the plan really did (an output’s
-location, format, save mode, catalog or schema) it is the write’s <em>actual</em> location, so
-a contract with several outputs can tell which write a field-level finding belongs to.
-Input-schema and input-catalog findings carry the input’s declared location.</li>
+location, format, save mode, catalog or schema, and every rule, data-quality and
+unverifiable-operation finding) it is the write’s <em>actual</em> location, so a contract with
+several outputs can tell which write a finding belongs to. Input-schema and input-catalog
+findings carry the input’s declared location; an organizational-policy finding carries the
+declared location of the dataset it faulted, when it names one.</li>
 <li><code dir="auto">column</code> — the field path, dotted for a nested field (<code dir="auto">address.zip</code>).</li>
-<li><code dir="auto">expected</code> / <code dir="auto">actual</code> — the contract’s value and what the plan really did, as a pair.</li>
+<li><code dir="auto">expected</code> / <code dir="auto">actual</code> — each is set when the finding has that value to report. A
+comparison sets both (declared type vs. actual type, declared format vs. actual format).
+A missing field reports only the <code dir="auto">expected</code> type; an undeclared column only its <code dir="auto">actual</code>
+type; a data-quality violation the declared constraint as <code dir="auto">expected</code>; an unverifiable
+operation the kind of operation or command as <code dir="auto">actual</code>.</li>
+<li><code dir="auto">rule</code> — the contract rule type (<code dir="auto">required_group_by</code>, <code dir="auto">forbid_cross_join</code>, …) or the
+organizational policy id that raised the finding.</li>
 </ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Kind</th><th><code dir="auto">location</code></th><th><code dir="auto">column</code></th><th><code dir="auto">expected</code> / <code dir="auto">actual</code></th><th><code dir="auto">rule</code></th></tr></thead><tbody><tr><td><code dir="auto">MISSING_INPUT</code>, <code dir="auto">MISSING_OUTPUT</code></td><td>declared</td><td>—</td><td>—</td><td>—</td></tr><tr><td><code dir="auto">UNDECLARED_INPUT</code></td><td>the read</td><td>—</td><td>—</td><td>—</td></tr><tr><td><code dir="auto">OUTPUT_LOCATION_MISMATCH</code> / <code dir="auto">_FORMAT_</code> / <code dir="auto">_SAVE_MODE_</code></td><td>write</td><td>—</td><td>declared / actual</td><td>—</td></tr><tr><td><code dir="auto">*_CATALOG_REGISTRATION</code>, <code dir="auto">*_CATALOG_MISMATCH</code></td><td>dataset</td><td>—</td><td>catalog (mismatch only)</td><td>—</td></tr><tr><td><code dir="auto">MISSING_*_FIELD</code></td><td>dataset</td><td>path</td><td>declared type / —</td><td>—</td></tr><tr><td><code dir="auto">UNDECLARED_*_COLUMN</code></td><td>dataset</td><td>path</td><td>— / actual type</td><td>—</td></tr><tr><td><code dir="auto">*_FIELD_TYPE_MISMATCH</code>, <code dir="auto">*_FIELD_NULLABILITY_MISMATCH</code></td><td>dataset</td><td>path</td><td>declared / actual</td><td>—</td></tr><tr><td><code dir="auto">ROLE_CONSISTENCY_VIOLATION</code></td><td>the input</td><td>—</td><td>—</td><td>—</td></tr><tr><td><code dir="auto">DATA_QUALITY_VIOLATION</code></td><td>write</td><td>field</td><td>declared constraint / —</td><td>—</td></tr><tr><td><code dir="auto">RULE_*</code></td><td>write</td><td>—</td><td>the rule’s own columns / what the plan has</td><td>rule type</td></tr><tr><td><code dir="auto">RULE_UNVERIFIABLE_DML</code></td><td>write</td><td>—</td><td>— / operation kind</td><td>—</td></tr><tr><td><code dir="auto">ORG_POLICY_VIOLATION</code></td><td>dataset, when named</td><td>—</td><td>—</td><td>policy id</td></tr><tr><td><code dir="auto">UNVERIFIABLE_WRITE</code></td><td>—</td><td>—</td><td>— / command class</td><td>—</td></tr><tr><td><code dir="auto">INVALID_CONTRACT</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tbody></table>
 <div class="sl-heading-wrapper level-h2"><h2 id="structural-violations--inputs">Structural violations — inputs</h2><a class="sl-anchor-link" href="#structural-violations--inputs"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Structural violations — inputs”</span></a></div>
 
 
@@ -408,4 +527,4 @@ guide behind the four <code dir="auto">*_CATALOG_*</code> types above</li>
 guide behind <code dir="auto">ORG_POLICY_VIOLATION</code></li>
 <li><a href="/Invaract/pr-preview/pr-94/guides/declaring-input-and-output-types/">Declare Input and Output Types</a> — the full
 guide behind <code dir="auto">ROLE_CONSISTENCY_VIOLATION</code></li>
-</ul></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/reference/violation-types.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-10-05T10:59:12.000Z">Oct 5, 2026</time></p></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/pr-preview/pr-94/reference/spark-version-support/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Spark Version Support</span></span></a><a href="/Invaract/pr-preview/pr-94/reference/org-policy-format/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Organizational Policy Format</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
+</ul></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/reference/violation-types.md" class="sl-flex print:hidden astro-xk5gmzsg"><svg aria-hidden="true" class="astro-xk5gmzsg astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-10-05T20:29:17.000Z">Oct 5, 2026</time></p></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/Invaract/pr-preview/pr-94/reference/spark-version-support/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Spark Version Support</span></span></a><a href="/Invaract/pr-preview/pr-94/reference/org-policy-format/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">Organizational Policy Format</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
