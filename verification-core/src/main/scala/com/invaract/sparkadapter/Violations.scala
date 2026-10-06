@@ -51,6 +51,7 @@ import com.invaract.sparkadapter.SchemaChecker.Side
   * ORG_POLICY_VIOLATION                   dataset   -       -                              policy id
   * UNVERIFIABLE_WRITE                     -         -       - / the command class          -
   * INVALID_CONTRACT                       -         -       -                              -
+  * UNSUPPORTED_CONTRACT_FEATURE           -         -       capability id / unsupported by <adapter>  -
   * }}}
   */
 private[sparkadapter] object Violations {
@@ -385,5 +386,21 @@ private[sparkadapter] object Violations {
           "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
           "\"Fail-closed on unverifiable writes\" section.",
       actual = Some(commandClassName)
+    )
+
+  /** `capability` is also reported as `expected`, and the declaring adapter as `actual`. `why` is
+    * what in the contract needs it; `reason` is the adapter's own stated reason for not supporting it.
+    */
+  def unsupportedContractFeature(adapter: String, capability: Capability, why: String, reason: Option[String]): Violation =
+    Violation(
+      ViolationType.UnsupportedContractFeature,
+      s"the contract relies on '${capability.id}' ($why), but the '$adapter' adapter declares it unsupported" +
+        reason.map(r => s": $r").getOrElse("") + ", so it would not be verified.",
+      remediation =
+        s"Remove what needs '${capability.id}' from the contract (or turn off the option that asks for it), or run this " +
+          "job through an adapter that supports it - see the engine capability matrix in the docs (reference/engine-capabilities). " +
+          "A requirement the adapter cannot verify is never passed as if it had been.",
+      expected = Some(capability.id),
+      actual = Some(s"unsupported by $adapter")
     )
 }

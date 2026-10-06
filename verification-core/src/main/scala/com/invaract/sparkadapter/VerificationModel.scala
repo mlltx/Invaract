@@ -98,6 +98,17 @@ object ViolationType {
     */
   val InvalidContract = "INVALID_CONTRACT"
 
+  /** Produced by `CapabilityCheck` (via `VerificationPipeline`) - the contract relies
+    * on something the engine adapter's own capability declaration says it cannot
+    * verify (`Support.Unsupported` on a capability that `enforcesContract`), so
+    * passing the write would represent an unchecked requirement as checked. Fail
+    * closed: the write is rejected and the message names the capability, why the
+    * contract needs it, and the adapter's stated reason. `expected` is the
+    * capability id; `actual` says which adapter declared it unsupported. See
+    * docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+    */
+  val UnsupportedContractFeature = "UNSUPPORTED_CONTRACT_FEATURE"
+
   /** Produced by `RuleVerifier`, not `StructuralVerifier` — a MERGE's `ON`
     * condition doesn't reference every column a `merge_condition` rule
     * declares.

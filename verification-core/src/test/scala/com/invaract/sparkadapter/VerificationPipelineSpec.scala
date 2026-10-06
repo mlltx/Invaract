@@ -131,6 +131,34 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
   }
 
+  test("verifyWrite: a capability the contract relies on and the adapter declares unsupported rejects an otherwise conforming write, first in the list") {
+    val caps = CapabilityFixtures.parsed(Map("check.location" -> (("unsupported", Some("no locations here")))))
+    val sink = new TestNotificationSink
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(sink), None, Some(caps))
+    }
+    assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnsupportedContractFeature))
+    assert(ex.result.violations.head.expected.contains("check.location"))
+    assert(ex.result.violations.head.message.contains("no locations here"))
+    assert(validationEvents(sink).map(_.status) == List("FAILED"))
+  }
+
+  test("verifyWrite: an unsupported-capability violation precedes the structural ones") {
+    val caps = CapabilityFixtures.parsed(Map("check.location" -> (("unsupported", Some("none")))))
+    val wrongOutput = Cols().add("id", LongType, nullable = false)
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(contract, checked(output = wrongOutput.toLogical), VerificationOptions(), None, None, Some(caps))
+    }
+    assert(ex.result.violations.map(_.violationType).head == ViolationType.UnsupportedContractFeature)
+    assert(ex.result.violations.map(_.violationType).contains(ViolationType.MissingOutputField))
+  }
+
+  test("verifyWrite: a partial capability does not block, and no declaration means no capability check") {
+    val partial = CapabilityFixtures.parsed(Map("check.location" -> (("partial", Some("some shapes")))))
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), None, None, Some(partial))
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), None, None, None)
+  }
+
   test("verifyWrite: a valid contract's write is built exactly once") {
     var built = 0
     VerificationPipeline.verifyWrite(contract, { built += 1; checked() }, VerificationOptions())

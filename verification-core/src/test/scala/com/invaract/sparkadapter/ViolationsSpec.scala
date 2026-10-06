@@ -66,7 +66,8 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.unresolvableCustomRuleType("c@1.0.0", "t", "x.Y", "boom") -> "",
     Violations.invalidInferredContract("outputs", "empty") -> "",
     Violations.orgPolicy("m", "r", Some("gold/out"), "p1") -> "LR",
-    Violations.unverifiableWrite("SomeCommand", "c@1.0.0") -> "A"
+    Violations.unverifiableWrite("SomeCommand", "c@1.0.0") -> "A",
+    Violations.unsupportedContractFeature("toy", Capability.CheckFormat, "a dataset declares a format", Some("no formats")) -> "EA"
   )
 
   test("every constructor builds the shape the table in Violations' doc promises") {

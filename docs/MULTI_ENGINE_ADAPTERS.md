@@ -60,7 +60,7 @@ module move in Stage 2.
 | 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done (PR #102) — see below |
 | 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change (package names kept) | Done — see below |
 | 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (neutral package names, `ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
-| 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered | Not started |
+| 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes or declares N/A (with a reason) on the same scenarios | Not started |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic fingerprints the same, and `GENERATE_UUID()` is not "deterministic" | Not started |
 | — | BigQuery / Beam adapters | The goal; deliberately last | Not started — needs a go-ahead after Stage 5 |
@@ -219,3 +219,47 @@ branch coverage; the three SPI files score 100% under mutation testing.
 - *Fail-closed wording.* `UnverifiableWrite`'s remediation text still names Spark's
   `FailClosedCommands`; `rejectUnverifiableWrite` is engine-neutral, the message is not yet.
 
+## Stage 3 — capability declaration
+
+Leak #8 was that nothing recorded what an adapter does *not* check. Spark's gaps were tracked
+per connector in prose; a second engine would have had no place to say "no catalogs, no DML rules,
+no lineage boundaries" at all, and a contract author would find out by a bad write getting through.
+
+**The vocabulary** (`Capability`, `verification-core`) is a fixed list of 29 capabilities in six
+groups — what an adapter *recognizes* (batch/streaming writes, DML, state changes), what it *checks*
+(location, format, save mode, catalog, schema, nested types, ...), the *rules* it evaluates, the
+*analyses* it can run, *lineage*, and the *fingerprint*. Each carries an `enforcesContract` flag:
+whether leaving it unsupported would let a contract requirement go unchecked (a missing catalog check
+does; a missing fingerprint does not).
+
+**The declaration** is one YAML file per adapter, `invaract-capabilities-<adapter>.yaml`, shipped as
+a resource of that adapter (Spark's: `spark-adapter/src/main/resources/`). It names the adapter, its
+engine, its *enforcement point* (`in-engine-blocking` / `pre-submit-gate` / `observe-only` — whether
+a bad write can actually be stopped, which differs between engines far more than any single check),
+and a status for every capability: `supported`, `partial`, `unsupported` or `not-applicable`, each
+with a `note` where it is not plainly supported. **An undeclared capability is a parse error**, and
+so is an unknown one, so a new capability added to the vocabulary forces every adapter to take a
+position on it, and a gap cannot exist by omission.
+
+**Enforcement.** `CapabilityCheck` reads the contract (and the `VerificationOptions`) and works out
+which capabilities it relies on. `VerificationPipeline.verifyWrite` takes the adapter's
+`AdapterCapabilities` and, for each relied-on capability the adapter declares `unsupported`, emits
+`UNSUPPORTED_CONTRACT_FEATURE` — a fail-closed violation, so the write is rejected and the message
+names the capability and the adapter's own reason. `partial` never blocks on its own (it would turn
+every nested-type contract into a rejection); its note is what the generated page shows. Spark
+declares nothing unsupported, so no Spark verdict changes; the check exists for the adapters that will.
+
+**The matrix and its drift check.** `./dev/capabilities` runs `CapabilityMatrix` over every
+`invaract-capabilities-*.yaml` in the repo and regenerates
+`docs-site/.../reference/engine-capabilities.md`. `CapabilityMatrixSpec` fails when the checked-in page
+differs from what the declarations generate, so editing a declaration without regenerating (or editing
+the page by hand) fails the `verification-core` tests — in CI, with no separate job.
+
+**Tests.** `CapabilitySpec` (parsing, every rejection path), `CapabilityCheckSpec` (each relied-on
+shape, each side of every condition), `CapabilityMatrixSpec` (rendering and drift),
+`SparkCapabilitiesSpec` (Spark's declaration loads, is complete, and a broken one fails closed), and a
+`VerificationPipelineSpec` case for the violation ordering.
+
+**Not done in 3, deliberately.** Spark's `docs/connectors/*.md` per-connector gaps stay prose — they are
+about *data sources*, not about the adapter's own capabilities; the testkit (Stage 4) is what will
+check the declarations are *true*, since a declaration only says what an adapter claims.
