@@ -167,7 +167,7 @@ private[sparkadapter] final class DryRunReporter(
           inferred.contract,
           inferred.translated.plan,
           inferred.inputSchemas,
-          inferred.writeInfo.outputSchema,
+          SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema),
           options,
           caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis
         )

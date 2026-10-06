@@ -98,6 +98,15 @@ Types can carry parameters, written as Spark writes them — `decimal(10,2)`,
 `array<int>`, `map<string,long>`, `struct<a:int,b:string>`, nested to any depth. Only the
 leading keyword is checked against the list above.
 
+These are *logical* types: Invaract defines what they mean, independent of any one
+engine, and maps each engine's own column types onto them before comparing. Inside
+`array<...>`, `map<...>` and `struct<...>` the usual SQL aliases are also accepted
+(`int`, `bigint`, `smallint`, `tinyint`, `real`, `dec`/`numeric`, `timestamp_ltz`; a
+struct member may be written `name:type` or `name type`, with `NOT NULL`); a bare
+top-level `type:` must use the keyword from the list above — `integer`, not `int`. Note
+that a plain `decimal` does not match a column of a particular precision: declare
+`decimal(10,2)`.
+
 ### How a declared type is compared
 
 - A plain type (`integer`, `string`, `decimal(10,2)`) must equal the actual column's type.

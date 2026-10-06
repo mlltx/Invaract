@@ -3,10 +3,9 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, ContractVersion, Dataset, Field, Schema}
+import com.invaract.contract.{Contract, ContractVersion, Dataset, Field, LogicalSchema, Schema}
 import com.invaract.ir.{Lineage, Plan}
 
-import org.apache.spark.sql.types.StructType
 
 /** Builds a best-effort starting-point `Contract` from a real write's
   * actually-observed inputs/outputs — the inverse of what
@@ -52,7 +51,7 @@ private[sparkadapter] object ContractInference {
     *   represents observed implementation behavior, not proof of a
     *   semantic role).
     */
-  def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, StructType)], plan: Plan): Contract = {
+  def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, LogicalSchema)], plan: Plan): Contract = {
     val totalInputs = inputSchemas.size
     val locationOf = PlanRuleVerifier.locationResolver(plan)
     val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet.map(locationOf)
@@ -71,7 +70,7 @@ private[sparkadapter] object ContractInference {
       name = "output",
       location = normalizeLocation(writeInfo.location),
       format = writeInfo.format,
-      schema = schemaOf(writeInfo.outputSchema),
+      schema = schemaOf(SparkSchemas.toLogicalSchema(writeInfo.outputSchema)),
       saveMode = writeInfo.saveMode,
       // Every input this write was observed reading - stated explicitly, so
       // that when this draft is merged into a multi-output contract each
@@ -144,17 +143,17 @@ private[sparkadapter] object ContractInference {
     * (where "required" expresses intent the author holds independently of
     * any one run), every field here was genuinely present in the schema
     * this write actually produced/consumed — the only fact dry-run mode
-    * has to go on. `nullable` instead reflects Spark's own tracked
-    * nullability exactly (`StructField.nullable`), since that one *is*
-    * something Spark already knows precisely, not a guess.
+    * has to go on. `nullable` instead reflects the engine's own tracked
+    * nullability exactly (`LogicalField.nullable`), since that one *is*
+    * something the engine already knows precisely, not a guess.
     */
-  private def schemaOf(structType: StructType): Schema =
-    Schema(structType.fields.map { field =>
+  private def schemaOf(schema: LogicalSchema): Schema =
+    Schema(schema.fields.map { field =>
       Field(
         name = field.name,
         fieldType = field.dataType.typeName,
         required = true,
         nullable = field.nullable
       )
-    }.toList)
+    })
 }

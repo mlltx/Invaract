@@ -68,6 +68,13 @@ const PAGES = [
     order: 5,
   },
   {
+    src: 'docs/MULTI_ENGINE_ADAPTERS.md',
+    slug: 'design/multi-engine-adapters',
+    section: 'Design Docs',
+    label: 'Multi-Engine Adapters',
+    order: 6,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

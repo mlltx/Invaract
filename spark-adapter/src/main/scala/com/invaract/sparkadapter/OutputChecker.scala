@@ -3,10 +3,9 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, Dataset}
+import com.invaract.contract.{Contract, Dataset, LogicalSchema}
 import com.invaract.ir.{Plan, Write}
 
-import org.apache.spark.sql.types.StructType
 
 /** The output half of `StructuralVerifier.verify`: does the plan's write land
   * where, in the format, with the save mode, catalog registration and schema the
@@ -48,7 +47,7 @@ private[sparkadapter] object OutputChecker {
     * `Write` leaves every declared output unsatisfied (`MISSING_OUTPUT`, one
     * each); a `Write` is checked as described on each step below.
     */
-  def check(contract: Contract, plan: Plan, outputSchema: StructType, options: VerificationOptions, caseSensitive: Boolean): List[Violation] =
+  def check(contract: Contract, plan: Plan, outputSchema: LogicalSchema, options: VerificationOptions, caseSensitive: Boolean): List[Violation] =
     plan match {
       case write: Write => checkWrite(contract, write, outputSchema, options, caseSensitive)
       case _            => missingOutputs(contract.outputs)
@@ -60,7 +59,7 @@ private[sparkadapter] object OutputChecker {
   private[sparkadapter] def missingOutputs(outputs: List[Dataset]): List[Violation] =
     outputs.map(Violations.missingOutput)
 
-  private def checkWrite(contract: Contract, write: Write, outputSchema: StructType, options: VerificationOptions, caseSensitive: Boolean): List[Violation] = {
+  private def checkWrite(contract: Contract, write: Write, outputSchema: LogicalSchema, options: VerificationOptions, caseSensitive: Boolean): List[Violation] = {
     val location = locationFinding(contract.outputs, write.dataset.location)
     // A single-output contract checks format/saveMode/catalog/schema against its
     // only declared output whether or not the location itself matches (see

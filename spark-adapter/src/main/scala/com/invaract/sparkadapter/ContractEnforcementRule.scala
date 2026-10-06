@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, ContractValidator, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
+import com.invaract.contract.{Contract, ContractValidator, LogicalSchema, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir.PlanPrinter
 import com.invaract.sparkadapter.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
@@ -533,11 +533,11 @@ object ContractEnforcementRule {
     * infers from), so re-deriving it a second time here would just repeat
     * that match on every analyzed plan the session produces for no reason.
     */
-  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): List[(String, StructType)] =
+  private def collectInputSchemas(plan: LogicalPlan, writeQuery: Option[LogicalPlan]): List[(String, LogicalSchema)] =
     (
       plan.collect(recognizedRead) ++
         writeQuery.toList.flatMap(_.collect(recognizedRead))
-    ).distinct.toList
+    ).distinct.toList.map { case (location, schema) => location -> SparkSchemas.toLogicalSchema(schema) }
 
   /** The registry is a best-effort aid: it can only ever turn an unresolved
     * boundary into a resolved one, so a failure inside it (a pathologically
@@ -665,7 +665,7 @@ object ContractEnforcementRule {
         // currently possible - `WriteCommandSupport.combined` is the only
         // producer of `ir.Write` - but kept as a safe default rather than
         // assuming that stays true forever).
-        val outputSchema = writeInfo.map(_.outputSchema).getOrElse(plan.schema)
+        val outputSchema = SparkSchemas.toLogicalSchema(writeInfo.map(_.outputSchema).getOrElse(plan.schema))
         // The plan's shape (reads, unknown nodes, aggregates, joins, filters) is
         // gathered once here and shared by every verifier below, instead of each
         // walking the plan itself - see `PlanFacts`.
@@ -806,7 +806,7 @@ object ContractEnforcementRule {
             // Same reasoning as the ir.Write branch above: verifyStateChange
             // assumes a structurally sound contract too.
             requireValidContract(contract, sink, applicationId)
-            val result = StructuralVerifier.verifyStateChange(contract, info.location, info.resultingSchema, options, SQLConf.get.caseSensitiveAnalysis)
+            val result = StructuralVerifier.verifyStateChange(contract, info.location, SparkSchemas.toLogicalSchema(info.resultingSchema), options, SQLConf.get.caseSensitiveAnalysis)
             publishValidation(contract, result, sink, applicationId)
             if (!result.passed) {
               // No ir.Plan translation exists for a state-changing CALL
@@ -875,7 +875,7 @@ object ContractEnforcementRule {
         plan: LogicalPlan,
         translated: TranslationResult,
         writeInfo: WriteCommandInfo,
-        inputSchemas: List[(String, StructType)]
+        inputSchemas: List[(String, LogicalSchema)]
     ) extends InferenceOutcome
 
     /** A write-shaped plan with no inference: `status` is an `InferenceStatus`. */

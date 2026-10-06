@@ -486,6 +486,7 @@ would be.
 ├── contract/                     # Verification engine: contract model
 │   ├── src/main/scala/com/invaract/contract/
 │   │   ├── ContractModel.scala
+│   │   ├── LogicalType.scala          # engine-neutral column types + LogicalSchema + type parser
 │   │   ├── ContractParser.scala       # YAML → object model
 │   │   ├── ContractValidator.scala    # structural validation
 │   │   └── ContractCompatibility.scala # version-diff classification
@@ -508,6 +509,7 @@ would be.
 │   │   ├── OutputChecker.scala        # output half of verify: location, format, save mode, catalog, schema
 │   │   ├── CatalogChecker.scala       # declared vs. actual catalog registration (inputs and outputs)
 │   │   ├── SchemaChecker.scala        # declared vs. actual schema (nested types, spark.sql.caseSensitive)
+│   │   ├── SparkSchemas.scala         # Spark StructType/DataType → contract.LogicalSchema/LogicalType
 │   │   ├── LocationMatching.scala     # declared-vs-actual location rule + LocationIndex (bulk lookups)
 │   │   ├── PlanFacts.scala            # one traversal of an ir.Plan shared by every verifier
 │   │   ├── ContractEnforcementRule.scala # SparkSessionExtensions check rule (gates writes)
@@ -754,7 +756,7 @@ If `./dev/test` fails:
 ### Engine and plugin JARs
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
-- `contract/target/scala-2.12/invaract-contract-0.12.0.jar`
+- `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.5.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar`
 - `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.10.0.jar` — via

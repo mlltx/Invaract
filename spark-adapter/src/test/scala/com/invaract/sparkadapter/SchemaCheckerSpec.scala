@@ -3,17 +3,17 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Field => CField}
+import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType, Field => CField}
 import com.invaract.sparkadapter.SchemaChecker.Side
 
 import org.apache.spark.sql.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-class SchemaCheckerSpec extends AnyFunSuite {
+class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
 
   private def check(
       fields: List[CField],
-      schema: StructType,
+      schema: LogicalSchema,
       side: Side = Side.Output,
       rejectUndeclared: Boolean = false,
       caseSensitive: Boolean = false
@@ -39,6 +39,12 @@ class SchemaCheckerSpec extends AnyFunSuite {
     assert(check(List(CField("id", "  INTEGER ")), schema).isEmpty)
     assert(check(List(CField("amt", "decimal(10,2)")), schema).isEmpty)
     assert(types(check(List(CField("amt", "decimal(12,2)")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
+  }
+
+  test("a bare 'decimal' does not match a column of a particular precision: declare decimal(p,s)") {
+    val vs = check(List(CField("amt", "decimal")), new StructType().add("amt", DecimalType(10, 2)))
+    assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
+    assert(vs.head.expected.contains("decimal") && vs.head.actual.contains("decimal(10,2)"))
   }
 
   test("a plain (non-nested) declared type must be the contract vocabulary's own keyword: 'int' is not 'integer'") {
@@ -224,16 +230,69 @@ class SchemaCheckerSpec extends AnyFunSuite {
   }
 
   test("sameShape: scalars compare by value, containers recurse, nullability flags are ignored") {
+    import LogicalType._
     assert(SchemaChecker.sameShape(IntegerType, IntegerType, caseSensitive = false))
     assert(!SchemaChecker.sameShape(IntegerType, LongType, caseSensitive = false))
     assert(SchemaChecker.sameShape(DecimalType(10, 2), DecimalType(10, 2), caseSensitive = true))
     assert(!SchemaChecker.sameShape(DecimalType(10, 2), DecimalType(10, 3), caseSensitive = true))
-    assert(SchemaChecker.sameShape(ArrayType(IntegerType, containsNull = true), ArrayType(IntegerType, containsNull = false), caseSensitive = true))
-    assert(SchemaChecker.sameShape(MapType(StringType, IntegerType, true), MapType(StringType, IntegerType, false), caseSensitive = true))
+    assert(SchemaChecker.sameShape(ArrayType(IntegerType), ArrayType(IntegerType), caseSensitive = true))
+    assert(!SchemaChecker.sameShape(ArrayType(IntegerType), ArrayType(LongType), caseSensitive = true))
+    assert(SchemaChecker.sameShape(MapType(StringType, IntegerType), MapType(StringType, IntegerType), caseSensitive = true))
+    assert(!SchemaChecker.sameShape(MapType(StringType, IntegerType), MapType(StringType, LongType), caseSensitive = true))
+    assert(!SchemaChecker.sameShape(MapType(StringType, IntegerType), MapType(LongType, IntegerType), caseSensitive = true))
     assert(!SchemaChecker.sameShape(ArrayType(IntegerType), IntegerType, caseSensitive = true))
-    val s1 = StructType(Seq(StructField("A", IntegerType, nullable = true)))
-    val s2 = StructType(Seq(StructField("a", IntegerType, nullable = false)))
+    val s1 = StructType(List(LogicalField("A", IntegerType, nullable = true)))
+    val s2 = StructType(List(LogicalField("a", IntegerType, nullable = false)))
     assert(SchemaChecker.sameShape(s1, s2, caseSensitive = false))
     assert(!SchemaChecker.sameShape(s1, s2, caseSensitive = true))
+    // A struct with a different number of fields, or a different field type, is a different shape.
+    assert(!SchemaChecker.sameShape(s1, StructType(List(LogicalField("A", IntegerType), LogicalField("B", IntegerType))), caseSensitive = true))
+    assert(!SchemaChecker.sameShape(s1, StructType(List(LogicalField("A", LongType))), caseSensitive = true))
+  }
+
+  // --- the checker needs no Spark at all ------------------------------------------------------
+  // Everything above goes through `SparkSchemas`; these build the `LogicalSchema` an adapter for
+  // any other engine would hand over, to prove the checker is engine-neutral rather than merely
+  // reachable from Spark.
+
+  test("a schema built directly from LogicalTypes is checked exactly as a Spark-derived one is") {
+    import LogicalType._
+    val schema = LogicalSchema(
+      List(
+        LogicalField("id", LongType, nullable = false),
+        LogicalField("amount", DecimalType(18, 2)),
+        LogicalField("tags", ArrayType(StringType)),
+        LogicalField("addr", StructType(List(LogicalField("zip", StringType))))
+      )
+    )
+    assert(
+      check(
+        List(
+          CField("id", "long", nullable = false),
+          CField("amount", "decimal(18,2)"),
+          CField("tags", "array<string>"),
+          CField("addr", "struct<zip:string>")
+        ),
+        schema
+      ).isEmpty
+    )
+    val vs = check(List(CField("id", "string"), CField("tags", "array<int>")), schema)
+    assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch, ViolationType.OutputFieldTypeMismatch))
+    assert(vs.map(_.actual) == List(Some("long"), Some("array<string>")))
+  }
+
+  test("an engine type with no logical equivalent never satisfies a declared standard type") {
+    import LogicalType._
+    val schema = LogicalSchema(List(LogicalField("area", OtherType("geography"))))
+    assert(types(check(List(CField("area", "string")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
+    assert(check(List(CField("area", "geography")), schema).isEmpty) // its own native keyword still matches
+  }
+
+  test("undeclared columns and nested NOT NULL / COMMENT in a declared type behave as before") {
+    import LogicalType._
+    val schema = LogicalSchema(List(LogicalField("p", StructType(List(LogicalField("x", IntegerType)))), LogicalField("extra", DoubleType)))
+    val vs = check(List(CField("p", "struct<x:int NOT NULL COMMENT 'the x'>")), schema, rejectUndeclared = true)
+    assert(types(vs) == List(ViolationType.UndeclaredOutputColumn))
+    assert(vs.head.column.contains("extra") && vs.head.actual.contains("double"))
   }
 }
