@@ -42,14 +42,15 @@ private[sparkadapter] object InputChecker {
       scopedOutput: Option[Dataset],
       inputSchemas: List[(String, LogicalSchema)],
       options: VerificationOptions,
-      caseSensitive: Boolean
+      caseSensitive: Boolean,
+      lineageBoundaryTypes: Set[String]
   ): Findings = {
     val all = Declared(contract.inputs)
     val scoped = if (scopedOutput.isEmpty) all else Declared(contract.inputsFor(scopedOutput.get))
     val readLocations = facts.reads.map(_.dataset.location).distinct
 
     val declaredButNotRead = notRead(scoped, readLocations)
-    val (missing, unverifiable) = classifyUnread(declaredButNotRead, facts.unknownPlans, scopedOutput, contract.outputs.size)
+    val (missing, unverifiable) = classifyUnread(declaredButNotRead, facts.unknownPlans, scopedOutput, contract.outputs.size, lineageBoundaryTypes)
 
     val undeclared = if (options.rejectUndeclaredInputs) undeclaredReads(readLocations, all, scoped, scopedOutput) else Nil
     val schema = schemaFindings(all, inputSchemas, options.rejectUndeclaredFields, caseSensitive)
@@ -74,11 +75,12 @@ private[sparkadapter] object InputChecker {
       unread: List[Dataset],
       unknownPlans: List[UnknownPlan],
       scopedOutput: Option[Dataset],
-      declaredOutputCount: Int
+      declaredOutputCount: Int,
+      lineageBoundaryTypes: Set[String]
   ): (List[Violation], List[UnverifiableInput]) = {
     // The evidence is about the plan, not the individual input: computed once,
     // and only if some declared input really is unread.
-    lazy val evidence = unverifiableEvidenceFor(unknownPlans)
+    lazy val evidence = unverifiableEvidenceFor(unknownPlans, lineageBoundaryTypes)
     val classified = unread.map(input => input -> evidence)
     val nudge = scopedOutput.exists(_.derivedFrom.isEmpty) && declaredOutputCount > 1
     val missing = classified.collect { case (input, None) => Violations.missingInput(input, nudge) }
@@ -89,14 +91,17 @@ private[sparkadapter] object InputChecker {
   }
 
   /** `Some(sourceTypes)` when `unknownPlans` contains an unresolved lineage
-    * boundary (see `CheckpointRegistry.BoundarySourceTypes`) - the only thing
+    * boundary - an `ir.UnknownPlan` whose `sourceType` is one of
+    * `lineageBoundaryTypes`, the set the engine adapter declares (for Spark,
+    * `CheckpointRegistry.BoundarySourceTypes`; an engine with no such concept
+    * passes the empty set, and no unread input is ever "unverifiable") - the only thing
     * that makes an unread input unverifiable rather than missing; `None`
     * (confidently missing) otherwise. The evidence is about the plan, not the
     * individual input: an unresolved boundary hides *every* read made before it,
     * so any unread input might be behind it.
     */
-  private[sparkadapter] def unverifiableEvidenceFor(unknownPlans: List[UnknownPlan]): Option[List[String]] = {
-    val boundaries = unknownPlans.map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
+  private[sparkadapter] def unverifiableEvidenceFor(unknownPlans: List[UnknownPlan], lineageBoundaryTypes: Set[String]): Option[List[String]] = {
+    val boundaries = unknownPlans.map(_.sourceType).filter(lineageBoundaryTypes.contains).distinct
     if (boundaries.isEmpty) None else Some(boundaries)
   }
 

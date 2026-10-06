@@ -63,7 +63,17 @@ name := "invaract-spark-adapter"
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.10.0"
+// 0.10.0 -> 0.11.0: the engine-neutral verification code (structural
+// checkers, rule/data-quality/role verifiers, the result model, notification
+// sinks/events, location resolution) moved out of this module into the new
+// `invaract-verification-core` module (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2).
+// Package names are unchanged, so nothing a user of this jar writes or
+// configures changes - this jar bundles the core's classes (sbt-assembly), at
+// the same fully-qualified names - but MiMa compares this artifact's own
+// classes, so every moved class is a deliberate MissingClassProblem (see
+// `mimaBinaryIssueFilters` below). Bumped for that, and for the Ivy-cache
+// coordinate-collision reason contract/build.sbt documents.
+ThisBuild / version := "0.11.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -944,10 +954,14 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.3.0"
+  "com.invaract" %% "invaract-fingerprint" % "0.3.0",
+  // The engine-neutral verification core (this module's own former
+  // checkers/result model/notification/location code) - same real,
+  // Maven-resolvable-dependency reasoning as the three above.
+  "com.invaract" %% "invaract-verification-core" % "0.1.0"
 )
 
-assembly / assemblyJarName := "invaract-spark-adapter-0.10.0.jar"
+assembly / assemblyJarName := "invaract-spark-adapter-0.11.0.jar"
 // Same fix as runner/build.sbt's assembly merge strategy, and for the
 // identical reason: a blanket META-INF discard drops log4j-core's own
 // META-INF/services/org.apache.logging.log4j.spi.Provider registration,
@@ -1250,4 +1264,177 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.Violation.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.Violation.this"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.Violation$")
+)
+
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2a): the engine-neutral
+// verification code - structural checkers, rule/data-quality/role verifiers, the
+// result model, notification sinks and events, location resolution - moved out of
+// this module into the new `invaract-verification-core` module, under the SAME
+// package names (deployed configs name sinks and plug-ins by fully-qualified class
+// name, so a rename would silently break them). MiMa compares this artifact's own
+// classes, so each moved class is reported missing here even though nothing changes
+// for a user of the assembled jar, which bundles `verification-core`'s classes at
+// the same names. RowMutationSupport.Kind became an alias of the neutral
+// `MutationKind` (verification-core), which changes the erased type of the members
+// that mention it. Every line below is MiMa's own suggested filter for this change
+// (`sbt mimaReportBinaryIssues` against 0.10.0), pasted verbatim - not hand-picked.
+// Inert once base-ref carries this move.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Extracted.apply"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Extracted.copy"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Extracted.this"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Unverifiable.apply"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Unverifiable.copy"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Unverifiable.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Extracted.copy$default$1"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Extracted.kind"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Unverifiable.copy$default$1"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification#Unverifiable.kind"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification.kind"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.CatalogChecker"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.CatalogChecker$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.ContractInference"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.ContractInference$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.ContractViolationException"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.CustomRuleVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.CustomRuleVerifierFactory"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.CustomRuleVerifierFactory$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityCheckResult"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityCheckResult$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict$Guaranteed$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict$NotGuaranteed$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict$NotStaticallyVerifiable$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.DataQualityVerdict$Violated$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.EqualityConditions"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.EqualityConditions$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker$Declared"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker$Declared$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker$Findings"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.InputChecker$Findings$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.LocationIndex"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.LocationIndex$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.LocationMatching"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.LocationMatching$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.MutationKind"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.MutationKind$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.MutationKind$Delete$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.MutationKind$Merge$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.MutationKind$Update$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.OutputChecker"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.OutputChecker$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.PlanFacts"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.PlanFacts$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.PlanRuleVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.PlanRuleVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceCheckResult"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceCheckResult$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceVerdict"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceVerdict$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceVerdict$CannotDetermine$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceVerdict$Conforms$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConformanceVerdict$Contradicts$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConsistencyVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RoleConsistencyVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Kind"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Kind$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Kind$Delete$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Kind$Merge$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Kind$Update$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RuleVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RuleVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RuleVerifier$AllowedUpdateColumnsVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RuleVerifier$ForbidUnconditionalDeleteVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RuleVerifier$MergeConditionVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker$Side"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker$Side$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker$Side$Input$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SchemaChecker$Side$Output$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SensitiveColumnLineage"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SensitiveColumnLineage$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SensitivityLineage"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.SensitivityLineage$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$FieldRangeClause"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$FieldRangeClause$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$FieldRangeClause$Holds$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$FieldRangeClause$Unknown$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StaticDataQualityVerifier$FieldRangeClause$Violated$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StructuralVerifier"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.StructuralVerifier$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.UnverifiableInput"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.UnverifiableInput$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.VerificationOptions"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.VerificationOptions$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.VerificationResult"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.VerificationResult$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.Violation"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.Violation$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.ViolationType"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.ViolationType$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.Violations"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.Violations$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.ContractLocationResolution"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.ContractLocationResolution$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.LocationRef"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.LocationRef$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.LocationResolutionException"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.LocationResolutionException$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.LocationResolver"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.NoOpLocationResolver"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.NoOpLocationResolver$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.StaticMapLocationResolver"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.location.StaticMapLocationResolver$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.CatalogInfo"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.CatalogInfo$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.ContractInferenceEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.ContractInferenceEvent$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.ContractValidationEvent$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.DryRunSummaryEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.DryRunSummaryEvent$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FailureOnlyNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FanOutNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FanOutNotificationSink$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FanOutNotificationSink$Target"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FanOutNotificationSink$Target$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.FileNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HadoopFsNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$Failure"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$Failure$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$PendingDelivery"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$RetryPolicy"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.HttpNotificationSink$RetryPolicy$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.InferenceStatus"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.InferenceStatus$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.JobInfo"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.JobInfo$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.JobSummaryEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.JobSummaryEvent$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.LoggingNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationConfig"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationConfig$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationJson"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationJson$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationSinkFactory"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.NotificationSinkFactory$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.RetryingNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.RetryingNotificationSink$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.SafeNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.SummarizingNotificationSink"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.WriteEvent"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.WriteEvent$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.WriteFieldInfo"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.WriteFieldInfo$"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification.kind")
 )

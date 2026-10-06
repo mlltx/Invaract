@@ -175,6 +175,12 @@ private[sparkadapter] object StructuralVerifier {
     * `SchemaChecker`'s class doc): it decides how declared field names are
     * matched against the plan's actual columns. It defaults to Spark's own
     * default, `false`; `ContractEnforcementRule` always passes the real setting.
+    *
+    * `lineageBoundaryTypes`: the `ir.UnknownPlan.sourceType`s this engine's
+    * adapter treats as an unresolved lineage boundary (see "Inputs hidden
+    * behind a lineage boundary" above). Spark passes
+    * `CheckpointRegistry.BoundarySourceTypes`; the empty default means "this
+    * engine has no such boundary", so an unread input is always `MISSING_INPUT`.
     */
   def verify(
     contract: Contract,
@@ -182,9 +188,10 @@ private[sparkadapter] object StructuralVerifier {
     inputSchemas: List[(String, LogicalSchema)],
     outputSchema: LogicalSchema,
     options: VerificationOptions = VerificationOptions(),
-    caseSensitive: Boolean = false
+    caseSensitive: Boolean = false,
+    lineageBoundaryTypes: Set[String] = Set.empty
   ): VerificationResult =
-    verify(contract, PlanFacts.of(plan), inputSchemas, outputSchema, options, caseSensitive)
+    verify(contract, PlanFacts.of(plan), inputSchemas, outputSchema, options, caseSensitive, lineageBoundaryTypes)
 
   /** The same check over a plan whose shape `ContractEnforcementRule` has
     * already gathered once for every verifier it runs (see `PlanFacts`).
@@ -195,7 +202,8 @@ private[sparkadapter] object StructuralVerifier {
     inputSchemas: List[(String, LogicalSchema)],
     outputSchema: LogicalSchema,
     options: VerificationOptions,
-    caseSensitive: Boolean
+    caseSensitive: Boolean,
+    lineageBoundaryTypes: Set[String]
   ): VerificationResult = {
     // Which declared output this write lands on (a single-output contract's only
     // output whatever the location, else the one whose location matches), which
@@ -208,7 +216,7 @@ private[sparkadapter] object StructuralVerifier {
       case _                          => None
     }
 
-    val inputs = InputChecker.check(contract, facts, scopedOutput, inputSchemas, options, caseSensitive)
+    val inputs = InputChecker.check(contract, facts, scopedOutput, inputSchemas, options, caseSensitive, lineageBoundaryTypes)
     val outputs = OutputChecker.check(contract, facts.plan, outputSchema, options, caseSensitive)
 
     VerificationResult.of(s"${contract.id}@${contract.version}", inputs.violations ++ outputs, unverifiableInputs = inputs.unverifiable)

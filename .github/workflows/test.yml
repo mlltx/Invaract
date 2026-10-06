@@ -414,6 +414,79 @@ jobs:
           path: fingerprint/target/stryker4s-report/**
           if-no-files-found: warn
 
+  # verification-core (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2): the
+  # engine-neutral verification code extracted from spark-adapter. It has no
+  # Spark dependency, so - like ir and fingerprint above - it skips the Spark
+  # cache/download sequence and runs on its own (fast) Spark-free suite, whole
+  # module plus the PR-scoped incremental check. Its break threshold is the
+  # one in verification-core/build.sbt.
+  mutation-testing-verification-core:
+    name: Mutation testing (verification-core)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'sbt'
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # verification-core's build.sbt resolves contract, ir and fingerprint as
+      # real libraryDependencies against their published coordinates (no
+      # aggregating root build), so they must be published locally before
+      # `sbt stryker` can even compile it - the shared action does that (and
+      # caches it).
+      - name: Publish contract, ir and fingerprint locally (verification-core's libraryDependencies)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Mutation test verification-core
+        shell: bash
+        run: cd verification-core && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
+
+      # See the shared comment on CLAUDE.md's "Mutation Testing
+      # Requirement" / the base-commit-not-previous-push reasoning on the
+      # spark-adapter job's equivalent step below - identical logic,
+      # scoped to just this module.
+      - name: Mutation test changed files (incremental, 70% bar)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "Diffing against base commit: $BASE_SHA"
+
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "verification-core/src/main/scala/" | grep '\.scala$' | sed "s|^verification-core/||" || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "=== verification-core: no changed files under src/main/scala, skipping ==="
+          else
+            FILE_COUNT=$(echo "$CHANGED" | wc -l)
+            if [ "$FILE_COUNT" -eq 1 ]; then
+              MUTATE_GLOB="$CHANGED"
+            else
+              MUTATE_GLOB="{$(echo "$CHANGED" | paste -sd, -)}"
+            fi
+
+            echo "=== verification-core: mutation-testing changed file(s) ==="
+            echo "$CHANGED"
+            (cd verification-core && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --mutate \"$MUTATE_GLOB\" --concurrency 4 --thresholds.high 90 --thresholds.low 80 --thresholds.break 70")
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-verification-core
+          path: verification-core/target/stryker4s-report/**
+          if-no-files-found: warn
+
   # spark-adapter's own whole-module Stryker run was, by itself, the real
   # CI bottleneck this repo had left to fix (docs/SPARK_ADAPTER.md's "CI
   # mutation-testing wall-clock" section explicitly flagged it as "what
@@ -515,8 +588,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: shard-1
-            files: "src/main/scala/com/invaract/sparkadapter/StructuralVerifier.scala,src/main/scala/com/invaract/sparkadapter/CatalogChecker.scala,src/main/scala/com/invaract/sparkadapter/SparkSchemas.scala"
           - name: shard-2
             files: "src/main/scala/com/invaract/sparkadapter/WriteCommandSupport.scala"
           - name: shard-3
@@ -524,17 +595,15 @@ jobs:
           - name: shard-4
             files: "src/main/scala/com/invaract/sparkadapter/SparkPlanAdapter.scala"
           - name: shard-5
-            files: "src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/ContractInference.scala,src/main/scala/com/invaract/sparkadapter/EqualityConditions.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/location/LocationResolver.scala,src/main/scala/com/invaract/sparkadapter/SchemaChecker.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/SparkSchemas.scala"
           - name: shard-6
-            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationJson.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSink.scala"
-          - name: shard-7
-            files: "src/main/scala/com/invaract/sparkadapter/RuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/location/StaticMapLocationResolver.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationEvent.scala,src/main/scala/com/invaract/sparkadapter/LocationMatching.scala,src/main/scala/com/invaract/sparkadapter/VerificationModel.scala,src/main/scala/com/invaract/sparkadapter/Violations.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala"
           - name: shard-8
-            files: "src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala,src/main/scala/com/invaract/sparkadapter/SensitivityLineage.scala,src/main/scala/com/invaract/sparkadapter/StaticDataQualityVerifier.scala,src/main/scala/com/invaract/sparkadapter/InputChecker.scala,src/main/scala/com/invaract/sparkadapter/OutputChecker.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala"
           - name: shard-9
-            files: "src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifierFactory.scala,src/main/scala/com/invaract/sparkadapter/RoleConsistencyVerifier.scala,src/main/scala/com/invaract/sparkadapter/PlanFacts.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/CheckpointRegistry.scala"
           - name: shard-10
-            files: "src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/CustomRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/DryRunReporter.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala,src/main/scala/com/invaract/sparkadapter/MutationKind.scala,src/main/scala/com/invaract/sparkadapter/PlanRuleVerifier.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/location/ContractLocationResolution.scala,src/main/scala/com/invaract/sparkadapter/location/LocationRef.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationConfig.scala,src/main/scala/com/invaract/sparkadapter/notification/NotificationSinkFactory.scala,src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/ContractSchemas.scala,src/main/scala/com/invaract/sparkadapter/DryRunReporter.scala,src/main/scala/com/invaract/sparkadapter/InvaractSparkSessionExtension.scala,src/main/scala/com/invaract/sparkadapter/StateChangingCallSupport.scala,src/main/scala/com/invaract/sparkadapter/VersionCompatibilityGuard.scala,src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1182,7 +1251,7 @@ jobs:
           test "$status" -eq 7 || { echo "expected exit status 7, got $status"; exit 1; }
 
   api-compatibility:
-    name: API compatibility (contract, ir, spark-adapter, fingerprint)
+    name: API compatibility (contract, ir, fingerprint, verification-core, spark-adapter)
     runs-on: ubuntu-latest
     # MiMa (sbt-mima-plugin) needs a previously *published* artifact to
     # diff the current build against, and there's no Maven Central release
@@ -1325,9 +1394,18 @@ jobs:
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          for module in contract ir fingerprint spark-adapter; do
+          for module in contract ir fingerprint verification-core spark-adapter; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
+              # Still publish the PR head's own build when something downstream
+              # (spark-adapter) resolves it as a libraryDependency - e.g.
+              # verification-core, introduced by the PR that extracted it from
+              # spark-adapter. contract/ir/fingerprint are published by now (they
+              # precede it in this loop's order), which it itself depends on.
+              if [ "$module" != "spark-adapter" ]; then
+                echo "=== $module: publishing PR head's own build to the local Ivy cache (spark-adapter's libraryDependencies) ==="
+                (cd "$module" && sbt publishLocal)
+              fi
               continue
             fi
 
@@ -1380,7 +1458,7 @@ jobs:
           done
 
   coverage-gating:
-    name: Coverage gating (contract, ir, spark-adapter, fingerprint)
+    name: Coverage gating (contract, ir, fingerprint, verification-core, spark-adapter)
     runs-on: ubuntu-latest
     # Line/branch coverage (sbt-scoverage), the one guardrail CLAUDE.md's
     # Testing Strategy section had disclosed as still outstanding - a
@@ -1424,10 +1502,13 @@ jobs:
       - name: Publish fingerprint locally (spark-adapter's libraryDependency)
         run: cd fingerprint && sbt publishLocal
 
+      - name: Publish verification-core locally (spark-adapter's libraryDependency)
+        run: cd verification-core && sbt publishLocal
+
       - name: Coverage gate each module
         shell: bash
         run: |
-          for module in contract ir fingerprint spark-adapter; do
+          for module in contract ir fingerprint verification-core spark-adapter; do
             echo "=== $module: coverage test + report (coverageFailOnMinimum enforces this module's own thresholds) ==="
             (cd "$module" && sbt "coverage; test; coverageReport")
           done
@@ -1441,6 +1522,7 @@ jobs:
             contract/target/scala-2.12/scoverage-report/**
             ir/target/scala-2.12/scoverage-report/**
             fingerprint/target/scala-2.12/scoverage-report/**
+            verification-core/target/scala-2.12/scoverage-report/**
             spark-adapter/target/scala-2.12/scoverage-report/**
           if-no-files-found: warn
 
@@ -1498,7 +1580,7 @@ jobs:
           # See dependency-graph.yml for why this list is also spelled out
           # there - kept in sync by hand, not derived from a shared source.
           pids=()
-          for m in contract ir fingerprint plugin spark-adapter runner notification-kafka; do
+          for m in contract ir fingerprint verification-core plugin spark-adapter runner notification-kafka; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -1583,7 +1665,7 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results

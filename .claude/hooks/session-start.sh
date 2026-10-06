@@ -110,7 +110,7 @@ if [ -x /opt/spark/bin/spark-submit ]; then
 fi
 
 # --- Warm each module's dependency cache, in the same order dev/build uses
-# (see that script's own comment for why: contract/ir/fingerprint must be
+# (see that script's own comment for why: contract/ir/fingerprint/verification-core must be
 # publishLocal'd before spark-adapter/runner can resolve them as library
 # dependencies - they're real Maven coordinates, not source references,
 # since there's no aggregating root build.sbt). Best-effort and non-fatal:
@@ -167,6 +167,7 @@ if command -v sbt &> /dev/null; then
   warm_module "ir" "compile test assembly publishLocal"
   warm_module "plugin" "compile test assembly"
   warm_module "fingerprint" "compile test assembly publishLocal"
+  warm_module "verification-core" "compile test assembly publishLocal"
   warm_module "spark-adapter" "compile test assembly publishLocal"
   warm_module "runner" "compile assembly"
 fi

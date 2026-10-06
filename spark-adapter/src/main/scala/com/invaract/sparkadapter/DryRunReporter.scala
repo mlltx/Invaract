@@ -169,7 +169,8 @@ private[sparkadapter] final class DryRunReporter(
           inferred.inputSchemas,
           SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema),
           options,
-          caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis
+          caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis,
+          lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes
         )
         (if (result.passed) SelfCheckPassed else SelfCheckFailed, result.violations, Nil)
       }

@@ -357,23 +357,23 @@ class RuleVerifierSpec extends AnyFunSuite {
 
   test("appliesTo: merge_condition applies only to Kind.Merge") {
     val rule = InterpretedRule.MergeCondition(List("id"))
-    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
+    assert(RuleVerifier.appliesTo(rule, MutationKind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Update))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Delete))
   }
 
   test("appliesTo: forbid_unconditional_delete applies only to Kind.Delete") {
     val rule = InterpretedRule.ForbidUnconditionalDelete
-    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
+    assert(RuleVerifier.appliesTo(rule, MutationKind.Delete))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Update))
   }
 
   test("appliesTo: allowed_update_columns applies only to Kind.Update") {
     val rule = InterpretedRule.AllowedUpdateColumns(List("status"))
-    assert(RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Update))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Merge))
-    assert(!RuleVerifier.appliesTo(rule, RowMutationSupport.Kind.Delete))
+    assert(RuleVerifier.appliesTo(rule, MutationKind.Update))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Merge))
+    assert(!RuleVerifier.appliesTo(rule, MutationKind.Delete))
   }
 
   // --- customRuleTypes: a ruleType Invaract's own RuleType.All doesn't
@@ -442,21 +442,21 @@ class RuleVerifierSpec extends AnyFunSuite {
   test("anyRuleAppliesTo: a custom rule type applies only to the MutationKind its verifier declares") {
     val rules = List(ContractRule("forbid_password_update", Map.empty))
     val customTypes = Map("forbid_password_update" -> forbidPasswordClassName)
-    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update, customTypes))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge, customTypes))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Delete, customTypes))
+    assert(RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Update, customTypes))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Merge, customTypes))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Delete, customTypes))
   }
 
   test("anyRuleAppliesTo: an unresolvable customRuleTypes entry never applies (not a thrown exception)") {
     val rules = List(ContractRule("totally_unrecognized_type", Map.empty))
     val customTypes = Map("totally_unrecognized_type" -> "com.invaract.sparkadapter.NoSuchClassAtAll")
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update, customTypes))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Update, customTypes))
   }
 
   test("anyRuleAppliesTo: a built-in ruleType with no matching customRuleTypes entry still applies via its own appliesTo") {
     val rules = List(ContractRule("merge_condition", Map("columns" -> java.util.Arrays.asList("id"))))
-    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update))
+    assert(RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Merge))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Update))
   }
 
   test("anyRuleAppliesTo: a malformed built-in rule (bad shape) still fails closed by ruleType alone") {
@@ -467,13 +467,13 @@ class RuleVerifierSpec extends AnyFunSuite {
     // Unverifiable Merge plan still fails closed rather than silently
     // passing because interpret() happened to fail.
     val rules = List(ContractRule("merge_condition", Map.empty)) // malformed: no 'columns'
-    assert(RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
+    assert(RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Merge))
   }
 
   test("anyRuleAppliesTo: an unrecognized ruleType with no customRuleTypes entry never applies") {
     val rules = List(ContractRule("compatibility", Map("mode" -> "backward")))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Merge))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Update))
-    assert(!RuleVerifier.anyRuleAppliesTo(rules, RowMutationSupport.Kind.Delete))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Merge))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Update))
+    assert(!RuleVerifier.anyRuleAppliesTo(rules, MutationKind.Delete))
   }
 }

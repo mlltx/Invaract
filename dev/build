@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds every sbt module and assembles a fat jar for each. Each top-level
-# module (contract/, ir/, fingerprint/, plugin/, spark-adapter/, runner/) is
+# module (contract/, ir/, fingerprint/, verification-core/, plugin/, spark-adapter/,
+# runner/) is
 # an independent sbt project (no aggregating root build.sbt). Cross-module
 # references split two ways:
 #
@@ -26,7 +27,11 @@
 #
 #   contract, ir, plugin   (no cross-module deps — built concurrently)
 #   fingerprint            (needs ir published locally — not contract/plugin)
-#   spark-adapter          (needs contract, ir, fingerprint published locally
+#   verification-core      (needs contract, ir, fingerprint published locally —
+#                            the engine-neutral verification code spark-adapter
+#                            reuses; docs/MULTI_ENGINE_ADAPTERS.md Stage 2)
+#   spark-adapter          (needs contract, ir, fingerprint, verification-core
+#                            published locally
 #                            — not plugin)
 #   runner                 (needs contract, ir, spark-adapter published
 #                            locally, plus plugin's jar directly)
@@ -140,6 +145,10 @@ fi
 echo ""
 start_module fingerprint "compile test assembly publishLocal"
 wait_module fingerprint
+
+echo ""
+start_module verification-core "compile test assembly publishLocal"
+wait_module verification-core
 
 echo ""
 start_module spark-adapter "compile test assembly publishLocal"

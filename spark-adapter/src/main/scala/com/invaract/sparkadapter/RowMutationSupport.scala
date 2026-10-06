@@ -73,14 +73,12 @@ private[sparkadapter] object RowMutationSupport {
 
   /** The three DML operation kinds `RuleVerifier`'s rules care about —
     * connector-agnostic, independent of whether extraction for that kind
-    * actually succeeds.
+    * actually succeeds. This is `MutationKind` (engine-neutral, in
+    * `verification-core`); the alias keeps `RowMutationSupport.Kind.Merge`
+    * and friends spelling for this file's own callers.
     */
-  sealed trait Kind
-  object Kind {
-    case object Merge extends Kind
-    case object Update extends Kind
-    case object Delete extends Kind
-  }
+  type Kind = MutationKind
+  val Kind: MutationKind.type = MutationKind
 
   sealed trait Classification { def kind: Kind }
   object Classification {

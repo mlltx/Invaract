@@ -28,6 +28,19 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
 
   override def afterAll(): Unit = spark.stop()
 
+  // `StructuralVerifier` is engine-neutral: the lineage-boundary node types are the adapter's to declare.
+  // These specs exercise the Spark adapter, so every check declares Spark's own (checkpoint / cached relation).
+  private def verifyOnSpark(
+      contract: com.invaract.contract.Contract,
+      plan: com.invaract.ir.Plan,
+      inputSchemas: List[(String, com.invaract.contract.LogicalSchema)],
+      outputSchema: com.invaract.contract.LogicalSchema,
+      options: VerificationOptions = VerificationOptions(),
+      caseSensitive: Boolean = false
+  ): VerificationResult =
+    StructuralVerifier.verify(contract, plan, inputSchemas, outputSchema, options, caseSensitive, CheckpointRegistry.BoundarySourceTypes)
+
+
   private def realDemoContract() =
     ContractParser.parseFile(new File("../demo/contracts/invaract_output.yaml"))
 
@@ -53,7 +66,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = realDemoOutput(inputDf)
     val plan = realDemoPlan(outputDf)
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -88,7 +101,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       rewriteBaseRead(SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan)
     )
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.passed)
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
@@ -118,7 +131,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = realDemoOutput(realDemoInput())
     val plan = demoPlanWithBaseRead(outputDf, boundary("LogicalRDD"))
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), s"expected no MISSING_INPUT, got: ${result.violations}")
     val entry = result.unverifiableInputs.find(_.inputName == "orders")
@@ -132,7 +145,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
   test("an unresolved cached-relation boundary (InMemoryRelation) is a lineage boundary too") {
     val contract = realDemoContract()
     val outputDf = realDemoOutput(realDemoInput())
-    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("InMemoryRelation")), Nil, outputDf.schema)
+    val result = verifyOnSpark(contract, demoPlanWithBaseRead(outputDf, boundary("InMemoryRelation")), Nil, outputDf.schema)
     assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("InMemoryRelation")))
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
   }
@@ -143,7 +156,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val realPlan = SparkPlanAdapter.translate(outputDf.queryExecution.analyzed).plan
     val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), com.invaract.ir.Union(List(realPlan, boundary("LogicalRDD"))))
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
     assert(result.unverifiableInputs.isEmpty)
@@ -156,7 +169,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = realDemoOutput(realDemoInput())
     val plan = demoPlanWithBaseRead(outputDf, com.invaract.ir.UnknownPlan("Generate(explode)", "Generate"))
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingInput && v.location.contains("demo/input/sample.csv")))
     assert(result.unverifiableInputs.isEmpty)
@@ -165,7 +178,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
   test("a blank sourceType is not a lineage boundary") {
     val contract = realDemoContract()
     val outputDf = realDemoOutput(realDemoInput())
-    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, boundary("")), Nil, outputDf.schema)
+    val result = verifyOnSpark(contract, demoPlanWithBaseRead(outputDf, boundary("")), Nil, outputDf.schema)
     assert(result.violations.exists(_.violationType == ViolationType.MissingInput))
     assert(result.unverifiableInputs.isEmpty)
   }
@@ -179,14 +192,14 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       boundary("LogicalRDD"),
       com.invaract.ir.UnknownPlan("Generate(explode)", "Generate")
     ))
-    val result = StructuralVerifier.verify(contract, demoPlanWithBaseRead(outputDf, replacement), Nil, outputDf.schema)
+    val result = verifyOnSpark(contract, demoPlanWithBaseRead(outputDf, replacement), Nil, outputDf.schema)
     assert(result.unverifiableInputs.map(_.unknownNodeTypes) == List(List("LogicalRDD", "InMemoryRelation")))
   }
 
   test("with an unresolved boundary in the plan, EVERY unread scoped input is unverifiable - the boundary hides all earlier reads") {
     val contract = lineageContract(None, None) // inputs a, b, c; two outputs, no derivedFrom
     val plan = com.invaract.ir.Write(DatasetRef("gold/out1.parquet"), boundary("LogicalRDD"))
-    val result = StructuralVerifier.verify(contract, plan, Nil, new StructType().add("id", IntegerType))
+    val result = verifyOnSpark(contract, plan, Nil, new StructType().add("id", IntegerType))
     assert(result.unverifiableInputs.map(_.inputName) == List("a", "b", "c"))
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput))
   }
@@ -202,10 +215,10 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), joined)
 
-    val permissive = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = inputDf.schema)
+    val permissive = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = inputDf.schema)
     assert(!permissive.violations.exists(_.violationType == ViolationType.UndeclaredInput))
 
-    val strict = StructuralVerifier.verify(
+    val strict = verifyOnSpark(
       contract,
       plan,
       inputSchemas = Nil,
@@ -222,7 +235,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id"))))
     )
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       bareProject,
       inputSchemas = Nil,
@@ -239,7 +252,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = realDemoOutput(inputDf)
     val plan = realDemoPlan(outputDf, outputLocation = "demo/output/somewhere_else.parquet")
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputLocationMismatch).get
@@ -297,7 +310,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = writePlan("warehouse/gold.parquet", format = Some("delta"))
     val outputSchema = new StructType().add("id", IntegerType, nullable = false).add("total", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(result.passed, s"expected PASSED, got violations: ${result.violations}")
   }
@@ -307,7 +320,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = writePlan("warehouse/silver.parquet", format = Some("parquet"))
     val outputSchema = new StructType().add("id", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(result.passed, s"expected PASSED, got violations: ${result.violations}")
   }
@@ -321,7 +334,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = writePlan("warehouse/gold.parquet")
     val outputSchema = new StructType().add("id", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(!result.passed)
     assert(result.violations.exists(v => v.violationType == ViolationType.MissingOutputField && v.column.contains("total")))
@@ -334,7 +347,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = writePlan("warehouse/gold.parquet", format = Some("parquet"))
     val outputSchema = new StructType().add("id", IntegerType, nullable = false).add("total", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputFormatMismatch).get
@@ -347,7 +360,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = writePlan("warehouse/somewhere_else.parquet")
     val outputSchema = new StructType().add("id", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputLocationMismatch).get
@@ -365,7 +378,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       List(com.invaract.ir.NamedExpr("id", com.invaract.ir.ColumnReference(com.invaract.ir.ColumnRef("id"))))
     )
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       bareProject,
       inputSchemas = Nil,
@@ -411,7 +424,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = inputDf // no value_squared column added
     val plan = realDemoPlan(outputDf)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.MissingOutputField).get
@@ -450,7 +463,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       .add("customer_id", StringType, nullable = false)
       .add("country", StringType, nullable = true)
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = Nil,
@@ -484,7 +497,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       .withColumn("extra_column", lit("unexpected"))
     val plan = realDemoPlan(outputDf)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(result.passed)
   }
@@ -495,7 +508,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val outputDf = inputDf.withColumn("value_squared", (col("value") * col("value")).cast("string"))
     val plan = realDemoPlan(outputDf)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputDf.schema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputFieldTypeMismatch).get
@@ -525,7 +538,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType, nullable = true)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputFieldNullabilityMismatch).get
@@ -550,7 +563,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
     val actualSchema = new StructType().add("id", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed)
   }
@@ -585,7 +598,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val actualInputSchema = new StructType().add("id", StringType)
     val outputSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("raw.orders" -> actualInputSchema),
@@ -615,7 +628,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     }
     assert(reads.head.dataset.location.startsWith("file:"), "sanity check: Spark does report an absolute file: URI")
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -641,7 +654,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(format = Some("csv"))
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -665,7 +678,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     // explicitly case-insensitive — prove that, not just the exact-match case.
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(format = Some("PARQUET"))
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -685,7 +698,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       outputs = realDemoContract().outputs.map(_.copy(format = None))
     )
     val planWithFormat = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(format = Some("csv"))
-    val resultA = StructuralVerifier.verify(
+    val resultA = verifyOnSpark(
       contractNoFormat,
       planWithFormat,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -695,7 +708,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
 
     // Contract declares a format, but the adapter couldn't determine the
     // actual one (format = None, same as realDemoPlan's default synthetic wrap).
-    val resultB = StructuralVerifier.verify(
+    val resultB = verifyOnSpark(
       realDemoContract(),
       bareWrite,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -720,7 +733,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(saveMode = Some("append"))
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -741,7 +754,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val bareWrite = realDemoPlan(outputDf)
     val plan = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(saveMode = Some("OVERWRITE"))
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -761,7 +774,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       outputs = realDemoContract().outputs.map(_.copy(saveMode = None))
     )
     val planWithSaveMode = bareWrite.asInstanceOf[com.invaract.ir.Write].copy(saveMode = Some("append"))
-    val resultA = StructuralVerifier.verify(
+    val resultA = verifyOnSpark(
       contractNoSaveMode,
       planWithSaveMode,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -771,7 +784,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
 
     // Contract declares a saveMode, but the adapter couldn't determine the
     // actual one (saveMode = None, same as realDemoPlan's default synthetic wrap).
-    val resultB = StructuralVerifier.verify(
+    val resultB = verifyOnSpark(
       realDemoContract(),
       bareWrite,
       inputSchemas = List("demo/input/sample.csv" -> inputDf.schema),
@@ -810,7 +823,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.MissingOutputCatalogRegistration)
@@ -842,7 +855,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
@@ -888,7 +901,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"expected a fully matching catalog registration to pass: ${result.violations}")
   }
@@ -912,7 +925,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.in")))
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"a contract with no declared catalog block shouldn't check it at all: ${result.violations}")
   }
@@ -942,7 +955,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"required: false shouldn't gate anything: ${result.violations}")
   }
@@ -973,7 +986,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"only technology was declared and it matched: ${result.violations}")
   }
@@ -1018,7 +1031,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"declaring a location the actual side can't report at all must not be treated as a mismatch: ${result.violations}")
   }
@@ -1057,7 +1070,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
@@ -1091,7 +1104,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"namespace wasn't declared, so the actual registration having one must not be flagged: ${result.violations}")
   }
@@ -1125,7 +1138,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
@@ -1168,7 +1181,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     )
     val actualSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(!result.passed)
     val violation = result.violations.find(_.violationType == ViolationType.OutputCatalogMismatch)
@@ -1217,7 +1230,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), joined)
     val outputSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(!result.passed)
     val missing = result.violations.find(_.violationType == ViolationType.MissingInputCatalogRegistration)
@@ -1258,7 +1271,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.other")))
     val outputSchema = new StructType().add("id", IntegerType)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = outputSchema)
 
     assert(result.violations.exists(_.violationType == ViolationType.MissingInput))
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInputCatalogRegistration))
@@ -1307,7 +1320,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val joined = com.invaract.ir.Join(Read(DatasetRef("raw.orders")), Read(DatasetRef("raw.extra")), com.invaract.ir.JoinType.Inner)
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), joined)
 
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = Nil,
@@ -1357,7 +1370,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     // unrelated OUTPUT_FIELD_NULLABILITY_MISMATCH.
     val actualSchema = new StructType().add("id", IntegerType, nullable = false)
 
-    val result = StructuralVerifier.verify(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
+    val result = verifyOnSpark(contract, plan, inputSchemas = Nil, outputSchema = actualSchema)
 
     assert(result.passed, s"an absent optional field should not be a violation: ${result.violations}")
   }
@@ -1385,7 +1398,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
         |""".stripMargin
     )
     val plan = com.invaract.ir.Write(DatasetRef("gold.out"), Read(DatasetRef("raw.orders")))
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       contract,
       plan,
       inputSchemas = List("raw.orders" -> new StructType()), // "id" absent from the actual input
@@ -1474,7 +1487,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     contract: com.invaract.contract.Contract,
     plan: com.invaract.ir.Write,
     options: VerificationOptions = VerificationOptions()
-  ) = StructuralVerifier.verify(contract, plan, Nil, idOnly, options)
+  ) = verifyOnSpark(contract, plan, Nil, idOnly, options)
 
   test("derivedFrom: read 3 inputs, out1 uses two and out2 uses one - each write passes without reading the inputs it isn't derived from") {
     val contract = lineageContract(Some(List("a", "b")), Some(List("c")))
@@ -1530,7 +1543,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
   test("derivedFrom: a single-output contract's remediation does not nudge toward derivedFrom") {
     val contract = realDemoContract()
     val plan = com.invaract.ir.Write(DatasetRef("demo/output/result.parquet"), Read(DatasetRef("demo/input/other.csv")))
-    val result = StructuralVerifier.verify(contract, plan, Nil, new StructType().add("id", IntegerType))
+    val result = verifyOnSpark(contract, plan, Nil, new StructType().add("id", IntegerType))
     val missing = result.violations.filter(_.violationType == ViolationType.MissingInput)
     assert(missing.nonEmpty)
     assert(!missing.exists(_.remediation.contains("derivedFrom")))
@@ -1610,7 +1623,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
 
   test("derivedFrom: a plan with no Write keeps every input in scope") {
     val contract = lineageContract(Some(List("a")), Some(List("c")))
-    val result = StructuralVerifier.verify(contract, readOf("a"), Nil, idOnly)
+    val result = verifyOnSpark(contract, readOf("a"), Nil, idOnly)
     assert(result.violations.count(_.violationType == ViolationType.MissingInput) == 2) // b and c
   }
 
@@ -1633,7 +1646,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
         |""".stripMargin
     )
     val plan = com.invaract.ir.Write(DatasetRef("somewhere/else.parquet"), readOf("a"))
-    val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
+    val result = verifyOnSpark(contract, plan, Nil, idOnly)
     assert(!result.violations.exists(_.violationType == ViolationType.MissingInput), result.violations.toString)
   }
 
@@ -1668,7 +1681,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       saveMode = Some("append"),
       catalog = None
     )
-    val result = StructuralVerifier.verify(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    val result = verifyOnSpark(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
     assert(
       result.violations.map(_.violationType).toSet == Set(
         ViolationType.OutputLocationMismatch,
@@ -1684,14 +1697,14 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
 
   test("single-output: the same write at the declared location has no location finding - the other findings are location-independent") {
     val plan = com.invaract.ir.Write(DatasetRef("warehouse/only.parquet"), readOf("raw.source"), format = Some("csv"))
-    val result = StructuralVerifier.verify(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    val result = verifyOnSpark(singleOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
     assert(!result.violations.exists(_.violationType == ViolationType.OutputLocationMismatch))
     assert(result.violations.exists(_.violationType == ViolationType.OutputFormatMismatch))
   }
 
   test("multi-output: a write matching no declared output gets only the location finding - there is no output to check the rest against") {
     val plan = com.invaract.ir.Write(DatasetRef("warehouse/typo.parquet"), readOf("raw.source"), format = Some("csv"))
-    val result = StructuralVerifier.verify(twoOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
+    val result = verifyOnSpark(twoOutputContract(), plan, Nil, new StructType().add("id", IntegerType))
     assert(result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
   }
 
@@ -1715,7 +1728,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
   private def caseWrite() = com.invaract.ir.Write(DatasetRef("gold/out.parquet"), Read(DatasetRef("bronze/src.parquet")))
 
   test("verify: declared names match actual columns case-insensitively by default, on both the input and output side") {
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       caseContract(),
       caseWrite(),
       List("bronze/src.parquet" -> new StructType().add("order_id", IntegerType, nullable = false)),
@@ -1725,7 +1738,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
   }
 
   test("verify: caseSensitive = true turns the same names into missing fields (input and output)") {
-    val result = StructuralVerifier.verify(
+    val result = verifyOnSpark(
       caseContract(),
       caseWrite(),
       List("bronze/src.parquet" -> new StructType().add("order_id", IntegerType, nullable = false)),
@@ -1763,7 +1776,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     // read every table except the multiples of 50, under an absolute s3 path
     val read = (0 until n).filterNot(_ % 50 == 0)
     val plan = com.invaract.ir.Write(DatasetRef("gold/out"), com.invaract.ir.Union(read.map(i => Read(DatasetRef(s"s3://bkt/warehouse/db/table$i"))).toList))
-    val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
+    val result = verifyOnSpark(contract, plan, Nil, idOnly)
     val missing = result.violations.filter(_.violationType == ViolationType.MissingInput).flatMap(_.location)
     assert(missing == (0 until n).filter(_ % 50 == 0).map(i => s"warehouse/db/table$i").toList)
     assert(result.violations.size == missing.size)
@@ -1792,9 +1805,9 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     val bad = new StructType().add("id", StringType, nullable = false)
     val plan = com.invaract.ir.Write(DatasetRef("gold/out"), Read(DatasetRef("bronze/src")))
     // `file:/a/bronze/src` and `s3://b/bronze/src` both match "bronze/src"; the caller's order decides.
-    val goodFirst = StructuralVerifier.verify(twoInputContract(), plan, List("file:/a/bronze/src" -> good, "s3://b/bronze/src" -> bad), idOnly)
+    val goodFirst = verifyOnSpark(twoInputContract(), plan, List("file:/a/bronze/src" -> good, "s3://b/bronze/src" -> bad), idOnly)
     assert(!goodFirst.violations.exists(_.violationType == ViolationType.InputFieldTypeMismatch), goodFirst.violations.toString)
-    val badFirst = StructuralVerifier.verify(twoInputContract(), plan, List("s3://b/bronze/src" -> bad, "file:/a/bronze/src" -> good), idOnly)
+    val badFirst = verifyOnSpark(twoInputContract(), plan, List("s3://b/bronze/src" -> bad, "file:/a/bronze/src" -> good), idOnly)
     assert(badFirst.violations.exists(_.violationType == ViolationType.InputFieldTypeMismatch), badFirst.violations.toString)
   }
 
@@ -1808,11 +1821,11 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
       )
     val iceberg = Some(CatalogIdentity(technology = Some("iceberg")))
     val hive = Some(CatalogIdentity(technology = Some("hive")))
-    val okFirst = StructuralVerifier.verify(contract, plan(iceberg, hive), Nil, idOnly)
+    val okFirst = verifyOnSpark(contract, plan(iceberg, hive), Nil, idOnly)
     assert(!okFirst.violations.exists(v => v.violationType == ViolationType.InputCatalogMismatch || v.violationType == ViolationType.MissingInputCatalogRegistration), okFirst.violations.toString)
-    val badFirst = StructuralVerifier.verify(contract, plan(hive, iceberg), Nil, idOnly)
+    val badFirst = verifyOnSpark(contract, plan(hive, iceberg), Nil, idOnly)
     assert(badFirst.violations.exists(_.violationType == ViolationType.InputCatalogMismatch), badFirst.violations.toString)
-    val noneFirst = StructuralVerifier.verify(contract, plan(None, iceberg), Nil, idOnly)
+    val noneFirst = verifyOnSpark(contract, plan(None, iceberg), Nil, idOnly)
     assert(noneFirst.violations.exists(_.violationType == ViolationType.MissingInputCatalogRegistration), noneFirst.violations.toString)
   }
 
@@ -1834,16 +1847,16 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
         |""".stripMargin
     )
     val plan = com.invaract.ir.Write(DatasetRef("gold/elsewhere"), Read(DatasetRef("bronze/other")))
-    val result = StructuralVerifier.verify(contract, plan, Nil, idOnly)
+    val result = verifyOnSpark(contract, plan, Nil, idOnly)
     val missing = result.violations.find(_.violationType == ViolationType.MissingInput).get
     assert(!missing.remediation.contains("derivedFrom"), missing.remediation)
     // while a write that DOES land on an output without derivedFrom gets the nudge:
-    val matched = StructuralVerifier.verify(contract, com.invaract.ir.Write(DatasetRef("gold/x"), Read(DatasetRef("bronze/other"))), Nil, idOnly)
+    val matched = verifyOnSpark(contract, com.invaract.ir.Write(DatasetRef("gold/x"), Read(DatasetRef("bronze/other"))), Nil, idOnly)
     assert(matched.violations.find(_.violationType == ViolationType.MissingInput).get.remediation.contains("derivedFrom"))
   }
 
   test("OUTPUT_LOCATION_MISMATCH wording: one declared output names it; several name every candidate") {
-    val single = StructuralVerifier.verify(
+    val single = verifyOnSpark(
       singleOutputContract(),
       com.invaract.ir.Write(DatasetRef("warehouse/typo.parquet"), readOf("raw.source")),
       Nil,
@@ -1853,7 +1866,7 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with Spa
     assert(single.remediation.startsWith("Write to 'warehouse/only.parquet' instead"))
     assert(single.expected.contains("warehouse/only.parquet") && single.actual.contains("warehouse/typo.parquet"))
 
-    val multi = StructuralVerifier.verify(
+    val multi = verifyOnSpark(
       twoOutputContract(),
       com.invaract.ir.Write(DatasetRef("warehouse/typo.parquet"), readOf("raw.source")),
       Nil,

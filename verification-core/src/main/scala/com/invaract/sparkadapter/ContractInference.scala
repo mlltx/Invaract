@@ -25,6 +25,12 @@ import com.invaract.ir.{Lineage, Plan}
   * `rules` is always empty in an inferred contract. A user is expected to
   * add rules by hand once they know what they want enforced.
   */
+/** The facts about one write `ContractInference` infers a contract's output
+  * from — the engine-neutral slice of an adapter's own write description
+  * (for Spark, `WriteCommandInfo`).
+  */
+private[sparkadapter] case class InferredWrite(location: String, format: Option[String], saveMode: Option[String], outputSchema: LogicalSchema)
+
 private[sparkadapter] object ContractInference {
 
   /** A freshly inferred contract is never something the writer intended to
@@ -36,7 +42,8 @@ private[sparkadapter] object ContractInference {
   val InferredVersion: ContractVersion = ContractVersion(0, 1, 0)
   val InferredStatus = "draft"
 
-  /** @param inputSchemas every recognized read this write's plan depends on
+  /** @param write what the engine adapter recognized the write as — see `InferredWrite`.
+    * @param inputSchemas every recognized read this write's plan depends on
     *   (location, schema) — the same collection
     *   `ContractEnforcementRule.verifyOrThrow` gathers via `collectInputSchemas`,
     *   reused here rather than re-derived so dry-run mode and real
@@ -51,7 +58,7 @@ private[sparkadapter] object ContractInference {
     *   represents observed implementation behavior, not proof of a
     *   semantic role).
     */
-  def infer(writeInfo: WriteCommandInfo, inputSchemas: List[(String, LogicalSchema)], plan: Plan): Contract = {
+  def infer(write: InferredWrite, inputSchemas: List[(String, LogicalSchema)], plan: Plan): Contract = {
     val totalInputs = inputSchemas.size
     val locationOf = PlanRuleVerifier.locationResolver(plan)
     val outputContributingQualifiers = Lineage.trace(plan).flatMap(_.sources).flatMap(_.qualifier).toSet.map(locationOf)
@@ -68,10 +75,10 @@ private[sparkadapter] object ContractInference {
     }
     val output = Dataset(
       name = "output",
-      location = normalizeLocation(writeInfo.location),
-      format = writeInfo.format,
-      schema = schemaOf(SparkSchemas.toLogicalSchema(writeInfo.outputSchema)),
-      saveMode = writeInfo.saveMode,
+      location = normalizeLocation(write.location),
+      format = write.format,
+      schema = schemaOf(write.outputSchema),
+      saveMode = write.saveMode,
       // Every input this write was observed reading - stated explicitly, so
       // that when this draft is merged into a multi-output contract each
       // output keeps naming only the inputs that feed it (see
