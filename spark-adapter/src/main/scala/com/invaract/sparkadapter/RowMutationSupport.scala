@@ -80,19 +80,16 @@ private[sparkadapter] object RowMutationSupport {
   type Kind = MutationKind
   val Kind: MutationKind.type = MutationKind
 
-  sealed trait Classification { def kind: Kind }
-  object Classification {
-    /** This plan is `kind`-shaped DML, and its rule-relevant facts were
-      * successfully extracted into `mutation`.
-      */
-    case class Extracted(kind: Kind, mutation: ir.RowMutation) extends Classification
-
-    /** This plan is genuinely `kind`-shaped DML, but this module could
-      * not extract the fact a rule of that kind needs — see this file's
-      * class doc for the two cases this covers.
-      */
-    case class Unverifiable(kind: Kind) extends Classification
-  }
+  /** What `classify` made of a plan: `Extracted(kind, mutation)` - this plan is
+    * `kind`-shaped DML and its rule-relevant facts were extracted - or
+    * `Unverifiable(kind)` - genuinely `kind`-shaped DML, but this module could
+    * not extract the fact a rule of that kind needs (see this file's class doc
+    * for the two cases). The neutral `MutationClassification`
+    * (`verification-core`), which `VerificationPipeline` consumes; the alias
+    * keeps this file's own spelling.
+    */
+  type Classification = MutationClassification
+  val Classification: MutationClassification.type = MutationClassification
 
   private val deltaDmlClassNames: Map[String, Kind] = Map(
     "org.apache.spark.sql.delta.commands.MergeIntoCommand" -> Kind.Merge,

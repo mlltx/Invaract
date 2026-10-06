@@ -23,6 +23,7 @@ package names are unchanged (deployed configs name sinks and plug-ins by
 fully-qualified class name), and `spark-adapter`'s assembly jar bundles the core, so
 nothing about how you install or configure this adapter changes. Where this document
 says a class "lives in `spark-adapter`" for one of those, read `verification-core`.
+The orchestration is core too: `VerificationPipeline` is what `ContractEnforcementRule.verifyOrThrow` used to do inline once a plan is translated, and `VerificationSetup` + `ConfigSource` are the session-start half (`ref://` locations, option overlay, organizational policy) — `ContractEnforcementRule` keeps same-signature methods that delegate to them with `SparkConfigSource` (`spark.invaract.<name>`, every key unchanged). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 What stays here is what is genuinely Spark: Catalyst translation (`SparkPlanAdapter`,
 `WriteCommandSupport`), the enforcement rule and listener, dry-run reporting,
 checkpoint resolution, catalog identity, fail-closed command classification, and

@@ -59,7 +59,7 @@ module move in Stage 2.
 |---|---|---|---|
 | 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done (PR #102) — see below |
 | 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change (package names kept) | Done — see below |
-| 2b | Adapter SPI: lift `verifyOrThrow`'s orchestration into a neutral `VerificationPipeline`; neutral `invaract.*` config namespace; engine-neutral fail-closed vocabulary; decide neutral package names with FQN compatibility for deployed configs | Removes leak #2 and the rest of #5/#7: a second adapter no longer copies ~200 lines of orchestration | Not started |
+| 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (neutral package names, `ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered | Not started |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes or declares N/A (with a reason) on the same scenarios | Not started |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic fingerprints the same, and `GENERATE_UUID()` is not "deterministic" | Not started |
@@ -155,4 +155,67 @@ its own MiMa entry (nothing to compare against until it is released).
   strings stay in `spark-adapter`; both belong with 2b's neutral config namespace.
 - Test helpers `TestNotificationSink`, `EventSchema` and `CustomRuleVerifierFixtures` are
   duplicated in both modules' test sources (separate sbt builds cannot share test classes).
+
+## Stage 2b — the adapter SPI
+
+An adapter's job is now exactly what is engine-specific: recognize an operation, translate it
+into `ir.Plan`, map its schemas into `LogicalSchema`, classify DML. Everything after that is the
+core's.
+
+**`VerificationPipeline`** (`verification-core`) is the body of what used to be
+`ContractEnforcementRule.verifyOrThrow`, with the Spark parts removed. Three public entry points,
+one per thing an adapter can find:
+
+| Entry point | When an adapter calls it |
+|---|---|
+| `verifyWrite(contract, write: => CheckedWrite, options, sink, applicationId)` | a recognized write |
+| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, applicationId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
+| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, applicationId)` | the fail-closed response to something that looks like a write but could not be translated |
+
+`CheckedWrite` is what an adapter hands over for a write: the translated plan, input/output
+`LogicalSchema`s, case sensitivity, its DML classification (`MutationClassification`), the
+lineage-boundary node types it uses, and any resolution caveats. `write` is by-name on purpose:
+the pipeline validates the contract *first* and only then asks the adapter to build the write, so an
+adapter cannot get that order wrong (an invalid contract must never reach checks that assume a sound
+one, and building the write can fail on a plan the contract has no bearing on). The pipeline owns the
+verifier ordering, fingerprinting, event publishing and the explanation text, so two engines cannot
+drift apart on them.
+
+**`VerificationSetup` + `ConfigSource`** are the settings-driven half, read once at session start:
+`ref://` location resolution, the five `VerificationOptions` flags overlaid from configuration, and
+organizational policy layering (reject a non-compliant contract, inject required rules, raise the
+option floor). They read configuration only through a `ConfigSource` keyed by the neutral names in
+`InvaractConf` (`locationMap`, `orgPolicy`, ...). An adapter spells those its own way: Spark's
+`SparkConfigSource` is `spark.invaract.<name>`, so every existing `--conf` key is unchanged
+(`SparkConfigSourceSpec` pins that), and another engine maps the same names onto its own options —
+which is how a new adapter satisfies CLAUDE.md's External Attachability Requirement without
+re-implementing any of it.
+
+**Seams.** `MutationClassification` (`Extracted`/`Unverifiable`) joins `MutationKind` in the core;
+`RowMutationSupport.Classification` is an alias of it. `ContractEnforcementRule` keeps thin,
+same-signature delegating methods (`resolveContractLocations`, `resolveVerificationOptions`,
+`enforceOrgPolicy`, `resolveOrgPolicyLayers`, `explain`) so nothing that called them changes.
+
+**Tests.** The pipeline and setup are tested in `verification-core` with hand-built `ir` plans and a
+map-backed `ConfigSource` — no engine at all (`VerificationPipelineSpec`, `VerificationSetupSpec`,
+`ConfigSourceSpec`) — which is the practical proof the SPI is engine-free. `ToyEngineAdapterSpec` goes
+one step further: a complete toy adapter (its own job type, BigQuery-flavoured column types, translation
+into `ir.Plan`, a type mapper and an env-style `ConfigSource`) written against only the public SPI, giving
+the same verdicts as Spark for the same contract and letting a platform turn on
+`rejectUndeclaredFields` through the toy engine's own configuration with no change to its job; it is
+also the seed of the Stage 4 conformance kit. `spark-adapter`'s existing suites exercise the same path
+end to end through a real `SparkSession`; `SparkConfigSourceSpec` pins every public `spark.invaract.*`
+key to its neutral name. `verification-core` is now 28 suites / 454 tests, 95.39% statement / 92.75%
+branch coverage; the three SPI files score 100% under mutation testing.
+
+**Not done in 2b, deliberately**
+
+- *Neutral package names.* Still `com.invaract.sparkadapter.*`, for the reason in Stage 2a (deployed
+  configs name classes by FQN). Doing it safely needs forwarding classes under the old names plus a
+  deprecation period, which is a release decision rather than a refactor.
+- *`registry/ContractSource`* (reads a `SparkSession`) and `InvaractSparkSessionExtension`'s own
+  keys (`contract`, `dryRun`, `notifyConfig`, `jobId`, `registryUrl`, ...) stay in `spark-adapter`:
+  they are the Spark *attach* mechanism, and each adapter has its own.
+- *Fail-closed wording.* `UnverifiableWrite`'s remediation text still names Spark's
+  `FailClosedCommands`; `rejectUnverifiableWrite` is engine-neutral, the message is not yet.
 

@@ -1305,9 +1305,11 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(warnings.isEmpty, warnings.toString)
   }
 
-  /** Runs `body`, capturing every WARN-or-worse message `ContractEnforcementRule` logs while it runs.
-    * This suite raises Spark's log level to ERROR, so a dedicated logger config for just that logger is
-    * installed for the duration (and removed afterwards) rather than relying on the ambient level.
+  /** Runs `body`, capturing every WARN-or-worse message the enforcement path logs while it runs - from
+    * `ContractEnforcementRule` itself and from `VerificationPipeline`, the engine-neutral half that now
+    * owns the fingerprint-disclosure WARN. This suite raises Spark's log level to ERROR, so a dedicated
+    * logger config for just those loggers is installed for the duration (and removed afterwards) rather
+    * than relying on the ambient level.
     */
   private def enforcementRuleWarnings[T](body: => T): (T, List[String]) = {
     import org.apache.logging.log4j.{Level, LogManager}
@@ -1318,20 +1320,22 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     val captured = new java.util.concurrent.CopyOnWriteArrayList[String]()
     val context = LogManager.getContext(false).asInstanceOf[LoggerContext]
     val config = context.getConfiguration
-    val loggerName = ContractEnforcementRule.getClass.getName
+    val loggerNames = List(ContractEnforcementRule.getClass.getName, VerificationPipeline.getClass.getName)
     val appender = new AbstractAppender("enforcement-rule-warnings", null, null, true, Property.EMPTY_ARRAY) {
       override def append(event: LogEvent): Unit = captured.add(event.getMessage.getFormattedMessage)
     }
     appender.start()
-    val loggerConfig = new LoggerConfig(loggerName, Level.WARN, false)
-    loggerConfig.addAppender(appender, null, null)
-    config.addLogger(loggerName, loggerConfig)
+    loggerNames.foreach { loggerName =>
+      val loggerConfig = new LoggerConfig(loggerName, Level.WARN, false)
+      loggerConfig.addAppender(appender, null, null)
+      config.addLogger(loggerName, loggerConfig)
+    }
     context.updateLoggers()
     try {
       val result = body
       (result, captured.toArray.toList.map(_.toString))
     } finally {
-      config.removeLogger(loggerName)
+      loggerNames.foreach(config.removeLogger)
       appender.stop()
       context.updateLoggers()
     }

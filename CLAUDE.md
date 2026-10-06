@@ -374,6 +374,17 @@ express — a contract loaded from somewhere `spark.invaract.contract` can't
 name, a resolver `spark.invaract.locationMap` can't express, a custom
 dry-run callback.
 
+**For an engine adapter other than Spark, "`spark-submit --conf`" reads as "that
+engine's own configuration surface"** (pipeline options, environment, job labels —
+whatever a platform can set without touching the job's source). The engine-neutral
+settings are read through `ConfigSource` in `verification-core`, keyed by the neutral
+names in `InvaractConf` (`locationMap`, `orgPolicy`, `rejectUndeclaredFields`, ...);
+an adapter satisfies this requirement by supplying a `ConfigSource` that spells those
+names its own way (Spark's is `SparkConfigSource`: `spark.invaract.<name>`) and calling
+`VerificationSetup`, which gives it location resolution, option overlay and
+organizational policy for free. A new neutral setting goes in `InvaractConf` and
+`VerificationSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
+
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
 `spark-submit --conf`? If the honest answer is no, the feature isn't done —

@@ -3,11 +3,8 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, ContractValidator, LogicalSchema, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
-import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
-import com.invaract.ir.PlanPrinter
-import com.invaract.sparkadapter.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
-import com.invaract.sparkadapter.notification.{ContractValidationEvent, InferenceStatus, NotificationSink}
+import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
+import com.invaract.sparkadapter.notification.{InferenceStatus, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -154,13 +151,8 @@ object ContractEnforcementRule {
     * reference fails immediately with a clear, actionable message instead
     * of a confusing downstream `MissingInput`/`OutputLocationMismatch`.
     */
-  private[sparkadapter] def resolveContractLocations(contract: Contract, session: SparkSession): Contract = {
-    val resolver: LocationResolver = session.conf.getOption(LocationMapConfKey) match {
-      case Some(path) => StaticMapLocationResolver.fromPropertiesFile(path)
-      case None       => NoOpLocationResolver
-    }
-    ContractLocationResolution.resolve(contract, resolver)
-  }
+  private[sparkadapter] def resolveContractLocations(contract: Contract, session: SparkSession): Contract =
+    VerificationSetup.resolveContractLocations(contract, SparkConfigSource(session))
 
   /** Spark configuration keys mirroring `VerificationOptions`'s three
     * `Boolean` flags — the same "attachable via spark-submit --conf, not
@@ -196,16 +188,8 @@ object ContractEnforcementRule {
     * and code that deliberately opted in can never be silently turned off
     * by a conf key's mere absence.
     */
-  private[sparkadapter] def resolveVerificationOptions(options: VerificationOptions, session: SparkSession): VerificationOptions = {
-    def confFlag(key: String): Boolean = session.conf.getOption(key).exists(_.toBoolean)
-    options.copy(
-      rejectUndeclaredInputs = options.rejectUndeclaredInputs || confFlag(RejectUndeclaredInputsConfKey),
-      rejectUndeclaredFields = options.rejectUndeclaredFields || confFlag(RejectUndeclaredFieldsConfKey),
-      computeFingerprint = options.computeFingerprint || confFlag(ComputeFingerprintConfKey),
-      staticDataQuality = options.staticDataQuality || confFlag(StaticDataQualityConfKey),
-      roleConsistency = options.roleConsistency || confFlag(RoleConsistencyConfKey)
-    )
-  }
+  private[sparkadapter] def resolveVerificationOptions(options: VerificationOptions, session: SparkSession): VerificationOptions =
+    VerificationSetup.resolveVerificationOptions(options, SparkConfigSource(session))
 
   /** Spark configuration key naming an organizational policy document
     * (`com.invaract.contract.OrgPolicy`, YAML — see docs/CONTRACT_MODEL.md's
@@ -260,18 +244,8 @@ object ContractEnforcementRule {
     * parsed the same way as the base (see `OrgPolicyOverlaysConfKey`'s own
     * doc for why layering needs no new document shape at all).
     */
-  private[sparkadapter] def resolveOrgPolicyLayers(session: SparkSession): List[(String, OrgPolicy)] = {
-    val overlayPaths = session.conf.getOption(OrgPolicyOverlaysConfKey).toList.flatMap(VersionCompatibilityGuard.splitCommaSeparated)
-    (session.conf.getOption(OrgPolicyConfKey), overlayPaths) match {
-      case (None, Nil) => Nil
-      case (None, _) =>
-        throw new com.invaract.contract.OrgPolicyParseException(
-          s"'$OrgPolicyOverlaysConfKey' is set (${overlayPaths.mkString(", ")}) but '$OrgPolicyConfKey' is not - " +
-            "policy layering requires an org-wide base policy to layer onto; set both, or neither"
-        )
-      case (Some(basePath), overlays) => (basePath :: overlays).map(path => path -> OrgPolicyParser.parseFile(path))
-    }
-  }
+  private[sparkadapter] def resolveOrgPolicyLayers(session: SparkSession): List[(String, OrgPolicy)] =
+    VerificationSetup.resolveOrgPolicyLayers(SparkConfigSource(session))
 
   /** Governs `contract`/`options` through the full, ordered stack of
     * organizational policy layers configured for this session
@@ -326,123 +300,7 @@ object ContractEnforcementRule {
       sink: Option[NotificationSink],
       applicationId: Option[String]
   ): (Contract, VerificationOptions) =
-    resolveOrgPolicyLayers(session) match {
-      case Nil => (contract, options)
-      case layers =>
-        val layersValidation = OrgPolicyValidator.validateLayers(layers)
-        if (!layersValidation.isValid) {
-          throw new com.invaract.contract.OrgPolicyParseException(
-            s"Organizational policy layers are invalid: ${layersValidation.errors.mkString("; ")}"
-          )
-        }
-        layers.foreach { case (path, layer) => requireKnownMinVerificationOptionKeys(layer, path) }
-
-        val policies = layers.map(_._2)
-        val governedContract = OrgPolicyEvaluator.applyInjectedRulesFromLayers(contract, policies)
-        val governedOptions = policies.foldLeft(options)(applyMinVerificationOptions)
-        val evaluation = OrgPolicyEvaluator.evaluateLayers(governedContract, policies)
-
-        if (evaluation.hasBlockingViolations) {
-          val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
-          val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
-          publishValidation(governedContract, result, sink, applicationId)
-          // No parenthesized fragment here: PlanPrinter renders UnknownPlan
-          // as "UnknownPlan(<description>)" verbatim - wrapping the
-          // description in its own parens too (an earlier version of this
-          // message did) produced a confusing doubled "((...))" that read
-          // like a rendering bug on first encounter, rather than the true,
-          // simple fact that no plan exists yet to show.
-          val describedPlan = com.invaract.ir.UnknownPlan(
-            "no transformation plan exists yet - rejected by organizational policy before any plan was analyzed"
-          )
-          throw new ContractViolationException(result, explain(governedContract, describedPlan, result))
-        } else if (evaluation.warnViolations.nonEmpty) {
-          // Never blocks - published (if a sink is configured) so a
-          // platform can watch a newly-introduced policy's violations
-          // accumulate before flipping it to Enforce. Built directly
-          // rather than via VerificationResult.of: that helper infers
-          // FAILED from a non-empty violation list, which would
-          // misrepresent a Warn-only result as a rejection that never
-          // actually happened.
-          val result = VerificationResult(
-            "PASSED",
-            s"${governedContract.id}@${governedContract.version}",
-            evaluation.warnViolations.map(toViolation(governedContract, _))
-          )
-          publishValidation(governedContract, result, sink, applicationId)
-        }
-
-        (governedContract, governedOptions)
-    }
-
-  /** The only `inject.minVerificationOptions` keys `applyMinVerificationOptions`
-    * actually reads — `VerificationOptions`'s three flag names. Kept as its
-    * own named set (rather than inlined) so `requireKnownMinVerificationOptionKeys`
-    * can validate against exactly the same list `applyMinVerificationOptions`
-    * consults, with no risk of the two drifting apart.
-    */
-  private val KnownMinVerificationOptionKeys =
-    Set("rejectUndeclaredInputs", "rejectUndeclaredFields", "computeFingerprint", "staticDataQuality", "roleConsistency")
-
-  /** Fails loudly on a `policy.inject.minVerificationOptions` key outside
-    * `KnownMinVerificationOptionKeys` — a typo (e.g.
-    * `rejectUndeclredFields`) would otherwise be silently ignored by
-    * `applyMinVerificationOptions`'s plain `getOrElse(key, false)` lookup,
-    * leaving a platform team believing a flag is enforced org-wide when it
-    * genuinely isn't. `contract` itself can't run this check (it has no
-    * `VerificationOptions` to validate against), so it lives here, next to
-    * the one place that actually knows the real flag names. `policyPath`
-    * names the specific layer this `policy` was loaded from, so a typo in a
-    * business-unit overlay is attributed to that overlay's own path, not
-    * misleadingly blamed on the org-wide base.
-    */
-  private[sparkadapter] def requireKnownMinVerificationOptionKeys(policy: OrgPolicy, policyPath: String): Unit = {
-    val unknownKeys = policy.inject.minVerificationOptions.keySet -- KnownMinVerificationOptionKeys
-    if (unknownKeys.nonEmpty) {
-      throw new com.invaract.contract.OrgPolicyParseException(
-        s"Organizational policy at '$policyPath' declares unrecognized " +
-          s"inject.minVerificationOptions key(s): ${unknownKeys.toList.sorted.mkString(", ")} " +
-          s"(known keys: ${KnownMinVerificationOptionKeys.toList.sorted.mkString(", ")})"
-      )
-    }
-  }
-
-  /** ORs `policy.inject.minVerificationOptions` floors onto `options` — a
-    * flag a job's own `VerificationOptions` left `false` can still be forced
-    * `true` by policy; the reverse never happens (a job can't use policy to
-    * weaken a flag it already opted into). Keyed by option name, since
-    * `InjectedDefaults.minVerificationOptions` is a plain `Map[String,
-    * Boolean]` (`contract` cannot depend on this Spark-specific type). Safe
-    * to call with an unrecognized key still present (an unknown key's value
-    * is simply never consulted) — `enforceOrgPolicy` calls
-    * `requireKnownMinVerificationOptionKeys` first specifically so that
-    * case never reaches here silently.
-    */
-  private[sparkadapter] def applyMinVerificationOptions(options: VerificationOptions, policy: OrgPolicy): VerificationOptions = {
-    def floor(key: String, current: Boolean): Boolean =
-      current || policy.inject.minVerificationOptions.getOrElse(key, false)
-    options.copy(
-      rejectUndeclaredInputs = floor("rejectUndeclaredInputs", options.rejectUndeclaredInputs),
-      rejectUndeclaredFields = floor("rejectUndeclaredFields", options.rejectUndeclaredFields),
-      computeFingerprint = floor("computeFingerprint", options.computeFingerprint),
-      staticDataQuality = floor("staticDataQuality", options.staticDataQuality),
-      roleConsistency = floor("roleConsistency", options.roleConsistency)
-    )
-  }
-
-  /** Adapts a `com.invaract.contract.PolicyViolation` into this module's own
-    * `Violation` shape, so an org-policy rejection flows through the exact
-    * same `explain`/notification-sink/`demo/output/report.json` path a
-    * structural violation already does. `column`/`location` are left unset,
-    * the same convention whole-contract-level violations like
-    * `ViolationType.InvalidContract` already use — the offending dataset (if
-    * any) is named in `message`/`remediation` themselves, via
-    * `PolicyViolation.dataset`.
-    */
-  private def toViolation(contract: Contract, violation: PolicyViolation): Violation = {
-    val location = violation.dataset.flatMap(name => (contract.inputs ++ contract.outputs).find(_.name == name)).map(_.location)
-    Violations.orgPolicy(violation.message, violation.remediation, location, violation.policyId)
-  }
+    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId)
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -567,6 +425,12 @@ object ContractEnforcementRule {
   /** The check logic itself, exposed directly for tests and for callers
     * that want to verify without going through `SparkSession` construction
     * (`forContract` is a thin adapter to the shape `injectCheckRule` wants).
+    *
+    * What is Spark-specific happens here - checkpoint resolution, Catalyst
+    * translation, recognizing a write / state-changing CALL / unverifiable
+    * command, mapping schemas, classifying DML. Everything after that (the
+    * checks, the fingerprint, the event, the rejection) is
+    * `VerificationPipeline`, the same for every engine.
     */
   private[sparkadapter] def verifyOrThrow(
       contract: Contract,
@@ -593,230 +457,80 @@ object ContractEnforcementRule {
         // What `SparkAdapterListener.lastWrite` reports for this write, so it
         // describes the same (checkpoint-resolved) plan this check does.
         SparkAdapterListener.stash(analyzedPlan, translated)
-        // Every check below assumes a *structurally sound* contract -
-        // StructuralVerifier.verify in particular reads contract.outputs.head
-        // unconditionally. `injectCheckRule` calls this method for every
-        // plan Spark analyzes in the session, not just writes, so this
-        // guard belongs inside the write (and, below, state-changing-CALL)
-        // branch specifically - guarding the whole method crashed an
-        // unrelated plain read/transformation the moment an invalid
-        // contract was merely *active*, confirmed the hard way by a real
-        // test failure. ContractParser.parse never validates on its own (a
-        // caller must invoke ContractValidator explicitly), and nothing
-        // else on this path did either - exactly how a missing `outputs:`
-        // key used to crash verify() with an unguarded
-        // NoSuchElementException instead of a clean, actionable rejection.
-        requireValidContract(contract, sink, applicationId)
-
-        // Collects every recognized *read* shape found anywhere in the
-        // plan via `recognizedRead` above - LogicalRelation for batch V1
-        // reads, StreamingRelation/StreamingRelationV2 for a legacy-V1 or
-        // DataSourceV2 streaming source (see docs/SPARK_ADAPTER.md's
-        // "Streaming reads as a contract input"), and DataSourceV2Relation
-        // for a batch DSv2 catalog read (any "pure" DSv2 connector's
-        // reads, Iceberg's included). Each was added after a contract
-        // declaring that kind of source as a required `input` was found
-        // to always report MISSING_INPUT, even though data was genuinely
-        // being read, because this collection didn't yet recognize it -
-        // the same location-extraction logic SparkPlanAdapter's own
-        // translation uses for each shape is reused here rather than
-        // re-derived, so the two sites can't drift the way write
-        // recognition once did (see WriteCommandSupport's class doc).
-        //
-        // `plan.collect` walks `children`, which is empty for Delta's row-
-        // level DML commands (MergeIntoCommand/UpdateCommand/DeleteCommand
-        // are effectively leaf nodes in the tree-traversal sense - their
-        // `source`/`target` are ordinary case-class fields, not exposed as
-        // children) - confirmed empirically by a real FAIL test never
-        // throwing, not assumed to "just work" the way it does for every
-        // other write shape. So this also walks `query` - the same field
-        // `WriteCommandSupport` already extracted (MERGE's `source` for
-        // DML, the same plan `plan.collect` would already reach on its own
-        // for every other shape) - which is a real, independently
-        // traversable `LogicalPlan`, unlike the outer command.
-        // WriteCommandSupport.combined is the same lookup translation used
-        // to reach this ir.Write in the first place, so this can never
-        // drift out of sync with it the way three independent matches
-        // could (and once did - see WriteCommandSupport's class doc).
-        // Computed once and reused by both inputSchemas and outputSchema
-        // below, rather than each re-deriving it independently.
-        val writeInfo = WriteCommandSupport.combined.lift(plan)
-        val inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query))
-        // outputSchema is always the underlying query's schema, not the
-        // command node's own: a Command's `.schema` is its own (typically
-        // empty) output, not the data it writes - using that directly
-        // silently reported every declared field as missing regardless of
-        // what was actually written, confirmed the hard way by a real
-        // Delta write test failing PASS with a MISSING_OUTPUT_FIELD
-        // violation on a field that genuinely was present (see
-        // docs/SPARK_ADAPTER.md's "Delta Lake support" section). The
-        // `plan.schema` fallback only matters if `translated.plan` is an
-        // `ir.Write` `SparkPlanAdapter` produced some other way (not
-        // currently possible - `WriteCommandSupport.combined` is the only
-        // producer of `ir.Write` - but kept as a safe default rather than
-        // assuming that stays true forever).
-        val outputSchema = SparkSchemas.toLogicalSchema(writeInfo.map(_.outputSchema).getOrElse(plan.schema))
-        // The plan's shape (reads, unknown nodes, aggregates, joins, filters) is
-        // gathered once here and shared by every verifier below, instead of each
-        // walking the plan itself - see `PlanFacts`.
-        val planFacts = PlanFacts.of(translated.plan)
-        // Every rule/data-quality finding below is about this write.
-        val writeLocation = PlanRuleVerifier.writeLocation(planFacts)
-        // Declared field names are matched the way Spark matches columns: by the
-        // session's `spark.sql.caseSensitive` (read per check, so a runtime change
-        // is honoured). `SQLConf.get` is the active session's conf on the analyzer
-        // thread this rule runs on.
-        val caseSensitive = SQLConf.get.caseSensitiveAnalysis
-        val structuralResult =
-          StructuralVerifier.verify(contract, planFacts, inputSchemas, outputSchema, options, caseSensitive, CheckpointRegistry.BoundarySourceTypes)
-        // Checked alongside (never instead of) StructuralVerifier's own
-        // checks: RowMutationSupport.classify is a separate, independent
-        // classifier over the same `plan` (see its class doc for why it
-        // isn't folded into WriteCommandInfo itself) - `None` for every
-        // write shape that isn't row-level DML, a no-op for the vast
-        // majority of writes a contract governs. `Extracted` runs the
-        // normal rule check; `Unverifiable` (this module recognized the
-        // plan as DML of a given kind but couldn't extract what a rule of
-        // that kind needs - see RowMutationSupport's class doc) fails
-        // closed instead of silently skipping the rule, but only when the
-        // contract actually declares a rule that kind is relevant to -
-        // RuleVerifier.anyRuleAppliesTo decides that (built-in or custom
-        // rule types alike), so an UPDATE this module can't fully verify
-        // doesn't spuriously fail a contract that only declares
-        // forbid_unconditional_delete, say.
-        // Classified once and reused below by both ruleViolations and
-        // fingerprinting - RowMutationSupport.classify re-derives the same
-        // RowMutation from the same `plan` either way, so computing it
-        // twice would be pure waste (and, worse, a second place that could
-        // silently drift from the first).
-        val rowMutationClassification = RowMutationSupport.classify(plan)
-        val ruleViolations = rowMutationClassification match {
-          case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
-            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes, writeLocation)
-          case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
-            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind, writeLocation)) else Nil
-          case None => Nil
-        }
-        // Independent of the DML-shaped ruleViolations above: PlanRuleVerifier
-        // checks the other rule family (RuleType.PlanShapeTypes - grouping,
-        // join, filter shape) against the whole translated plan, not against
-        // a RowMutation, so it runs unconditionally rather than being gated
-        // on rowMutationClassification the way ruleViolations is. A rule
-        // outside both families (unrecognized, or DML-shaped) contributes
-        // nothing here - see PlanRuleVerifier.checkOne's own doc.
-        val planRuleViolations = PlanRuleVerifier.verify(contract.rules, planFacts)
-        // See docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.2: this is the
-        // one branch with a real, complete ir.Plan already in hand
-        // (`translated.plan`, produced above for structural verification
-        // itself) - the state-changing-CALL and invalid-contract branches
-        // below have no equivalent real plan to fingerprint, so they never
-        // populate this field, flag on or not.
-        //
-        // The RowMutation (if any) feeds the fingerprint too - a MERGE's ON
-        // condition, or a conditional DELETE's predicate, is real
-        // transformation-defining behavior that ir.Plan alone never
-        // captures (see Canonicalizer.canonicalizeRowMutation's own doc);
-        // only the Extracted case has an actual RowMutation value to pass -
-        // Unverifiable/None both mean "no RowMutation to fold in," not
-        // "known to be absent," so the fingerprint in that case still just
-        // reflects translated.plan alone, exactly as before RowMutation
-        // support existed.
-        val fingerprints =
-          if (options.computeFingerprint) {
-            val mutation = rowMutationClassification.collect {
-              case RowMutationSupport.Classification.Extracted(_, m) => m
-            }
-            // Disclosed, not silently absorbed. A resolved checkpoint boundary
-            // is fingerprinted as the real transformation it stands for
-            // (CheckpointRegistry splices the pre-checkpoint plan in), so it
-            // needs no caveat. Two cases still do: a boundary that stayed
-            // unresolved (origin never seen / evicted / ambiguous), which the
-            // fingerprint can only see as an opaque node, and a resolution
-            // that had to pick the most recent of several same-source plans
-            // (the CheckpointResolution diagnostic). Either way the hash is
-            // still fully stable and deterministic for this exact plan - it
-            // just may not reflect what happened upstream of the boundary -
-            // so it is logged once per check, at WARN, rather than left for
-            // a reader of the hash alone to discover. (Nothing in this suite
-            // asserts on log output, so this call is covered only by the
-            // fingerprint-determinism tests, not by an assertion on the
-            // message itself.)
-            val unresolvedBoundaries = planFacts.unknownPlans
-              .map(_.sourceType).filter(CheckpointRegistry.BoundarySourceTypes.contains).distinct
-            val assumedResolutions = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType)
-            if (unresolvedBoundaries.nonEmpty || assumedResolutions.nonEmpty) {
-              logger.warn(
-                "computeFingerprint: this transformation's fingerprint is stable and deterministic for this exact plan " +
-                  "but may not reflect everything upstream of a .checkpoint()/cache boundary" +
-                  (if (unresolvedBoundaries.isEmpty) "" else s"; unresolved boundary: ${unresolvedBoundaries.mkString(", ")}") +
-                  (if (assumedResolutions.isEmpty) "" else s"; ${assumedResolutions.map(_.message).distinct.mkString(" / ")}")
-              )
-            }
-            Some(TransformationFingerprinter.fingerprint(translated.plan, mutation))
-          } else None
-        // See VerificationOptions.staticDataQuality's own doc and
-        // docs/STATIC_DATA_QUALITY_VERIFICATION.md: dataQualityResults is
-        // report-only (every verdict, kept for VerificationResult.dataQuality),
-        // while only its Violated entries become real Violations that can
-        // fail this check and abort the write - the same "distinct from
-        // NotGuaranteed" principle DataQualityVerdict's own doc explains.
-        val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, planFacts) else Nil
-        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults, writeLocation)
-        // See VerificationOptions.roleConsistency's own doc and
-        // docs/CONTRACT_MODEL.md's "Input and Output Types" section:
-        // roleConformanceResults is report-only (every verdict, kept for
-        // VerificationResult.roleConformance), while only its Contradicts
-        // entries become real Violations - the same "distinct from
-        // CannotDetermine" principle RoleConformanceVerdict's own doc
-        // explains.
-        val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, planFacts) else Nil
-        val roleConsistencyViolations = RoleConsistencyVerifier.violations(contract, roleConformanceResults)
-        val result = VerificationResult.of(
-          structuralResult.contract,
-          structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
-          fingerprints,
-          dataQualityResults,
-          roleConformanceResults,
-          structuralResult.unverifiableInputs
-        )
-        publishValidation(contract, result, sink, applicationId)
-        if (!result.passed) {
-          throw new ContractViolationException(result, explain(contract, translated.plan, result))
-        }
+        // `injectCheckRule` calls this method for every plan Spark analyzes in
+        // the session, not just writes, so the contract-validity guard lives in
+        // `VerificationPipeline` and only runs for a write (and, below, a
+        // state-changing CALL) - guarding the whole method crashed an unrelated
+        // plain read/transformation the moment an invalid contract was merely
+        // *active*. `checkedWrite` is passed by-name: the pipeline validates the
+        // contract first and only then asks for the write.
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId)
       case _ =>
-        // Checked before the fail-closed Command catch-all below: a
-        // recognized state-changing CALL (nine procedures - see
-        // StateChangingCallSupport) genuinely verifies the resulting
-        // state, rather than being rejected outright the way it was
-        // before this case existed. rewrite_table_path (the one remaining
-        // state-changing procedure) is instead safe-listed in
-        // FailClosedCommands, having no state a contract could ever check.
+        // Checked before the fail-closed Command catch-all below: a recognized
+        // state-changing CALL (nine procedures - see StateChangingCallSupport)
+        // genuinely verifies the resulting state, rather than being rejected
+        // outright. rewrite_table_path (the one remaining state-changing
+        // procedure) is instead safe-listed in FailClosedCommands, having no
+        // state a contract could ever check.
         StateChangingCallSupport.extract(plan) match {
           case Some(info) =>
-            // Same reasoning as the ir.Write branch above: verifyStateChange
-            // assumes a structurally sound contract too.
-            requireValidContract(contract, sink, applicationId)
-            val result = StructuralVerifier.verifyStateChange(contract, info.location, SparkSchemas.toLogicalSchema(info.resultingSchema), options, SQLConf.get.caseSensitiveAnalysis)
-            publishValidation(contract, result, sink, applicationId)
-            if (!result.passed) {
-              // No ir.Plan translation exists for a state-changing CALL
-              // (there's no Spark write/query to translate) - a plain
-              // description standing in for `explain`'s usual rendered
-              // plan tree, reusing the rest of its explanation format
-              // unchanged.
-              val describedPlan =
-                com.invaract.ir.UnknownPlan(s"CALL ${info.callName}(...) targeting '${info.location}'")
-              throw new ContractViolationException(result, explain(contract, describedPlan, result))
-            }
+            VerificationPipeline.verifyStateChange(
+              contract,
+              s"CALL ${info.callName}(...) targeting '${info.location}'",
+              info.location,
+              SparkSchemas.toLogicalSchema(info.resultingSchema),
+              SQLConf.get.caseSensitiveAnalysis,
+              options,
+              sink,
+              applicationId
+            )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            val violation = Violations.unverifiableWrite(plan.getClass.getSimpleName, s"${contract.id}@${contract.version}")
-            val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-            publishValidation(contract, result, sink, applicationId)
-            throw new ContractViolationException(result, explain(contract, translated.plan, result))
+            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId)
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }
     }
+  }
+
+  /** What this adapter hands `VerificationPipeline` for a plan it translated to
+    * an `ir.Write`.
+    *
+    * `WriteCommandSupport.combined` is the same lookup translation used to
+    * reach that `ir.Write` in the first place, so this can never drift from it.
+    * Its `query` is walked for reads too: Delta's row-level DML commands are
+    * effectively leaf nodes in the tree-traversal sense (their `source`/`target`
+    * are ordinary case-class fields, not children), so `plan.collect` alone
+    * would miss them - confirmed empirically by a real FAIL test never
+    * throwing.
+    *
+    * The output schema is always the underlying query's schema, never the
+    * command node's own: a Command's `.schema` is its own (typically empty)
+    * output, not the data it writes - using that directly silently reported
+    * every declared field as missing (see docs/SPARK_ADAPTER.md's "Delta Lake
+    * support"). The `plan.schema` fallback only matters for an `ir.Write`
+    * produced some other way (not currently possible).
+    *
+    * Declared field names are matched the way Spark matches columns: by the
+    * session's `spark.sql.caseSensitive`, read per check so a runtime change is
+    * honoured (`SQLConf.get` is the active session's conf on the analyzer
+    * thread this rule runs on).
+    */
+  private def checkedWrite(plan: LogicalPlan, translated: TranslationResult): CheckedWrite = {
+    val writeInfo = WriteCommandSupport.combined.lift(plan)
+    CheckedWrite(
+      plan = translated.plan,
+      inputSchemas = collectInputSchemas(plan, writeInfo.map(_.query)),
+      outputSchema = SparkSchemas.toLogicalSchema(writeInfo.map(_.outputSchema).getOrElse(plan.schema)),
+      caseSensitive = SQLConf.get.caseSensitiveAnalysis,
+      // Classified once; a separate, independent classifier over the same plan
+      // (see RowMutationSupport's class doc) - `None` for every write shape that
+      // isn't row-level DML.
+      rowMutation = RowMutationSupport.classify(plan),
+      lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes,
+      // A resolution that had to pick the most recent of several same-source
+      // plans is an assumption the fingerprint cannot reflect; disclosed with it.
+      resolutionNotes = translated.diagnostics.filter(_.nodeType == CheckpointRegistry.ResolutionDiagnosticType).map(_.message)
+    )
   }
 
   /** The dry-run counterpart to `verifyOrThrow`: only the plain-write shape
@@ -932,146 +646,11 @@ object ContractEnforcementRule {
     }
   }
 
-  /** Throws if `contract` itself is structurally unsound per
-    * `ContractValidator` (e.g. no declared outputs) - the same check every
-    * other rejection in `verifyOrThrow` assumes has already passed. Not
-    * called unconditionally by `verifyOrThrow` itself: see the call sites'
-    * own comments for why it's scoped to just the write and state-changing-
-    * CALL branches.
-    */
-  private def requireValidContract(contract: Contract, sink: Option[NotificationSink], applicationId: Option[String]): Unit = {
-    val validation = ContractValidator.validate(contract)
-    // ContractValidator only checks customRuleTypes's shape (empty key/class
-    // name, collision with a built-in RuleType) - it lives in `contract`,
-    // which can't depend on CustomRuleVerifier (a spark-adapter-only trait,
-    // per the contract -> spark-adapter dependency direction), so it can
-    // never actually resolve a named class. Resolving each entry here, once
-    // per write, fails the same way an unresolvable NotificationSink class
-    // or CustomPolicyEvaluator class does: loudly, at validation time,
-    // before any rule check runs - rather than RuleVerifier silently
-    // treating every rule naming that class as inapplicable.
-    val unresolvableCustomRuleTypes = contract.customRuleTypes.toList.flatMap { case (ruleType, className) =>
-      CustomRuleVerifierFactory.tryResolve(className).failed.toOption.map(e => (ruleType, className, e.getMessage))
-    }
-    if (!validation.isValid || unresolvableCustomRuleTypes.nonEmpty) {
-      val contractRef = s"${contract.id}@${contract.version}"
-      val validatorViolations = validation.errors.map(issue => Violations.invalidContract(contractRef, issue.path, issue.message))
-      val customRuleTypeViolations = unresolvableCustomRuleTypes.map { case (ruleType, className, message) =>
-        Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
-      }
-      val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
-      publishValidation(contract, result, sink, applicationId)
-      // See enforceOrgPolicy's identical describedPlan for why this reads
-      // as a plain sentence rather than a parenthesized fragment: PlanPrinter
-      // already wraps it as "UnknownPlan(<description>)", so an inner
-      // "(...)" too would render as a confusing doubled "((...))".
-      val describedPlan =
-        com.invaract.ir.UnknownPlan("no transformation plan exists yet - contract validation failed before any plan was checked")
-      throw new ContractViolationException(result, explain(contract, describedPlan, result))
-    }
-  }
-
-  /** Publishes a `ContractValidationEvent` to `sink`, if one is configured —
-    * a no-op otherwise, so every call site can invoke this unconditionally
-    * rather than each guarding on `sink.isDefined` itself. Always called
-    * *before* a FAILED result's `ContractViolationException` is thrown (see
-    * every call site above), so a subscriber observes the rejection at the
-    * same moment the writing job does.
-    */
-  private def publishValidation(
-      contract: Contract,
-      result: VerificationResult,
-      sink: Option[NotificationSink],
-      applicationId: Option[String]
-  ): Unit =
-    sink.foreach { s =>
-      s.publish(
-        ContractValidationEvent(
-          contract = result.contract,
-          status = result.status,
-          violations = result.violations,
-          timestamp = System.currentTimeMillis(),
-          metadata = contract.extensions,
-          applicationId = applicationId,
-          fingerprints = result.fingerprints,
-          dataQuality = result.dataQuality,
-          roleConformance = result.roleConformance,
-          unverifiableInputs = result.unverifiableInputs
-        )
-      )
-    }
-
   /** Builds the full explanation `ContractViolationException.getMessage`
-    * carries. Deterministic: built entirely from `result.violations` (an
-    * already-deterministically-ordered list — see `StructuralVerifier`'s
-    * "Determinism" doc) and the plan's own rendering, so the same
-    * violation always produces the same message, byte for byte.
+    * carries - see `VerificationPipeline.explain`, which owns it (it is the
+    * same for every engine); kept here as the spelling this module's own
+    * tests use.
     */
-  private[sparkadapter] def explain(contract: Contract, plan: com.invaract.ir.Plan, result: VerificationResult): String = {
-    val sb = new StringBuilder
-
-    sb.append(s"Contract violation: '${result.contract}' rejected this transformation. Write aborted.\n")
-
-    sb.append("\nWhat the contract expects:\n")
-    contract.inputs.foreach { input =>
-      sb.append(s"  input  '${input.name}' at ${input.location}: ${describeFields(input.schema.fields)}\n")
-    }
-    contract.outputs.foreach { output =>
-      val lineage = output.derivedFrom match {
-        case None                         => ""
-        case Some(names) if names.isEmpty => " (derived from no declared input)"
-        case Some(names)                  => s" (derived from ${names.mkString(", ")})"
-      }
-      sb.append(s"  output '${output.name}' at ${output.location}$lineage: ${describeFields(output.schema.fields)}\n")
-    }
-
-    sb.append("\nWhat the plan contains:\n")
-    PlanPrinter.render(plan).linesIterator.foreach(line => sb.append("  ").append(line).append("\n"))
-
-    sb.append(s"\nWhy it violates the contract (${result.violations.size} " + (if (result.violations.size == 1) "violation" else "violations") + "):\n")
-    result.violations.zipWithIndex.foreach { case (v, i) =>
-      sb.append(s"  ${i + 1}. [${v.violationType}] ${v.message}\n")
-    }
-
-    sb.append("\nHow to correct it:\n")
-    result.violations.zipWithIndex.foreach { case (v, i) =>
-      sb.append(s"  ${i + 1}. ${v.remediation}\n")
-    }
-
-    // Only present when VerificationOptions.computeFingerprint was true
-    // for this check and a real plan existed to fingerprint - see
-    // docs/SEMANTIC_LINEAGE_FINGERPRINTING.md §14.4. Only each output's
-    // combined hash is printed, not its separate expression/lineage
-    // components (still available on `result.fingerprints` directly) -
-    // and this never claims "changed"/"unchanged": there is no prior
-    // fingerprint here to compare against, only this check's own values.
-    result.fingerprints.foreach(appendFingerprints(sb, _))
-
-    sb.toString()
-  }
-
-  private def appendFingerprints(sb: StringBuilder, fingerprints: TransformationFingerprint): Unit = {
-    sb.append(s"\nFingerprints (v${fingerprints.version}, ${fingerprints.overall.algorithm}):\n")
-    sb.append(s"  overall: ${fingerprints.overall.value}\n")
-    if (fingerprints.outputs.nonEmpty) {
-      sb.append("  outputs:\n")
-      fingerprints.outputs.toList.sortBy(_._1).foreach { case (name, output) =>
-        sb.append(s"    $name: ${output.combined.value}\n")
-      }
-    }
-  }
-
-  private def describeFields(fields: List[com.invaract.contract.Field]): String =
-    fields
-      .map(f => s"${f.name}: ${f.fieldType}" + (if (f.required) "" else " (optional)"))
-      .mkString(", ")
-
-  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind, location: Option[String]): Violation = {
-    val kindName = kind match {
-      case RowMutationSupport.Kind.Merge  => "MERGE"
-      case RowMutationSupport.Kind.Update => "UPDATE"
-      case RowMutationSupport.Kind.Delete => "DELETE"
-    }
-    Violations.unverifiableDml(kindName, location)
-  }
+  private[sparkadapter] def explain(contract: Contract, plan: com.invaract.ir.Plan, result: VerificationResult): String =
+    VerificationPipeline.explain(contract, plan, result)
 }
