@@ -1240,3 +1240,14 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.SparkAdapterListener.this")
 )
 
+// Deliberate break: Violation gained a trailing `rule: Option[String]` constructor parameter
+// (the contract rule type or org policy id that raised a finding - see Violations.scala's own
+// doc table). Same "case class gained a field" shape as every filter block above: apply/copy/
+// constructor change signature even with a default, and the companion loses its Function-N
+// parent. Load-bearing for this PR's own api-compatibility check; inert once base-ref carries it.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.Violation.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.Violation.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.Violation.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.sparkadapter.Violation$")
+)

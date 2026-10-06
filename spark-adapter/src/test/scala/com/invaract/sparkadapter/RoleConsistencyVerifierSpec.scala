@@ -69,11 +69,14 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     assert(result.datasetType == DatasetType.Control)
     assert(result.verdict == RoleConformanceVerdict.Contradicts)
 
-    val violations = RoleConsistencyVerifier.violations(results)
+    val violations = RoleConsistencyVerifier.violations(contract, results)
     assert(violations.size == 1)
     assert(violations.head.violationType == ViolationType.RoleConsistencyViolation)
     assert(violations.head.message.contains("calendar"))
     assert(violations.head.message.contains("CONTROL"))
+    // `location` is the input's declared LOCATION, not its name (it used to hold "calendar"):
+    assert(violations.head.location.contains("raw.calendar"))
+    assert(violations.head.column.isEmpty)
   }
 
   test("a CONTROL input referenced only in a Filter condition, never in output lineage, is Conforms and never blocks") {
@@ -88,7 +91,7 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     val results = RoleConsistencyVerifier.verify(contract, plan)
     val calendarResult = results.find(_.dataset == "calendar").get
     assert(calendarResult.verdict == RoleConformanceVerdict.Conforms)
-    assert(RoleConsistencyVerifier.violations(results).isEmpty)
+    assert(RoleConsistencyVerifier.violations(contract, results).isEmpty)
   }
 
   test("a CONTROL input referenced only in a Join condition, never in output lineage, is Conforms") {
@@ -114,7 +117,7 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     val results = RoleConsistencyVerifier.verify(contract, plan)
     assert(results.size == 1)
     assert(results.head.verdict == RoleConformanceVerdict.Conforms)
-    assert(RoleConsistencyVerifier.violations(results).isEmpty)
+    assert(RoleConsistencyVerifier.violations(contract, results).isEmpty)
   }
 
   test("a SOURCE input observed only in a Filter/Join condition, never in output lineage, is CannotDetermine - not a violation") {
@@ -131,7 +134,7 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     assert(vendorResult.verdict == RoleConformanceVerdict.CannotDetermine)
     // Never blocks - the whole point of a three-state verdict is that an
     // unproven contradiction must never be silently escalated to one.
-    assert(RoleConsistencyVerifier.violations(results).isEmpty)
+    assert(RoleConsistencyVerifier.violations(contract, results).isEmpty)
   }
 
   // --- Multiple inputs, mixed verdicts -------------------------------------
@@ -153,7 +156,7 @@ class RoleConsistencyVerifierSpec extends AnyFunSuite {
     assert(results.map(_.dataset).toSet == Set("customer", "calendar"))
     assert(results.find(_.dataset == "customer").get.verdict == RoleConformanceVerdict.Conforms)
     assert(results.find(_.dataset == "calendar").get.verdict == RoleConformanceVerdict.Conforms)
-    assert(RoleConsistencyVerifier.violations(results).isEmpty)
+    assert(RoleConsistencyVerifier.violations(contract, results).isEmpty)
   }
 
   // --- Qualifiers are scopes, not locations: aliased / disambiguated reads --

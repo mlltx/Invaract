@@ -502,6 +502,11 @@ would be.
 │   ├── src/main/scala/com/invaract/sparkadapter/
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
 │   │   ├── StructuralVerifier.scala   # IR vs. contract verification
+│   │   ├── VerificationModel.scala    # Violation/ViolationType, VerificationOptions/Result, verdict types
+│   │   ├── Violations.scala           # one constructor per kind of violation (consistent field usage)
+│   │   ├── InputChecker.scala         # input half of verify: missing/undeclared reads, input schema + catalog
+│   │   ├── OutputChecker.scala        # output half of verify: location, format, save mode, catalog, schema
+│   │   ├── CatalogChecker.scala       # declared vs. actual catalog registration (inputs and outputs)
 │   │   ├── SchemaChecker.scala        # declared vs. actual schema (nested types, spark.sql.caseSensitive)
 │   │   ├── LocationMatching.scala     # declared-vs-actual location rule + LocationIndex (bulk lookups)
 │   │   ├── PlanFacts.scala            # one traversal of an ir.Plan shared by every verifier

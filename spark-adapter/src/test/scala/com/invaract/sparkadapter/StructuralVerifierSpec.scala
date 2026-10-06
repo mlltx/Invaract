@@ -466,7 +466,9 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
           ViolationType.UndeclaredOutputColumn,
           result.violations.head.message,
           result.violations.head.remediation,
-          column = Some("country")
+          column = Some("country"),
+          location = Some("gold.customer_orders"), // the write this finding is about (the spec's example had none)
+          actual = Some("string") // the stray column's type
         )
       )
     )
@@ -1860,5 +1862,11 @@ class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(multi.message.startsWith("the plan writes to 'warehouse/typo.parquet', which does not match any of the contract's 2 declared output locations (warehouse/silver.parquet, warehouse/gold.parquet)"))
     assert(multi.remediation.startsWith("Write to one of the contract's declared output locations (warehouse/silver.parquet, warehouse/gold.parquet)"))
     assert(multi.expected.contains("warehouse/silver.parquet, warehouse/gold.parquet"))
+  }
+
+  test("matchesAny: true when any qualifier matches the declared location, false when none does or there are none") {
+    assert(StructuralVerifier.matchesAny("bronze/src", Set("s3://b/other", "file:/x/bronze/src")))
+    assert(!StructuralVerifier.matchesAny("bronze/src", Set("s3://b/other", "file:/x/bronze/src2")))
+    assert(!StructuralVerifier.matchesAny("bronze/src", Set.empty[String]))
   }
 }

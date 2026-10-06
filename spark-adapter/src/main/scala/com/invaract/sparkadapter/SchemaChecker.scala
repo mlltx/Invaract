@@ -88,10 +88,11 @@ private[sparkadapter] object SchemaChecker {
       contractFields: List[ContractField],
       actualSchema: StructType,
       side: Side,
+      location: String,
       rejectUndeclaredFields: Boolean,
       caseSensitive: Boolean
   ): List[Violation] =
-    checkFields(contractFields, actualSchema.fields, "", side, rejectUndeclaredFields, caseSensitive)
+    checkFields(contractFields, actualSchema.fields, "", side, location, rejectUndeclaredFields, caseSensitive)
 
   private def key(name: String, caseSensitive: Boolean): String =
     if (caseSensitive) name else name.toLowerCase(Locale.ROOT)
@@ -101,6 +102,7 @@ private[sparkadapter] object SchemaChecker {
       actualFields: Array[StructField],
       pathPrefix: String,
       side: Side,
+      location: String,
       rejectUndeclaredFields: Boolean,
       caseSensitive: Boolean
   ): List[Violation] = {
@@ -111,32 +113,12 @@ private[sparkadapter] object SchemaChecker {
       val path = pathPrefix + field.name
       actualByName.get(key(field.name, caseSensitive)) match {
         case None =>
-          if (field.required)
-            List(
-              Violation(
-                side.missingField,
-                s"required field '$path' is absent from the actual ${side.label} schema",
-                remediation =
-                  s"Add a '$path' column (type '${field.fieldType}') to the ${side.noun}, or mark it optional in the contract if it isn't always produced.",
-                column = Some(path)
-              )
-            )
+          if (field.required) List(Violations.missingField(side, location, path, field.fieldType))
           else Nil
 
         case Some(actualField) =>
           val typeViolation = typeMismatch(field, actualField.dataType, caseSensitive) match {
-            case Some(actualDescription) =>
-              List(
-                Violation(
-                  side.typeMismatch,
-                  s"field '$path' declares type '${field.fieldType}' but the actual ${side.label} schema has type '$actualDescription'",
-                  remediation =
-                    s"Cast '$path' to '${field.fieldType}' in the transformation, or update the contract to declare '$actualDescription' if the new type is intentional.",
-                  column = Some(path),
-                  expected = Some(field.fieldType),
-                  actual = Some(actualDescription)
-                )
-              )
+            case Some(actualDescription) => List(Violations.fieldTypeMismatch(side, location, path, field.fieldType, actualDescription))
             case None => Nil
           }
 
@@ -146,25 +128,14 @@ private[sparkadapter] object SchemaChecker {
           // guarantees non-null) is a stricter-than-required guarantee,
           // not a violation.
           val nullabilityViolation =
-            if (!field.nullable && actualField.nullable)
-              List(
-                Violation(
-                  side.nullabilityMismatch,
-                  s"field '$path' is declared non-nullable but the actual ${side.label} schema permits nulls",
-                  remediation =
-                    s"Filter or coalesce nulls out of '$path' before the ${side.noun} is produced, or relax the contract to allow nulls if they're expected.",
-                  column = Some(path),
-                  expected = Some("not null"),
-                  actual = Some("nullable")
-                )
-              )
+            if (!field.nullable && actualField.nullable) List(Violations.fieldNullabilityMismatch(side, location, path))
             else Nil
 
           // Recurse only into a declared struct whose actual type really is one;
           // anything else was already reported as a type mismatch above.
           val nestedViolations = actualField.dataType match {
             case nested: StructType if field.isStruct =>
-              checkFields(field.properties, nested.fields, path + ".", side, rejectUndeclaredFields, caseSensitive)
+              checkFields(field.properties, nested.fields, path + ".", side, location, rejectUndeclaredFields, caseSensitive)
             case _ => Nil
           }
 
@@ -176,16 +147,7 @@ private[sparkadapter] object SchemaChecker {
       if (rejectUndeclaredFields)
         actualFields.toList
           .filterNot(f => declaredNames.contains(key(f.name, caseSensitive)))
-          .map { f =>
-            val path = pathPrefix + f.name
-            Violation(
-              side.undeclaredColumn,
-              s"column '$path' is present in the actual ${side.label} schema but not declared by the contract",
-              remediation =
-                s"Remove '$path' from the transformation's ${side.noun}, or add it to the contract's declared schema if it's intentional.",
-              column = Some(path)
-            )
-          }
+          .map(f => Violations.undeclaredColumn(side, location, pathPrefix + f.name, f.dataType.catalogString))
       else Nil
 
     fieldViolations ++ undeclaredViolations

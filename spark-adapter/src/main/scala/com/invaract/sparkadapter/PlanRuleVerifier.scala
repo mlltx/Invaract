@@ -48,7 +48,15 @@ private[sparkadapter] object PlanRuleVerifier {
     * (see `PlanFacts`) — each rule used to walk the whole plan itself.
     */
   def verify(rules: List[ContractRule], facts: PlanFacts): List[Violation] =
-    rules.flatMap(rule => rule.interpret.toList.flatMap(checkOne(_, facts)))
+    rules.flatMap { rule =>
+      rule.interpret.toList.flatMap(checkOne(_, facts)).map(RuleVerifier.stamp(_, rule, PlanRuleVerifier.writeLocation(facts)))
+    }
+
+  /** The location of the write this plan ends in — every plan-shape finding is about that write. */
+  private[sparkadapter] def writeLocation(facts: PlanFacts): Option[String] = facts.plan match {
+    case w: com.invaract.ir.Write => Some(w.dataset.location)
+    case _                        => None
+  }
 
   private def checkOne(rule: InterpretedRule, facts: PlanFacts): List[Violation] = rule match {
     case InterpretedRule.RequiredGroupBy(columns)       => checkRequiredGroupBy(columns, facts)
@@ -109,20 +117,7 @@ private[sparkadapter] object PlanRuleVerifier {
     if (groupings.exists(required.subsetOf))
       Nil
     else
-      List(
-        Violation(
-          ViolationType.RuleRequiredGroupByViolation,
-          if (aggregates.isEmpty)
-            s"contract requires the output to be grouped by ${columns.mkString(", ")}, but the plan performs no aggregation at all"
-          else
-            s"contract requires the output to be grouped by ${columns.mkString(", ")}, but no aggregation in the plan groups by all of them",
-          remediation =
-            s"Add a GROUP BY on ${columns.mkString(", ")} to the transformation, or update the contract's " +
-              "required_group_by rule if grouping by fewer/different columns is intentional.",
-          expected = Some(columns.mkString(", ")),
-          actual = Some(if (groupings.isEmpty) "no aggregation" else groupings.map(_.mkString("+")).mkString("; "))
-        )
-      )
+      List(Violations.requiredGroupByRule(columns, groupings.toList))
   }
 
   /** Satisfied when the plan contains no join that's a cartesian product —
@@ -136,14 +131,7 @@ private[sparkadapter] object PlanRuleVerifier {
     if (crossJoins.isEmpty)
       Nil
     else
-      List(
-        Violation(
-          ViolationType.RuleCrossJoinViolation,
-          s"contract forbids a cartesian-product join, but the plan contains ${crossJoins.size} join(s) with no condition",
-          remediation =
-            "Add a join condition to every join in the transformation, or remove the forbid_cross_join rule if a cartesian product is intentional."
-        )
-      )
+      List(Violations.crossJoinRule(crossJoins.size))
   }
 
   /** Satisfied when at least one `Join` node's `condition` establishes a
@@ -159,20 +147,7 @@ private[sparkadapter] object PlanRuleVerifier {
     if (satisfied)
       Nil
     else
-      List(
-        Violation(
-          ViolationType.RuleRequiredJoinColumnsViolation,
-          if (allJoins.isEmpty)
-            s"contract requires a join matching on ${columns.mkString(", ")}, but the plan contains no join at all"
-          else
-            s"contract requires a join matching on ${columns.mkString(", ")}, but no join's condition establishes an equality match on all of them",
-          remediation =
-            s"Add a 'left.${columns.head} = right.${columns.head}'-style equality to a join's condition for " +
-              s"${columns.mkString(", ")}, or update the contract's required_join_columns rule if matching on " +
-              "fewer/different columns is intentional.",
-          expected = Some(columns.mkString(", "))
-        )
-      )
+      List(Violations.requiredJoinColumnsRule(columns, allJoins.nonEmpty))
   }
 
   /** Satisfied when every declared column is referenced by at least one
@@ -188,16 +163,6 @@ private[sparkadapter] object PlanRuleVerifier {
     if (missing.isEmpty)
       Nil
     else
-      List(
-        Violation(
-          ViolationType.RuleRequiredFilterColumnsViolation,
-          s"contract requires the plan to filter on ${columns.mkString(", ")}, but no filter references ${missing.mkString(", ")}",
-          remediation =
-            s"Add a filter referencing ${missing.mkString(", ")} to the transformation, or update the contract's " +
-              "required_filter_columns rule if filtering on fewer columns is intentional.",
-          expected = Some(columns.mkString(", ")),
-          actual = Some(filteredColumns.mkString(", "))
-        )
-      )
+      List(Violations.requiredFilterColumnsRule(columns, missing, filteredColumns))
   }
 }

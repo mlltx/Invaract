@@ -56,6 +56,7 @@ interface Report {
       location?: string
       expected?: string
       actual?: string
+      rule?: string
     }>
     // Populated (a real array) only on a FAILED check - ContractEnforcementRule
     // doesn't expose a VerificationResult on a passing one, so a PASSED check's
@@ -371,12 +372,13 @@ const ReportViewer = () => {
                       <div key={i} className={styles.violation}>
                         <div className={styles.violationType}>{v.type}</div>
                         <div className={styles.violationMessage}>{v.message}</div>
-                        {(v.column || v.location || v.expected || v.actual) && (
+                        {(v.column || v.location || v.expected || v.actual || v.rule) && (
                           <div className={styles.violationDetail}>
                             {v.column && <span>column: {v.column}</span>}
                             {v.location && <span>location: {v.location}</span>}
                             {v.expected && <span>expected: {v.expected}</span>}
                             {v.actual && <span>actual: {v.actual}</span>}
+                            {v.rule && <span>rule: {v.rule}</span>}
                           </div>
                         )}
                         <div className={styles.violationRemediation}>→ {v.remediation}</div>

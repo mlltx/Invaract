@@ -17,7 +17,7 @@ class SchemaCheckerSpec extends AnyFunSuite {
       side: Side = Side.Output,
       rejectUndeclared: Boolean = false,
       caseSensitive: Boolean = false
-  ): List[Violation] = SchemaChecker.check(fields, schema, side, rejectUndeclared, caseSensitive)
+  ): List[Violation] = SchemaChecker.check(fields, schema, side, "warehouse/ds", rejectUndeclared, caseSensitive)
 
   private def types(vs: List[Violation]): List[String] = vs.map(_.violationType)
 

@@ -353,7 +353,7 @@ object ContractEnforcementRule {
         val evaluation = OrgPolicyEvaluator.evaluateLayers(governedContract, policies)
 
         if (evaluation.hasBlockingViolations) {
-          val violations = evaluation.enforceViolations.map(toViolation)
+          val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
           publishValidation(governedContract, result, sink, applicationId)
           // No parenthesized fragment here: PlanPrinter renders UnknownPlan
@@ -377,7 +377,7 @@ object ContractEnforcementRule {
           val result = VerificationResult(
             "PASSED",
             s"${governedContract.id}@${governedContract.version}",
-            evaluation.warnViolations.map(toViolation)
+            evaluation.warnViolations.map(toViolation(governedContract, _))
           )
           publishValidation(governedContract, result, sink, applicationId)
         }
@@ -449,8 +449,10 @@ object ContractEnforcementRule {
     * any) is named in `message`/`remediation` themselves, via
     * `PolicyViolation.dataset`.
     */
-  private def toViolation(violation: PolicyViolation): Violation =
-    Violation(ViolationType.OrgPolicyViolation, violation.message, violation.remediation)
+  private def toViolation(contract: Contract, violation: PolicyViolation): Violation = {
+    val location = violation.dataset.flatMap(name => (contract.inputs ++ contract.outputs).find(_.name == name)).map(_.location)
+    Violations.orgPolicy(violation.message, violation.remediation, location, violation.policyId)
+  }
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -668,6 +670,8 @@ object ContractEnforcementRule {
         // gathered once here and shared by every verifier below, instead of each
         // walking the plan itself - see `PlanFacts`.
         val planFacts = PlanFacts.of(translated.plan)
+        // Every rule/data-quality finding below is about this write.
+        val writeLocation = PlanRuleVerifier.writeLocation(planFacts)
         // Declared field names are matched the way Spark matches columns: by the
         // session's `spark.sql.caseSensitive` (read per check, so a runtime change
         // is honoured). `SQLConf.get` is the active session's conf on the analyzer
@@ -698,9 +702,9 @@ object ContractEnforcementRule {
         val rowMutationClassification = RowMutationSupport.classify(plan)
         val ruleViolations = rowMutationClassification match {
           case Some(RowMutationSupport.Classification.Extracted(_, mutation)) =>
-            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes)
+            RuleVerifier.verify(contract.rules, mutation, contract.customRuleTypes, writeLocation)
           case Some(RowMutationSupport.Classification.Unverifiable(kind)) =>
-            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind)) else Nil
+            if (RuleVerifier.anyRuleAppliesTo(contract.rules, kind, contract.customRuleTypes)) List(unverifiableDmlViolation(kind, writeLocation)) else Nil
           case None => Nil
         }
         // Independent of the DML-shaped ruleViolations above: PlanRuleVerifier
@@ -767,7 +771,7 @@ object ContractEnforcementRule {
         // fail this check and abort the write - the same "distinct from
         // NotGuaranteed" principle DataQualityVerdict's own doc explains.
         val dataQualityResults = if (options.staticDataQuality) StaticDataQualityVerifier.verify(contract, planFacts) else Nil
-        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults)
+        val dataQualityViolations = StaticDataQualityVerifier.violations(dataQualityResults, writeLocation)
         // See VerificationOptions.roleConsistency's own doc and
         // docs/CONTRACT_MODEL.md's "Input and Output Types" section:
         // roleConformanceResults is report-only (every verdict, kept for
@@ -776,7 +780,7 @@ object ContractEnforcementRule {
         // CannotDetermine" principle RoleConformanceVerdict's own doc
         // explains.
         val roleConformanceResults = if (options.roleConsistency) RoleConsistencyVerifier.verify(contract, planFacts) else Nil
-        val roleConsistencyViolations = RoleConsistencyVerifier.violations(roleConformanceResults)
+        val roleConsistencyViolations = RoleConsistencyVerifier.violations(contract, roleConformanceResults)
         val result = VerificationResult.of(
           structuralResult.contract,
           structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
@@ -815,16 +819,7 @@ object ContractEnforcementRule {
               throw new ContractViolationException(result, explain(contract, describedPlan, result))
             }
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            val violation = Violation(
-              ViolationType.UnverifiableWrite,
-              s"'${plan.getClass.getSimpleName}' looks like it may write or otherwise mutate data, but Invaract has no " +
-                s"translation for it, so it was never checked against contract '${contract.id}@${contract.version}'.",
-              remediation =
-                "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-                  "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-                  "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-                  "\"Fail-closed on unverifiable writes\" section."
-            )
+            val violation = Violations.unverifiableWrite(plan.getClass.getSimpleName, s"${contract.id}@${contract.version}")
             val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
             publishValidation(contract, result, sink, applicationId)
             throw new ContractViolationException(result, explain(contract, translated.plan, result))
@@ -966,21 +961,9 @@ object ContractEnforcementRule {
     }
     if (!validation.isValid || unresolvableCustomRuleTypes.nonEmpty) {
       val contractRef = s"${contract.id}@${contract.version}"
-      val validatorViolations = validation.errors.map { issue =>
-        Violation(
-          ViolationType.InvalidContract,
-          s"contract '$contractRef' is invalid at '${issue.path}': ${issue.message}",
-          remediation = s"Fix the contract document (see the '${issue.path}' issue above) so it passes " +
-            "ContractValidator.validate before it's used to verify any write."
-        )
-      }
+      val validatorViolations = validation.errors.map(issue => Violations.invalidContract(contractRef, issue.path, issue.message))
       val customRuleTypeViolations = unresolvableCustomRuleTypes.map { case (ruleType, className, message) =>
-        Violation(
-          ViolationType.InvalidContract,
-          s"contract '$contractRef' declares customRuleTypes['$ruleType'] = '$className', which could not be resolved: $message",
-          remediation = s"Fix or remove the customRuleTypes['$ruleType'] entry so '$className' names a class on the " +
-            "classpath implementing CustomRuleVerifier with a public no-arg constructor."
-        )
+        Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
       }
       val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
       publishValidation(contract, result, sink, applicationId)
@@ -1089,20 +1072,12 @@ object ContractEnforcementRule {
       .map(f => s"${f.name}: ${f.fieldType}" + (if (f.required) "" else " (optional)"))
       .mkString(", ")
 
-  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind): Violation = {
+  private def unverifiableDmlViolation(kind: RowMutationSupport.Kind, location: Option[String]): Violation = {
     val kindName = kind match {
       case RowMutationSupport.Kind.Merge  => "MERGE"
       case RowMutationSupport.Kind.Update => "UPDATE"
       case RowMutationSupport.Kind.Delete => "DELETE"
     }
-    Violation(
-      ViolationType.RuleUnverifiableDml,
-      s"this operation is a $kindName the active contract declares a rule for, but Invaract could not " +
-        "extract the structural fact that rule needs to check, so it was never actually verified.",
-      remediation =
-        "This is likely a genuine gap in Invaract's support for this operation's exact shape (e.g. an " +
-          "Iceberg merge-on-read UPDATE, whose rewritten plan doesn't expose which columns changed) - open " +
-          "an issue/PR. If the rule doesn't need to apply to this operation, remove it from the contract."
-    )
+    Violations.unverifiableDml(kindName, location)
   }
 }
