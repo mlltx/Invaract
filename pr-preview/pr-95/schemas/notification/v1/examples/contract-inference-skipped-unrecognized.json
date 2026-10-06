@@ -1,0 +1,33 @@
+{
+  "eventType": "CONTRACT_INFERENCE",
+  "timestamp": 1791097550611,
+  "contractYaml": null,
+  "job": {
+    "master": "local[2]",
+    "deployMode": "client",
+    "appName": "SparkSQL::192.0.2.2",
+    "startTimeMs": 1791097540432,
+    "applicationId": "local-1791097541542",
+    "sparkVersion": "3.5.7",
+    "attributes": {
+      "run_id": "orders_daily__2026-10-04T02:00",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "user": "root"
+  },
+  "contractDigest": null,
+  "selfCheckViolations": [],
+  "reason": "'InsertIntoDataSourceDirCommand' may write data but Invaract has no translation for it; with a contract active, enforcement would reject it as an UNVERIFIABLE_WRITE",
+  "eventId": "2cde1d5de2f0d06ee29ba309486e4a574dd418a76d7a3a705f7f9e98d6c91f00",
+  "fingerprints": null,
+  "diagnostics": [],
+  "status": "SKIPPED_UNRECOGNIZED",
+  "selfCheck": null,
+  "writeLocation": null,
+  "metadata": {
+    "source_system": "crm",
+    "owner": "orders-team"
+  },
+  "schemaVersion": 1
+}
