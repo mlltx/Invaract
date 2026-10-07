@@ -343,7 +343,7 @@ describes (optional capabilities reading <code dir="auto">SparkConf</code>) comp
 free, since ADR-009’s extension class calls the very same <code dir="auto">forContract</code>.</p>
 <p><strong>Alternative considered:</strong> Configuration only via explicit method
 arguments (<code dir="auto">ContractLocationResolution.resolve(contract, resolver)</code>,
-called in the job’s own code), as <code dir="auto">com.invaract.sparkadapter.location</code>
+called in the job’s own code), as <code dir="auto">com.invaract.verification.location</code>
 first shipped with. <strong>Rejected as the only mechanism</strong>, not removed: it
 remains available for a resolver <code dir="auto">SparkConf</code> can’t express (a mapping
 built at runtime, a future <code dir="auto">HttpLocationResolver</code>’s endpoint/auth), and
