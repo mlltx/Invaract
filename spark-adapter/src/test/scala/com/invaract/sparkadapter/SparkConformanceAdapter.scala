@@ -51,6 +51,8 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     val base = scratch.resolve(scenarioId)
     def path(location: String): String = base.resolve(location).toString
 
+    if (job.untranslatableWrite) return runUntranslatable(scenarioId, contract, options)
+
     job.inputs.foreach { input =>
       val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema))
       empty.write.mode("overwrite").parquet(path(input.location))
@@ -71,6 +73,23 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
         }).as(c.name)
       }
       filtered.select(columns: _*).write.format(job.output.format).mode(job.output.saveMode).save(path(job.output.location))
+      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
+    } catch {
+      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
+    } finally active = None
+  }
+
+  /** Spark's representative of "a data-changing operation the adapter has no translation for": `TRUNCATE TABLE` on a
+    * managed table, which Catalyst plans as a command `SparkPlanAdapter` does not turn into a write and that is not
+    * on the known-safe list. The table is created while no contract is active, so only the truncate is checked.
+    */
+  private def runUntranslatable(scenarioId: String, contract: Contract, options: VerificationOptions): ScenarioOutcome = {
+    val table = "conformance_" + scenarioId.replace('-', '_')
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $table (id BIGINT) USING parquet")
+    val sink = new RecordingSink
+    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
+    try {
+      spark.sql(s"TRUNCATE TABLE $table")
       ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
     } catch {
       case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)

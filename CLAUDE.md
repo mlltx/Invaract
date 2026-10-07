@@ -399,8 +399,9 @@ position; regenerate the docs-site matrix with `./dev/capabilities` (a drift tes
 and each must come out as the adapter's declaration promises (a capability declared
 unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
 is canceled with its note). A new engine-neutral check means a new scenario in
-`Scenarios.scala` (or an entry in `Scenarios.notCovered` saying why not yet) — the kit's own
-tests fail if a capability is in neither. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+`Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
+could check by its nature, the second for what the kit cannot check yet) — the kit's own
+tests fail if a capability is in neither. The kit is itself gated by MiMa and coverage in CI (not mutation testing). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only

@@ -229,6 +229,14 @@ object Scenarios {
       expectNonDeterministic = Some(Set("token"))
     ),
     Scenario(
+      "untranslatable-write-fails-closed",
+      "an operation that changes data but that the adapter cannot translate is blocked as unverifiable, never passed unchecked",
+      Set(Capability.FailClosedUnverifiableWrites),
+      contract(), ScenarioJob(List(orders), passThrough, ScenarioOutput("out/report"), untranslatableWrite = true), defaults,
+      Expectation.Reject(Set(ViolationType.UnverifiableWrite)),
+      operations = Set(Capability.WriteBatch)
+    ),
+    Scenario(
       "invalid-contract",
       "a contract that is itself unsound is rejected before the job is looked at",
       Set.empty,
@@ -236,28 +244,36 @@ object Scenarios {
     )
   )
 
-  /** Capabilities no scenario is evidence for yet, each with why. An adapter's claim on one of these
-    * is reported as unverified, not as passing. */
-  val notCovered: Map[Capability, String] = Map(
-    Capability.ReadStreaming -> "needs a streaming job shape the neutral job description does not have yet",
-    Capability.WriteStreaming -> "needs a streaming job shape the neutral job description does not have yet",
-    Capability.WriteRowLevelDml -> "needs a MERGE/UPDATE/DELETE job shape the neutral job description does not have yet",
-    Capability.WriteStateChange -> "a state change is not a read-transform-write job; each engine has its own",
-    Capability.CheckCatalogRegistration -> "needs a catalog-resident dataset, which the neutral job description does not model yet",
-    Capability.RulesDml -> "needs a MERGE/UPDATE/DELETE job shape the neutral job description does not have yet",
-    Capability.RulesCustom -> "a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one",
-    Capability.AnalysisStaticDataQuality -> "opt-in analysis; the outcome does not yet carry data-quality verdicts",
-    Capability.AnalysisRoleConsistency -> "opt-in analysis; the outcome does not yet carry role verdicts",
-    Capability.AnalysisSensitivityPropagation -> "report-only; the outcome does not yet carry sensitivity propagation",
-    Capability.LineageColumnLevel -> "the outcome does not yet carry lineage",
-    Capability.LineageBoundaryResolution -> "needs a checkpoint/cache job shape the neutral job description does not have",
+  /** Capabilities a job cannot be evidence for, by their nature: how an adapter attaches to a job, what it
+    * applies before any job exists, what a mode of installing does. An adapter's claim on one of these is
+    * attested by the adapter's own tests, never by this kit, and the report says so. */
+  val attested: Map[Capability, String] = Map(
     Capability.PolicyOrganizational -> "applied to the contract at session start, not part of a job",
     Capability.ConfigZeroCodeInstall -> "how an adapter attaches to a job is engine-specific, not a job",
     Capability.ConfigLocationRefs -> "how an adapter attaches to a job is engine-specific, not a job",
     Capability.ConfigContractRegistry -> "how an adapter attaches to a job is engine-specific, not a job",
     Capability.ReportingDryRun -> "dry-run mode is a mode of installing, not a job",
-    Capability.FailClosedUnverifiableWrites -> "needs a job the engine cannot translate, which has no neutral description yet"
+    Capability.WriteStateChange -> "a state change is not a read-transform-write job; each engine has its own",
+    Capability.RulesCustom -> "a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one"
   )
+
+  /** Capabilities a job *could* be evidence for, but the kit cannot check yet - honest gaps in the kit, each with
+    * why. An adapter's claim on one of these is reported as an unchecked gap, not as passing. */
+  val gaps: Map[Capability, String] = Map(
+    Capability.ReadStreaming -> "needs a streaming job shape the neutral job description does not have yet",
+    Capability.WriteStreaming -> "needs a streaming job shape the neutral job description does not have yet",
+    Capability.WriteRowLevelDml -> "needs a MERGE/UPDATE/DELETE job shape (and, on Spark, a table format that supports it) the neutral job description does not have yet",
+    Capability.CheckCatalogRegistration -> "needs a catalog-resident dataset, which the neutral job description does not model yet",
+    Capability.RulesDml -> "needs a MERGE/UPDATE/DELETE job shape the neutral job description does not have yet",
+    Capability.AnalysisStaticDataQuality -> "opt-in analysis; the outcome does not yet carry data-quality verdicts",
+    Capability.AnalysisRoleConsistency -> "opt-in analysis; the outcome does not yet carry role verdicts",
+    Capability.AnalysisSensitivityPropagation -> "report-only; the outcome does not yet carry sensitivity propagation",
+    Capability.LineageColumnLevel -> "the outcome does not yet carry lineage",
+    Capability.LineageBoundaryResolution -> "needs a checkpoint/cache job shape the neutral job description does not have"
+  )
+
+  /** Everything the kit does not verify with a job: `attested` plus `gaps`. */
+  val notCovered: Map[Capability, String] = attested ++ gaps
 
   /** Capabilities some scenario is the evidence for: a scenario's focus, and the operations every job needs. */
   val covered: Set[Capability] = all.flatMap(s => s.focus ++ s.operations).toSet

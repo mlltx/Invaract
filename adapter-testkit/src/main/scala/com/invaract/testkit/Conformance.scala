@@ -29,6 +29,12 @@ final case class ConformanceReport(adapter: String, results: List[ScenarioResult
   def failures: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Diverges])
   def skipped: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Skipped])
   def conforming: List[ScenarioResult] = results.filter(_.verdict == ScenarioVerdict.Conforms)
+
+  /** The unverified claims no job could check by their nature (`Scenarios.attested`): the adapter's own tests carry them. */
+  def attestedClaims: List[Capability] = unverifiedClaims.filter(Scenarios.attested.contains)
+
+  /** The unverified claims the kit should be able to check but cannot yet (`Scenarios.gaps`). */
+  def gapClaims: List[Capability] = unverifiedClaims.filter(Scenarios.gaps.contains)
 }
 
 /** What a scenario must produce on an adapter, given what that adapter declares.

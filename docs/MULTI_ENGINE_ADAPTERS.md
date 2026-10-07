@@ -350,11 +350,12 @@ runs, judged against that adapter's *own declaration*.
 **A scenario** is a contract, a job described in no engine's terms, and a verdict. The job
 (`ScenarioJob`) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 20 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario's schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
-invalid contract, the PASSED/FAILED events published and (from Stage 5) non-determinism in the fingerprint.
+invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5) and
+fail-closed behaviour (below).
 
 **An adapter** implements `ConformanceAdapter`: its `AdapterCapabilities`, and `run(...)`, which
 turns the neutral job into a real job on its engine, runs it through the *real* enforcement path, and
@@ -372,10 +373,19 @@ adapter mixes `AdapterConformanceSpec` into a test, which registers one test per
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |
 
+**Fail-closed has its own job shape.** A `ScenarioJob` with `untranslatableWrite` set is not a
+read-transform-write at all but a data-changing operation the adapter has no translation for; the
+adapter picks its engine's representative (Spark: `TRUNCATE TABLE` on a managed table) and must block
+it as `UNVERIFIABLE_WRITE` rather than let it through unchecked. This is the property that makes
+"supported" safe to rely on, so it is verified, not attested.
+
 An exception out of `run` is a divergence, not a verdict. A capability an adapter claims that no
-scenario is evidence for (`Scenarios.notCovered`, each with a reason - streaming, DML, catalogs, the
-opt-in analyses, the attachment mechanisms) is listed as *unverified*, never counted as passing; the
-kit's own tests fail if a capability is in neither list.
+scenario is evidence for is listed as *unverified*, never counted as passing, and the report says which
+kind of unverified it is: **attested** (`Scenarios.attested`) when no job could check it by its nature
+- how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
+adapter's own tests carry it; or a **gap** (`Scenarios.gaps`) when a job could check it but the kit
+cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit's own tests fail
+if a capability is in neither list or in both.
 
 **The kit is tested against itself.** `ReferenceAdapter` is a complete adapter built on nothing but
 the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
@@ -383,7 +393,7 @@ scenarios are consistent with the SPI before any real engine is involved. Then d
 adapters must be caught: one that claims `check.format` but never checks it fails exactly the format
 scenario; one that lets everything through fails every scenario expecting a rejection; one that
 blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
-none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5).
+none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5, 21 with fail-closed).
 
 **Adding an adapter** is therefore: write its capability declaration, implement `ConformanceAdapter`,
 mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. Where Spark's own
@@ -393,8 +403,11 @@ third place for the difference to hide.
 **Not done in 4, deliberately.** The scenario language has no streaming, row-level DML, catalog or
 checkpoint shapes yet (see `Scenarios.notCovered`); each grows the neutral job description and is its own
 step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
-`ConformanceKitSpec` is the equivalent proof that it fails what it should) and is not published
-anywhere but the local Ivy cache.
+`ConformanceKitSpec` is the equivalent proof that it fails what it should), but it is held to the
+other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
+coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
+`MERGE`/`UPDATE`/`DELETE` job needs a table format that supports it (Delta or Iceberg on Spark),
+which a plain local session does not have.
 
 ## Stage 5 — function canonicalisation
 
