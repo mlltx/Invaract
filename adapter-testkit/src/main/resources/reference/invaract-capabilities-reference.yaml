@@ -86,5 +86,5 @@ capabilities:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
   failClosed.unverifiableWrites:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: An operation the adapter has no translation for is rejected (UNVERIFIABLE_WRITE) through VerificationPipeline.rejectUnverifiableWrite.

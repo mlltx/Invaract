@@ -103,7 +103,7 @@ object VerificationSetup {
       options: VerificationOptions,
       config: ConfigSource,
       sink: Option[NotificationSink],
-      applicationId: Option[String]
+      runId: Option[String]
   ): (Contract, VerificationOptions) =
     resolveOrgPolicyLayers(config) match {
       case Nil => (contract, options)
@@ -122,7 +122,7 @@ object VerificationSetup {
         if (evaluation.hasBlockingViolations) {
           val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
-          VerificationPipeline.publishValidation(governedContract, result, sink, applicationId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
           // No parenthesized fragment here: PlanPrinter renders UnknownPlan as
           // "UnknownPlan(<description>)" verbatim - wrapping the description in
           // its own parens too produced a confusing doubled "((...))".
@@ -139,7 +139,7 @@ object VerificationSetup {
             s"${governedContract.id}@${governedContract.version}",
             evaluation.warnViolations.map(toViolation(governedContract, _))
           )
-          VerificationPipeline.publishValidation(governedContract, result, sink, applicationId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
         }
 
         (governedContract, governedOptions)

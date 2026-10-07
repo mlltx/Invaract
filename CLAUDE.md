@@ -396,8 +396,9 @@ position; regenerate the docs-site matrix with `./dev/capabilities` (a drift tes
 and each must come out as the adapter's declaration promises (a capability declared
 unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
 is canceled with its note). A new engine-neutral check means a new scenario in
-`Scenarios.scala` (or an entry in `Scenarios.notCovered` saying why not yet) — the kit's own
-tests fail if a capability is in neither. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+`Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
+could check by its nature, the second for what the kit cannot check yet) — the kit's own
+tests fail if a capability is in neither. The kit is itself gated by MiMa and coverage in CI (not mutation testing). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
@@ -806,7 +807,7 @@ If `./dev/test` fails:
 - `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.6.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.4.0.jar`
-- `verification-core/target/scala-2.12/invaract-verification-core-0.3.0.jar` —
+- `verification-core/target/scala-2.12/invaract-verification-core-0.4.0.jar` —
   the engine-neutral verification code; `spark-adapter`'s fat jar bundles it
   (same `sbt-assembly` dependency bundling as `fingerprint`), so a consumer
   installing only the spark-adapter jar needs nothing extra
@@ -984,6 +985,8 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when `spark-adapter/`, `verification-core/` or
   `.github/workflows/test.yml` changed; pushes always run them
+- **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
+  the job rebuilds every module
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

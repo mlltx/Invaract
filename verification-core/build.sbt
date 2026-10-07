@@ -27,7 +27,10 @@ name := "invaract-verification-core"
 // 0.3.0: Stages 4-5 (the adapter-testkit's SPI additions and the function
 // catalog's capability) change this module again, so main's 0.2.0 stays the
 // base ref's coordinate and this build is a new one.
-ThisBuild / version := "0.3.0"
+// 0.4.0: the notification events went engine-neutral (`applicationId` -> `runId`, `JobInfo`
+// reshaped) and HadoopFsNotificationSink moved to spark-adapter - source- and binary-breaking
+// for the base ref's spark-adapter, hence a new coordinate again.
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -86,7 +89,7 @@ pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 // that does not exist at the base commit). Once a version is released, point
 // this at it the way fingerprint/build.sbt does.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
+  "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.3.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -97,23 +100,41 @@ import com.typesafe.tools.mima.core._
 // every class is reported missing; excluding the whole old package is the one honest way to say
 // "all of it moved". Inert once the base branch carries the rename.
 mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*")
+  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*"),
+  // Deliberate break, review pass 1 (docs/MULTI_ENGINE_ADAPTERS.md, "Conventions every adapter follows"):
+  // the notification events went engine-neutral. `applicationId` is `runId` on every event, and
+  // `JobInfo` lost its Spark fields (`appName`, `sparkVersion`, `master`, `deployMode`) for
+  // `name`, `engine`, `engineVersion` and `engineDetails`. HadoopFsNotificationSink moved to
+  // spark-adapter so this module carries no Hadoop dependency. No consumers exist; these are the
+  // exact lines MiMa's own output suggests.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractValidationEvent.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.appName"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.deployMode"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.master"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.sparkVersion"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobSummaryEvent.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.applicationId"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.apply"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.copy"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.<init>$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.apply$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.copy$default$6"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.verification.notification.HadoopFsNotificationSink")
 )
-
-val hadoopVersion = "3.3.4"
 
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
   "com.invaract" %% "invaract-ir" % "0.6.0",
   "com.invaract" %% "invaract-fingerprint" % "0.4.0",
-  // Logging and (for HadoopFsNotificationSink only) Hadoop's FileSystem are
-  // supplied by whatever engine hosts this module (Spark ships both), never
-  // bundled: `provided`, exactly as they were for spark-adapter.
+  // Logging is supplied by whatever engine hosts this module (Spark ships
+  // slf4j), never bundled: `provided`. Deliberately no Hadoop here - the one
+  // sink that needed it (HadoopFsNotificationSink) lives in spark-adapter, so
+  // a non-Hadoop engine's classpath is never in question.
   "org.slf4j" % "slf4j-api" % "2.0.17" % "provided",
-  "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion % "provided",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
-  "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion % "test",
   "org.slf4j" % "slf4j-simple" % "2.0.7" % "test",
   // EventSchema (test helper validating published events against the JSON
   // Schema) reads/walks JSON.
@@ -123,7 +144,7 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
-assembly / assemblyJarName := "invaract-verification-core-0.3.0.jar"
+assembly / assemblyJarName := "invaract-verification-core-0.4.0.jar"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

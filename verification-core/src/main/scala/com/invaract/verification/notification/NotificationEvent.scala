@@ -55,7 +55,7 @@ sealed trait NotificationEvent {
   * the rejection at the same moment the writing job does, not only once
   * some later retry succeeds.
   *
-  * `applicationId` is the checking session's `SparkContext.applicationId`
+  * `runId` is the checking session's `SparkContext.runId`
   * — always present for a real, running Spark session (`Option` here only
   * because `verifyOrThrow` is also exercised directly in tests without a
   * session in scope).
@@ -103,7 +103,7 @@ case class ContractValidationEvent(
   violations: List[Violation],
   timestamp: Long,
   metadata: Map[String, Any],
-  applicationId: Option[String] = None,
+  runId: Option[String] = None,
   fingerprints: Option[TransformationFingerprint] = None,
   dataQuality: List[DataQualityCheckResult] = Nil,
   roleConformance: List[RoleConformanceCheckResult] = Nil,
@@ -177,7 +177,7 @@ object CatalogInfo {
   * `Table.currentSnapshot().summary()`/`MetricsReporter`) — row/byte/file
   * counts through that route remain unattempted, but the commit identity
   * itself (which `deltaVersion`/`icebergSnapshotId` below capture) does
-  * not need it. `applicationId` is
+  * not need it. `runId` is
   * `qe.sparkSession.sparkContext.applicationId` — always present for a
   * real write.
   *
@@ -272,7 +272,7 @@ case class WriteEvent(
   rowCount: Option[Long] = None,
   bytesWritten: Option[Long] = None,
   fileCount: Option[Long] = None,
-  applicationId: Option[String] = None,
+  runId: Option[String] = None,
   deltaVersion: Option[Long] = None,
   icebergSnapshotId: Option[Long] = None,
   operation: Option[String] = None,
@@ -306,41 +306,50 @@ case class JobSummaryEvent(
   durationMs: Long,
   timestamp: Long,
   metadata: Map[String, Any],
-  applicationId: Option[String] = None
+  runId: Option[String] = None
 ) extends NotificationEvent {
   val eventType: String = "JOB_SUMMARY"
 }
 
 /** Where a dry-run event came from - enough to tell one job's runs apart
   * from another's, and to group one job's events together across runs.
+  * Engine-neutral: nothing here names an engine, so the same event shape
+  * serves any adapter.
   *
-  * `jobId` is the stable, caller-chosen identity (`spark.invaract.jobId`);
-  * `appName` is Spark's own `spark.app.name`, which many schedulers make
-  * unique per run and so cannot serve as that identity on its own.
-  * `attributes` is whatever the platform attached via
-  * `spark.invaract.job.metadata.<key>=<value>` (team, DAG id, orchestrator
-  * run id, ...), prefix stripped. Deliberately an allowlist-by-prefix, never
-  * a dump of the whole `SparkConf`: that holds credentials.
+  * `runId` is the engine's own identifier for this run (Spark: the
+  * application id; another engine: its job id). `jobId` is the stable,
+  * caller-chosen identity (Spark: `spark.invaract.jobId`); `name` is the
+  * engine's own name for the application, which many schedulers make unique
+  * per run and so cannot serve as that identity on its own. `engine` and
+  * `engineVersion` say which adapter produced the event ("spark", "3.5.7").
+  * `engineDetails` is whatever else the adapter finds worth recording about
+  * where it ran (Spark: `master`, `deployMode`) - free-form and
+  * engine-specific by design, so the fixed fields stay neutral.
+  * `attributes` is whatever the platform attached through the engine's own
+  * configuration (Spark: `spark.invaract.job.metadata.<key>=<value>`)
+  * - team, DAG id, orchestrator run id, ... - prefix stripped. Deliberately
+  * an allowlist-by-prefix, never a dump of the whole engine configuration:
+  * that holds credentials.
   */
 case class JobInfo(
-  applicationId: Option[String] = None,
-  appName: Option[String] = None,
+  runId: Option[String] = None,
+  name: Option[String] = None,
   jobId: Option[String] = None,
-  sparkVersion: Option[String] = None,
-  master: Option[String] = None,
-  deployMode: Option[String] = None,
+  engine: Option[String] = None,
+  engineVersion: Option[String] = None,
+  engineDetails: Map[String, String] = Map.empty,
   user: Option[String] = None,
   startTimeMs: Option[Long] = None,
   attributes: Map[String, String] = Map.empty
 ) {
   def toMap: Map[String, Any] =
     Map("attributes" -> attributes) ++
-      applicationId.map("applicationId" -> _) ++
-      appName.map("appName" -> _) ++
+      (if (engineDetails.isEmpty) Map.empty[String, Any] else Map("engineDetails" -> engineDetails)) ++
+      runId.map("runId" -> _) ++
+      name.map("name" -> _) ++
       jobId.map("jobId" -> _) ++
-      sparkVersion.map("sparkVersion" -> _) ++
-      master.map("master" -> _) ++
-      deployMode.map("deployMode" -> _) ++
+      engine.map("engine" -> _) ++
+      engineVersion.map("engineVersion" -> _) ++
       user.map("user" -> _) ++
       startTimeMs.map("startTimeMs" -> _)
 }

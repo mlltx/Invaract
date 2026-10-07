@@ -109,7 +109,7 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.bytesWritten.exists(_ > 0L), s"expected a positive byte count, got ${event.bytesWritten}")
     assert(event.fileCount.exists(_ > 0L), s"expected a positive file count, got ${event.fileCount}")
     assert(event.durationMs >= 0L)
-    assert(event.applicationId.contains(spark.sparkContext.applicationId))
+    assert(event.runId.contains(spark.sparkContext.applicationId))
     // Neither connector-specific field applies to a plain Parquet write.
     assert(event.deltaVersion.isEmpty, s"expected no deltaVersion for a Parquet write, got ${event.deltaVersion}")
     assert(event.icebergSnapshotId.isEmpty, s"expected no icebergSnapshotId for a Parquet write, got ${event.icebergSnapshotId}")
@@ -135,7 +135,7 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.rowCount.isEmpty, s"expected None for a Delta write, got ${event.rowCount}")
     assert(event.bytesWritten.isEmpty, s"expected None for a Delta write, got ${event.bytesWritten}")
     assert(event.fileCount.isEmpty, s"expected None for a Delta write, got ${event.fileCount}")
-    assert(event.applicationId.contains(spark.sparkContext.applicationId))
+    assert(event.runId.contains(spark.sparkContext.applicationId))
     // The first-ever write to a brand new Delta table always commits as
     // version 0 - confirmed empirically (see SparkAdapterListener's own
     // doc) that this plain, unforced read already reflects the

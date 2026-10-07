@@ -393,10 +393,10 @@ Real captured output — **exactly one of each event, and nothing at all
 from the `CREATE EXTERNAL TABLE` step**:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196777660, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196777660, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "runId": "local-1789196775261", "fingerprints": null}
 ```
 ```json
-{"eventType": "WRITE", "timestamp": 1789196779435, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_sql", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 1761, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "applicationId": "local-1789196775261"}
+{"eventType": "WRITE", "timestamp": 1789196779435, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_sql", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 1761, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "runId": "local-1789196775261"}
 ```
 
 The `CREATE EXTERNAL TABLE` statement that follows publishes **nothing**
@@ -420,12 +420,12 @@ Real captured output — **two of each event**, for what the caller
 experiences as one write:
 
 ```json
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783942, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
-{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783958, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "applicationId": "local-1789196775261", "fingerprints": null}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783942, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "runId": "local-1789196775261", "fingerprints": null}
+{"eventType": "CONTRACT_VALIDATION", "timestamp": 1789196783958, "contract": "enforcement_demo@1.0.0", "status": "PASSED", "violations": [], "runId": "local-1789196775261", "fingerprints": null}
 ```
 ```json
-{"eventType": "WRITE", "timestamp": 1789196784087, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 127, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "applicationId": "local-1789196775261"}
-{"eventType": "WRITE", "timestamp": 1789196784147, "contract": "enforcement_demo@1.0.0", "location": "file:///tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "error", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 201, "rowCount": null, "bytesWritten": null, "fileCount": null, "applicationId": "local-1789196775261"}
+{"eventType": "WRITE", "timestamp": 1789196784087, "contract": "enforcement_demo@1.0.0", "location": "file:/tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "overwrite", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 127, "rowCount": 2, "bytesWritten": 1435, "fileCount": 2, "runId": "local-1789196775261"}
+{"eventType": "WRITE", "timestamp": 1789196784147, "contract": "enforcement_demo@1.0.0", "location": "file:///tmp/invaract-hive-test.../external_compare_saveastable", "format": "parquet", "saveMode": "error", "schema": [{"name": "id", "type": "long", "nullable": false}, {"name": "value", "type": "long", "nullable": false}], "durationMs": 201, "rowCount": null, "bytesWritten": null, "fileCount": null, "runId": "local-1789196775261"}
 ```
 
 **Why two, and a real correction to what this document previously assumed
@@ -456,7 +456,7 @@ know to prefer the one with real metrics over the metrics-free duplicate.
 
 Both forms' events carry the table's *real, external* `location` (never
 a warehouse-relative or catalog-identifier form) and the same
-`contract`/`applicationId` pair — nothing about being external changes
+`contract`/`runId` pair — nothing about being external changes
 the shape or correctness of what's published. The real difference this
 comparison surfaces is entirely about *event cardinality*: one write
 statement, one validation and one write event; one `.saveAsTable()` call,

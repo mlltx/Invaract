@@ -29,8 +29,28 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(Scenarios.notCovered.values.forall(_.trim.nonEmpty))
   }
 
+  test("attested and gaps are disjoint, and together are exactly notCovered") {
+    assert(Scenarios.attested.keySet.intersect(Scenarios.gaps.keySet).isEmpty)
+    assert(Scenarios.notCovered == (Scenarios.attested ++ Scenarios.gaps))
+    assert(Scenarios.attested.nonEmpty && Scenarios.gaps.nonEmpty)
+  }
+
+  test("a report splits an adapter's unchecked claims into those a job cannot check and those the kit cannot check yet") {
+    val claims = declaring(
+      Map(
+        "config.zeroCodeInstall" -> (("supported", None)),
+        "write.streaming" -> (("supported", None)),
+        "lineage.columnLevel" -> (("supported", None))
+      )
+    )
+    val report = Conformance.evaluate(new ReferenceAdapter(claims))
+    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.WriteStreaming, Capability.LineageColumnLevel))
+    assert(report.attestedClaims == List(Capability.ConfigZeroCodeInstall))
+    assert(report.gapClaims.toSet == Set(Capability.WriteStreaming, Capability.LineageColumnLevel))
+  }
+
   // Capabilities no contract "relies on" (they describe what the engine reports, not what a contract asks for).
-  private val notDerivable = Set(Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog)
+  private val notDerivable = Set(Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog, Capability.FailClosedUnverifiableWrites)
 
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
@@ -82,6 +102,24 @@ class ConformanceKitSpec extends AnyFunSuite {
   test("an adapter that claims check.format but never checks it is caught on exactly the format scenario that needs it") {
     val liar = new Tampered(reference, contractOf = c => c.copy(outputs = c.outputs.map(_.copy(format = None))))
     assert(failingIds(liar) == Set("output-format-mismatch"))
+  }
+
+  test("an adapter that lets an untranslatable write through unchecked is caught on exactly the fail-closed scenario") {
+    val letsItThrough = new Tampered(
+      reference,
+      outcomeOf = {
+        case r: ScenarioOutcome.Rejected if r.violationTypes == Set(com.invaract.verification.ViolationType.UnverifiableWrite) => ScenarioOutcome.Passed(Nil)
+        case other => other
+      }
+    )
+    assert(failingIds(letsItThrough) == Set("untranslatable-write-fails-closed"))
+  }
+
+  test("an adapter that declares fail-closed unsupported has the scenario skipped, not failed") {
+    val caps = declaring(Map("failClosed.unverifiableWrites" -> (("unsupported", Some("not implemented")))))
+    val report = Conformance.evaluate(new ReferenceAdapter(caps))
+    assert(report.skipped.map(_.scenario.id) == List("untranslatable-write-fails-closed"))
+    assert(report.failures.isEmpty)
   }
 
   test("an adapter that claims check.saveMode but never checks it is caught") {
@@ -189,7 +227,9 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noRead = new ReferenceAdapter(declaring(Map("read.batch" -> (("unsupported", Some("sources are push-only"))))))
     val report = Conformance.evaluate(noRead)
     assert(report.failures == Nil)
-    assert(report.skipped.size == Scenarios.all.size)
+    // every scenario that reads is skipped; the one that only needs a write (fail-closed) still runs, and conforms
+    assert(report.skipped.map(_.scenario.id).toSet == Scenarios.all.filter(_.operations.contains(Capability.ReadBatch)).map(_.id).toSet)
+    assert(report.conforming.map(_.scenario.id) == List("untranslatable-write-fails-closed"))
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {

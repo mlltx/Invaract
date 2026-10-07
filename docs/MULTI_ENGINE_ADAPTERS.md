@@ -22,7 +22,7 @@ depended on Spark types or Spark's spelling of things. The review found eight le
 |---|---|---|---|
 | 1 | The verification core took Spark's `StructType`: `StructuralVerifier`, `InputChecker`, `OutputChecker`, `SchemaChecker`, `ContractInference`. A contract's `type:` was compared against Spark's `DataType.typeName` and parsed with Spark's `DataType.fromDDL`. | BigQuery's `INT64`/`NUMERIC`/`REPEATED`, Beam's schema `FieldType` had nowhere to land. | Stage 1 |
 | 2 | `ContractEnforcementRule.verifyOrThrow` is the real adapter interface, written inline and interleaved with `LogicalPlan`, `SQLConf` and `WriteCommandSupport`. | A second adapter would copy ~200 lines of orchestration. | Stage 2 |
-| 3 | Neutral code (`Violation`, `VerificationResult`, `VerificationOptions`, the notification events, `spark.invaract.*` keys, `applicationId`) lives in `com.invaract.sparkadapter`. | A BigQuery adapter would have to depend on `spark-adapter`, whose Spark dependency is `provided`. | Stage 2 |
+| 3 | Neutral code (`Violation`, `VerificationResult`, `VerificationOptions`, the notification events, `spark.invaract.*` keys, `runId`) lives in `com.invaract.sparkadapter`. | A BigQuery adapter would have to depend on `spark-adapter`, whose Spark dependency is `provided`. | Stage 2 |
 | 4 | `ir.Function` names are Spark's `prettyName`; `fingerprint`'s `NonDeterminism` lists `spark_partition_id`, `input_file_name`, … | BigQuery's `GENERATE_UUID()` would be classified deterministic — a silently wrong fingerprint. The same logic on two engines would fingerprint differently. | Stage 5 |
 | 5 | `LocationMatching` assumes file paths (`file:`, `\`, `/`-boundary suffix). | `proj.ds.tbl`, `proj:ds.tbl`, backticks, Beam IO targets don't fit. | Stage 2 |
 | 6 | The IR has no `Distinct`, set operations, `UNNEST`/`explode`, pivot, sample, window frames or lateral joins. | They surface only as `UnknownPlan` diagnostics. | After Stage 5 |
@@ -166,9 +166,9 @@ one per thing an adapter can find:
 
 | Entry point | When an adapter calls it |
 |---|---|
-| `verifyWrite(contract, write: => CheckedWrite, options, sink, applicationId)` | a recognized write |
-| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, applicationId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
-| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, applicationId)` | the fail-closed response to something that looks like a write but could not be translated |
+| `verifyWrite(contract, write: => CheckedWrite, options, sink, runId)` | a recognized write |
+| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
+| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId)` | the fail-closed response to something that looks like a write but could not be translated |
 
 `CheckedWrite` is what an adapter hands over for a write: the translated plan, input/output
 `LogicalSchema`s, case sensitivity, its DML classification (`MutationClassification`), the
@@ -284,6 +284,63 @@ Members the adapter needs from the core that were `private[sparkadapter]` are
 filters record the move; the one signature of this module's own surface that changes is
 `ContractEnforcementRule.forContract`.
 
+## Conventions every adapter follows
+
+These are the rules that make one contract mean the same thing on every engine. They are not
+enforced by the type system, so they are written down here and, where a test can see them,
+checked by the conformance kit.
+
+**Locations are canonical `/`-separated strings.** The pipeline compares a contract's declared
+location with the location the adapter reports using one rule (`LocationMatching`): equal, or the
+declared one is a `/`-boundary suffix of the reported one. An engine whose names are not paths
+converts them first: a BigQuery table `project.dataset.table` is reported as
+`project/dataset/table`, and a contract author writes `dataset/table` (or the full form to pin
+one project). An absolute declaration (`/data/orders`, `gs://bucket/orders`) matches only itself;
+a relative one matches any location ending in it, so a contract that must distinguish tenants
+declares it absolute.
+
+**Write modes use the four canonical names.** `ir.Write.saveMode` is `append`, `overwrite`,
+`ignore` or `error` (`com.invaract.contract.SaveModes`), or `None` when the adapter cannot tell.
+An adapter maps its engine's dispositions onto them; one with no equivalent leaves it `None`
+rather than inventing a name, because a contract can only match a name every adapter spells the
+same way. A contract that declares another string still validates, with a warning.
+
+| Engine disposition | Canonical |
+|---|---|
+| Spark `SaveMode.Append` / `Overwrite` / `ErrorIfExists` / `Ignore` | `append` / `overwrite` / `error` / `ignore` |
+| BigQuery `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
+| Beam `BigQueryIO` `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
+| `MERGE` / `UPDATE` / `DELETE` (row-level DML) | `None`: reported through `rowMutation`, not as a write mode |
+
+The Spark row is what ships today. The BigQuery and Beam rows are the intended mapping for adapters
+that do not exist yet, written from the engines' public documentation and not yet exercised by an
+adapter: confirm each against the engine's current documentation when its adapter is written.
+
+**Types map into `LogicalType`.** An adapter converts its engine's schema into `LogicalSchema`;
+anything with no neutral equivalent becomes `OtherType(typeName, catalogString)`, which compares
+by its catalog string and never matches a declared neutral type. The intended mappings (same caveat as the write-mode table):
+
+| Neutral type | BigQuery | Beam schema |
+|---|---|---|
+| `string` / `boolean` / `long` / `double` | `STRING` / `BOOL` / `INT64` / `FLOAT64` | `STRING` / `BOOLEAN` / `INT64` / `DOUBLE` |
+| `decimal(p,s)` | `NUMERIC` = `decimal(38,9)`; `BIGNUMERIC` is wider than `decimal(38,_)`, so it is `OtherType("BIGNUMERIC", ...)` | `DECIMAL` (arbitrary precision: `OtherType` unless a precision is declared) |
+| `date` / `timestamp` / `timestamp_ntz` | `DATE` / `TIMESTAMP` / `DATETIME` | `DATETIME` and the date/time logical types: decide per type when the adapter is written, else `OtherType` |
+| `binary` | `BYTES` | `BYTES` |
+| `array` / `struct` / `map` | `ARRAY` / `STRUCT` (BigQuery has no map: a repeated `STRUCT<key,value>` stays an array) | `ARRAY` / `ROW` / `MAP` |
+| no neutral type | `JSON`, `GEOGRAPHY`, `INTERVAL`, `TIME`, `RANGE` | `ITERABLE`, custom logical types |
+
+Each adapter documents its own table next to its capability declaration and adds a conformance
+scenario for any type whose mapping is not obvious.
+
+**Events are engine-neutral.** A published event names no engine's concepts: `runId` is the
+engine's own run identifier, and `JobInfo` carries `engine`, `engineVersion` and a free-form
+`engineDetails` map for whatever else the adapter wants to record. An adapter fills those in;
+it does not add engine-named fields to the event schema.
+
+**A sink that needs an engine's storage library lives in that engine's adapter.** The core has
+no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a
+`scheme://` path names its sink with `deadLetter.class`.
+
 ## Stage 4 — the adapter conformance kit
 
 Stage 3 made an adapter state what it does; a statement nobody checks only moves the problem. The
@@ -293,11 +350,12 @@ runs, judged against that adapter's *own declaration*.
 **A scenario** is a contract, a job described in no engine's terms, and a verdict. The job
 (`ScenarioJob`) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 20 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario's schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
-invalid contract, the PASSED/FAILED events published and (from Stage 5) non-determinism in the fingerprint.
+invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5) and
+fail-closed behaviour (below).
 
 **An adapter** implements `ConformanceAdapter`: its `AdapterCapabilities`, and `run(...)`, which
 turns the neutral job into a real job on its engine, runs it through the *real* enforcement path, and
@@ -315,10 +373,19 @@ adapter mixes `AdapterConformanceSpec` into a test, which registers one test per
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |
 
+**Fail-closed has its own job shape.** A `ScenarioJob` with `untranslatableWrite` set is not a
+read-transform-write at all but a data-changing operation the adapter has no translation for; the
+adapter picks its engine's representative (Spark: `TRUNCATE TABLE` on a managed table) and must block
+it as `UNVERIFIABLE_WRITE` rather than let it through unchecked. This is the property that makes
+"supported" safe to rely on, so it is verified, not attested.
+
 An exception out of `run` is a divergence, not a verdict. A capability an adapter claims that no
-scenario is evidence for (`Scenarios.notCovered`, each with a reason - streaming, DML, catalogs, the
-opt-in analyses, the attachment mechanisms) is listed as *unverified*, never counted as passing; the
-kit's own tests fail if a capability is in neither list.
+scenario is evidence for is listed as *unverified*, never counted as passing, and the report says which
+kind of unverified it is: **attested** (`Scenarios.attested`) when no job could check it by its nature
+- how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
+adapter's own tests carry it; or a **gap** (`Scenarios.gaps`) when a job could check it but the kit
+cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit's own tests fail
+if a capability is in neither list or in both.
 
 **The kit is tested against itself.** `ReferenceAdapter` is a complete adapter built on nothing but
 the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
@@ -326,7 +393,7 @@ scenarios are consistent with the SPI before any real engine is involved. Then d
 adapters must be caught: one that claims `check.format` but never checks it fails exactly the format
 scenario; one that lets everything through fails every scenario expecting a rejection; one that
 blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
-none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5).
+none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5, 21 with fail-closed).
 
 **Adding an adapter** is therefore: write its capability declaration, implement `ConformanceAdapter`,
 mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. Where Spark's own
@@ -336,8 +403,11 @@ third place for the difference to hide.
 **Not done in 4, deliberately.** The scenario language has no streaming, row-level DML, catalog or
 checkpoint shapes yet (see `Scenarios.notCovered`); each grows the neutral job description and is its own
 step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
-`ConformanceKitSpec` is the equivalent proof that it fails what it should) and is not published
-anywhere but the local Ivy cache.
+`ConformanceKitSpec` is the equivalent proof that it fails what it should), but it is held to the
+other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
+coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
+`MERGE`/`UPDATE`/`DELETE` job needs a table format that supports it (Delta or Iceberg on Spark),
+which a plain local session does not have.
 
 ## Stage 5 — function canonicalisation
 

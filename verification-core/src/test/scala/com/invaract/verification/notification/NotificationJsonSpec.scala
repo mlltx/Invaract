@@ -66,12 +66,12 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"metadata\": {}"))
   }
 
-  test("toJson for ContractValidationEvent renders applicationId, None as null and Some as a plain value") {
+  test("toJson for ContractValidationEvent renders runId, None as null and Some as a plain value") {
     val withoutAppId = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty)
-    assert(NotificationJson.toJson(withoutAppId).contains("\"applicationId\": null"))
+    assert(NotificationJson.toJson(withoutAppId).contains("\"runId\": null"))
 
-    val withAppId = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty, applicationId = Some("app-123"))
-    assert(NotificationJson.toJson(withAppId).contains("\"applicationId\": \"app-123\""))
+    val withAppId = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 0L, Map.empty, runId = Some("app-123"))
+    assert(NotificationJson.toJson(withAppId).contains("\"runId\": \"app-123\""))
   }
 
   test("toJson for ContractValidationEvent renders fingerprints, None as null and Some via TransformationFingerprint.toMap") {
@@ -196,7 +196,7 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"schema\": []"))
   }
 
-  test("toJson for WriteEvent renders durationMs/rowCount/bytesWritten/fileCount/applicationId") {
+  test("toJson for WriteEvent renders durationMs/rowCount/bytesWritten/fileCount/runId") {
     val withMetrics = WriteEvent(
       contract = None,
       location = "file:/tmp/out.parquet",
@@ -209,14 +209,14 @@ class NotificationJsonSpec extends AnyFunSuite {
       rowCount = Some(5L),
       bytesWritten = Some(1024L),
       fileCount = Some(2L),
-      applicationId = Some("app-123")
+      runId = Some("app-123")
     )
     val json = NotificationJson.toJson(withMetrics)
     assert(json.contains("\"durationMs\": 42"))
     assert(json.contains("\"rowCount\": 5"))
     assert(json.contains("\"bytesWritten\": 1024"))
     assert(json.contains("\"fileCount\": 2"))
-    assert(json.contains("\"applicationId\": \"app-123\""))
+    assert(json.contains("\"runId\": \"app-123\""))
   }
 
   test("toJson for WriteEvent renders default durationMs=0 and None metrics as null, not omitted") {
@@ -226,7 +226,7 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"rowCount\": null"))
     assert(json.contains("\"bytesWritten\": null"))
     assert(json.contains("\"fileCount\": null"))
-    assert(json.contains("\"applicationId\": null"))
+    assert(json.contains("\"runId\": null"))
     assert(json.contains("\"deltaVersion\": null"))
     assert(json.contains("\"icebergSnapshotId\": null"))
     assert(json.contains("\"operation\": null"))
@@ -333,7 +333,7 @@ class NotificationJsonSpec extends AnyFunSuite {
       durationMs = 1234L,
       timestamp = 999L,
       metadata = Map("team" -> "data-platform"),
-      applicationId = Some("app-123")
+      runId = Some("app-123")
     )
     val json = NotificationJson.toJson(summary)
     assert(json.contains("\"eventType\": \"JOB_SUMMARY\""))
@@ -344,14 +344,14 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(json.contains("\"totalViolations\": 4"))
     assert(json.contains("\"durationMs\": 1234"))
     assert(json.contains("\"team\": \"data-platform\""))
-    assert(json.contains("\"applicationId\": \"app-123\""))
+    assert(json.contains("\"runId\": \"app-123\""))
   }
 
-  test("toJson for JobSummaryEvent renders a default (no applicationId) event with null, not omitted") {
+  test("toJson for JobSummaryEvent renders a default (no runId) event with null, not omitted") {
     val summary = JobSummaryEvent(0L, 0L, 0L, 0L, 0L, 0L, Map.empty)
     val json = NotificationJson.toJson(summary)
     assert(json.contains("\"totalWrites\": 0"))
-    assert(json.contains("\"applicationId\": null"))
+    assert(json.contains("\"runId\": null"))
   }
 
   test("toJson for WriteEvent renders deltaVersion/icebergSnapshotId, None as null and Some as a plain value") {
