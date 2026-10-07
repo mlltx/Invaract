@@ -3952,7 +3952,8 @@ Extend verification engine to support multiple execution engines.
   - [x] Stage 2c: neutral package names (`com.invaract.verification`), no forwarding layer
   - [x] Stage 3: per-adapter capability declaration (`invaract-capabilities-<adapter>.yaml`),
         generated docs-site matrix with a drift test, `UNSUPPORTED_CONTRACT_FEATURE` fail-closed
-  - [ ] Stage 4: `adapter-testkit` conformance scenarios
+  - [x] Stage 4: `adapter-testkit` — 18 engine-neutral conformance scenarios judged against each
+        adapter's own capability declaration; a reference adapter on the SPI; Spark passes all
   - [ ] Stage 5: function canonicalisation
 - [ ] Adapter pattern documentation
 

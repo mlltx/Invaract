@@ -30,8 +30,11 @@
 #   verification-core      (needs contract, ir, fingerprint published locally —
 #                            the engine-neutral verification code spark-adapter
 #                            reuses; docs/MULTI_ENGINE_ADAPTERS.md Stage 2)
+#   adapter-testkit        (needs contract, ir, verification-core published
+#                            locally — the engine-neutral conformance scenarios
+#                            spark-adapter's tests run; Stage 4)
 #   spark-adapter          (needs contract, ir, fingerprint, verification-core
-#                            published locally
+#                            and adapter-testkit (tests) published locally
 #                            — not plugin)
 #   runner                 (needs contract, ir, spark-adapter published
 #                            locally, plus plugin's jar directly)
@@ -149,6 +152,10 @@ wait_module fingerprint
 echo ""
 start_module verification-core "compile test assembly publishLocal"
 wait_module verification-core
+
+echo ""
+start_module adapter-testkit "compile test publishLocal"
+wait_module adapter-testkit
 
 echo ""
 start_module spark-adapter "compile test assembly publishLocal"

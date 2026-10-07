@@ -335,6 +335,9 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-hive" % sparkHiveVersion % "test",
   "org.apache.spark" %% "spark-avro" % sparkAvroVersion % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
+  // The adapter conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4): the engine-neutral
+  // scenarios SparkConformanceSpec runs through the real enforcement rule. Test scope only.
+  "com.invaract" %% "invaract-adapter-testkit" % "0.1.0" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",

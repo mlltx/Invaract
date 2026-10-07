@@ -72,7 +72,9 @@ don't present it as something external consumers would bind to.
   checkers, rule/data-quality/role verifiers, the result model, notification
   sinks, location resolution; no Spark dependency, so a second engine's
   adapter depends on this, not on `spark-adapter` — see
-  docs/MULTI_ENGINE_ADAPTERS.md)
+  docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
+  scenarios every adapter's tests run — test-scope infrastructure, not part of any
+  runtime jar)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -85,7 +87,7 @@ don't present it as something external consumers would bind to.
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
   required by Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (7 independent modules `./dev/build` builds, plus
+- **Build System**: sbt (8 independent modules `./dev/build` builds, plus
   the standalone opt-in `notification-kafka` — no aggregating root
   `build.sbt` — see `dev/build`'s comments for the cross-module dependency
   graph)
@@ -392,6 +394,14 @@ check, rule or analysis means a new `Capability`, which forces every adapter to 
 position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
 `verification-core` fails otherwise). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
 
+**Every adapter is checked against its own declaration** by the conformance kit
+(`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
+and each must come out as the adapter's declaration promises (a capability declared
+unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
+is canceled with its note). A new engine-neutral check means a new scenario in
+`Scenarios.scala` (or an entry in `Scenarios.notCovered` saying why not yet) — the kit's own
+tests fail if a capability is in neither. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
 `spark-submit --conf`? If the honest answer is no, the feature isn't done —
@@ -529,6 +539,15 @@ would be.
 │   │                               # listed under spark-adapter/ below that are engine-neutral
 │   │                               # live here (the tree below predates the split).
 │   └── src/main/scala/com/invaract/verification/
+│
+├── adapter-testkit/               # Conformance kit: engine-neutral scenarios + the ScalaTest
+│   │                               # trait an adapter's tests mix in (spark-adapter's are the
+│   │                               # first); test-scope only, never bundled
+│   └── src/main/scala/com/invaract/testkit/
+│       ├── Scenario.scala, Scenarios.scala    # the neutral job description + the catalogue
+│       ├── Conformance.scala                  # judges an adapter against its own declaration
+│       ├── ReferenceAdapter.scala             # a complete adapter on the SPI, no engine
+│       └── AdapterConformanceSpec.scala       # one test per scenario
 │
 ├── spark-adapter/                 # Verification engine: Spark integration
 │   ├── src/main/scala/com/invaract/sparkadapter/

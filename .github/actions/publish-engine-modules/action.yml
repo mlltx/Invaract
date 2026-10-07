@@ -47,7 +47,7 @@ runs:
         # -z / -0 so paths with spaces cannot split; sorted so the hash does not
         # depend on git's listing order. sha256sum prints the file name too, so
         # a rename changes the hash.
-        HASH=$(git ls-files -z contract ir fingerprint verification-core | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)
+        HASH=$(git ls-files -z contract ir fingerprint verification-core adapter-testkit | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)
         echo "hash=$HASH" >> "$GITHUB_OUTPUT"
 
     - name: Restore locally published contract, ir, fingerprint and verification-core
@@ -59,6 +59,7 @@ runs:
           ~/.ivy2/local/com.invaract/invaract-ir_2.12
           ~/.ivy2/local/com.invaract/invaract-fingerprint_2.12
           ~/.ivy2/local/com.invaract/invaract-verification-core_2.12
+          ~/.ivy2/local/com.invaract/invaract-adapter-testkit_2.12
         key: ivy-local-engine-${{ runner.os }}-jdk${{ inputs.java-version }}-${{ steps.sources.outputs.hash }}
 
     - name: Publish contract, ir, fingerprint and verification-core locally (spark-adapter's libraryDependencies)
@@ -70,3 +71,6 @@ runs:
         (cd ir && sbt publishLocal)
         (cd fingerprint && sbt publishLocal)
         (cd verification-core && sbt publishLocal)
+        # The adapter conformance kit (a test-scope dependency of spark-adapter; it needs
+        # verification-core published first).
+        (cd adapter-testkit && sbt publishLocal)

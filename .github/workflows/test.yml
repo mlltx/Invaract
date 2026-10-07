@@ -1395,6 +1395,12 @@ jobs:
         shell: bash
         run: |
           for module in contract ir fingerprint verification-core spark-adapter; do
+            if [ "$module" = "spark-adapter" ]; then
+              # spark-adapter's tests depend on the conformance kit, which depends on the
+              # verification-core build published just above.
+              echo "=== adapter-testkit: publishing PR head's own build (spark-adapter's test dependency) ==="
+              (cd adapter-testkit && sbt publishLocal)
+            fi
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
               # Still publish the PR head's own build when something downstream
@@ -1504,6 +1510,9 @@ jobs:
 
       - name: Publish verification-core locally (spark-adapter's libraryDependency)
         run: cd verification-core && sbt publishLocal
+
+      - name: Publish adapter-testkit locally (spark-adapter's test dependency)
+        run: cd adapter-testkit && sbt publishLocal
 
       - name: Coverage gate each module
         shell: bash
