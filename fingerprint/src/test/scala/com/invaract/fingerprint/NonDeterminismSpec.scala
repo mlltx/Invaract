@@ -114,4 +114,28 @@ class NonDeterminismSpec extends AnyFunSuite {
   test("an empty StructConstruct classifies as deterministic") {
     assert(NonDeterminism.classify(StructConstruct(Nil)) == Some(false))
   }
+
+  test("every function in ir.FunctionCatalog is flagged non-deterministic, in any case - the catalog is the one source of truth") {
+    com.invaract.ir.FunctionCatalog.all.foreach { f =>
+      assert(NonDeterminism.classify(Function(f.name, Nil)) == Some(true), f.name)
+      assert(NonDeterminism.classify(Function(f.name.toLowerCase, Nil)) == Some(true), f.name.toLowerCase)
+    }
+  }
+
+  test("a function the catalog does not know is not flagged - mapping an engine's names onto the catalog is the adapter's job") {
+    assert(NonDeterminism.classify(Function("GENERATE_UUID", Nil)) == Some(false))
+    assert(NonDeterminism.classify(Function("random", Nil)) == Some(false))
+  }
+
+  test("the aliased spelling classifies like the canonical one: the same logic on two engines is flagged the same") {
+    val spark = com.invaract.ir.FunctionAliases("spark", Map("random" -> "RAND"))
+    val bigQuery = com.invaract.ir.FunctionAliases("bigquery", Map("GENERATE_UUID" -> "UUID"))
+    assert(NonDeterminism.classify(Function(spark.canonicalName("random"), Nil)) == Some(true))
+    assert(NonDeterminism.classify(Function(bigQuery.canonicalName("GENERATE_UUID"), Nil)) == Some(true))
+  }
+
+  test("a flag anywhere in an expression marks the whole expression, and the legacy name set mirrors the catalog") {
+    assert(NonDeterminism.classify(Arithmetic("+", List(ColumnReference(ColumnRef("a")), Function("UUID", Nil)))) == Some(true))
+    assert(NonDeterminism.knownNonDeterministicFunctionNames == com.invaract.ir.FunctionCatalog.all.map(_.name.toLowerCase).toSet)
+  }
 }

@@ -62,8 +62,8 @@ module move in Stage 2.
 | 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (`ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
 | 2c | Neutral package names: `verification-core` is `com.invaract.verification` (`.notification`, `.location`), `notification-kafka` follows; no forwarding classes | Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released | In review |
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
-| 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes or declares N/A (with a reason) on the same scenarios | Not started |
-| 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic fingerprints the same, and `GENERATE_UUID()` is not "deterministic" | Not started |
+| 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour | In review |
+| 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic is classified the same on every engine, and `GENERATE_UUID()` is not "deterministic" | In review |
 | — | BigQuery / Beam adapters | The goal; deliberately last | Not started — needs a go-ahead after Stage 5 |
 
 ## Stage 1 — the logical type model
@@ -221,7 +221,7 @@ Leak #8 was that nothing recorded what an adapter does *not* check. Spark's gaps
 per connector in prose; a second engine would have had no place to say "no catalogs, no DML rules,
 no lineage boundaries" at all, and a contract author would find out by a bad write getting through.
 
-**The vocabulary** (`Capability`, `verification-core`) is a fixed list of 29 capabilities in six
+**The vocabulary** (`Capability`, `verification-core`) is a fixed list of capabilities (29 when this stage landed; 30 after Stage 5) in six
 groups — what an adapter *recognizes* (batch/streaming writes, DML, state changes), what it *checks*
 (location, format, save mode, catalog, schema, nested types, ...), the *rules* it evaluates, the
 *analyses* it can run, *lineage*, and the *fingerprint*. Each carries an `enforcesContract` flag:
@@ -283,3 +283,108 @@ Members the adapter needs from the core that were `private[sparkadapter]` are
 `private[invaract]` (the two modules now sit in different packages). `spark-adapter`'s MiMa
 filters record the move; the one signature of this module's own surface that changes is
 `ContractEnforcementRule.forContract`.
+
+## Stage 4 — the adapter conformance kit
+
+Stage 3 made an adapter state what it does; a statement nobody checks only moves the problem. The
+`adapter-testkit` module is the check: one catalogue of engine-neutral scenarios that every adapter
+runs, judged against that adapter's *own declaration*.
+
+**A scenario** is a contract, a job described in no engine's terms, and a verdict. The job
+(`ScenarioJob`) is: read one or two inputs (two are inner-joined), optionally filter a column,
+project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
+save mode. That is deliberately small - just enough to build every shape the 20 scenarios need on any
+engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
+the scenario's schema. The scenarios cover location, schema (presence, type, nullability, undeclared
+columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
+invalid contract, the PASSED/FAILED events published and (from Stage 5) non-determinism in the fingerprint.
+
+**An adapter** implements `ConformanceAdapter`: its `AdapterCapabilities`, and `run(...)`, which
+turns the neutral job into a real job on its engine, runs it through the *real* enforcement path, and
+reports `Passed` or `Rejected(violation types)` plus the validation statuses it published. Spark's
+`SparkConformanceAdapter` builds a Spark job on a local session and runs it through
+`ContractEnforcementRule.forContract`, the builder `InvaractSparkSessionExtension` registers. The
+adapter mixes `AdapterConformanceSpec` into a test, which registers one test per scenario.
+
+**What an adapter is held to** follows from its declaration, not from the neutral verdict alone:
+
+| The adapter declares... | The scenario's expected result |
+|---|---|
+| everything the scenario needs `supported` / `partial` | the neutral verdict, exactly (the same violation types) |
+| a capability the scenario's contract relies on `unsupported` (and it `enforcesContract`) | a rejection including `UNSUPPORTED_CONTRACT_FEATURE` - a quiet pass is a failure |
+| a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
+| `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |
+
+An exception out of `run` is a divergence, not a verdict. A capability an adapter claims that no
+scenario is evidence for (`Scenarios.notCovered`, each with a reason - streaming, DML, catalogs, the
+opt-in analyses, the attachment mechanisms) is listed as *unverified*, never counted as passing; the
+kit's own tests fail if a capability is in neither list.
+
+**The kit is tested against itself.** `ReferenceAdapter` is a complete adapter built on nothing but
+the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
+scenarios are consistent with the SPI before any real engine is involved. Then deliberately dishonest
+adapters must be caught: one that claims `check.format` but never checks it fails exactly the format
+scenario; one that lets everything through fails every scenario expecting a rejection; one that
+blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
+none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5).
+
+**Adding an adapter** is therefore: write its capability declaration, implement `ConformanceAdapter`,
+mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. Where Spark's own
+behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
+third place for the difference to hide.
+
+**Not done in 4, deliberately.** The scenario language has no streaming, row-level DML, catalog or
+checkpoint shapes yet (see `Scenarios.notCovered`); each grows the neutral job description and is its own
+step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
+`ConformanceKitSpec` is the equivalent proof that it fails what it should) and is not published
+anywhere but the local Ivy cache.
+
+## Stage 5 — function canonicalisation
+
+Leak #4: an IR `Function` carried whatever name its engine's translator wrote - Spark's `prettyName`
+- and `fingerprint`'s non-determinism classifier was a hand-kept list of *Spark* names
+(`spark_partition_id`, `input_file_name`, ...). On BigQuery `GENERATE_UUID()` would have been
+classified deterministic: a silently wrong fingerprint annotation, and the same logic on two engines
+would have been described differently.
+
+**`ir.FunctionCatalog`** is the one engine-independent place that says what a function *is*: twelve
+canonical names (`UUID`, `RAND`, `RANDN`, `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `UNIX_TIMESTAMP`,
+`ROW_ID`, `SOURCE_FILE_NAME`, `SOURCE_BLOCK_START`/`_LENGTH`, `PARTITION_ID`, `SHUFFLE`) with two
+properties: non-deterministic, and seed-bearing (a call carries an analyzer-injected seed the
+fingerprint must leave out). A function the catalog does not list is not flagged - it lists what is
+*known* - so keeping an engine's table complete is the adapter's job, and is checked rather than
+trusted (below).
+
+**`ir.FunctionAliases`** is an engine's mapping from its own spellings onto the catalog. An adapter
+applies it where it writes a `Function` into the IR (Spark: `SparkPlanAdapter`, through
+`SparkFunctionAliases`: `random` -> `RAND`, `now` -> `CURRENT_TIMESTAMP`, `curdate` ->
+`CURRENT_DATE`, `monotonically_increasing_id` -> `ROW_ID`, and so on). A name with no alias passes
+through upper-cased; an alias whose target is not a catalog name is rejected at construction, since
+a typo there would leave a non-deterministic function unflagged. `fingerprint` now asks the catalog
+(`NonDeterminism`, and `Canonicalizer`'s seed exclusion) and no longer lists names itself.
+
+**Checked, not trusted.** `SparkFunctionAliasesSpec` sweeps Spark's own function registry: for every
+function that can be called with no arguments, anything Catalyst reports non-deterministic must come
+out of translation flagged. The first run found two functions the hand-kept list had missed
+(`input_file_block_start`, `input_file_block_length`); they are catalog entries now. The sweep is
+one-directional on purpose: Spark treats the clock functions as deterministic within a query, but
+they differ between runs, which is what the catalog records.
+
+**A new capability and two scenarios.** `analysis.functionCatalog` joins the vocabulary (so every
+adapter had to take a position; Spark and the reference adapter declare it supported), and the
+conformance kit gains two scenarios: a job of deterministic columns reports nothing non-deterministic,
+and a job with an engine-generated unique id (`ColumnSource.UniqueId` - Spark's `uuid()`, the reference
+adapter's `UUID`, what BigQuery would spell `GENERATE_UUID()`) reports exactly that column. A kit test
+shows an adapter whose names never reach the catalog is caught. `analysis.fingerprint` moves from
+"claimed but unverified" to covered.
+
+**Versions.** `ir` 0.5.0 -> 0.6.0 and `fingerprint` 0.3.0 -> 0.4.0 (and `verification-core`,
+`adapter-testkit`, whose POMs pin them) for the Ivy-coordinate reason described in each `build.sbt`.
+`FingerprintHasher.CurrentVersion` went 2 -> 3: an aliased function now hashes under its canonical
+name, so fingerprints of jobs calling `random()` or `now()` differ from before.
+
+**Not done in 5, deliberately.** No BigQuery or Beam alias table exists - the tests use a BigQuery-shaped
+one as an example of what such an adapter declares. Functions that depend on their arguments to be
+non-deterministic (`unix_timestamp(x)` is not; `unix_timestamp()` is) are classified by name alone, as
+before. The catalog says nothing yet about other properties an engine's functions have (null
+handling, monotonicity); each would be another field on `CanonicalFunction`.

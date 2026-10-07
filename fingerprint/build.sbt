@@ -1,5 +1,5 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -38,6 +38,11 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
 )
 
+// 0.3.0 -> 0.4.0 (Stage 5, docs/MULTI_ENGINE_ADAPTERS.md): non-determinism and seed handling now come from
+// `ir.FunctionCatalog`, and the `invaract-ir` pin below moved 0.5.0 -> 0.6.0 - bumped for the same
+// Ivy-coordinate reason as the 0.2.0 -> 0.3.0 bump described next. The public API is unchanged
+// (MiMa clean); fingerprints of a job calling an aliased function (`random()`, `now()`) change.
+//
 // The 0.2.0 -> 0.3.0 bump (this file's version above): NOT a MiMa break -
 // this module's own compiled classes/public API are byte-for-byte
 // unchanged (sbt mimaReportBinaryIssues stays clean either way). The real,
@@ -67,7 +72,7 @@ mimaPreviousArtifacts := Set(
 versionScheme := Some("early-semver")
 
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.5.0",
+  "com.invaract" %% "invaract-ir" % "0.6.0",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test"
 )
@@ -94,7 +99,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.3.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.4.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the

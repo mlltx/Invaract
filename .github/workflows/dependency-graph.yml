@@ -83,6 +83,7 @@ jobs:
           fi
           if [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
             cd verification-core && sbt -batch publishLocal && cd ..
+            cd adapter-testkit && sbt -batch publishLocal && cd ..
           fi
           if [ "${{ matrix.module }}" = "runner" ]; then
             cd spark-adapter && sbt -batch publishLocal && cd ..

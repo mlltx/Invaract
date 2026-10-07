@@ -83,6 +83,11 @@ jobs:
       - name: Build verification-core
         run: cd verification-core && sbt -batch clean compile test assembly publishLocal
 
+      # The conformance kit is a test-scope dependency of spark-adapter (Stage 4); it is built
+      # and published locally only so spark-adapter's tests resolve it, not released.
+      - name: Build adapter-testkit
+        run: cd adapter-testkit && sbt -batch clean compile test publishLocal
+
       - name: Build spark-adapter
         run: cd spark-adapter && sbt -batch clean compile test assembly
 

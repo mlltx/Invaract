@@ -29,29 +29,13 @@ import com.invaract.ir._
   */
 object NonDeterminism {
 
-  /** Function names (lower-cased) this module treats as producing a
-    * different result on every evaluation. Deliberately small and
-    * maintained by hand, not derived from Catalyst's own `deterministic`
-    * flag (the IR carries no such field today - see the design doc's own
-    * named limitation). Growing this list is a canonicalisation-format-
-    * relevant change in the sense docs/SEMANTIC_LINEAGE_FINGERPRINTING.md
-    * §10 describes (it changes reported metadata, never hash bytes), so a
-    * real fingerprint-version bump should still accompany a real addition
-    * here once this module is versioned for real.
+  /** The canonical non-deterministic function names, lower-cased - kept for source compatibility;
+    * the single source of truth is `ir.FunctionCatalog` (docs/MULTI_ENGINE_ADAPTERS.md, Stage 5),
+    * which an adapter feeds by mapping its engine's own function names onto the catalog when it
+    * translates. Before that, this was a hand-kept list of Spark's names, so the same logic on
+    * another engine would have been silently classified deterministic.
     */
-  val knownNonDeterministicFunctionNames: Set[String] = Set(
-    "rand",
-    "random",
-    "randn",
-    "uuid",
-    "current_timestamp",
-    "current_date",
-    "now",
-    "unix_timestamp",
-    "monotonically_increasing_id",
-    "input_file_name",
-    "spark_partition_id"
-  )
+  val knownNonDeterministicFunctionNames: Set[String] = FunctionCatalog.nonDeterministicNames.map(_.toLowerCase)
 
   def classify(expr: Expr): Option[Boolean] = expr match {
     case ColumnReference(_) => Some(false)
@@ -65,7 +49,7 @@ object NonDeterminism {
       val branchResults = branches.flatMap { case (c, v) => List(classify(c), classify(v)) }
       combine(branchResults ++ elseValue.map(classify).toList)
     case Function(name, args) =>
-      val own: Option[Boolean] = Some(knownNonDeterministicFunctionNames.contains(name.toLowerCase))
+      val own: Option[Boolean] = Some(FunctionCatalog.isNonDeterministic(name))
       combine(own :: args.map(classify))
     case UDF(_, _, _) =>
       // Opaque unconditionally, regardless of its arguments' own

@@ -48,6 +48,8 @@ capabilities:
     status: supported
   analysis.fingerprint:
     status: supported
+  analysis.functionCatalog:
+    status: supported
   analysis.sensitivityPropagation:
     status: supported
   lineage.columnLevel:
