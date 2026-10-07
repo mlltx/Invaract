@@ -809,7 +809,7 @@ If `./dev/test` fails:
 - `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.6.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.4.0.jar`
-- `verification-core/target/scala-2.12/invaract-verification-core-0.2.0.jar` —
+- `verification-core/target/scala-2.12/invaract-verification-core-0.3.0.jar` —
   the engine-neutral verification code; `spark-adapter`'s fat jar bundles it
   (same `sbt-assembly` dependency bundling as `fingerprint`), so a consumer
   installing only the spark-adapter jar needs nothing extra
@@ -979,6 +979,14 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   (blocking at each module's `break` threshold), plus the incremental
   changed-files check on PRs (70% bar) — see "Mutation Testing
   Requirement" above
+  The whole-module runs (every `ir`/`fingerprint`/`verification-core`
+  file, and all `spark-adapter` shards) execute on pushes to `main`/
+  `develop`/`feature/**` only; a PR push runs just the incremental
+  changed-files check, so a whole-module regression is caught on the merge
+  commit's run, not before it
+- **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
+  run on a PR — only when `spark-adapter/`, `verification-core/` or
+  `.github/workflows/test.yml` changed; pushes always run them
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

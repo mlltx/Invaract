@@ -21,7 +21,15 @@ name := "invaract-verification-core"
 // disclosed gap `fingerprint` has - see CLAUDE.md "What's the product"):
 // `spark-adapter`'s published POM depends on it, so that follow-up has to
 // land before the next Maven Central release.
-ThisBuild / version := "0.2.0"
+// 0.2.0 (main): Stage 2c moved every class to `com.invaract.verification`. The version
+// has to change with the package: CI's api-compatibility job publishes the
+// base ref's modules to the local Ivy cache by coordinate, and the base
+// ref's spark-adapter (still importing `com.invaract.sparkadapter.*` from
+// the core) must resolve the OLD core, not this one, under that coordinate.
+// 0.3.0: Stages 4-5 (the adapter-testkit's SPI additions and the function
+// catalog's capability) change this module again, so main's 0.2.0 stays the
+// base ref's coordinate and this build is a new one.
+ThisBuild / version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -30,7 +38,7 @@ organization := "com.invaract"
 // that does not exist at the base commit). Once a version is released, point
 // this at it the way fingerprint/build.sbt does.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.1.0")
+  "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
 )
 
 import com.typesafe.tools.mima.core._
@@ -69,7 +77,7 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
-assembly / assemblyJarName := "invaract-verification-core-0.2.0.jar"
+assembly / assemblyJarName := "invaract-verification-core-0.3.0.jar"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

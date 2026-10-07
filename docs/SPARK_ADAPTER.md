@@ -3069,6 +3069,14 @@ overhead. The two levers above reduced wasted time around that core cost
 
 #### Sharding `spark-adapter`'s whole-module run
 
+> **When the shards run.** The sharded whole-module job runs on pushes to
+> `main`/`develop`/`feature/**`, not on pull-request pushes: a PR is held to
+> the 70% bar on the files it changed by the incremental job, and the
+> merge commit's push run re-checks the whole module against its `break`
+> threshold. (`ir`, `fingerprint` and `verification-core` follow the same
+> rule — their whole-module step is skipped on PRs; their incremental step
+> still runs.)
+
 The bottleneck named above was addressed directly by splitting
 `mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to `verification-core`, 8 now — see "Runner memory and runner loss" below)
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
