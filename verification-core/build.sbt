@@ -21,7 +21,12 @@ name := "invaract-verification-core"
 // disclosed gap `fingerprint` has - see CLAUDE.md "What's the product"):
 // `spark-adapter`'s published POM depends on it, so that follow-up has to
 // land before the next Maven Central release.
-ThisBuild / version := "0.1.0"
+// 0.2.0: Stage 2c moved every class to `com.invaract.verification`. The version
+// has to change with the package: CI's api-compatibility job publishes the
+// base ref's modules to the local Ivy cache by coordinate, and the base
+// ref's spark-adapter (still importing `com.invaract.sparkadapter.*` from
+// the core) must resolve the OLD core, not this one, under that coordinate.
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -69,7 +74,7 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
-assembly / assemblyJarName := "invaract-verification-core-0.1.0.jar"
+assembly / assemblyJarName := "invaract-verification-core-0.2.0.jar"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

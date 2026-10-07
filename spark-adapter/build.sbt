@@ -958,7 +958,7 @@ libraryDependencies ++= Seq(
   // The engine-neutral verification core (this module's own former
   // checkers/result model/notification/location code) - same real,
   // Maven-resolvable-dependency reasoning as the three above.
-  "com.invaract" %% "invaract-verification-core" % "0.1.0"
+  "com.invaract" %% "invaract-verification-core" % "0.2.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.11.0.jar"
