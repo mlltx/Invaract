@@ -289,7 +289,7 @@ private[invaract] object StructuralVerifier {
   // match a traced ColumnRef's qualifier (a Read's actual reported
   // location) against a contract input's declared, portable location -
   // the same normalized-suffix rule this method already documents, not a
-  // second copy of it (mirrors why normalizeSparkLocation below already
+  // second copy of it (mirrors why normalizeLocation below already
   // has this same widened visibility, for ContractInference's reuse).
   //
   // A contract's declared location can come from anywhere (a config file
@@ -322,6 +322,6 @@ private[invaract] object StructuralVerifier {
     * way by a real test failing this way before `ContractInference` was
     * fixed to call this instead of its own separate copy.
     */
-  private[invaract] def normalizeSparkLocation(actual: String): String =
+  private[invaract] def normalizeLocation(actual: String): String =
     LocationMatching.normalizeActual(actual)
 }

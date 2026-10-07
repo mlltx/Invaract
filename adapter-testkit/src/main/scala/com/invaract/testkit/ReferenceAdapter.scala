@@ -23,6 +23,13 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
   override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
     val sink = new RecordingSink
     try {
+      if (job.untranslatableWrite)
+        VerificationPipeline.rejectUnverifiableWrite(
+          contract,
+          "ReferenceTruncate",
+          com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
+          Some(sink)
+        )
       VerificationPipeline.verifyWrite(
         contract,
         CheckedWrite(

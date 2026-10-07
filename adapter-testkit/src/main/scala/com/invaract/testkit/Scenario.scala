@@ -48,13 +48,20 @@ final case class JoinOn(leftColumn: String, rightColumn: String)
 /** A job described in no engine's terms: read one or two inputs (two are inner-joined), optionally
   * keep the rows where a column of the first input is greater than zero, project `columns`, write
   * `output`. Each adapter turns this into its own engine's real job and runs it under enforcement.
+  *
+  * With `untranslatableWrite` set the job is not that read-transform-write at all: it is a
+  * data-changing operation on `output` that looks like a write but that the adapter has no
+  * translation for, and an adapter must refuse it (`UNVERIFIABLE_WRITE`) rather than let it through
+  * unchecked. The adapter picks its own engine's representative (Spark: `TRUNCATE TABLE`); the
+  * inputs and columns are not used.
   */
 final case class ScenarioJob(
     inputs: List[ScenarioInput],
     columns: List[OutColumn],
     output: ScenarioOutput,
     join: Option[JoinOn] = None,
-    filterColumn: Option[String] = None
+    filterColumn: Option[String] = None,
+    untranslatableWrite: Boolean = false
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
   require(inputs.size == 1 || join.isDefined, "a two-input job must say how its inputs are joined")

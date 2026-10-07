@@ -606,7 +606,7 @@ jobs:
           - name: shard-5
             files: "src/main/scala/com/invaract/sparkadapter/CatalogIdentitySupport.scala,src/main/scala/com/invaract/sparkadapter/SparkAdapterListener.scala,src/main/scala/com/invaract/sparkadapter/SparkSchemas.scala,src/main/scala/com/invaract/sparkadapter/SparkConfigSource.scala,src/main/scala/com/invaract/sparkadapter/SparkCapabilities.scala"
           - name: shard-6
-            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/SparkFunctionAliases.scala"
+            files: "src/main/scala/com/invaract/sparkadapter/FailClosedCommands.scala,src/main/scala/com/invaract/sparkadapter/SparkFunctionAliases.scala,src/main/scala/com/invaract/sparkadapter/notification/HadoopFsNotificationSink.scala"
           - name: shard-8
             files: "src/main/scala/com/invaract/sparkadapter/RowMutationSupport.scala"
           - name: shard-9
@@ -1445,13 +1445,10 @@ jobs:
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          for module in contract ir fingerprint verification-core spark-adapter; do
-            if [ "$module" = "spark-adapter" ]; then
-              # spark-adapter's tests depend on the conformance kit, which depends on the
-              # verification-core build published just above.
-              echo "=== adapter-testkit: publishing PR head's own build (spark-adapter's test dependency) ==="
-              (cd adapter-testkit && sbt publishLocal)
-            fi
+          # adapter-testkit sits before spark-adapter: spark-adapter's tests depend on it, so the base
+          # ref's kit (the coordinate base-ref/spark-adapter resolves) must be published before
+          # base-ref/spark-adapter is, and the PR head's kit before head's spark-adapter is compiled.
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
             if [ ! -d "base-ref/$module" ]; then
               echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
               # Still publish the PR head's own build when something downstream
@@ -1466,7 +1463,8 @@ jobs:
               continue
             fi
 
-            if [ "$module" != "spark-adapter" ]; then
+            if [ "$module" != "spark-adapter" ] && [ "$module" != "adapter-testkit" ]; then
+              # (adapter-testkit has no assembly: it is never bundled into a jar.)
               # base-ref is checked out at the PR's base commit, which
               # predates this fix - base-ref/spark-adapter's build.sbt still
               # uses the OLD unmanagedJars, needing base-ref/contract's and
@@ -1568,7 +1566,7 @@ jobs:
       - name: Coverage gate each module
         shell: bash
         run: |
-          for module in contract ir fingerprint verification-core spark-adapter; do
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
             echo "=== $module: coverage test + report (coverageFailOnMinimum enforces this module's own thresholds) ==="
             (cd "$module" && sbt "coverage; test; coverageReport")
           done
@@ -1589,6 +1587,11 @@ jobs:
   sbom:
     name: Generate SBOMs
     runs-on: ubuntu-latest
+    # Push events only (main, develop, feature/**): the SBOM is an uploaded artifact that nothing
+    # in a PR consumes, and generating it rebuilds every module - a full build's worth of runner
+    # time on every PR push for no check. It still runs, and still gates `summary`, on the push
+    # that follows a merge.
+    if: github.event_name != 'pull_request'
     # Downstream transparency, not vulnerability detection (that's the
     # dependency-graph.yml workflow, which feeds Dependabot). This produces
     # a CycloneDX SBOM per publishable artifact so users can run their own

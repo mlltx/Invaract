@@ -34,6 +34,28 @@ class LocationMatchingSpec extends AnyFunSuite {
     assert(!LocationMatching.matches("/data/out", "s3://b/data/out"))
   }
 
+  test("canonical form: an absolute declared location matches only itself, a relative one matches any location ending in it") {
+    // absolute: exact only, so it pins one tenant's data
+    assert(LocationMatching.matches("/data/orders", "/data/orders"))
+    assert(!LocationMatching.matches("/data/orders", "/other-tenant/data/orders"))
+    assert(LocationMatching.matches("gs://bucket/orders", "gs://bucket/orders"))
+    assert(!LocationMatching.matches("gs://bucket/orders", "gs://other/bucket/orders"))
+    // relative: a suffix on a boundary, so it need not know a deployment's root
+    assert(LocationMatching.matches("orders", "/other-tenant/data/orders"))
+    assert(LocationMatching.matches("data/orders", "/other-tenant/data/orders"))
+  }
+
+  test("canonical form: an engine whose names are not paths converts them first - a dotted table id does not match until it does") {
+    // BigQuery-style `project.dataset.table` has no `/` boundary, so the raw id matches nothing but itself
+    assert(!LocationMatching.matches("dataset/table", "project.dataset.table"))
+    // converted to the canonical `/`-separated form, the same contract matches
+    val canonical = "project.dataset.table".replace('.', '/')
+    assert(LocationMatching.matches("dataset/table", canonical))
+    assert(LocationMatching.matches("table", canonical))
+    assert(LocationMatching.matches("project/dataset/table", canonical))
+    assert(!LocationMatching.matches("other/table", canonical))
+  }
+
   test("matches: the file: scheme is only stripped from the actual side, not the declared one") {
     assert(!LocationMatching.matches("file:/data/out", "/data/out"))
     assert(LocationMatching.normalizeActual("file:/data/out") == "/data/out")
