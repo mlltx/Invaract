@@ -37,6 +37,18 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.1.0")
 )
 
+import com.typesafe.tools.mima.core._
+
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 3): `VerificationPipeline.verifyWrite`
+// gained a sixth parameter, the adapter's `AdapterCapabilities`, which the pipeline now checks the
+// contract against (UNSUPPORTED_CONTRACT_FEATURE). A parameter added to a method changes its
+// compiled signature even with a default. Nothing outside this repository calls the method yet
+// (the module is unreleased), so there is no overload kept for the old shape. MiMa's own
+// suggested filter, verbatim; inert once the base branch carries this change.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationPipeline.verifyWrite")
+)
+
 versionScheme := Some("early-semver")
 
 val hadoopVersion = "3.3.4"
