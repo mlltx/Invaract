@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
-import com.invaract.ir.{Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
+import com.invaract.ir.{FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, VerificationOptions, VerificationPipeline}
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
@@ -38,9 +38,9 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
         None,
         Some(capabilities)
       )
-      ScenarioOutcome.Passed(sink.statuses)
+      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
     } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses)
+      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
     }
   }
 }
@@ -70,6 +70,7 @@ object ReferenceAdapter {
           case ColumnSource.FromInput(i, col)    => ref(job, i, col)
           case ColumnSource.CastInput(i, col, t) => Cast(ref(job, i, col), t.typeName)
           case ColumnSource.NonNullLong(v)       => Literal(v, "long")
+          case ColumnSource.UniqueId             => com.invaract.ir.Function(FunctionCatalog.Uuid.name, Nil)
         }
       )
     }
@@ -84,6 +85,7 @@ object ReferenceAdapter {
         case ColumnSource.FromInput(i, col)    => source(i, col).copy(name = c.name)
         case ColumnSource.CastInput(i, col, t) => LogicalField(c.name, t, source(i, col).nullable)
         case ColumnSource.NonNullLong(_)       => LogicalField(c.name, LogicalType.LongType, nullable = false)
+        case ColumnSource.UniqueId             => LogicalField(c.name, LogicalType.StringType, nullable = false)
       }
     })
   }

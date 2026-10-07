@@ -29,12 +29,15 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(Scenarios.notCovered.values.forall(_.trim.nonEmpty))
   }
 
+  // Capabilities no contract "relies on" (they describe what the engine reports, not what a contract asks for).
+  private val notDerivable = Set(Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog)
+
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
       val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet
       s.focus.foreach { c =>
         assert(
-          relied.contains(c) || s.operations.contains(c) || c == Capability.ReportingNotifications,
+          relied.contains(c) || s.operations.contains(c) || notDerivable.contains(c),
           s"scenario '${s.id}' names '${c.id}' as its focus, but nothing in it relies on that capability"
         )
       }
@@ -87,7 +90,7 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("an adapter that lets everything through is caught on every scenario that expects a rejection") {
-    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses))
+    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns))
     val expectingReject = Scenarios.all.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
     assert(failingIds(permissive) == expectingReject)
   }
@@ -117,6 +120,22 @@ class ConformanceKitSpec extends AnyFunSuite {
     val report = Conformance.evaluate(crashing)
     assert(report.failures.size == Scenarios.all.size)
     assert(report.failures.forall(_.verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("engine exploded")))
+  }
+
+  test("an adapter whose engine function names never reach the catalog is caught: its generated id is not reported non-deterministic") {
+    val forgetsAliases = new Tampered(reference, outcomeOf = {
+      case p: ScenarioOutcome.Passed   => p.copy(nonDeterministicColumns = Set.empty)
+      case r: ScenarioOutcome.Rejected => r.copy(nonDeterministicColumns = Set.empty)
+    })
+    assert(failingIds(forgetsAliases) == Set("fingerprint-flags-a-generated-id"))
+  }
+
+  test("an adapter that flags everything non-deterministic is caught on the deterministic job too") {
+    val overeager = new Tampered(reference, outcomeOf = {
+      case p: ScenarioOutcome.Passed   => p.copy(nonDeterministicColumns = Set("id", "total", "token"))
+      case r: ScenarioOutcome.Rejected => r
+    })
+    assert(failingIds(overeager) == Set("fingerprint-flags-nothing-for-a-deterministic-job", "fingerprint-flags-a-generated-id"))
   }
 
   // --- honest declarations are held to what they say -----------------------------------------------
@@ -174,7 +193,7 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {
-    val claims = declaring(Map("analysis.fingerprint" -> (("supported", None))))
-    assert(Conformance.unverifiedClaims(claims) == List(Capability.AnalysisFingerprint))
+    val claims = declaring(Map("analysis.sensitivityPropagation" -> (("supported", None))))
+    assert(Conformance.unverifiedClaims(claims) == List(Capability.AnalysisSensitivityPropagation))
   }
 }

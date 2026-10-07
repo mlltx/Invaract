@@ -9,7 +9,7 @@ import com.invaract.verification.{AdapterCapabilities, ContractViolationExceptio
 
 import org.apache.spark.sql.{Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.{expr, lit}
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 import java.nio.file.{Files, Path}
@@ -67,12 +67,13 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
           case ColumnSource.FromInput(i, col)    => frames(i)(col)
           case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
           case ColumnSource.NonNullLong(v)       => lit(v)
+          case ColumnSource.UniqueId             => expr("uuid()")
         }).as(c.name)
       }
       filtered.select(columns: _*).write.format(job.output.format).mode(job.output.saveMode).save(path(job.output.location))
-      ScenarioOutcome.Passed(sink.statuses)
+      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
     } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses)
+      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
     } finally active = None
   }
 

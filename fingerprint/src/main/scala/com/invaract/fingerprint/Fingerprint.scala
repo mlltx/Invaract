@@ -29,7 +29,7 @@ object FingerprintHasher {
   /** The canonicalisation/encoding ruleset version this object's `hash`
     * implements. See `Fingerprint`'s own doc for what bumping it means.
     */
-  val CurrentVersion: Int = 2
+  val CurrentVersion: Int = 3
 
   val Algorithm: String = "SHA-256"
 

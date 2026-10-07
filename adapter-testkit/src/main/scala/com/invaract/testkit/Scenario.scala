@@ -30,6 +30,12 @@ object ColumnSource {
   /** The same column cast to `to`. */
   final case class CastInput(input: Int, column: String, to: LogicalType) extends ColumnSource
 
+  /** A value the engine generates afresh for every row (a random unique id) - typed `string`, never null. A
+    * conforming adapter writes it with its own engine's function (`uuid()`, `GENERATE_UUID()`); what the
+    * scenarios check is that the engine's name for it is recognized as non-deterministic.
+    */
+  case object UniqueId extends ColumnSource
+
   /** A constant integer, typed `long` and never null (the way to get a guaranteed non-null column). */
   final case class NonNullLong(value: Long) extends ColumnSource
 }
@@ -60,15 +66,18 @@ final case class ScenarioJob(
   */
 sealed trait ScenarioOutcome {
   def statuses: List[String]
+
+  /** The output columns the adapter's fingerprint reported non-deterministic (empty when it computed none). */
+  def nonDeterministicColumns: Set[String]
 }
 
 object ScenarioOutcome {
 
   /** The write was allowed to proceed. */
-  final case class Passed(statuses: List[String]) extends ScenarioOutcome
+  final case class Passed(statuses: List[String], nonDeterministicColumns: Set[String] = Set.empty) extends ScenarioOutcome
 
   /** The write was blocked; `violationTypes` are the distinct `ViolationType`s reported. */
-  final case class Rejected(violationTypes: Set[String], statuses: List[String]) extends ScenarioOutcome
+  final case class Rejected(violationTypes: Set[String], statuses: List[String], nonDeterministicColumns: Set[String] = Set.empty) extends ScenarioOutcome
 }
 
 /** What a conforming adapter must do with a scenario. */
@@ -85,6 +94,9 @@ object Expectation {
   *
   * @param focus the capabilities this scenario is the evidence for: an adapter that declares one of
   *   these `supported` or `partial` is claiming this scenario passes on it.
+  * @param expectNonDeterministic when set, exactly these output columns must be reported non-deterministic by the
+  *   adapter's fingerprint (the scenario turns `computeFingerprint` on) - the check that an engine's own
+  *   function names reach the shared catalog.
   * @param operations what the job itself needs the engine to do (read, write) - an adapter that
   *   cannot do those cannot run the scenario at all.
   */
@@ -96,5 +108,6 @@ final case class Scenario(
     job: ScenarioJob,
     options: VerificationOptions,
     expect: Expectation,
+    expectNonDeterministic: Option[Set[String]] = None,
     operations: Set[Capability] = Set(Capability.ReadBatch, Capability.WriteBatch)
 )

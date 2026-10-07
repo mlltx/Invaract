@@ -168,12 +168,12 @@ class CanonicalizerSpec extends AnyFunSuite {
     assert(encodeExpr(withSeedA) == encodeExpr(noArgs), "the arg list itself must be excluded, not merely tolerant of different values")
   }
 
-  test("rand/random/randn (case-insensitive) all get the same seed-argument exclusion") {
+  test("RAND/RANDN (the catalog's seed-bearing names, any case) all get the same seed-argument exclusion") {
     // Not asserting different names encode identically to each other
     // (that would be a real difference) - only that each one's own seed
     // argument is excluded, proven by comparing against a freshly
     // different seed for that same name.
-    List("rand", "RAND", "Random", "randn", "RANDN").foreach { n =>
+    List("rand", "RAND", "Rand", "randn", "RANDN").foreach { n =>
       val a = encodeExpr(Function(n, List(Literal(111L, "long"))))
       val b = encodeExpr(Function(n, List(Literal(222L, "long"))))
       assert(a == b, s"$n's seed argument must be excluded from the hash")
@@ -183,6 +183,14 @@ class CanonicalizerSpec extends AnyFunSuite {
   test("a genuinely different function name is still a real difference, even among seed-excluded functions") {
     assert(encodeExpr(Function("rand", Nil)) != encodeExpr(Function("randn", Nil)))
     assert(encodeExpr(Function("rand", Nil)) != encodeExpr(Function("random", Nil)))
+  }
+
+  test("a name the catalog does not know - an engine alias an adapter forgot to map - is hashed with its arguments, never silently excluded") {
+    // `ir.FunctionAliases` is where an engine's own spelling ("random" in Spark) is folded onto
+    // the catalog's "RAND" before it reaches the IR; this module only trusts canonical names.
+    val a = encodeExpr(Function("random", List(Literal(111L, "long"))))
+    val b = encodeExpr(Function("random", List(Literal(222L, "long"))))
+    assert(a != b)
   }
 
   test("uuid/shuffle are NOT seed-excluded - an ordinary Function keeps hashing its real arguments") {

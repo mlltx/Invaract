@@ -126,6 +126,14 @@ plan node (grouped aggregation) or a `Window` plan node (running/partitioned
 aggregation) — windowing is a property of *where* the expression sits in
 the plan, not a different kind of expression.
 
+**Function names** (`FunctionCatalog.scala`). An `ir.Function` carries a name its adapter chose, and
+the few functions the IR gives a meaning to - the ones that differ between runs - are listed once, in
+`FunctionCatalog`, under canonical upper-case names (`UUID`, `RAND`, `CURRENT_TIMESTAMP`, ...), with their
+properties (non-deterministic; seed-bearing). An adapter folds its engine's own spellings onto them with
+`FunctionAliases` when it translates, so nothing downstream - the fingerprint's non-determinism
+annotation, its seed handling - needs to know any engine's names. A function the catalog does not list
+is not flagged. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 5.
+
 ### Plans (`Plan.scala`) — transform datasets
 
 | Node | Represents |

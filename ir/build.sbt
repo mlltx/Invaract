@@ -9,11 +9,14 @@ name := "invaract-ir"
 // docs/VERSIONING.md's FAQ calls for bumping the MINOR digit (not MAJOR,
 // pinned at 0 until 1.0.0) to signal a deliberate break - the same
 // convention the 0.1.0 -> 0.2.0 rebrand itself used.
+// 0.5.0 -> 0.6.0: FunctionCatalog/FunctionAliases added (docs/MULTI_ENGINE_ADAPTERS.md, Stage 5) -
+// purely additive (MiMa clean); bumped, like contract 0.12.0 -> 0.13.0, so a CI job that publishes
+// base-ref and then the PR head to the same Ivy coordinate never resolves the wrong build.
 // ThisBuild-scoped, not a bare `version :=` - see contract/build.sbt's
 // matching comment for why (sonatypePublishToBundle reads ThisBuild/version
 // specifically; confirmed the gap directly with
 // `sbt "show version" "show ThisBuild/version"` before fixing it there).
-ThisBuild / version := "0.5.0"
+ThisBuild / version := "0.6.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -82,7 +85,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-ir-0.5.0.jar"
+assembly / assemblyJarName := "invaract-ir-0.6.0.jar"
 
 // Mutation testing (Stryker4s) config: see stryker4s.conf for reporters.
 // `mutate`/`thresholds` are set here rather than in stryker4s.conf, whose
@@ -143,7 +146,7 @@ coverageHighlighting := true
 // hardcoded value only matters for a local `sbt mimaReportBinaryIssues`
 // run and can no longer break CI by going stale.
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-ir" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.4.0")
+  "com.invaract" %% "invaract-ir" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.5.0")
 )
 
 import com.typesafe.tools.mima.core._

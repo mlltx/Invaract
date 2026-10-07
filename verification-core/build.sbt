@@ -21,7 +21,7 @@ name := "invaract-verification-core"
 // disclosed gap `fingerprint` has - see CLAUDE.md "What's the product"):
 // `spark-adapter`'s published POM depends on it, so that follow-up has to
 // land before the next Maven Central release.
-ThisBuild / version := "0.1.0"
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -50,8 +50,8 @@ val hadoopVersion = "3.3.4"
 
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
-  "com.invaract" %% "invaract-ir" % "0.5.0",
-  "com.invaract" %% "invaract-fingerprint" % "0.3.0",
+  "com.invaract" %% "invaract-ir" % "0.6.0",
+  "com.invaract" %% "invaract-fingerprint" % "0.4.0",
   // Logging and (for HadoopFsNotificationSink only) Hadoop's FileSystem are
   // supplied by whatever engine hosts this module (Spark ships both), never
   // bundled: `provided`, exactly as they were for spark-adapter.
@@ -69,7 +69,7 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
-assembly / assemblyJarName := "invaract-verification-core-0.1.0.jar"
+assembly / assemblyJarName := "invaract-verification-core-0.2.0.jar"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

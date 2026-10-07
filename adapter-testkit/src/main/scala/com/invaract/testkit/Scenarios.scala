@@ -215,6 +215,20 @@ object Scenarios {
       defaults, Expectation.Reject(Set(ViolationType.RuleRequiredFilterColumnsViolation))
     ),
     Scenario(
+      "fingerprint-flags-nothing-for-a-deterministic-job",
+      "with computeFingerprint, a job built only from deterministic columns reports no non-deterministic output",
+      Set(Capability.AnalysisFingerprint, Capability.AnalysisFunctionCatalog),
+      contract(), job(), defaults.copy(computeFingerprint = true), Expectation.Pass, expectNonDeterministic = Some(Set.empty)
+    ),
+    Scenario(
+      "fingerprint-flags-a-generated-id",
+      "a column the engine generates afresh per row is reported non-deterministic, whatever the engine calls the function",
+      Set(Capability.AnalysisFingerprint, Capability.AnalysisFunctionCatalog),
+      contract(outputFields = fields(8, ("id", "long", false), ("total", "long", true), ("token", "string", true))),
+      job(columns = passThrough :+ OutColumn("token", UniqueId)), defaults.copy(computeFingerprint = true), Expectation.Pass,
+      expectNonDeterministic = Some(Set("token"))
+    ),
+    Scenario(
       "invalid-contract",
       "a contract that is itself unsound is rejected before the job is looked at",
       Set.empty,
@@ -234,7 +248,6 @@ object Scenarios {
     Capability.RulesCustom -> "a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one",
     Capability.AnalysisStaticDataQuality -> "opt-in analysis; the outcome does not yet carry data-quality verdicts",
     Capability.AnalysisRoleConsistency -> "opt-in analysis; the outcome does not yet carry role verdicts",
-    Capability.AnalysisFingerprint -> "opt-in analysis; the outcome does not yet carry fingerprints",
     Capability.AnalysisSensitivityPropagation -> "report-only; the outcome does not yet carry sensitivity propagation",
     Capability.LineageColumnLevel -> "the outcome does not yet carry lineage",
     Capability.LineageBoundaryResolution -> "needs a checkpoint/cache job shape the neutral job description does not have",

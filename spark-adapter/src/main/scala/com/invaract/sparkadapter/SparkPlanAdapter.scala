@@ -960,7 +960,7 @@ private[sparkadapter] object SparkPlanAdapter {
       // `.children` generically on Expression — no need to hardcode
       // Spark's several dozen remaining built-in function classes.
       case e: Expression =>
-        ir.Function(e.prettyName.toUpperCase, e.children.map(translateExpr).toList)
+        ir.Function(SparkFunctionAliases.canonicalName(e.prettyName), e.children.map(translateExpr).toList)
     }
 
     private def isOpaqueUdf(e: Expression): Boolean = {

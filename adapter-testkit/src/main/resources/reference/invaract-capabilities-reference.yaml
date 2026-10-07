@@ -56,8 +56,9 @@ capabilities:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
   analysis.fingerprint:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+  analysis.functionCatalog:
+    status: supported
   analysis.sensitivityPropagation:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.

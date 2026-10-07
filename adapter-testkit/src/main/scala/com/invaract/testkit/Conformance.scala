@@ -74,7 +74,12 @@ object Conformance {
   }
 
   /** Compares what the adapter did with what it must have done. */
-  def judge(expected: Expected, outcome: ScenarioOutcome, capabilities: AdapterCapabilities): ScenarioVerdict = {
+  def judge(
+      expected: Expected,
+      outcome: ScenarioOutcome,
+      capabilities: AdapterCapabilities,
+      expectNonDeterministic: Option[Set[String]] = None
+  ): ScenarioVerdict = {
     val verdict: Option[String] = (expected, outcome) match {
       case (Expected.Pass, _: ScenarioOutcome.Passed) => None
       case (Expected.Pass, r: ScenarioOutcome.Rejected) =>
@@ -100,7 +105,14 @@ object Conformance {
             s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish exactly " +
               s"${wanted.mkString("[", ", ", "]")} validation event(s); it published ${outcome.statuses.mkString("[", ", ", "]")}"
           )
-        } else ScenarioVerdict.Conforms
+        } else
+          expectNonDeterministic match {
+            case Some(columns) if expected == Expected.Pass && outcome.nonDeterministicColumns != columns =>
+              ScenarioVerdict.Diverges(
+                s"the fingerprint must report exactly ${show(columns)} non-deterministic; it reported ${show(outcome.nonDeterministicColumns)} - an engine function name did not reach the catalog"
+              )
+            case _ => ScenarioVerdict.Conforms
+          }
     }
   }
 
@@ -118,7 +130,7 @@ object Conformance {
     expectationFor(scenario, caps) match {
       case Left(reason) => ScenarioVerdict.Skipped(reason)
       case Right(expected) =>
-        try judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps)
+        try judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic)
         catch { case e: Exception => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}") }
     }
 

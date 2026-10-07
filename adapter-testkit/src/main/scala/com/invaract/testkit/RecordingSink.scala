@@ -16,4 +16,11 @@ final class RecordingSink extends NotificationSink {
   override def publish(event: NotificationEvent): Unit = synchronized(seen += event)
 
   def statuses: List[String] = synchronized(seen.toList).collect { case e: ContractValidationEvent => e.status }
+
+  /** The output columns the last validation's fingerprint reports non-deterministic. */
+  def nonDeterministicOutputs: Set[String] =
+    synchronized(seen.toList).collect { case e: ContractValidationEvent => e }.lastOption
+      .flatMap(_.fingerprints)
+      .map(_.outputs.collect { case (name, fp) if fp.nonDeterministic.contains(true) => name }.toSet)
+      .getOrElse(Set.empty)
 }

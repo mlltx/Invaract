@@ -807,9 +807,9 @@ If `./dev/test` fails:
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
 - `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.5.0.jar`
-- `fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar`
-- `verification-core/target/scala-2.12/invaract-verification-core-0.1.0.jar` —
+- `ir/target/scala-2.12/invaract-ir-0.6.0.jar`
+- `fingerprint/target/scala-2.12/invaract-fingerprint-0.4.0.jar`
+- `verification-core/target/scala-2.12/invaract-verification-core-0.2.0.jar` —
   the engine-neutral verification code; `spark-adapter`'s fat jar bundles it
   (same `sbt-assembly` dependency bundling as `fingerprint`), so a consumer
   installing only the spark-adapter jar needs nothing extra

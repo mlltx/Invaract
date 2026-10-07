@@ -647,6 +647,20 @@ fingerprint's *metadata* says, even though — critically — it never
 changes the hash bytes themselves, since the underlying `Function` node
 is hashed identically either way).
 
+> **Superseded in part (docs/MULTI_ENGINE_ADAPTERS.md, Stage 5).** The allowlist above began as a
+> list of Spark's function names kept in this module, so the same logic on another engine -
+> BigQuery's `GENERATE_UUID()` is Spark's `uuid()` - would have been classified deterministic and
+> fingerprinted differently, silently. It is now `ir.FunctionCatalog`, one engine-independent
+> catalog of canonical function names and their properties (non-deterministic, seed-bearing); an
+> adapter folds its engine's own spellings onto it when it translates (`ir.FunctionAliases`;
+> Spark's table is `SparkFunctionAliases`), so this module only ever sees canonical names and
+> `NonDeterminism`/`Canonicalizer` ask the catalog. Spark's table is proven complete by a test that
+> sweeps Spark's own function registry - which found two functions the hand-kept list had missed
+> (`input_file_block_start`, `input_file_block_length`) - and the conformance kit checks a generated
+> id is flagged on every adapter. `FingerprintHasher.CurrentVersion` went 2 -> 3, because an aliased
+> function (`random()`, `now()`) now hashes under its canonical name. Everything below still
+> describes the behaviour; read "the allowlist" as "the catalog".
+
 Classification is **tri-state**, not boolean, to avoid the same
 "invented certainty" failure mode as everywhere else in this design:
 
@@ -1727,10 +1741,10 @@ below):
   first place) were confirmed directly, by the same empirical method, to
   **not** share this bug. Fixed with a targeted exclusion in
   `Canonicalizer.canonicalizeExprT`'s `Function` case
-  (`SeedBearingFunctionNames = Set("rand", "random", "randn")`, matched
-  case-insensitively since Spark reports different `prettyName` casing per
-  call-site alias for the identical class) that drops the argument list
-  entirely for exactly these three names - an accepted trade-off is that
+  (originally `SeedBearingFunctionNames = Set("rand", "random", "randn")`, now the
+  catalog's seed-bearing functions `RAND`/`RANDN` - Spark's `random` alias is folded onto
+  `RAND` by `SparkFunctionAliases` - matched case-insensitively) that drops the argument list
+  entirely for exactly these names - an accepted trade-off is that
   an explicit seed change (`rand(42)` to `rand(43)`) is no longer detected
   either, since nothing post-analysis can distinguish "explicit, unchanged
   seed" from "analyzer-assigned, freshly different seed." Regression-tested
@@ -2028,8 +2042,8 @@ where a real Spark upgrade is likely to change fingerprinting behavior
 specifically, based on how Spark's own analyzer has historically evolved,
 not a list of things currently broken:
 
-- **The `SeedBearingFunctionNames` exclusion (see the `rand()` gap-closing
-  entry above) is a closed, three-name list, not a structural detection of
+- **The seed-bearing exclusion (`FunctionCatalog`'s `RAND`/`RANDN`; see the `rand()` gap-closing
+  entry above) is a closed, two-name list, not a structural detection of
   "this argument is an analyzer-injected seed."** It works today because
   `ResolveRandomSeed` happens to name its rewritten function nodes exactly
   `rand`/`random`/`randn` (case-insensitively) and stores the seed as that
