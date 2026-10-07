@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter.notification
 
-import com.invaract.verification.notification.ContractValidationEvent
+import com.invaract.verification.notification.{ContractValidationEvent, NotificationEvent}
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 

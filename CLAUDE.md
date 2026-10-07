@@ -987,6 +987,8 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when `spark-adapter/`, `verification-core/` or
   `.github/workflows/test.yml` changed; pushes always run them
+- **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
+  the job rebuilds every module
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

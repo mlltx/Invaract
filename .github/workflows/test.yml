@@ -1589,6 +1589,11 @@ jobs:
   sbom:
     name: Generate SBOMs
     runs-on: ubuntu-latest
+    # Push events only (main, develop, feature/**): the SBOM is an uploaded artifact that nothing
+    # in a PR consumes, and generating it rebuilds every module - a full build's worth of runner
+    # time on every PR push for no check. It still runs, and still gates `summary`, on the push
+    # that follows a merge.
+    if: github.event_name != 'pull_request'
     # Downstream transparency, not vulnerability detection (that's the
     # dependency-graph.yml workflow, which feeds Dependabot). This produces
     # a CycloneDX SBOM per publishable artifact so users can run their own
