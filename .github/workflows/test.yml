@@ -294,6 +294,7 @@ jobs:
         uses: sbt/setup-sbt@v1
 
       - name: Mutation test ir
+        if: github.event_name != 'pull_request'
         shell: bash
         run: cd ir && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
@@ -375,6 +376,7 @@ jobs:
         run: cd ir && sbt publishLocal
 
       - name: Mutation test fingerprint
+        if: github.event_name != 'pull_request'
         shell: bash
         run: cd fingerprint && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
@@ -448,6 +450,7 @@ jobs:
         uses: ./.github/actions/publish-engine-modules
 
       - name: Mutation test verification-core
+        if: github.event_name != 'pull_request'
         shell: bash
         run: cd verification-core && "$GITHUB_WORKSPACE/.github/scripts/memwatch.sh" -- sbt "stryker --concurrency 4"
 
@@ -581,6 +584,12 @@ jobs:
   mutation-testing-spark-adapter:
     name: Mutation testing (spark-adapter, ${{ matrix.name }})
     runs-on: ubuntu-latest
+    # Whole-module runs are for pushes (main/develop/feature/**), not PR pushes: the
+    # incremental job below already enforces the 70% bar on exactly the files a PR
+    # changes, and re-mutating every untouched file on every PR push cost ~50-90 min
+    # of wall clock per push. A whole-module regression is caught on the merge
+    # commit's push run instead (this job still gates that run via `summary`).
+    if: github.event_name != 'pull_request'
     # Shards take 50-90 min. Without this the 360-minute default would let a hung runner
     # (or a Stryker run wedged on a stuck test JVM) hold a slot for six hours.
     timeout-minutes: 180
@@ -894,9 +903,47 @@ jobs:
               sys.exit(1)
           print(f"No drift: all {len(actual_set)} spark-adapter source file(s) are assigned to exactly one mutation-testing shard.")
 
+  # Decides whether the Spark/Delta/Iceberg version-compatibility matrices run. They
+  # prove spark-adapter's translation holds across Spark/Delta/Iceberg releases, so a
+  # PR that touches neither spark-adapter, verification-core nor this workflow (docs,
+  # harness, web, CI scripts, ...) cannot change their answer. Push events (main,
+  # develop, feature/**) always run them, so nothing merges without a full run.
+  changes:
+    name: Detect engine changes
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.detect.outputs.engine }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Diff against the PR base
+        id: detect
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: version matrices always run."
+            exit 0
+          fi
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- spark-adapter verification-core .github/workflows/test.yml)
+          if [ -n "$CHANGED" ]; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "Engine files changed, version matrices will run:"
+            echo "$CHANGED"
+          else
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+            echo "No spark-adapter / verification-core / workflow change: version matrices skipped."
+          fi
+
   spark-version-matrix:
     name: Spark version compatibility (spark-adapter, ${{ matrix.spark-version }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     # This is the "multi-Spark-version compatibility matrix" ROADMAP.md and
     # CLAUDE.md's "Supporting Multiple Spark Versions" section named as
     # still-outstanding: proof that spark-adapter's own suite actually
@@ -974,6 +1021,8 @@ jobs:
   delta-version-matrix:
     name: Delta Lake version compatibility (spark-adapter, ${{ matrix.delta-version }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     # The connector-library counterpart to spark-version-matrix above: that
     # job proves spark-adapter's translation holds across Spark patches;
     # this one proves it holds across delta-spark releases specifically,
@@ -1042,6 +1091,8 @@ jobs:
   iceberg-version-matrix:
     name: Iceberg version compatibility (spark-adapter, ${{ matrix.iceberg-version }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     # Same rationale as delta-version-matrix above, for Iceberg. See
     # docs/connectors/iceberg.md's "Version compatibility" section for why
     # 1.10.0 is excluded (a real, known Avro-API bug inside that release
@@ -1665,12 +1716,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else
