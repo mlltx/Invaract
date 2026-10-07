@@ -234,6 +234,14 @@ cross-module graph <code dir="auto">dev/build</code> documents)</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Caching strategies (<code dir="auto">actions/cache@v4</code> plus <code dir="auto">setup-java</code>’s
 <code dir="auto">cache: 'sbt'</code>, throughout <code dir="auto">.github/workflows/test.yml</code>)</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Artifact publishing (<code dir="auto">release.yml</code>, <code dir="auto">publish-spark-jars.yml</code>)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> CI stability under runner loss — the <code dir="auto">spark-adapter</code> mutation shards
+were being killed by memory exhaustion (“The runner has received a
+shutdown signal”). Fixed by capping the test JVM heap, running 10 shards
+at <code dir="auto">--concurrency 2</code> instead of 5 at 4, streaming memory telemetry into the
+job log (<code dir="auto">.github/scripts/memwatch.sh</code>), and re-running a run whose only
+failures are lost runners (<code dir="auto">rerun-on-runner-loss.yml</code>). Measurements and
+the open follow-up (re-tune shard balance from real per-shard times) are in
+docs/SPARK_ADAPTER.md’s “Runner memory and runner loss.”</li>
 </ul>
 </li>
 <li class="task-list-item">
@@ -3974,6 +3982,30 @@ location and named from it, each output’s <code dir="auto">derivedFrom</code> 
 merged names, outputs kept distinct by location, conflicting schemas for
 one location reported (<code dir="auto">MergeConflict</code>) rather than guessed at, result
 round-trips through <code dir="auto">ContractParser</code> and passes <code dir="auto">ContractValidator</code>.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> <strong>Follow-up: dry-run reporting to a sink (<code dir="auto">DryRunReporter</code>)</strong> (<code dir="auto">spark-adapter</code>,
+additive): with <code dir="auto">spark.invaract.dryRun=true</code> + <code dir="auto">spark.invaract.notifyConfig</code>, dry-run
+publishes a <code dir="auto">ContractInferenceEvent</code> per write-shaped plan (<code dir="auto">INFERRED</code>/
+<code dir="auto">INFERRED_DEGRADED</code>/<code dir="auto">SKIPPED_UNSUPPORTED</code>/<code dir="auto">SKIPPED_UNRECOGNIZED</code>/<code dir="auto">INFERENCE_ERROR</code>,
+each draft self-checked against its own write) and, at application end, a
+<code dir="auto">DryRunSummaryEvent</code> (counts per status, <code dir="auto">NO_WRITES_OBSERVED</code>, all drafts merged by
+<code dir="auto">ContractDraftMerger</code>). Purpose: roll Invaract out across many jobs - collect the
+drafts, and learn from the skips/self-checks how safe turning enforcement on is.
+Job identity via <code dir="auto">spark.invaract.jobId</code> / <code dir="auto">spark.invaract.job.metadata.*</code>. Delivery:
+<code dir="auto">NotificationSink.flush</code>, <code dir="auto">HttpNotificationSink</code> auth headers/<code dir="auto">bearerTokenEnv</code> and
+in-flight draining, <code dir="auto">FanOutNotificationSink</code> with per-target <code dir="auto">statuses</code> routing.
+Follow-ups in the same PR: a bad <code dir="auto">notifyConfig</code> no longer fails a dry-run job (WARN and
+log-only fallback); <code dir="auto">schemaVersion</code> + deterministic <code dir="auto">eventId</code> (+ <code dir="auto">contractDigest</code>) on every
+event; a published JSON Schema (<code dir="auto">docs-site/public/schemas/notification/v1/</code>) with real
+examples, checked by the whole Scala suite and by Ajv in the docs build; <code dir="auto">HttpNotificationSink</code>
+retry with backoff and a dead letter (<code dir="auto">deadLetter.path</code>, local or any Hadoop FS), configurable
+from the properties file. Docs: status-by-status migration walkthrough, endpoint contract, a
+reference receiver, two troubleshooting entries.
+<code dir="auto">spark.invaract.contract.metadata.*</code> tags every inferred draft’s <code dir="auto">extensions</code> (and each
+event’s <code dir="auto">metadata</code>), so enforcement’s own events later carry the same keys and link back to
+the dry run; run-level facts stay on <code dir="auto">spark.invaract.job.metadata.*</code> / <code dir="auto">job.attributes</code>.
+Corrects an earlier doc claim that dry-run excluded row-level DML (it infers from it,
+weakly). Open: redaction of locations/schemas in events; the receiving contract
+repository (separate repo).</li>
 </ul>
 <hr>
 <div class="sl-heading-wrapper level-h2"><h2 id="phase-2--multi-engine-support">Phase 2 — Multi-Engine Support</h2><a class="sl-anchor-link" href="#phase-2--multi-engine-support"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Phase 2 — Multi-Engine Support”</span></a></div>
@@ -3984,7 +4016,24 @@ round-trips through <code dir="auto">ContractParser</code> and passes <code dir=
 <li class="task-list-item"><input type="checkbox" disabled> Transformation IR abstraction</li>
 <li class="task-list-item"><input type="checkbox" disabled> SQL adapter</li>
 <li class="task-list-item"><input type="checkbox" disabled> dbt adapter</li>
-<li class="task-list-item"><input type="checkbox" disabled> Engine-agnostic verification</li>
+<li class="task-list-item"><input type="checkbox" disabled> Engine-agnostic verification — staged in docs/MULTI_ENGINE_ADAPTERS.md
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 1: engine-neutral logical type model (<code dir="auto">contract.LogicalType</code>/
+<code dir="auto">LogicalSchema</code>); the schema/input/output checkers and <code dir="auto">ContractInference</code> no
+longer import Spark types; Spark mapping isolated in <code dir="auto">SparkSchemas</code>, pinned to
+Spark’s own output by <code dir="auto">SparkSchemasSpec</code>. No verdict or message changed.</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 2a: <code dir="auto">verification-core</code> module extracted from <code dir="auto">spark-adapter</code> (package
+names unchanged — deployed configs name classes by FQN); seams for lineage-boundary
+types, <code dir="auto">MutationKind</code>, <code dir="auto">InferredWrite</code></li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 2b: adapter SPI — <code dir="auto">VerificationPipeline</code> (<code dir="auto">verifyWrite</code> /
+<code dir="auto">verifyStateChange</code> / <code dir="auto">rejectUnverifiableWrite</code>) and <code dir="auto">VerificationSetup</code> +
+<code dir="auto">ConfigSource</code> (neutral <code dir="auto">InvaractConf</code> names; Spark spells them <code dir="auto">spark.invaract.*</code>,
+unchanged). Neutral package names deferred (deployed configs name classes by FQN)</li>
+<li class="task-list-item"><input type="checkbox" disabled> Stage 3: per-adapter capability declaration, generated matrix, CI drift check</li>
+<li class="task-list-item"><input type="checkbox" disabled> Stage 4: <code dir="auto">adapter-testkit</code> conformance scenarios</li>
+<li class="task-list-item"><input type="checkbox" disabled> Stage 5: function canonicalisation</li>
+</ul>
+</li>
 <li class="task-list-item"><input type="checkbox" disabled> Adapter pattern documentation</li>
 </ul>
 <div class="sl-heading-wrapper level-h3"><h3 id="dependencies-3">Dependencies</h3><a class="sl-anchor-link" href="#dependencies-3"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Dependencies”</span></a></div>

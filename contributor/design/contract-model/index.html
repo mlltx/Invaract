@@ -311,6 +311,53 @@ see <code dir="auto">spark-adapter</code>’s <code dir="auto">StructuralVerifie
 <p>Known types (validator warns, does not error, on anything else):
 <code dir="auto">string</code>, <code dir="auto">integer</code>, <code dir="auto">long</code>, <code dir="auto">short</code>, <code dir="auto">byte</code>, <code dir="auto">double</code>, <code dir="auto">float</code>, <code dir="auto">decimal</code>,
 <code dir="auto">boolean</code>, <code dir="auto">date</code>, <code dir="auto">timestamp</code>, <code dir="auto">binary</code>, <code dir="auto">struct</code>, <code dir="auto">array</code>, <code dir="auto">map</code>.</p>
+<div class="sl-heading-wrapper level-h4"><h4 id="logical-types-logicaltype">Logical types (<code dir="auto">LogicalType</code>)</h4><a class="sl-anchor-link" href="#logical-types-logicaltype"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Logical types (LogicalType)”</span></a></div>
+<p>A field’s <code dir="auto">type:</code> is a <em>logical</em> type, and the contract module owns what that
+means: <code dir="auto">LogicalType</code> (a sealed ADT — scalars, <code dir="auto">DecimalType(precision, scale)</code>,
+<code dir="auto">ArrayType</code>, <code dir="auto">MapType</code>, <code dir="auto">StructType</code>, and <code dir="auto">OtherType</code> for a native type with no
+logical equivalent), with <code dir="auto">LogicalField</code> and <code dir="auto">LogicalSchema</code> for a dataset’s
+actual columns. An engine adapter maps its own schema types <em>into</em> this model
+(<code dir="auto">spark-adapter</code>’s <code dir="auto">SparkSchemas</code> does it for Spark) and the verification
+checkers compare only <code dir="auto">LogicalSchema</code> against the contract — no checker knows
+which engine produced the schema. See docs/MULTI_ENGINE_ADAPTERS.md.</p>
+<p><code dir="auto">LogicalType.parse</code> is the contract’s own parser for a type written with
+parameters or nesting — <code dir="auto">decimal(10,2)</code>, <code dir="auto">array&#x3C;int></code>, <code dir="auto">map&#x3C;string,long></code>,
+<code dir="auto">struct&#x3C;a:int,b:string></code>, nested to any depth. The grammar is the one Spark’s DDL
+has always accepted for these forms, kept as the contract’s definition instead of
+delegated to an engine: scalar aliases (<code dir="auto">int</code>/<code dir="auto">integer</code>, <code dir="auto">bigint</code>/<code dir="auto">long</code>,
+<code dir="auto">smallint</code>/<code dir="auto">short</code>, <code dir="auto">tinyint</code>/<code dir="auto">byte</code>, <code dir="auto">real</code>, <code dir="auto">dec</code>/<code dir="auto">numeric</code>, <code dir="auto">timestamp_ltz</code>),
+<code dir="auto">name:type</code> or <code dir="auto">name type</code> struct members, <code dir="auto">`quoted`</code> names, and <code dir="auto">NOT NULL</code> /
+<code dir="auto">COMMENT '...'</code> after a member (nullability is kept, the comment ignored). Text it
+cannot parse returns <code dir="auto">None</code> and is reported by the checker as a type mismatch,
+never an exception.</p>
+<p>Two renderings, both identical to what Spark prints (asserted against Spark by
+<code dir="auto">spark-adapter</code>’s <code dir="auto">SparkSchemasSpec</code>, so no existing message changed):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>Used for</th><th>Examples</th></tr></thead><tbody><tr><td><code dir="auto">typeName</code></td><td>a plain <code dir="auto">type:</code> is compared against it exactly; a container is the bare keyword (<code dir="auto">array</code>, <code dir="auto">map</code>, <code dir="auto">struct</code>)</td><td><code dir="auto">integer</code>, <code dir="auto">long</code>, <code dir="auto">decimal(10,2)</code>, <code dir="auto">array</code></td></tr><tr><td><code dir="auto">catalogString</code></td><td>inside a nested type, and in violation messages</td><td><code dir="auto">int</code>, <code dir="auto">bigint</code>, <code dir="auto">array&#x3C;int></code>, <code dir="auto">struct&#x3C;a:int,b:string></code></td></tr></tbody></table>
+<p>A bare top-level <code dir="auto">type: int</code> is therefore <em>not</em> <code dir="auto">integer</code> (the keyword above is the
+vocabulary); the aliases are accepted only inside a nested type. A native type with
+no logical equivalent (an interval, a geography) is an <code dir="auto">OtherType</code> that equals only
+the identical native type — an adapter must not guess a lossy mapping, since a wrong
+guess would make a mismatch invisible.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="static-data-quality-constraints-fieldconstraint">Static data-quality constraints (<code dir="auto">FieldConstraint</code>)</h3><a class="sl-anchor-link" href="#static-data-quality-constraints-fieldconstraint"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Static data-quality constraints (FieldConstraint)”</span></a></div>
 <p>A <code dir="auto">Field</code>’s <code dir="auto">constraints</code> list holds requirements on that field’s <em>value</em>,
 distinct from <code dir="auto">nullable</code>/<code dir="auto">required</code> (presence/nullability) and
