@@ -12,7 +12,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /** The small functions `InputChecker` and `OutputChecker` are made of, tested directly
   * (`StructuralVerifierSpec` covers the same behaviour end to end through `verify`).
   */
-class InputOutputCheckerSpec extends AnyFunSuite {
+class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
 
   private def ds(name: String, location: String, format: Option[String] = None, saveMode: Option[String] = None) =
     Dataset(name, location, format, Schema(Nil), saveMode = saveMode)

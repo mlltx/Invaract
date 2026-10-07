@@ -3937,7 +3937,15 @@ Extend verification engine to support multiple execution engines.
 - [ ] Transformation IR abstraction
 - [ ] SQL adapter
 - [ ] dbt adapter
-- [ ] Engine-agnostic verification
+- [ ] Engine-agnostic verification — staged in docs/MULTI_ENGINE_ADAPTERS.md
+  - [x] Stage 1: engine-neutral logical type model (`contract.LogicalType`/
+        `LogicalSchema`); the schema/input/output checkers and `ContractInference` no
+        longer import Spark types; Spark mapping isolated in `SparkSchemas`, pinned to
+        Spark's own output by `SparkSchemasSpec`. No verdict or message changed.
+  - [ ] Stage 2: `verification-core` module + adapter SPI
+  - [ ] Stage 3: per-adapter capability declaration, generated matrix, CI drift check
+  - [ ] Stage 4: `adapter-testkit` conformance scenarios
+  - [ ] Stage 5: function canonicalisation
 - [ ] Adapter pattern documentation
 
 ### Dependencies

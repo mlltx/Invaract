@@ -3,11 +3,10 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, Dataset}
+import com.invaract.contract.{Contract, Dataset, LogicalSchema}
 import com.invaract.fingerprint.TransformationFingerprint
 import com.invaract.ir.{CatalogIdentity, Plan, Read, UnknownPlan, Write}
 
-import org.apache.spark.sql.types.StructType
 
 /** Checks a transformation plan's actual inputs and output against a
   * `Contract`'s declarations. This is ROADMAP.md Phase 4: the first
@@ -23,10 +22,12 @@ import org.apache.spark.sql.types.StructType
   *     (`Read`/`Write` nodes' `DatasetRef.location`) — no Spark-specific
   *     data needed, since `ir.Plan` already carries this.
   *   - **Schema** (field presence, type, nullability) needs the actual
-  *     Spark `StructType` for each dataset, because the IR deliberately
+  *     `LogicalSchema` (the engine-neutral `com.invaract.contract` model, see
+  *     `LogicalType`) for each dataset, because the IR deliberately
   *     carries no schema of its own (see `ir.Read`'s doc) — only which
   *     columns were *referenced*, not the dataset's full column set. The
-  *     caller supplies these. Every resolved Catalyst `LogicalPlan` exposes
+  *     caller supplies these, already mapped from its engine's own types (for
+  *     Spark, via `SparkSchemas`). Every resolved Catalyst `LogicalPlan` exposes
   *     its own `.schema` derived from resolved attributes, so a caller can
   *     get these directly from the *analyzed* plan — before anything
   *     executes — rather than needing a materialized `DataFrame`; see
@@ -178,8 +179,8 @@ private[sparkadapter] object StructuralVerifier {
   def verify(
     contract: Contract,
     plan: Plan,
-    inputSchemas: List[(String, StructType)],
-    outputSchema: StructType,
+    inputSchemas: List[(String, LogicalSchema)],
+    outputSchema: LogicalSchema,
     options: VerificationOptions = VerificationOptions(),
     caseSensitive: Boolean = false
   ): VerificationResult =
@@ -191,8 +192,8 @@ private[sparkadapter] object StructuralVerifier {
   def verify(
     contract: Contract,
     facts: PlanFacts,
-    inputSchemas: List[(String, StructType)],
-    outputSchema: StructType,
+    inputSchemas: List[(String, LogicalSchema)],
+    outputSchema: LogicalSchema,
     options: VerificationOptions,
     caseSensitive: Boolean
   ): VerificationResult = {
@@ -246,7 +247,7 @@ private[sparkadapter] object StructuralVerifier {
   private[sparkadapter] def verifyStateChange(
     contract: Contract,
     location: String,
-    resultingSchema: StructType,
+    resultingSchema: LogicalSchema,
     options: VerificationOptions = VerificationOptions(),
     caseSensitive: Boolean = false
   ): VerificationResult =

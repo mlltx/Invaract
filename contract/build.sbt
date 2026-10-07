@@ -47,7 +47,13 @@ name := "invaract-contract"
 // section) - the same shape of break as datasetType's 0.9.0 -> 0.10.0 bump
 // above. Also bumped for the Ivy-cache coordinate-collision reason the
 // 0.8.0 -> 0.9.0 note above documents.
-ThisBuild / version := "0.12.0"
+// 0.12.0 -> 0.13.0: NOT a MiMa break - LogicalType/LogicalField/LogicalSchema
+// are wholly new classes (the engine-neutral column-type model the
+// verification checkers now compare against instead of Spark's own types -
+// see docs/CONTRACT_MODEL.md's "Logical types" section); nothing existing
+// changes signature. Bumped purely for the same Ivy-cache
+// coordinate-collision reason the 0.8.0 -> 0.9.0 note above documents.
+ThisBuild / version := "0.13.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -144,7 +150,7 @@ scalacOptions ++= Seq(
   "-feature"
 )
 
-assembly / assemblyJarName := "invaract-contract-0.12.0.jar"
+assembly / assemblyJarName := "invaract-contract-0.13.0.jar"
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first

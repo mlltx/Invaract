@@ -161,6 +161,42 @@ Known types (validator warns, does not error, on anything else):
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`,
 `boolean`, `date`, `timestamp`, `binary`, `struct`, `array`, `map`.
 
+#### Logical types (`LogicalType`)
+
+A field's `type:` is a *logical* type, and the contract module owns what that
+means: `LogicalType` (a sealed ADT — scalars, `DecimalType(precision, scale)`,
+`ArrayType`, `MapType`, `StructType`, and `OtherType` for a native type with no
+logical equivalent), with `LogicalField` and `LogicalSchema` for a dataset's
+actual columns. An engine adapter maps its own schema types *into* this model
+(`spark-adapter`'s `SparkSchemas` does it for Spark) and the verification
+checkers compare only `LogicalSchema` against the contract — no checker knows
+which engine produced the schema. See docs/MULTI_ENGINE_ADAPTERS.md.
+
+`LogicalType.parse` is the contract's own parser for a type written with
+parameters or nesting — `decimal(10,2)`, `array<int>`, `map<string,long>`,
+`struct<a:int,b:string>`, nested to any depth. The grammar is the one Spark's DDL
+has always accepted for these forms, kept as the contract's definition instead of
+delegated to an engine: scalar aliases (`int`/`integer`, `bigint`/`long`,
+`smallint`/`short`, `tinyint`/`byte`, `real`, `dec`/`numeric`, `timestamp_ltz`),
+`name:type` or `name type` struct members, `` `quoted` `` names, and `NOT NULL` /
+`COMMENT '...'` after a member (nullability is kept, the comment ignored). Text it
+cannot parse returns `None` and is reported by the checker as a type mismatch,
+never an exception.
+
+Two renderings, both identical to what Spark prints (asserted against Spark by
+`spark-adapter`'s `SparkSchemasSpec`, so no existing message changed):
+
+| | Used for | Examples |
+|---|---|---|
+| `typeName` | a plain `type:` is compared against it exactly; a container is the bare keyword (`array`, `map`, `struct`) | `integer`, `long`, `decimal(10,2)`, `array` |
+| `catalogString` | inside a nested type, and in violation messages | `int`, `bigint`, `array<int>`, `struct<a:int,b:string>` |
+
+A bare top-level `type: int` is therefore *not* `integer` (the keyword above is the
+vocabulary); the aliases are accepted only inside a nested type. A native type with
+no logical equivalent (an interval, a geography) is an `OtherType` that equals only
+the identical native type — an adapter must not guess a lossy mapping, since a wrong
+guess would make a mismatch invisible.
+
 ### Static data-quality constraints (`FieldConstraint`)
 
 A `Field`'s `constraints` list holds requirements on that field's *value*,

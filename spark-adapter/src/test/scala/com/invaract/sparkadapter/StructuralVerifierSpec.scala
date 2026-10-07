@@ -14,7 +14,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
 
-class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll {
+class StructuralVerifierSpec extends AnyFunSuite with BeforeAndAfterAll with SparkSchemaConversions {
   private var spark: SparkSession = _
 
   override def beforeAll(): Unit = {

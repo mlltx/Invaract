@@ -3,10 +3,9 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.{Contract, Dataset}
+import com.invaract.contract.{Contract, Dataset, LogicalSchema}
 import com.invaract.ir.{Read, UnknownPlan}
 
-import org.apache.spark.sql.types.StructType
 
 /** The input half of `StructuralVerifier.verify`: was every declared input
   * actually read, was anything undeclared read, and do the inputs' schemas and
@@ -41,7 +40,7 @@ private[sparkadapter] object InputChecker {
       contract: Contract,
       facts: PlanFacts,
       scopedOutput: Option[Dataset],
-      inputSchemas: List[(String, StructType)],
+      inputSchemas: List[(String, LogicalSchema)],
       options: VerificationOptions,
       caseSensitive: Boolean
   ): Findings = {
@@ -128,12 +127,12 @@ private[sparkadapter] object InputChecker {
     */
   private[sparkadapter] def schemaFindings(
       all: Declared,
-      inputSchemas: List[(String, StructType)],
+      inputSchemas: List[(String, LogicalSchema)],
       rejectUndeclaredFields: Boolean,
       caseSensitive: Boolean
   ): List[Violation] = {
-    val schemaForInput: Map[Int, StructType] =
-      inputSchemas.foldLeft(Map.empty[Int, StructType]) { case (acc, (loc, schema)) =>
+    val schemaForInput: Map[Int, LogicalSchema] =
+      inputSchemas.foldLeft(Map.empty[Int, LogicalSchema]) { case (acc, (loc, schema)) =>
         all.index.matchingIndices(loc).foldLeft(acc)((m, i) => if (m.contains(i)) m else m + (i -> schema))
       }
     all.inputs.zipWithIndex.flatMap { case (input, i) =>

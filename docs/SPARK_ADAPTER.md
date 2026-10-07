@@ -3121,16 +3121,25 @@ failed jobs" only has to redo the one shard that actually failed.
 `StructuralVerifier.verify` is the entry point; three helpers carry the logic that used to
 be inline, each with its own spec:
 
-- **`SchemaChecker`** compares a declared schema with the actual `StructType`. Names are
+- **`SchemaChecker`** compares a declared schema with the actual `LogicalSchema` — the
+  engine-neutral `com.invaract.contract` model (see docs/CONTRACT_MODEL.md's "Logical
+  types"), not Spark's `StructType`. `ContractEnforcementRule` (and `DryRunReporter`) map
+  Spark's schema into it at the boundary with `SparkSchemas`, the one place a Spark
+  `DataType` becomes a `LogicalType`; the checkers, `StructuralVerifier` and
+  `ContractInference` import nothing from Spark. Names are
   matched by the session's `spark.sql.caseSensitive` (`ContractEnforcementRule` reads
   `SQLConf.get.caseSensitiveAnalysis` per check and passes it down; `verify`'s own default is
   Spark's, `false`). Types are compared structurally where the contract says more than a
   keyword: a field's `properties` recurse into the actual struct (findings carry the dotted
-  path), and a type written as Spark DDL (`array<int>`, `map<string,long>`,
-  `struct<a:int>`) is parsed with `DataType.fromDDL` and compared ignoring inner nullability.
-  A bare `array`/`map`/`struct` keeps its shallow meaning. Before this, only
-  `DataType.typeName` was compared — `array` for every array — so a changed element type
-  passed. See docs-site's contract-format reference for the user-facing rules.
+  path), and a type written with nesting (`array<int>`, `map<string,long>`,
+  `struct<a:int>`) is parsed with `LogicalType.parse` (the contract's own parser for the
+  grammar Spark's DDL uses; it replaced `DataType.fromDDL`) and compared ignoring inner
+  nullability. A bare `array`/`map`/`struct` keeps its shallow meaning. Before this, only
+  the type keyword was compared — `array` for every array — so a changed element type
+  passed. `SparkSchemasSpec` pins both the mapping and the parser against Spark itself (the
+  logical `typeName`/`catalogString` equal Spark's; 33 declared nested types parse to what
+  `DataType.fromDDL` produces), which is what makes the move verdict- and message-neutral.
+  See docs-site's contract-format reference for the user-facing rules.
 - **`LocationMatching` / `LocationIndex`** hold the one definition of "declared location
   matches actual location" (normalize both sides, then equal or `/`-boundary suffix) and an
   index that buckets declared locations by their last path segment, so each question is a

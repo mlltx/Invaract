@@ -199,6 +199,13 @@ ExecutionReport (Scala case class, runner/DemoJobHarness.scala)
   additive rather than a rewrite: `contract` and `ir` don't change, only a
   new adapter module translating into the same IR.
 
+**Status of this claim:** true for `contract`/`ir`/`fingerprint`, but a review of
+`spark-adapter` found Spark still leaking into the verification core (schema types,
+function names, location semantics, result/notification model). Closing that — so a
+second engine really is additive — is the staged plan in
+[docs/MULTI_ENGINE_ADAPTERS.md](docs/MULTI_ENGINE_ADAPTERS.md); the engine-neutral
+logical type model (`contract.LogicalType`) is its first stage.
+
 **Alternative considered:** Build the IR as a thin Catalyst wrapper.
 **Rejected:** Ties lineage/verification logic to one engine's optimizer
 internals, defeating the point of having an IR at all.
