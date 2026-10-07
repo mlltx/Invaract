@@ -27,5 +27,5 @@ if [ "${#DECLARATIONS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-(cd verification-core && sbt -batch "runMain com.invaract.sparkadapter.CapabilityMatrix ../$OUTPUT ${DECLARATIONS[*]}")
+(cd verification-core && sbt -batch "runMain com.invaract.verification.CapabilityMatrix ../$OUTPUT ${DECLARATIONS[*]}")
 echo "Wrote $OUTPUT from ${#DECLARATIONS[@]} adapter declaration(s)."

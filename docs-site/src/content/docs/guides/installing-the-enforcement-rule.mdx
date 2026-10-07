@@ -92,7 +92,7 @@ Spark's query analysis, so it surfaces as an ordinary Scala exception around wha
 triggered the write (`.write.save(...)`, `.write.parquet(...)`, and so on):
 
 ```scala
-import com.invaract.sparkadapter.ContractViolationException
+import com.invaract.verification.ContractViolationException
 import scala.util.{Failure, Success, Try}
 
 Try {

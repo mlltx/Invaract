@@ -3,8 +3,10 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.VerificationOptions
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.sparkadapter.notification.NotificationSink
+import com.invaract.verification.notification.NotificationSink
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.SparkSessionExtensions

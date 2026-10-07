@@ -9,17 +9,13 @@ name := "invaract-verification-core"
 // (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2): no Spark dependency, so a
 // second engine's adapter depends on this, not on `spark-adapter`.
 //
-// Package names are DELIBERATELY unchanged (`com.invaract.sparkadapter`,
-// `.notification`, `.location`): deployed configurations name built-in
+// Packages are `com.invaract.verification` (with `.notification` and
+// `.location`) - neutral, not Spark's. Deployed configurations name built-in
 // sinks and custom plug-ins by fully-qualified class name
-// (`sink.class=com.invaract.sparkadapter.notification.FileNotificationSink`,
-// `customRuleTypes`, ...), so renaming a package would silently break every
-// existing deployment's config - the External Attachability Requirement's
-// whole point is that a platform team changes none of that. The relocation
-// is invisible to a user of the `spark-adapter` jar, which bundles this
-// module's classes (sbt-assembly, the same way it bundles `fingerprint`'s).
-// Neutral package names, with FQN compatibility for existing configs, are a
-// separate follow-up decision.
+// (`sink.class=com.invaract.verification.notification.FileNotificationSink`,
+// `customRuleTypes`, ...); the rename from `com.invaract.sparkadapter` was made
+// before any release, so there is no forwarding layer (docs/MULTI_ENGINE_ADAPTERS.md,
+// Stage 2c).
 //
 // Not yet wired into Maven Central publishing or `release.yml` (the same
 // disclosed gap `fingerprint` has - see CLAUDE.md "What's the product"):

@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractInference, StructuralVerifier, VerificationOptions, Violation, Violations}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.mutable
@@ -12,7 +14,7 @@ import scala.util.control.NonFatal
 import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser, ContractValidator}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.sparkadapter.ContractEnforcementRule.InferenceOutcome
-import com.invaract.sparkadapter.notification.{
+import com.invaract.verification.notification.{
   ContractInferenceEvent,
   DryRunSummaryEvent,
   InferenceStatus,

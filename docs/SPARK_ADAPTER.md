@@ -19,9 +19,9 @@ model (`VerificationModel`, `Violations`, `ContractViolationException`),
 `ContractInference`, and the whole `notification/` and `location/` packages — now
 lives in the sibling `verification-core/` module, which has no Spark dependency, so a
 second engine's adapter can reuse it (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2). The
-package names are unchanged (deployed configs name sinks and plug-ins by
-fully-qualified class name), and `spark-adapter`'s assembly jar bundles the core, so
-nothing about how you install or configure this adapter changes. Where this document
+packages are `com.invaract.verification` (`.notification`, `.location`) — a configuration
+that names a sink or plug-in by fully-qualified class name uses those — and `spark-adapter`'s
+assembly jar bundles the core, so how you install or configure this adapter is unchanged. Where this document
 says a class "lives in `spark-adapter`" for one of those, read `verification-core`.
 The orchestration is core too: `VerificationPipeline` is what `ContractEnforcementRule.verifyOrThrow` used to do inline once a plan is translated, and `VerificationSetup` + `ConfigSource` are the session-start half (`ref://` locations, option overlay, organizational policy) — `ContractEnforcementRule` keeps same-signature methods that delegate to them with `SparkConfigSource` (`spark.invaract.<name>`, every key unchanged). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 What stays here is what is genuinely Spark: Catalyst translation (`SparkPlanAdapter`,
@@ -1430,8 +1430,8 @@ inferred locations the same way `locationsMatch` expects.
 ## Notification sinks
 
 Everything above answers "does this write satisfy its contract" and, if
-not, aborts it. `com.invaract.sparkadapter.notification`
-(`spark-adapter/src/main/scala/com/invaract/sparkadapter/notification/`)
+not, aborts it. `com.invaract.verification.notification`
+(`spark-adapter/src/main/scala/com/invaract/verification/notification/`)
 answers a different, additive question: how does an external system find
 out that a check happened at all — PASS or FAIL — or that a write actually
 completed? This is opt-in observability, not a new enforcement mechanism:
@@ -1968,8 +1968,8 @@ actually exercise differently.
 
 ## Location resolution
 
-`com.invaract.sparkadapter.location`
-(`spark-adapter/src/main/scala/com/invaract/sparkadapter/location/`) answers a
+`com.invaract.verification.location`
+(`spark-adapter/src/main/scala/com/invaract/verification/location/`) answers a
 different question again: where does a contract's declared `location` actually
 come from? Every check above assumes `Dataset.location` is already a real,
 literal path or table name — but a contract author sometimes wants to avoid

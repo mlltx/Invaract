@@ -10,7 +10,7 @@ package com.invaract.ir
   * both a `Filter`'s condition and a `Conditional`'s per-branch narrowing.
   *
   * Structurally the same polarity-aware, De Morgan-/`NOT`-aware top-level
-  * walk `com.invaract.sparkadapter.EqualityConditions` already implements
+  * walk `com.invaract.verification.EqualityConditions` already implements
   * for `merge_condition`/`required_join_columns` — generalized from "which
   * columns are equality-paired" to a broader vocabulary of facts (not
   * null, equals/one-of a constant, a numeric bound). That existing logic

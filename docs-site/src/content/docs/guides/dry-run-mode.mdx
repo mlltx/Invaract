@@ -410,13 +410,13 @@ different one:
 
 ```properties
 sink.enabled=true
-sink.class=com.invaract.sparkadapter.notification.FanOutNotificationSink
+sink.class=com.invaract.verification.notification.FanOutNotificationSink
 sink.property.sinks=repository,triage
-sink.property.repository.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.repository.class=com.invaract.verification.notification.HttpNotificationSink
 sink.property.repository.property.url=https://contracts.corp.internal/inferred
 sink.property.repository.property.bearerTokenEnv=INVARACT_TOKEN
 sink.property.repository.statuses=INFERRED
-sink.property.triage.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.triage.class=com.invaract.verification.notification.HttpNotificationSink
 sink.property.triage.property.url=https://triage.corp.internal/invaract
 sink.property.triage.statuses=INFERRED_DEGRADED,SKIPPED_UNSUPPORTED,SKIPPED_UNRECOGNIZED,INFERENCE_ERROR
 ```

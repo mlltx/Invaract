@@ -65,7 +65,7 @@ scalacOptions ++= Seq(
 // (0.8.0 -> 0.9.0, WriteEvent.datasetType) that updated assemblyJarName
 // but not this literal path broke this module's own compile with "object
 // NotificationEvent is not a member of package
-// com.invaract.sparkadapter.notification" (the jar unmanagedJars pointed
+// com.invaract.verification.notification" (the jar unmanagedJars pointed
 // at simply didn't exist on disk under the old name), caught by this
 // module's own CI job, not assumed fixed.
 unmanagedJars in Compile += file("../spark-adapter/target/scala-2.12/invaract-spark-adapter-0.11.0.jar")

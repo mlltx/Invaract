@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invaract Contributors
+
+package com.invaract.verification
+
+import org.scalatest.funsuite.AnyFunSuite
+
+import scala.util.Random
+
+class LocationMatchingSpec extends AnyFunSuite {
+
+  // The rule exactly as `StructuralVerifier.locationsMatch` was written before it
+  // moved to `LocationMatching`: the reference every indexed lookup must agree with.
+  private def reference(declared: String, actual: String): Boolean = {
+    val d = declared.replace('\\', '/')
+    val a = actual.stripPrefix("file:").replace('\\', '/')
+    a == d || a.endsWith("/" + d)
+  }
+
+  test("matches: equal, suffix on a path boundary, and the file: scheme / backslash normalization") {
+    assert(LocationMatching.matches("data/out", "data/out"))
+    assert(LocationMatching.matches("data/out", "file:/home/u/data/out"))
+    assert(LocationMatching.matches("out", "s3://bucket/data/out"))
+    assert(LocationMatching.matches("C:\\work\\out.parquet", "file:/C:/work/out.parquet"))
+    assert(LocationMatching.matches("data\\out", "/x/data/out"))
+    assert(LocationMatching.matches("/abs/out", "file:/abs/out"))
+  }
+
+  test("matches: a suffix must start on a path boundary, and a longer declared path never matches a shorter actual one") {
+    assert(!LocationMatching.matches("orders", "s3://b/xorders"))
+    assert(!LocationMatching.matches("data/out", "out"))
+    assert(!LocationMatching.matches("a/orders", "b/orders"))
+    assert(!LocationMatching.matches("out", "data/out/"))
+    assert(!LocationMatching.matches("/data/out", "s3://b/data/out"))
+  }
+
+  test("matches: the file: scheme is only stripped from the actual side, not the declared one") {
+    assert(!LocationMatching.matches("file:/data/out", "/data/out"))
+    assert(LocationMatching.normalizeActual("file:/data/out") == "/data/out")
+    assert(LocationMatching.normalizeDeclared("file:/data/out") == "file:/data/out")
+  }
+
+  test("matchesNormalized and lastSegment") {
+    assert(LocationMatching.matchesNormalized("b", "a/b"))
+    assert(!LocationMatching.matchesNormalized("a/b", "b"))
+    assert(LocationMatching.lastSegment("a/b/c") == "c")
+    assert(LocationMatching.lastSegment("c") == "c")
+    assert(LocationMatching.lastSegment("a/b/") == "")
+    assert(LocationMatching.lastSegment("") == "")
+  }
+
+  test("LocationIndex returns the entries a linear scan would, in declaration order") {
+    val index = LocationIndex(Seq("orders" -> 0, "archive/orders" -> 1, "customers" -> 2, "orders" -> 3))
+    assert(index.matchingIndices("s3://b/archive/orders") == Vector(0, 1, 3))
+    assert(index.matching("s3://b/archive/orders") == List(0, 1, 3))
+    assert(index.first("s3://b/archive/orders").contains(0))
+    assert(index.matchingIndices("file:/w/customers") == Vector(2))
+    assert(index.matchingIndices("file:/w/unknown").isEmpty)
+    assert(index.matching("file:/w/unknown").isEmpty)
+    assert(index.first("file:/w/unknown").isEmpty)
+    assert(index.matchesAny("x/customers"))
+    assert(!index.matchesAny("x/customers2"))
+  }
+
+  test("LocationIndex over no entries matches nothing") {
+    val index = LocationIndex(Seq.empty[(String, Int)])
+    assert(index.matchingIndices("anything").isEmpty)
+    assert(!index.matchesAny("anything"))
+  }
+
+  test("LocationIndex buckets by the last segment but still applies the full suffix test inside a bucket") {
+    val index = LocationIndex(Seq("a/orders" -> "a", "b/orders" -> "b"))
+    assert(index.matching("root/a/orders") == List("a"))
+    assert(index.matching("root/b/orders") == List("b"))
+    assert(index.matching("root/c/orders").isEmpty)
+    assert(index.matching("orders").isEmpty)
+  }
+
+  test("LocationIndex handles degenerate locations: empty, trailing slash, backslashes") {
+    val index = LocationIndex(Seq("" -> 0, "dir/" -> 1, "w\\x" -> 2))
+    assert(index.matchingIndices("") == Vector(0))
+    assert(index.matchingIndices("a/dir/") == Vector(0, 1))
+    assert(index.matchingIndices("file:/p/w/x") == Vector(2))
+  }
+
+  test("PROPERTY: the index agrees with the reference rule on thousands of generated location pairs") {
+    val rnd = new Random(20261004)
+    val segments = Array("a", "b", "orders", "x", "data", "", "w", "C:", "out.parquet")
+    def path(): String = {
+      val n = rnd.nextInt(4)
+      val sep = if (rnd.nextInt(5) == 0) "\\" else "/"
+      val body = Seq.fill(n + 1)(segments(rnd.nextInt(segments.length))).mkString(sep)
+      val prefix = rnd.nextInt(4) match { case 0 => "file:"; case 1 => "s3://bkt/"; case 2 => "/"; case _ => "" }
+      prefix + body
+    }
+    val declared = Seq.fill(60)(path())
+    val index = LocationIndex(declared.zipWithIndex)
+    var matchedAtLeastOnce = 0
+    (1 to 4000).foreach { _ =>
+      val actual = path()
+      val expected = declared.indices.filter(i => reference(declared(i), actual)).toVector
+      assert(index.matchingIndices(actual) == expected, s"declared=$declared actual=$actual")
+      assert(expected.forall(i => LocationMatching.matches(declared(i), actual)))
+      if (expected.nonEmpty) matchedAtLeastOnce += 1
+    }
+    assert(matchedAtLeastOnce > 200, "the generator should produce real matches, or this property proves little")
+  }
+
+  test("a contract-sized index is usable at scale: 2000 declared locations, 2000 lookups") {
+    val declared = (0 until 2000).map(i => s"warehouse/db$i/table$i" -> i)
+    val index = LocationIndex(declared)
+    (0 until 2000).foreach { i =>
+      assert(index.matchingIndices(s"s3://bucket/warehouse/db$i/table$i") == Vector(i))
+    }
+    assert(index.matchingIndices("s3://bucket/warehouse/db1/table2").isEmpty)
+  }
+}

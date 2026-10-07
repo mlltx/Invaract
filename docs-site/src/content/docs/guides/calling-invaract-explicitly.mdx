@@ -61,7 +61,7 @@ warnings — none of that changes based on which path installed the rule.
 ```scala
 import com.invaract.contract.ContractParser
 import com.invaract.sparkadapter.ContractEnforcementRule
-import com.invaract.sparkadapter.location.{ContractLocationResolution, StaticMapLocationResolver}
+import com.invaract.verification.location.{ContractLocationResolution, StaticMapLocationResolver}
 
 val resolver = StaticMapLocationResolver.fromPropertiesFile("location-map.properties")
 // or: StaticMapLocationResolver.fromArgs(Seq("orders-input=s3://prod-bucket/orders/2026-09-09/"))
@@ -86,8 +86,9 @@ See [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/)
 ## Wire a notification sink
 
 ```scala
-import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSinkFactory}
-import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener, VerificationOptions}
+import com.invaract.verification.notification.{NotificationConfig, NotificationSinkFactory}
+import com.invaract.sparkadapter.{ContractEnforcementRule, SparkAdapterListener}
+import com.invaract.verification.{VerificationOptions}
 import org.apache.spark.sql.SparkSession
 
 val notifyConfig = NotificationConfig.load("notify.properties")
@@ -154,8 +155,8 @@ inferred and what it deliberately can't.
 ## Set verification options — fingerprinting and undeclared-input/field checks
 
 ```scala
-import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
-
+import com.invaract.sparkadapter.{ContractEnforcementRule}
+import com.invaract.verification.{VerificationOptions}
 val options = VerificationOptions(
   computeFingerprint = true,
   rejectUndeclaredInputs = true,

@@ -564,13 +564,13 @@ object ContractRule extends scala.runtime.AbstractFunction2[String, Map[String, 
   *
   * @param customRuleTypes maps a `ContractRule.ruleType` this contract's
   *   own `rules` use to the fully-qualified class name of a
-  *   `com.invaract.sparkadapter.CustomRuleVerifier` implementation that
+  *   `com.invaract.verification.CustomRuleVerifier` implementation that
   *   verifies it — the plug-in-without-editing-Invaract's-own-source
   *   extension point for a DML rule type the built-in `RuleType` set
   *   doesn't cover. A `ruleType` also present in `RuleType.All` is inert
   *   here — the built-in interpretation always wins
   *   (`ContractValidator` warns on this). Resolved by
-  *   `com.invaract.sparkadapter.CustomRuleVerifierFactory` — this module
+  *   `com.invaract.verification.CustomRuleVerifierFactory` — this module
   *   has no Spark dependency to resolve it itself, so
   *   `ContractValidator` can only check this map's own shape (empty
   *   keys/values, a built-in collision), not whether a named class

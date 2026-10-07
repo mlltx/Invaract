@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.AdapterCapabilities
 import org.slf4j.LoggerFactory
 
 /** The Spark adapter's own declaration of what it verifies - loaded from

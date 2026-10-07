@@ -3,8 +3,10 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.StructuralVerifier
 import com.invaract.contract.{ContractParser, DatasetType}
-import com.invaract.sparkadapter.notification.{TestNotificationSink, WriteEvent}
+import com.invaract.verification.notification.{TestNotificationSink, WriteEvent}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
@@ -19,7 +21,7 @@ import java.nio.file.{Files, Path}
   * than `ContractEnforcementRuleSpec`'s `ContractValidationEvent` tests:
   * this listener only observes *after* Spark reports a write actually
   * completed (`onSuccess`), not at analysis time. See
-  * `com.invaract.sparkadapter.notification.WriteEvent`'s doc for why that
+  * `com.invaract.verification.notification.WriteEvent`'s doc for why that
   * distinction matters.
   */
 class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {

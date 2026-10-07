@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.StructuralVerifier
 import com.invaract.fingerprint.TransformationFingerprinter
 import com.invaract.ir
 import org.apache.spark.sql.{DataFrame, SparkSession}

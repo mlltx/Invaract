@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.ContractViolationException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.scalatest.BeforeAndAfterAll
@@ -159,7 +161,7 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     // reason.
     val notifyProps = new java.util.Properties()
     notifyProps.setProperty("sink.enabled", "true")
-    notifyProps.setProperty("sink.class", "com.invaract.sparkadapter.notification.FileNotificationSink")
+    notifyProps.setProperty("sink.class", "com.invaract.verification.notification.FileNotificationSink")
     notifyProps.setProperty("sink.property.path", eventsFile.toString)
     val notifyPropsOut = new java.io.FileOutputStream(notifyPropsFile.toFile)
     try notifyProps.store(notifyPropsOut, null)
@@ -226,7 +228,7 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
   private def fileSinkProps(eventsFile: Path): Path =
     writeNotifyProps(
       "sink.enabled" -> "true",
-      "sink.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.class" -> "com.invaract.verification.notification.FileNotificationSink",
       "sink.property.path" -> eventsFile.toString
     )
 
@@ -307,11 +309,11 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     val problems = scratchDir.resolve("fanout_problems.jsonl")
     val notify = writeNotifyProps(
       "sink.enabled" -> "true",
-      "sink.class" -> "com.invaract.sparkadapter.notification.FanOutNotificationSink",
+      "sink.class" -> "com.invaract.verification.notification.FanOutNotificationSink",
       "sink.property.sinks" -> "all,problems",
-      "sink.property.all.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.property.all.class" -> "com.invaract.verification.notification.FileNotificationSink",
       "sink.property.all.property.path" -> everything.toString,
-      "sink.property.problems.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink",
+      "sink.property.problems.class" -> "com.invaract.verification.notification.FileNotificationSink",
       "sink.property.problems.property.path" -> problems.toString,
       "sink.property.problems.statuses" -> "INFERRED_DEGRADED,SKIPPED_UNSUPPORTED,SKIPPED_UNRECOGNIZED,INFERENCE_ERROR"
     )
@@ -358,7 +360,7 @@ class InvaractSparkSessionExtensionSpec extends AnyFunSuite with BeforeAndAfterA
     val outputPath = scratchDir.resolve("dry_run_bad_sink_props.parquet").toString
     val noPath = writeNotifyProps(
       "sink.enabled" -> "true",
-      "sink.class" -> "com.invaract.sparkadapter.notification.FileNotificationSink" // requires sink.property.path
+      "sink.class" -> "com.invaract.verification.notification.FileNotificationSink" // requires sink.property.path
     )
     val spark = buildSession(
       InvaractSparkSessionExtension.DryRunConfKey -> "true",

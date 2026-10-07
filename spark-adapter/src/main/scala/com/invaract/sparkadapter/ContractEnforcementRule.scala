@@ -3,8 +3,10 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
-import com.invaract.sparkadapter.notification.{InferenceStatus, NotificationSink}
+import com.invaract.verification.notification.{InferenceStatus, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -71,7 +73,7 @@ object ContractEnforcementRule {
     * `ContractViolationException` to abort it if verification fails.
     *
     * Resolves any `ref://<id>` location `contract` declares (see
-    * `com.invaract.sparkadapter.location`) before the first check runs -
+    * `com.invaract.verification.location`) before the first check runs -
     * see `resolveContractLocations`'s doc for why this is what makes the
     * feature attachable purely via `spark-submit --conf`, with no change
     * to the caller's own code.
@@ -107,7 +109,7 @@ object ContractEnforcementRule {
     * this fires at analysis time, before Spark has executed anything (so a
     * FAILED event here means the write never happened), while `WriteEvent`
     * only fires once Spark reports a write actually completed. See
-    * `com.invaract.sparkadapter.notification`'s types for the full
+    * `com.invaract.verification.notification`'s types for the full
     * mechanism, and docs-site's "Notification sinks" guide for a worked
     * example.
     */
@@ -126,7 +128,7 @@ object ContractEnforcementRule {
   /** Spark configuration key naming an `id=location` `.properties` file
     * (the same shape `StaticMapLocationResolver.fromPropertiesFile` reads)
     * to resolve `contract`'s `ref://<id>` locations against - see
-    * `com.invaract.sparkadapter.location`'s package for the syntax.
+    * `com.invaract.verification.location`'s package for the syntax.
     *
     * Reading this from Spark's own configuration, rather than requiring a
     * caller to build a `LocationResolver` and call

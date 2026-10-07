@@ -6,8 +6,9 @@ package com.invaract.runner
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir.Lineage
 import com.invaract.ir.PlanPrinter
-import com.invaract.sparkadapter.{ContractEnforcementRule, ContractViolationException, InvaractSparkSessionExtension, SensitiveColumnLineage, SensitivityLineage, SparkAdapterListener, TranslationResult, VerificationOptions}
-import com.invaract.sparkadapter.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
+import com.invaract.sparkadapter.{ContractEnforcementRule, InvaractSparkSessionExtension, SparkAdapterListener, TranslationResult}
+import com.invaract.verification.{ContractViolationException, SensitiveColumnLineage, SensitivityLineage, VerificationOptions}
+import com.invaract.verification.notification.{NotificationConfig, NotificationSink, NotificationSinkFactory, SummarizingNotificationSink}
 import com.invaract.sparkadapter.registry.ContractSource
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -75,7 +76,7 @@ object DemoJobHarness {
     // Optional and empty by default: notification (ROADMAP.md's "Notification
     // sinks" feature) is entirely opt-in, so omitting this argument changes
     // nothing about how this harness behaves - see
-    // com.invaract.sparkadapter.notification's package for the mechanism.
+    // com.invaract.verification.notification's package for the mechanism.
     val notifyConfigPath = positional.applyOrElse(4, (_: Int) => "")
 
     val startTime = System.currentTimeMillis()
@@ -122,7 +123,7 @@ object DemoJobHarness {
       // unvalidated.
       //
       // Any ref://<id> location a sink-branch contract declares (see
-      // com.invaract.sparkadapter.location) is resolved automatically
+      // com.invaract.verification.location) is resolved automatically
       // inside ContractEnforcementRule.forContract itself, from Spark's
       // own configuration (spark.invaract.locationMap) — not here. That's
       // deliberate: this harness exists to demonstrate exactly what a real
@@ -137,7 +138,7 @@ object DemoJobHarness {
 
       // Off by default (empty path -> NotificationConfig.disabled ->
       // NotificationSinkFactory.create returns None): see
-      // com.invaract.sparkadapter.notification's package doc. Loaded
+      // com.invaract.verification.notification's package doc. Loaded
       // before the SparkSession for the same reason a sink-branch contract
       // is - both the check rule and the listener below need it at
       // construction time.

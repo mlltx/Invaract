@@ -340,7 +340,7 @@ free, since ADR-009's extension class calls the very same `forContract`.
 
 **Alternative considered:** Configuration only via explicit method
 arguments (`ContractLocationResolution.resolve(contract, resolver)`,
-called in the job's own code), as `com.invaract.sparkadapter.location`
+called in the job's own code), as `com.invaract.verification.location`
 first shipped with. **Rejected as the only mechanism**, not removed: it
 remains available for a resolver `SparkConf` can't express (a mapping
 built at runtime, a future `HttpLocationResolver`'s endpoint/auth), and

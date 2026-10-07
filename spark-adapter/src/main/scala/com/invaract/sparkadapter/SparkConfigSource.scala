@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.ConfigSource
 import org.apache.spark.sql.SparkSession
 
 /** Spark's spelling of the neutral `InvaractConf` names: every Invaract setting

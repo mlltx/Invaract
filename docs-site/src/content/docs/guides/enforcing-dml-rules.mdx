@@ -104,8 +104,7 @@ predicate") isn't limited to it. `customRuleTypes` maps a `type:` name your cont
 ```scala
 import com.invaract.contract.ContractRule
 import com.invaract.ir.RowMutation
-import com.invaract.sparkadapter.{CustomRuleVerifier, MutationKind, Violation, ViolationType}
-
+import com.invaract.verification.{CustomRuleVerifier, MutationKind, Violation, ViolationType}
 class ForbidPasswordColumnUpdate extends CustomRuleVerifier {
   override def appliesTo(kind: MutationKind): Boolean = kind == MutationKind.Update
 

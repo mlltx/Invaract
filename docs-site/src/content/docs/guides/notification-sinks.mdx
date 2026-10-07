@@ -31,7 +31,7 @@ belongs alongside a contract describing data shape.
 ```properties
 # notify.properties
 sink.enabled=true
-sink.class=com.invaract.sparkadapter.notification.FileNotificationSink
+sink.class=com.invaract.verification.notification.FileNotificationSink
 sink.property.path=/var/log/invaract/events.jsonl
 ```
 
@@ -61,7 +61,7 @@ spark-submit \
 to `forContract` for `ContractValidationEvent`s, **and** registers a `SparkAdapterListener`
 on the same session for `WriteEvent`s — the two-call wiring Step 2/3 below do by hand,
 done automatically. Nothing in `MyRealJob`'s source needs to import
-`com.invaract.sparkadapter.notification` at all.
+`com.invaract.verification.notification` at all.
 
 ## Need something `spark.invaract.notifyConfig` can't express?
 
@@ -449,7 +449,7 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
 
   ```properties
   sink.enabled=true
-  sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+  sink.class=com.invaract.verification.notification.HttpNotificationSink
   sink.property.url=https://example.com/invaract-events
   ```
 
@@ -481,7 +481,7 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
 
   ```properties
   sink.enabled=true
-  sink.class=com.invaract.sparkadapter.notification.HadoopFsNotificationSink
+  sink.class=com.invaract.verification.notification.HadoopFsNotificationSink
   sink.property.path=s3a://my-bucket/invaract-events/
   sink.property.hadoop.fs.s3a.access.key=...
   sink.property.hadoop.fs.s3a.secret.key=...
@@ -506,12 +506,12 @@ properties file. `sink.property.sinks` lists the targets in order; each target `
 
 ```properties
 sink.enabled=true
-sink.class=com.invaract.sparkadapter.notification.FanOutNotificationSink
+sink.class=com.invaract.verification.notification.FanOutNotificationSink
 sink.property.sinks=registry,audit
-sink.property.registry.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.property.registry.class=com.invaract.verification.notification.HttpNotificationSink
 sink.property.registry.property.url=https://registry.corp.internal/events
 sink.property.registry.property.bearerTokenEnv=INVARACT_TOKEN
-sink.property.audit.class=com.invaract.sparkadapter.notification.FileNotificationSink
+sink.property.audit.class=com.invaract.verification.notification.FileNotificationSink
 sink.property.audit.property.path=/var/log/invaract-events.jsonl
 ```
 
@@ -536,7 +536,7 @@ an event it couldn't deliver. These properties (all optional) control that:
 
 ```properties
 sink.enabled=true
-sink.class=com.invaract.sparkadapter.notification.HttpNotificationSink
+sink.class=com.invaract.verification.notification.HttpNotificationSink
 sink.property.url=https://example.com/invaract-events
 sink.property.bearerTokenEnv=INVARACT_TOKEN
 sink.property.retry.maxAttempts=5
@@ -601,7 +601,7 @@ around whatever `NotificationSinkFactory.create` returns — they're not somethi
 no-arg constructor:
 
 ```scala
-import com.invaract.sparkadapter.notification.{NotificationSinkFactory, SummarizingNotificationSink}
+import com.invaract.verification.notification.{NotificationSinkFactory, SummarizingNotificationSink}
 
 val configuredSink = NotificationSinkFactory.create(notifyConfig)
 val summarizingSink = configuredSink.map(new SummarizingNotificationSink(_))
@@ -628,7 +628,7 @@ before giving up — and if every attempt fails, it publishes the event to a
 **dead-letter sink** instead of letting it disappear:
 
 ```scala
-import com.invaract.sparkadapter.notification.{
+import com.invaract.verification.notification.{
   FileNotificationSink, HttpNotificationSink, NotificationSinkFactory, RetryingNotificationSink
 }
 
@@ -692,7 +692,7 @@ documents them:
 
 ```properties
 sink.enabled=true
-sink.class=com.invaract.sparkadapter.notification.kafka.KafkaNotificationSink
+sink.class=com.invaract.verification.notification.kafka.KafkaNotificationSink
 sink.property.topic=invaract-events
 sink.property.bootstrap.servers=localhost:9092
 ```
@@ -708,7 +708,7 @@ A real destination — a message queue, an HTTP endpoint, a metrics system — i
 code implementing `NotificationSink`:
 
 ```scala
-import com.invaract.sparkadapter.notification.{NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{NotificationEvent, NotificationSink}
 
 class MySink extends NotificationSink {
   private var endpoint: String = _

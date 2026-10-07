@@ -524,11 +524,11 @@ would be.
 │
 ├── verification-core/             # Verification engine: engine-neutral checkers, result
 │   │                               # model, notification sinks, location resolution (no Spark).
-│   │                               # Same `com.invaract.sparkadapter` packages as before the
-│   │                               # extraction (deployed configs name classes by FQN) — see
-│   │                               # docs/MULTI_ENGINE_ADAPTERS.md. Files listed under
-│   │                               # spark-adapter/ below that are engine-neutral live here.
-│   └── src/main/scala/com/invaract/sparkadapter/
+│   │                               # Packages are `com.invaract.verification` (`.notification`,
+│   │                               # `.location`) — see docs/MULTI_ENGINE_ADAPTERS.md. Files
+│   │                               # listed under spark-adapter/ below that are engine-neutral
+│   │                               # live here (the tree below predates the split).
+│   └── src/main/scala/com/invaract/verification/
 │
 ├── spark-adapter/                 # Verification engine: Spark integration
 │   ├── src/main/scala/com/invaract/sparkadapter/
@@ -592,10 +592,10 @@ would be.
 │   └── project/assembly.sbt
 │
 ├── notification-kafka/           # Optional extension: Kafka NotificationSink
-│   ├── src/main/scala/com/invaract/sparkadapter/notification/kafka/
+│   ├── src/main/scala/com/invaract/verification/notification/kafka/
 │   │   └── KafkaNotificationSink.scala # real, unscoped kafka-clients dependency —
 │   │                                    # of this module only, not spark-adapter's
-│   ├── src/test/scala/com/invaract/sparkadapter/notification/kafka/
+│   ├── src/test/scala/com/invaract/verification/notification/kafka/
 │   └── build.sbt                # unmanagedJars against spark-adapter's assembly jar
 │
 ├── web/                          # Example harness: mobile-friendly results UI

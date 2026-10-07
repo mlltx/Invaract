@@ -92,8 +92,8 @@ already uses. A platform team can turn this on for a job whose source they don't
 Setting it explicitly in code works the same way too:
 
 ```scala
-import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
-
+import com.invaract.sparkadapter.{ContractEnforcementRule}
+import com.invaract.verification.{VerificationOptions}
 val spark = SparkSession.builder()
   .withExtensions(_.injectCheckRule(
     ContractEnforcementRule.forContract(contract, VerificationOptions(staticDataQuality = true))
