@@ -1438,3 +1438,18 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.notification.WriteFieldInfo$"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.sparkadapter.RowMutationSupport#Classification.kind")
 )
+
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b): `RowMutationSupport.Classification`
+// (`private[sparkadapter]`, though MiMa still sees it) became an alias of the engine-neutral
+// `MutationClassification` that now lives in `verification-core` and is what
+// `VerificationPipeline` consumes - the same move `RowMutationSupport.Kind` made to
+// `MutationKind` in Stage 2a. Every line is MiMa's own suggested filter for this change
+// (`sbt mimaReportBinaryIssues` against 0.11.0), pasted verbatim.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Extracted"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Extracted$"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Unverifiable"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Unverifiable$")
+)

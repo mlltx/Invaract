@@ -3945,8 +3945,10 @@ Extend verification engine to support multiple execution engines.
   - [x] Stage 2a: `verification-core` module extracted from `spark-adapter` (package
         names unchanged — deployed configs name classes by FQN); seams for lineage-boundary
         types, `MutationKind`, `InferredWrite`
-  - [ ] Stage 2b: adapter SPI (`VerificationPipeline`), neutral `invaract.*` config
-        namespace, neutral package names with FQN compatibility
+  - [x] Stage 2b: adapter SPI — `VerificationPipeline` (`verifyWrite` /
+        `verifyStateChange` / `rejectUnverifiableWrite`) and `VerificationSetup` +
+        `ConfigSource` (neutral `InvaractConf` names; Spark spells them `spark.invaract.*`,
+        unchanged). Neutral package names deferred (deployed configs name classes by FQN)
   - [ ] Stage 3: per-adapter capability declaration, generated matrix, CI drift check
   - [ ] Stage 4: `adapter-testkit` conformance scenarios
   - [ ] Stage 5: function canonicalisation

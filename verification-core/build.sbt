@@ -89,7 +89,8 @@ Test / javaOptions ++= Seq(
 // here moved from spark-adapter, where it scored well partly on the strength
 // of spark-adapter's Spark-backed suites; the thresholds below are the same
 // as spark-adapter's, checked against a real whole-module run on this module's
-// own (Spark-free) tests: 89.18% of total / 95.84% of covered code (817 mutants).
+// own (Spark-free) tests: 87.89% of total / 91.16% of covered code (950 mutants, Stage 2b),
+// and 100% on the Stage 2b SPI files (VerificationPipeline, VerificationSetup, ConfigSource).
 // `StringLiteral` is excluded for the same documented reason as in
 // spark-adapter (violation/remediation wording is human-readable text).
 strykerMutate := Seq("src/main/scala/**/*.scala")
@@ -100,11 +101,12 @@ strykerThresholdsBreak := 70
 
 // Line/branch coverage gating (sbt-scoverage) - see ir/build.sbt's matching
 // comment for coverageScalacPluginVersion's own reasoning and the "measure
-// first, then pin" discipline: measured stmt=91.54%, branch=89.88% via a real
+// first, then pin" discipline: measured stmt=95.39%, branch=92.75% via a real
 // `sbt coverage test coverageReport` run on this module's own (Spark-free)
-// suite, pinned a few points below.
+// suite (after the Stage 2b SPI and its tests landed; 91.54% / 89.88% before),
+// pinned a few points below.
 coverageScalacPluginVersion := "2.4.2"
-coverageMinimumStmtTotal := 88
-coverageMinimumBranchTotal := 86
+coverageMinimumStmtTotal := 92
+coverageMinimumBranchTotal := 89
 coverageFailOnMinimum := true
 coverageHighlighting := true
