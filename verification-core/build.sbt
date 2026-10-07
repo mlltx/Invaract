@@ -52,7 +52,28 @@ import com.typesafe.tools.mima.core._
 // every class is reported missing; excluding the whole old package is the one honest way to say
 // "all of it moved". Inert once the base branch carries the rename.
 mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*")
+  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*"),
+  // Deliberate break, review pass 1 (docs/MULTI_ENGINE_ADAPTERS.md, "Conventions every adapter follows"):
+  // the notification events went engine-neutral. `applicationId` is `runId` on every event, and
+  // `JobInfo` lost its Spark fields (`appName`, `sparkVersion`, `master`, `deployMode`) for
+  // `name`, `engine`, `engineVersion` and `engineDetails`. HadoopFsNotificationSink moved to
+  // spark-adapter so this module carries no Hadoop dependency. No consumers exist; these are the
+  // exact lines MiMa's own output suggests.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractValidationEvent.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.appName"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.deployMode"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.master"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobInfo.sparkVersion"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobSummaryEvent.applicationId"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.applicationId"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.apply"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.copy"),
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.notification.JobInfo.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.<init>$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.apply$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.copy$default$6"),
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.verification.notification.HadoopFsNotificationSink")
 )
 
 versionScheme := Some("early-semver")
