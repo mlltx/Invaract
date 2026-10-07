@@ -438,7 +438,8 @@ object ContractEnforcementRule {
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
       applicationId: Option[String] = None,
-      checkpointRegistry: Option[CheckpointRegistry] = None
+      checkpointRegistry: Option[CheckpointRegistry] = None,
+      capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared
   ): Unit = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
@@ -464,7 +465,7 @@ object ContractEnforcementRule {
         // plain read/transformation the moment an invalid contract was merely
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId)
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities)
       case _ =>
         // Checked before the fail-closed Command catch-all below: a recognized
         // state-changing CALL (nine procedures - see StateChangingCallSupport)

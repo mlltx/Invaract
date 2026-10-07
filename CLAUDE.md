@@ -385,6 +385,13 @@ names its own way (Spark's is `SparkConfigSource`: `spark.invaract.<name>`) and 
 organizational policy for free. A new neutral setting goes in `InvaractConf` and
 `VerificationSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 
+**Every adapter declares what it can and cannot verify**, in
+`invaract-capabilities-<adapter>.yaml` (a status for every `Capability` in
+`verification-core`; an undeclared capability is a parse error). A new engine-neutral
+check, rule or analysis means a new `Capability`, which forces every adapter to take a
+position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
+`verification-core` fails otherwise). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
 `spark-submit --conf`? If the honest answer is no, the feature isn't done —

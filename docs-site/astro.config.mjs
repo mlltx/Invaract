@@ -108,6 +108,7 @@ export default defineConfig({
 						{ label: 'Contract Format', slug: 'reference/contract-format' },
 						{ label: 'Connector Support', slug: 'reference/connector-support' },
 						{ label: 'Spark Version Support', slug: 'reference/spark-version-support' },
+						{ label: 'Engine Capabilities', slug: 'reference/engine-capabilities' },
 						{ label: 'Violation Types', slug: 'reference/violation-types' },
 						{
 							label: 'Organizational Policy Format',

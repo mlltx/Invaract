@@ -3949,7 +3949,8 @@ Extend verification engine to support multiple execution engines.
         `verifyStateChange` / `rejectUnverifiableWrite`) and `VerificationSetup` +
         `ConfigSource` (neutral `InvaractConf` names; Spark spells them `spark.invaract.*`,
         unchanged). Neutral package names deferred (deployed configs name classes by FQN)
-  - [ ] Stage 3: per-adapter capability declaration, generated matrix, CI drift check
+  - [x] Stage 3: per-adapter capability declaration (`invaract-capabilities-<adapter>.yaml`),
+        generated docs-site matrix with a drift test, `UNSUPPORTED_CONTRACT_FEATURE` fail-closed
   - [ ] Stage 4: `adapter-testkit` conformance scenarios
   - [ ] Stage 5: function canonicalisation
 - [ ] Adapter pattern documentation

@@ -71,15 +71,23 @@ object VerificationPipeline {
     * and building the write (gathering schemas, translating) can fail on a
     * plan the contract has no bearing on - an adapter must not be able to get
     * that order wrong by calling the two steps itself.
+    *
+    * `capabilities` is the adapter's own declaration of what it can verify (see
+    * `AdapterCapabilities`). When given, a contract that relies on something the
+    * adapter declares `Unsupported` is rejected with `UNSUPPORTED_CONTRACT_FEATURE`
+    * rather than passing a requirement nothing verified (see `CapabilityCheck`);
+    * `None` skips the check.
     */
   def verifyWrite(
       contract: Contract,
       write: => CheckedWrite,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None
+      applicationId: Option[String] = None,
+      capabilities: Option[AdapterCapabilities] = None
   ): Unit = {
     requireValidContract(contract, sink, applicationId)
+    val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
     val checked = write
 
     // The plan's shape (reads, unknown nodes, aggregates, joins, filters) is
@@ -149,7 +157,7 @@ object VerificationPipeline {
 
     val result = VerificationResult.of(
       structuralResult.contract,
-      structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
+      capabilityViolations ++ structuralResult.violations ++ ruleViolations ++ planRuleViolations ++ dataQualityViolations ++ roleConsistencyViolations,
       fingerprints,
       dataQualityResults,
       roleConformanceResults,

@@ -1,0 +1,70 @@
+adapter: toy
+engine: Toy Engine 1.0
+enforcement:
+  point: pre-submit-gate
+  note: Runs as a CI step before the job is submitted.
+capabilities:
+  read.batch:
+    status: supported
+  read.streaming:
+    status: not-applicable
+    note: The toy engine is batch only.
+  write.batch:
+    status: supported
+  write.streaming:
+    status: not-applicable
+    note: The toy engine is batch only.
+  write.rowLevelDml:
+    status: supported
+  write.stateChange:
+    status: supported
+  check.inputExistence:
+    status: supported
+  check.location:
+    status: supported
+  check.schema:
+    status: supported
+  check.nestedTypes:
+    status: partial
+    note: Arrays are compared by keyword only.
+  check.format:
+    status: supported
+  check.saveMode:
+    status: supported
+  check.catalogRegistration:
+    status: unsupported
+    note: The toy engine has no catalogs.
+  rules.dml:
+    status: unsupported
+    note: The toy engine has no row-level DML.
+  rules.planShape:
+    status: supported
+  rules.custom:
+    status: supported
+  analysis.staticDataQuality:
+    status: unsupported
+    note: Not implemented for the toy engine.
+  analysis.roleConsistency:
+    status: supported
+  analysis.fingerprint:
+    status: supported
+  analysis.sensitivityPropagation:
+    status: supported
+  lineage.columnLevel:
+    status: supported
+  lineage.boundaryResolution:
+    status: supported
+  policy.organizational:
+    status: supported
+  config.zeroCodeInstall:
+    status: supported
+  config.locationRefs:
+    status: supported
+  config.contractRegistry:
+    status: supported
+  reporting.notifications:
+    status: supported
+  reporting.dryRunInference:
+    status: supported
+  failClosed.unverifiableWrites:
+    status: supported
