@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024 Invaract Contributors
 
-package com.invaract.verification.notification
+package com.invaract.sparkadapter.notification
 
+import com.invaract.verification.notification.ContractValidationEvent
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 

@@ -265,7 +265,7 @@ private[sparkadapter] final class DryRunReporter(
     * (`ContractValidator` wants a letter first, then alphanumerics/`.`/`_`/`-`).
     */
   private def mergedContractId: String = {
-    val cleaned = job.jobId.orElse(job.appName).map(_.replaceAll("[^A-Za-z0-9._-]", "_")).getOrElse("")
+    val cleaned = job.jobId.orElse(job.name).map(_.replaceAll("[^A-Za-z0-9._-]", "_")).getOrElse("")
     if (cleaned.isEmpty) ContractInference.InferredId
     else if (cleaned.head.isLetter) cleaned
     else "job_" + cleaned
@@ -318,12 +318,12 @@ private[sparkadapter] object DryRunReporter {
   def jobInfoOf(session: SparkSession): JobInfo = {
     val sc = session.sparkContext
     JobInfo(
-      applicationId = Some(sc.applicationId),
-      appName = Some(sc.appName),
+      runId = Some(sc.applicationId),
+      name = Some(sc.appName),
       jobId = session.conf.getOption(JobIdConfKey).map(_.trim).filter(_.nonEmpty),
-      sparkVersion = Some(sc.version),
-      master = Some(sc.master),
-      deployMode = Some(sc.deployMode),
+      engine = Some("spark"),
+      engineVersion = Some(sc.version),
+      engineDetails = Map("master" -> sc.master, "deployMode" -> sc.deployMode),
       user = Some(sc.sparkUser),
       startTimeMs = Some(sc.startTime),
       attributes = withPrefix(session, JobMetadataConfPrefix)

@@ -3,18 +3,28 @@
 
 package com.invaract.verification
 
-/** The one definition of "does a contract's declared location match a location
-  * Spark reported" — `StructuralVerifier.locationsMatch` and
-  * `normalizeSparkLocation` delegate here, and `LocationIndex` below is built
-  * from the same two pure functions, so the indexed and the one-off paths cannot
-  * disagree (`LocationMatchingSpec` also checks them against each other on
-  * generated paths).
+/** The one definition of "does a contract's declared location match a location the
+  * engine reported" - `StructuralVerifier.locationsMatch` and `normalizeLocation`
+  * delegate here, and `LocationIndex` below is built from the same two pure functions,
+  * so the indexed and the one-off paths cannot disagree (`LocationMatchingSpec` also
+  * checks them against each other on generated paths).
   *
-  * The rule: strip a `file:` scheme from the actual side and turn `\` into `/`
-  * on both sides (a contract authored on Windows still matches Spark's
-  * forward-slash paths), then a declared location matches if it equals the
-  * actual one or is a `/`-boundary suffix of it. The matching rule itself is
-  * deliberately unchanged here — only where the work happens moved.
+  * **The canonical location form.** A location is a `/`-separated path or identifier.
+  * An adapter whose engine names data some other way converts it to that form before
+  * handing it to the pipeline - a table `project.dataset.table` becomes
+  * `project/dataset/table` - and a contract author writes the same form. The rule does
+  * not know about engines; it only compares canonical strings, which is what lets one
+  * contract mean the same thing on every adapter.
+  *
+  * The rule: strip a `file:` scheme from the actual side (the one URL-style prefix a
+  * local-file engine reports) and turn `\` into `/` on both sides (a contract authored
+  * on Windows still matches forward-slash paths), then a declared location matches if
+  * it equals the actual one or is a `/`-boundary suffix of it. So an absolute declared
+  * location (`/data/orders`, `gs://bucket/orders`) matches only that exact location,
+  * while a relative one (`orders`, `sales/orders`) matches any location that ends in
+  * it - deliberately, so a contract need not know a deployment's root. The consequence
+  * to design for: a relative declaration cannot tell two tenants' `.../orders` apart,
+  * so a contract that must pin one declares it absolute.
   */
 private[invaract] object LocationMatching {
 

@@ -1423,7 +1423,7 @@ exists today for anything else `VerificationResult` carries.
 ### 14.5 Publishing through the existing `NotificationSink` mechanism
 
 `ContractValidationEvent` gains one new, appended, defaulted field,
-following the exact precedent `applicationId` already set on this same
+following the exact precedent `runId` already set on this same
 case class:
 
 ```scala
@@ -1433,7 +1433,7 @@ case class ContractValidationEvent(
   violations: List[Violation],
   timestamp: Long,
   metadata: Map[String, Any],
-  applicationId: Option[String] = None,
+  runId: Option[String] = None,
   fingerprints: Option[TransformationFingerprint] = None
 ) extends NotificationEvent { val eventType: String = "CONTRACT_VALIDATION" }
 ```
@@ -1448,7 +1448,7 @@ ContractValidationEvent(
   violations = result.violations,
   timestamp = System.currentTimeMillis(),
   metadata = contract.extensions,
-  applicationId = applicationId,
+  runId = runId,
   fingerprints = result.fingerprints
 )
 ```
@@ -1471,7 +1471,7 @@ already recurses through `Map`/`Iterable`/`Option`/`String`/`Number`
 generically (see its own doc) and needs no changes at all to render
 whatever shape `toMap` produces. `invaract-notification-kafka`'s
 `KafkaNotificationSink`, and any other custom sink, gets this for free
-the same way it already gets `violations`, `applicationId`, and every
+the same way it already gets `violations`, `runId`, and every
 other field for free — no per-sink change required.
 
 ### 14.6 Binary compatibility
@@ -1479,7 +1479,7 @@ other field for free — no per-sink change required.
 Both changes in this section — a new field on `VerificationOptions`, and
 a new field on `ContractValidationEvent` — are real, deliberate MiMa
 breaks under CLAUDE.md's "API Compatibility Requirement," in exactly the
-same way `ContractValidationEvent.applicationId` and every one of
+same way `ContractValidationEvent.runId` and every one of
 `WriteEvent`'s later-appended `Option[...] = None` fields already were:
 appending a defaulted field to an existing case class changes its
 constructor's arity. This document's recommendation, consistent with

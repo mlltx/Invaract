@@ -22,7 +22,7 @@ depended on Spark types or Spark's spelling of things. The review found eight le
 |---|---|---|---|
 | 1 | The verification core took Spark's `StructType`: `StructuralVerifier`, `InputChecker`, `OutputChecker`, `SchemaChecker`, `ContractInference`. A contract's `type:` was compared against Spark's `DataType.typeName` and parsed with Spark's `DataType.fromDDL`. | BigQuery's `INT64`/`NUMERIC`/`REPEATED`, Beam's schema `FieldType` had nowhere to land. | Stage 1 |
 | 2 | `ContractEnforcementRule.verifyOrThrow` is the real adapter interface, written inline and interleaved with `LogicalPlan`, `SQLConf` and `WriteCommandSupport`. | A second adapter would copy ~200 lines of orchestration. | Stage 2 |
-| 3 | Neutral code (`Violation`, `VerificationResult`, `VerificationOptions`, the notification events, `spark.invaract.*` keys, `applicationId`) lives in `com.invaract.sparkadapter`. | A BigQuery adapter would have to depend on `spark-adapter`, whose Spark dependency is `provided`. | Stage 2 |
+| 3 | Neutral code (`Violation`, `VerificationResult`, `VerificationOptions`, the notification events, `spark.invaract.*` keys, `runId`) lives in `com.invaract.sparkadapter`. | A BigQuery adapter would have to depend on `spark-adapter`, whose Spark dependency is `provided`. | Stage 2 |
 | 4 | `ir.Function` names are Spark's `prettyName`; `fingerprint`'s `NonDeterminism` lists `spark_partition_id`, `input_file_name`, … | BigQuery's `GENERATE_UUID()` would be classified deterministic — a silently wrong fingerprint. The same logic on two engines would fingerprint differently. | Stage 5 |
 | 5 | `LocationMatching` assumes file paths (`file:`, `\`, `/`-boundary suffix). | `proj.ds.tbl`, `proj:ds.tbl`, backticks, Beam IO targets don't fit. | Stage 2 |
 | 6 | The IR has no `Distinct`, set operations, `UNNEST`/`explode`, pivot, sample, window frames or lateral joins. | They surface only as `UnknownPlan` diagnostics. | After Stage 5 |
@@ -166,9 +166,9 @@ one per thing an adapter can find:
 
 | Entry point | When an adapter calls it |
 |---|---|
-| `verifyWrite(contract, write: => CheckedWrite, options, sink, applicationId)` | a recognized write |
-| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, applicationId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
-| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, applicationId)` | the fail-closed response to something that looks like a write but could not be translated |
+| `verifyWrite(contract, write: => CheckedWrite, options, sink, runId)` | a recognized write |
+| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
+| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId)` | the fail-closed response to something that looks like a write but could not be translated |
 
 `CheckedWrite` is what an adapter hands over for a write: the translated plan, input/output
 `LogicalSchema`s, case sensitivity, its DML classification (`MutationClassification`), the
@@ -283,6 +283,63 @@ Members the adapter needs from the core that were `private[sparkadapter]` are
 `private[invaract]` (the two modules now sit in different packages). `spark-adapter`'s MiMa
 filters record the move; the one signature of this module's own surface that changes is
 `ContractEnforcementRule.forContract`.
+
+## Conventions every adapter follows
+
+These are the rules that make one contract mean the same thing on every engine. They are not
+enforced by the type system, so they are written down here and, where a test can see them,
+checked by the conformance kit.
+
+**Locations are canonical `/`-separated strings.** The pipeline compares a contract's declared
+location with the location the adapter reports using one rule (`LocationMatching`): equal, or the
+declared one is a `/`-boundary suffix of the reported one. An engine whose names are not paths
+converts them first: a BigQuery table `project.dataset.table` is reported as
+`project/dataset/table`, and a contract author writes `dataset/table` (or the full form to pin
+one project). An absolute declaration (`/data/orders`, `gs://bucket/orders`) matches only itself;
+a relative one matches any location ending in it, so a contract that must distinguish tenants
+declares it absolute.
+
+**Write modes use the four canonical names.** `ir.Write.saveMode` is `append`, `overwrite`,
+`ignore` or `error` (`com.invaract.contract.SaveModes`), or `None` when the adapter cannot tell.
+An adapter maps its engine's dispositions onto them; one with no equivalent leaves it `None`
+rather than inventing a name, because a contract can only match a name every adapter spells the
+same way. A contract that declares another string still validates, with a warning.
+
+| Engine disposition | Canonical |
+|---|---|
+| Spark `SaveMode.Append` / `Overwrite` / `ErrorIfExists` / `Ignore` | `append` / `overwrite` / `error` / `ignore` |
+| BigQuery `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
+| Beam `BigQueryIO` `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
+| `MERGE` / `UPDATE` / `DELETE` (row-level DML) | `None`: reported through `rowMutation`, not as a write mode |
+
+The Spark row is what ships today. The BigQuery and Beam rows are the intended mapping for adapters
+that do not exist yet, written from the engines' public documentation and not yet exercised by an
+adapter: confirm each against the engine's current documentation when its adapter is written.
+
+**Types map into `LogicalType`.** An adapter converts its engine's schema into `LogicalSchema`;
+anything with no neutral equivalent becomes `OtherType(typeName, catalogString)`, which compares
+by its catalog string and never matches a declared neutral type. The intended mappings (same caveat as the write-mode table):
+
+| Neutral type | BigQuery | Beam schema |
+|---|---|---|
+| `string` / `boolean` / `long` / `double` | `STRING` / `BOOL` / `INT64` / `FLOAT64` | `STRING` / `BOOLEAN` / `INT64` / `DOUBLE` |
+| `decimal(p,s)` | `NUMERIC` = `decimal(38,9)`; `BIGNUMERIC` is wider than `decimal(38,_)`, so it is `OtherType("BIGNUMERIC", ...)` | `DECIMAL` (arbitrary precision: `OtherType` unless a precision is declared) |
+| `date` / `timestamp` / `timestamp_ntz` | `DATE` / `TIMESTAMP` / `DATETIME` | `DATETIME` and the date/time logical types: decide per type when the adapter is written, else `OtherType` |
+| `binary` | `BYTES` | `BYTES` |
+| `array` / `struct` / `map` | `ARRAY` / `STRUCT` (BigQuery has no map: a repeated `STRUCT<key,value>` stays an array) | `ARRAY` / `ROW` / `MAP` |
+| no neutral type | `JSON`, `GEOGRAPHY`, `INTERVAL`, `TIME`, `RANGE` | `ITERABLE`, custom logical types |
+
+Each adapter documents its own table next to its capability declaration and adds a conformance
+scenario for any type whose mapping is not obvious.
+
+**Events are engine-neutral.** A published event names no engine's concepts: `runId` is the
+engine's own run identifier, and `JobInfo` carries `engine`, `engineVersion` and a free-form
+`engineDetails` map for whatever else the adapter wants to record. An adapter fills those in;
+it does not add engine-named fields to the event schema.
+
+**A sink that needs an engine's storage library lives in that engine's adapter.** The core has
+no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a
+`scheme://` path names its sink with `deadLetter.class`.
 
 ## Stage 4 — the adapter conformance kit
 

@@ -37,8 +37,8 @@ class EventSchemaSpec extends AnyFunSuite {
     expected = Some("long"), actual = Some("string")
   )
   private val job = JobInfo(
-    Some("app-1"), Some("orders"), Some("nightly"), Some("3.5.1"), Some("local[*]"), Some("client"), Some("svc"), Some(1700L),
-    Map("team" -> "data-eng")
+    Some("app-1"), Some("orders"), Some("nightly"), Some("spark"), Some("3.5.1"), Map("master" -> "local[*]", "deployMode" -> "client"), Some("svc"),
+    Some(1700L), Map("team" -> "data-eng")
   )
 
   /** One of every event, with every optional field both present and (in the second set) absent. */
@@ -94,7 +94,7 @@ class EventSchemaSpec extends AnyFunSuite {
     assert(EventSchema.errors(withField("timestamp", "\"yesterday\"")).nonEmpty)
     assert(EventSchema.errors(withField("violations", "{}")).nonEmpty)
     assert(EventSchema.errors(withField("violations", "[{\"type\":\"X\"}]")).nonEmpty, "a violation missing message/remediation")
-    assert(EventSchema.errors(withField("applicationId", "5")).nonEmpty)
+    assert(EventSchema.errors(withField("runId", "5")).nonEmpty)
   }
 
   test("a receiver-side extension is allowed: unknown extra fields are ignored, as the schema promises") {
@@ -170,7 +170,7 @@ class EventSchemaSpec extends AnyFunSuite {
     json.remove("eventId")
     json.remove("schemaVersion")
     val content = json.fieldNames().asScala.toList.sorted
-    assert(content == List("applicationId", "contract", "dataQuality", "eventType", "fingerprints", "metadata", "roleConformance", "status", "timestamp", "unverifiableInputs", "violations"))
+    assert(content == List("runId", "contract", "dataQuality", "eventType", "fingerprints", "metadata", "roleConformance", "status", "timestamp", "unverifiableInputs", "violations"))
   }
 
   test("contractDigest is the SHA-256 of contractYaml (null without one), and identical drafts have identical digests") {

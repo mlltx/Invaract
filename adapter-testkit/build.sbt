@@ -17,7 +17,7 @@ name := "invaract-adapter-testkit"
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
   "com.invaract" %% "invaract-ir" % "0.6.0",
-  "com.invaract" %% "invaract-verification-core" % "0.3.0",
+  "com.invaract" %% "invaract-verification-core" % "0.4.0",
   "org.scalatest" %% "scalatest" % "3.2.18",
   // verification-core's own `provided` dependencies, needed to run its classes here.
   "org.slf4j" % "slf4j-api" % "2.0.17" % "provided",

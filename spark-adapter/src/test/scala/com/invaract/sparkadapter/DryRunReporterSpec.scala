@@ -45,8 +45,8 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
   private val capturedPlans = mutable.ListBuffer.empty[LogicalPlan]
 
   private val job = JobInfo(
-    applicationId = Some("app-1"),
-    appName = Some("orders app"),
+    runId = Some("app-1"),
+    name = Some("orders app"),
     jobId = Some("nightly_orders"),
     attributes = Map("team" -> "data-eng")
   )
@@ -418,7 +418,7 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assert(mergedIdFor(job) == "nightly_orders")
     assert(mergedIdFor(job.copy(jobId = None)) == "orders_app")
-    assert(mergedIdFor(job.copy(jobId = None, appName = None)) == ContractInference.InferredId)
+    assert(mergedIdFor(job.copy(jobId = None, name = None)) == ContractInference.InferredId)
     assert(mergedIdFor(job.copy(jobId = Some("9 lives/x"))) == "job_9_lives_x")
     assert(mergedIdFor(job.copy(jobId = Some(""))) == ContractInference.InferredId)
   }
@@ -521,12 +521,12 @@ class DryRunReporterSpec extends AnyFunSuite with BeforeAndAfterAll {
     try {
       val info = DryRunReporter.jobInfoOf(spark)
       val sc = spark.sparkContext
-      assert(info.applicationId.contains(sc.applicationId))
-      assert(info.appName.contains("DryRunReporterSpec"))
+      assert(info.runId.contains(sc.applicationId))
+      assert(info.name.contains("DryRunReporterSpec"))
       assert(info.jobId.contains("stable_job"))
-      assert(info.sparkVersion.contains(sc.version))
-      assert(info.master.contains(sc.master))
-      assert(info.deployMode.contains(sc.deployMode))
+      assert(info.engine.contains("spark"))
+      assert(info.engineVersion.contains(sc.version))
+      assert(info.engineDetails == Map("master" -> sc.master, "deployMode" -> sc.deployMode))
       assert(info.user.contains(sc.sparkUser))
       assert(info.startTimeMs.contains(sc.startTime))
       assert(info.attributes == Map("team" -> "data-eng", "dag" -> "orders_nightly"))

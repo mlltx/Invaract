@@ -32,19 +32,25 @@ object NotificationSinkFactory {
       val className = config.sinkClassName.getOrElse(
         throw new IllegalArgumentException("Notification config has sink.enabled=true but no sink.class")
       )
-      val sink =
-        try {
-          Class.forName(className).getDeclaredConstructor().newInstance().asInstanceOf[NotificationSink]
-        } catch {
-          case e: ClassCastException =>
-            throw new IllegalArgumentException(s"'$className' does not implement NotificationSink", e)
-          case e: ReflectiveOperationException =>
-            throw new IllegalArgumentException(
-              s"Could not instantiate notification sink '$className' (it needs a public no-arg constructor)",
-              e
-            )
-        }
+      val sink = instantiate(className)
       sink.configure(config.properties)
       Some(new SafeNotificationSink(sink))
+    }
+
+  /** A new, unconfigured instance of the sink class `className` (it needs a public no-arg
+    * constructor). Shared by `create` and by sinks that build a sink of their own from
+    * configuration, such as `HttpNotificationSink`'s dead letter.
+    */
+  def instantiate(className: String): NotificationSink =
+    try {
+      Class.forName(className).getDeclaredConstructor().newInstance().asInstanceOf[NotificationSink]
+    } catch {
+      case e: ClassCastException =>
+        throw new IllegalArgumentException(s"'$className' does not implement NotificationSink", e)
+      case e: ReflectiveOperationException =>
+        throw new IllegalArgumentException(
+          s"Could not instantiate notification sink '$className' (it needs a public no-arg constructor)",
+          e
+        )
     }
 }

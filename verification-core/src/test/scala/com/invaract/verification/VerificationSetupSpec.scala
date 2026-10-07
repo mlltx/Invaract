@@ -164,7 +164,7 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.result.violations.head.location.contains("some/output/path"))
     assert(ex.getMessage.contains("rejected by organizational policy before any plan was analyzed"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
-    assert(validationEvents(sink).head.applicationId.contains("app-3"))
+    assert(validationEvents(sink).head.runId.contains("app-3"))
   }
 
   test("enforceOrgPolicy: a policy the contract satisfies blocks nothing and publishes nothing") {

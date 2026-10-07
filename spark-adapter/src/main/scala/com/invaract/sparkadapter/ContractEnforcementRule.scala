@@ -118,11 +118,11 @@ object ContractEnforcementRule {
       VersionCompatibilityGuard.check(session)
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
-      val applicationId = Some(session.sparkContext.applicationId)
-      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
+      val runId = Some(session.sparkContext.applicationId)
+      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), runId)
       val checkpointRegistry = new CheckpointRegistry
       (plan: LogicalPlan) =>
-        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry))
+        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), runId, checkpointRegistry = Some(checkpointRegistry))
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -300,9 +300,9 @@ object ContractEnforcementRule {
       options: VerificationOptions,
       session: SparkSession,
       sink: Option[NotificationSink],
-      applicationId: Option[String]
+      runId: Option[String]
   ): (Contract, VerificationOptions) =
-    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId)
+    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, runId)
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -439,7 +439,7 @@ object ContractEnforcementRule {
       analyzedPlan: LogicalPlan,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None,
+      runId: Option[String] = None,
       checkpointRegistry: Option[CheckpointRegistry] = None,
       capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared
   ): Unit = {
@@ -467,7 +467,7 @@ object ContractEnforcementRule {
         // plain read/transformation the moment an invalid contract was merely
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities)
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, runId, capabilities)
       case _ =>
         // Checked before the fail-closed Command catch-all below: a recognized
         // state-changing CALL (nine procedures - see StateChangingCallSupport)
@@ -485,10 +485,10 @@ object ContractEnforcementRule {
               SQLConf.get.caseSensitiveAnalysis,
               options,
               sink,
-              applicationId
+              runId
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId)
+            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, runId)
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }

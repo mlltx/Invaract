@@ -83,10 +83,10 @@ object VerificationPipeline {
       write: => CheckedWrite,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None,
+      runId: Option[String] = None,
       capabilities: Option[AdapterCapabilities] = None
   ): Unit = {
-    requireValidContract(contract, sink, applicationId)
+    requireValidContract(contract, sink, runId)
     val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
     val checked = write
 
@@ -163,7 +163,7 @@ object VerificationPipeline {
       roleConformanceResults,
       structuralResult.unverifiableInputs
     )
-    publishValidation(contract, result, sink, applicationId)
+    publishValidation(contract, result, sink, runId)
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -208,12 +208,12 @@ object VerificationPipeline {
       caseSensitive: Boolean,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None
+      runId: Option[String] = None
   ): Unit = {
     // Same reasoning as verifyWrite: verifyStateChange assumes a structurally sound contract too.
-    requireValidContract(contract, sink, applicationId)
+    requireValidContract(contract, sink, runId)
     val result = StructuralVerifier.verifyStateChange(contract, location, resultingSchema, options, caseSensitive)
-    publishValidation(contract, result, sink, applicationId)
+    publishValidation(contract, result, sink, runId)
     if (!result.passed) {
       // No ir.Plan translation exists for a state change (there's no query to
       // translate): a plain description stands in for the rendered plan tree.
@@ -236,11 +236,11 @@ object VerificationPipeline {
       operation: String,
       translatedPlan: ir.Plan,
       sink: Option[NotificationSink] = None,
-      applicationId: Option[String] = None
+      runId: Option[String] = None
   ): Nothing = {
     val violation = Violations.unverifiableWrite(operation, s"${contract.id}@${contract.version}")
     val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-    publishValidation(contract, result, sink, applicationId)
+    publishValidation(contract, result, sink, runId)
     throw new ContractViolationException(result, explain(contract, translatedPlan, result))
   }
 
@@ -249,7 +249,7 @@ object VerificationPipeline {
     * type whose class cannot be resolved - the check every other rejection in
     * this object assumes has already passed.
     */
-  private[invaract] def requireValidContract(contract: Contract, sink: Option[NotificationSink], applicationId: Option[String]): Unit = {
+  private[invaract] def requireValidContract(contract: Contract, sink: Option[NotificationSink], runId: Option[String]): Unit = {
     val validation = ContractValidator.validate(contract)
     // ContractValidator only checks customRuleTypes's shape (empty key/class
     // name, collision with a built-in RuleType) - it lives in `contract`, which
@@ -269,7 +269,7 @@ object VerificationPipeline {
         Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
       }
       val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
-      publishValidation(contract, result, sink, applicationId)
+      publishValidation(contract, result, sink, runId)
       // Reads as a plain sentence rather than a parenthesized fragment:
       // PlanPrinter already wraps an UnknownPlan as "UnknownPlan(<description>)",
       // so an inner "(...)" too would render as a confusing doubled "((...))".
@@ -284,7 +284,7 @@ object VerificationPipeline {
       contract: Contract,
       result: VerificationResult,
       sink: Option[NotificationSink],
-      applicationId: Option[String]
+      runId: Option[String]
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -294,7 +294,7 @@ object VerificationPipeline {
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
-          applicationId = applicationId,
+          runId = runId,
           fingerprints = result.fingerprints,
           dataQuality = result.dataQuality,
           roleConformance = result.roleConformance,
