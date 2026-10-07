@@ -10,6 +10,27 @@ Code lives in the `spark-adapter/` sbt module (`com.invaract.sparkadapter`
 package), which depends on `ir` and on Spark (`provided`, same convention as
 `plugin`/`runner`).
 
+**Module layout.** The engine-neutral half of this package — the structural
+checkers (`StructuralVerifier`, `SchemaChecker`, `InputChecker`, `OutputChecker`,
+`CatalogChecker`, `LocationMatching`), the rule/data-quality/role verifiers
+(`RuleVerifier`, `PlanRuleVerifier`, `StaticDataQualityVerifier`,
+`RoleConsistencyVerifier`, `SensitivityLineage`, `CustomRuleVerifier`), the result
+model (`VerificationModel`, `Violations`, `ContractViolationException`),
+`ContractInference`, and the whole `notification/` and `location/` packages — now
+lives in the sibling `verification-core/` module, which has no Spark dependency, so a
+second engine's adapter can reuse it (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2). The
+package names are unchanged (deployed configs name sinks and plug-ins by
+fully-qualified class name), and `spark-adapter`'s assembly jar bundles the core, so
+nothing about how you install or configure this adapter changes. Where this document
+says a class "lives in `spark-adapter`" for one of those, read `verification-core`.
+What stays here is what is genuinely Spark: Catalyst translation (`SparkPlanAdapter`,
+`WriteCommandSupport`), the enforcement rule and listener, dry-run reporting,
+checkpoint resolution, catalog identity, fail-closed command classification, and
+`SparkSchemas`. The seams between the two: the adapter passes the lineage-boundary
+node types it uses (`CheckpointRegistry.BoundarySourceTypes`) to
+`StructuralVerifier.verify`, `RowMutationSupport.Kind` is an alias of the neutral
+`MutationKind`, and `ContractInference.infer` takes an engine-neutral `InferredWrite`.
+
 ## Integration point
 
 Spark exposes a query's logical plan through several extension mechanisms.
@@ -3045,7 +3066,7 @@ overhead. The two levers above reduced wasted time around that core cost
 #### Sharding `spark-adapter`'s whole-module run
 
 The bottleneck named above was addressed directly by splitting
-`mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 now — see "Runner memory and runner loss" below)
+`mutation-testing-spark-adapter` itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to `verification-core`, 8 now — see "Runner memory and runner loss" below)
 (`.github/workflows/test.yml`), each leg running `sbt stryker --mutate`
 scoped to a fixed subset of the module's source files (30 as of
 `RoleConsistencyVerifier`, added to shard-4 — the shard smallest by line

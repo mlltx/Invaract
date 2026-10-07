@@ -79,12 +79,6 @@ private[sparkadapter] object RuleVerifier {
     RuleType.AllowedUpdateColumns -> AllowedUpdateColumnsVerifier
   )
 
-  private def toMutationKind(kind: RowMutationSupport.Kind): MutationKind = kind match {
-    case RowMutationSupport.Kind.Merge  => MutationKind.Merge
-    case RowMutationSupport.Kind.Update => MutationKind.Update
-    case RowMutationSupport.Kind.Delete => MutationKind.Delete
-  }
-
   /** Looks up the `CustomRuleVerifier` that verifies `ruleType` — a
     * built-in `RuleType` (`builtinVerifiers`, above) always wins when
     * present; `customRuleTypes`'s reflective escape hatch is consulted
@@ -101,7 +95,7 @@ private[sparkadapter] object RuleVerifier {
       customRuleTypes.get(ruleType).flatMap(className => CustomRuleVerifierFactory.tryResolve(className).toOption)
     }
 
-  /** Whether `rule` is the kind of rule `RowMutationSupport.Classification.Unverifiable(kind)`
+  /** Whether `rule` is the kind of rule an engine adapter's "unverifiable DML of `kind`" classification
     * would need to check — used by `ContractEnforcementRule` to decide
     * whether an operation this module recognized as DML-shaped but
     * couldn't extract facts for is actually a problem for *this*
@@ -121,10 +115,10 @@ private[sparkadapter] object RuleVerifier {
     * *unverifiable DML* classification need to fail closed over this
     * rule," which a plan-shape rule is never the reason for.
     */
-  def appliesTo(rule: InterpretedRule, kind: RowMutationSupport.Kind): Boolean = rule match {
-    case _: InterpretedRule.MergeCondition         => kind == RowMutationSupport.Kind.Merge
-    case InterpretedRule.ForbidUnconditionalDelete => kind == RowMutationSupport.Kind.Delete
-    case _: InterpretedRule.AllowedUpdateColumns   => kind == RowMutationSupport.Kind.Update
+  def appliesTo(rule: InterpretedRule, kind: MutationKind): Boolean = rule match {
+    case _: InterpretedRule.MergeCondition         => kind == MutationKind.Merge
+    case InterpretedRule.ForbidUnconditionalDelete => kind == MutationKind.Delete
+    case _: InterpretedRule.AllowedUpdateColumns   => kind == MutationKind.Update
     case _: InterpretedRule.RequiredGroupBy        => false
     case InterpretedRule.ForbidCrossJoin           => false
     case _: InterpretedRule.RequiredJoinColumns    => false
@@ -143,12 +137,10 @@ private[sparkadapter] object RuleVerifier {
     */
   def anyRuleAppliesTo(
       rules: List[ContractRule],
-      kind: RowMutationSupport.Kind,
+      kind: MutationKind,
       customRuleTypes: Map[String, String] = Map.empty
-  ): Boolean = {
-    val mutationKind = toMutationKind(kind)
-    rules.exists(rule => resolveVerifier(rule.ruleType, customRuleTypes).exists(_.appliesTo(mutationKind)))
-  }
+  ): Boolean =
+    rules.exists(rule => resolveVerifier(rule.ruleType, customRuleTypes).exists(_.appliesTo(kind)))
 
   /** `location`: the write the mutation targets — every finding is about it, so it is stamped on each
     * (custom rule verifiers included) along with the `rule` that raised it.

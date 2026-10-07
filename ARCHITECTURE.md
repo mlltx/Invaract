@@ -81,6 +81,7 @@ useful a diagnostic as a passing one's; see
 | `contract/` | `com.invaract.contract` | Parses and validates ODCS-shaped YAML contracts; classifies compatibility between two contract versions. No Spark dependency — a contract is a plain data structure. |
 | `ir/` | `com.invaract.ir` | An engine-independent `Plan`/`Expr` algebra (`Read`, `Write`, `Project`, `Join`, `Aggregate`, ...), plus `Lineage.trace` (structural column-level provenance) and `PlanPrinter` (human-readable rendering). No Spark dependency, no dependency on `contract` — this is meant to be the thing any engine's plan gets translated *into*. |
 | `spark-adapter/` | `com.invaract.sparkadapter` | Translates a real Spark Catalyst `LogicalPlan` into the IR (`SparkPlanAdapter`), verifies it against a contract (`StructuralVerifier`), and enforces that verification inside Spark's own execution lifecycle (`ContractEnforcementRule`, a `SparkSessionExtensions` check rule) or observes it after the fact (`SparkAdapterListener`, a `QueryExecutionListener`). Depends on `ir` and `contract`, and on Spark (`provided`). |
+| `verification-core/` | `com.invaract.sparkadapter` (unchanged — see docs/MULTI_ENGINE_ADAPTERS.md for why) | The engine-neutral verification code extracted from `spark-adapter`: structural checkers (schema, input, output, catalog), rule/data-quality/role verifiers, the result model (`Violation`, `VerificationResult`), notification sinks and events, location resolution. No Spark dependency — a second engine's adapter depends on this module, not on `spark-adapter`. An adapter supplies a translated `ir.Plan`, `LogicalSchema`s, the lineage-boundary node types it uses, and (for contract inference) an `InferredWrite`. |
 | `fingerprint/` | `com.invaract.fingerprint` | Canonicalizes an `ir.Plan`/`ir.Expr`/`ir.Lineage` value into a deterministic, versioned SHA-256 hash (`Canonicalizer`, `FingerprintHasher`, `TransformationFingerprinter`) — see [docs/SEMANTIC_LINEAGE_FINGERPRINTING.md](docs/SEMANTIC_LINEAGE_FINGERPRINTING.md). Detects a business-logic change (`amount * 1.20` → `amount * 1.25`) that leaves the output schema identical, something schema verification alone cannot. Depends only on `ir`, no Spark dependency — surfaced through `spark-adapter` opt-in (`VerificationOptions.computeFingerprint`), not a required part of verification itself. |
 
 This is where a feature request almost always belongs, and where the
@@ -119,7 +120,7 @@ even though the harness itself is not the thing being changed.
    └─> fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar
 
 3. Build spark-adapter (needs contract, ir, fingerprint published locally)
-   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.10.0.jar
+   └─> spark-adapter/target/scala-2.12/invaract-spark-adapter-0.11.0.jar
        (already bundles fingerprint's compiled classes via sbt-assembly —
        a consumer installing only this jar gets fingerprinting for free)
 
@@ -413,7 +414,10 @@ fingerprint/      depends on: ir
                   org.scalatestplus:scalacheck (test, property-based fuzzing)
                   no Spark dependency — usable by any future front end that
                   produces ir.Plan, not just spark-adapter
-spark-adapter/    depends on: contract, ir, fingerprint
+verification-core/ depends on: contract, ir, fingerprint
+                  org.slf4j / hadoop-client-api (provided — supplied by the
+                  host engine); no Spark dependency
+spark-adapter/    depends on: contract, ir, fingerprint, verification-core
                   org.apache.spark:spark-sql (provided)
                   org.scalatestplus:scalacheck (test, property-based fuzzing)
 plugin/           org.apache.spark:spark-sql (provided)

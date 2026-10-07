@@ -3942,7 +3942,11 @@ Extend verification engine to support multiple execution engines.
         `LogicalSchema`); the schema/input/output checkers and `ContractInference` no
         longer import Spark types; Spark mapping isolated in `SparkSchemas`, pinned to
         Spark's own output by `SparkSchemasSpec`. No verdict or message changed.
-  - [ ] Stage 2: `verification-core` module + adapter SPI
+  - [x] Stage 2a: `verification-core` module extracted from `spark-adapter` (package
+        names unchanged — deployed configs name classes by FQN); seams for lineage-boundary
+        types, `MutationKind`, `InferredWrite`
+  - [ ] Stage 2b: adapter SPI (`VerificationPipeline`), neutral `invaract.*` config
+        namespace, neutral package names with FQN compatibility
   - [ ] Stage 3: per-adapter capability declaration, generated matrix, CI drift check
   - [ ] Stage 4: `adapter-testkit` conformance scenarios
   - [ ] Stage 5: function canonicalisation

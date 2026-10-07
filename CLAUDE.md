@@ -7,7 +7,7 @@ development environment for exercising it against a real Spark job.
 ## What's the product, and what's the test harness
 
 **The product is the verification engine: `contract/`, `ir/`,
-`spark-adapter/`, and `fingerprint/`.** Together they parse a data
+`spark-adapter/`, `fingerprint/`, and `verification-core/`.** Together they parse a data
 contract, translate a real Spark job's Catalyst logical plan into an
 engine-independent IR, verify it against the contract, and — via a
 `SparkSessionExtensions` check rule installed in the `SparkSession` —
@@ -67,7 +67,12 @@ don't present it as something external consumers would bind to.
   `ir` (engine-independent transformation IR + lineage), `spark-adapter`
   (Spark → IR translation, contract enforcement), `fingerprint`
   (canonicalisation + hashing of `ir.Plan`/`ir.Expr` — see
-  docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
+  docs/SEMANTIC_LINEAGE_FINGERPRINTING.md), `verification-core`
+  (the engine-neutral verification code `spark-adapter` reuses — structural
+  checkers, rule/data-quality/role verifiers, the result model, notification
+  sinks, location resolution; no Spark dependency, so a second engine's
+  adapter depends on this, not on `spark-adapter` — see
+  docs/MULTI_ENGINE_ADAPTERS.md)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -80,7 +85,7 @@ don't present it as something external consumers would bind to.
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
   required by Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (6 independent modules `./dev/build` builds, plus
+- **Build System**: sbt (7 independent modules `./dev/build` builds, plus
   the standalone opt-in `notification-kafka` — no aggregating root
   `build.sbt` — see `dev/build`'s comments for the cross-module dependency
   graph)
@@ -178,7 +183,7 @@ docs/SPARK_ADAPTER.md's "Incremental checking in CI.")
 
 **Adding a new file under `spark-adapter/src/main/scala` also means updating
 `.github/workflows/test.yml`.** `spark-adapter`'s whole-module mutation run is
-sharded across a 10-way matrix job (`mutation-testing-spark-adapter`), and each
+sharded across an 8-way matrix job (`mutation-testing-spark-adapter`), and each
 shard's file list is hand-written (`strategy.matrix.include`, one
 comma-separated `files:` string per shard) — see docs/SPARK_ADAPTER.md's
 "Sharding `spark-adapter`'s whole-module run." A new source file isn't
@@ -499,6 +504,14 @@ would be.
 │   │   └── PlanPrinter.scala          # human-readable rendering
 │   └── src/test/scala/com/invaract/ir/
 │
+├── verification-core/             # Verification engine: engine-neutral checkers, result
+│   │                               # model, notification sinks, location resolution (no Spark).
+│   │                               # Same `com.invaract.sparkadapter` packages as before the
+│   │                               # extraction (deployed configs name classes by FQN) — see
+│   │                               # docs/MULTI_ENGINE_ADAPTERS.md. Files listed under
+│   │                               # spark-adapter/ below that are engine-neutral live here.
+│   └── src/main/scala/com/invaract/sparkadapter/
+│
 ├── spark-adapter/                 # Verification engine: Spark integration
 │   ├── src/main/scala/com/invaract/sparkadapter/
 │   │   ├── SparkPlanAdapter.scala     # Catalyst LogicalPlan → ir.Plan
@@ -759,7 +772,11 @@ If `./dev/test` fails:
 - `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
 - `ir/target/scala-2.12/invaract-ir-0.5.0.jar`
 - `fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar`
-- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.10.0.jar` — via
+- `verification-core/target/scala-2.12/invaract-verification-core-0.1.0.jar` —
+  the engine-neutral verification code; `spark-adapter`'s fat jar bundles it
+  (same `sbt-assembly` dependency bundling as `fingerprint`), so a consumer
+  installing only the spark-adapter jar needs nothing extra
+- `spark-adapter/target/scala-2.12/invaract-spark-adapter-0.11.0.jar` — via
   `sbt-assembly`'s ordinary dependency-bundling (not `unmanagedJars`, the
   same as `contract`/`ir`), this fat jar already contains
   `com.invaract.fingerprint`'s compiled classes too (confirmed directly:
@@ -1066,7 +1083,7 @@ Edit `demo/input/sample.csv` and run `./dev/test`.
 
 ```bash
 # Start Spark shell with the engine + plugin JARs
-spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.10.0.jar
+spark-shell --jars plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar,spark-adapter/target/scala-2.12/invaract-spark-adapter-0.11.0.jar
 
 # Then in shell:
 // scala> val df = spark.read.csv("demo/input/sample.csv", header=true, inferSchema=true)

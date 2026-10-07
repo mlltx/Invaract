@@ -54,7 +54,7 @@ jobs:
         uses: sbt/setup-sbt@v1
 
       # contract and ir have no dependency on each other; fingerprint needs
-      # ir; spark-adapter needs all three (see dev/build's comments for the
+      # ir; verification-core needs those three; spark-adapter needs all four (see dev/build's comments for the
       # full graph). No need to build plugin/runner here — they're the
       # example harness, not something an external Spark job installs
       # (CLAUDE.md).
@@ -77,6 +77,12 @@ jobs:
       - name: Build fingerprint
         run: cd fingerprint && sbt -batch clean compile test assembly publishLocal
 
+      # verification-core (the engine-neutral verification code extracted from
+      # spark-adapter, docs/MULTI_ENGINE_ADAPTERS.md Stage 2) needs contract,
+      # ir and fingerprint published, and spark-adapter needs it published.
+      - name: Build verification-core
+        run: cd verification-core && sbt -batch clean compile test assembly publishLocal
+
       - name: Build spark-adapter
         run: cd spark-adapter && sbt -batch clean compile test assembly
 
@@ -95,12 +101,13 @@ jobs:
           name: "Spark engine jars (latest)"
           body: |
             Prebuilt `sbt assembly` fat jars for Invaract's verification engine —
-            `contract`, `ir`, `fingerprint`, and `spark-adapter` (see CLAUDE.md's "What's
+            `contract`, `ir`, `fingerprint`, `verification-core`, and `spark-adapter` (see CLAUDE.md's "What's
             the product, and what's the test harness" for why those four and not
             `plugin`/`runner`). `spark-adapter`'s own jar already bundles
-            `fingerprint`/`ir`/`contract`'s compiled classes via `sbt-assembly` - the
-            standalone `fingerprint`/`ir`/`contract` jars below are for a consumer who
-            wants just one of those, without the rest of `spark-adapter`'s footprint.
+            `verification-core`/`fingerprint`/`ir`/`contract`'s compiled classes via
+            `sbt-assembly` - the standalone jars below are for a consumer who wants just
+            one of those (e.g. a non-Spark engine adapter reusing `verification-core`),
+            without the rest of `spark-adapter`'s footprint.
 
             For a Spark job built with a toolchain other than sbt (Maven, Gradle, ...)
             that wants to install Invaract without a Maven Central release to depend on.
@@ -118,4 +125,5 @@ jobs:
             contract/target/scala-2.12/invaract-contract-*.jar
             ir/target/scala-2.12/invaract-ir-*.jar
             fingerprint/target/scala-2.12/invaract-fingerprint-*.jar
+            verification-core/target/scala-2.12/invaract-verification-core-*.jar
             spark-adapter/target/scala-2.12/invaract-spark-adapter-*.jar

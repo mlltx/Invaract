@@ -57,8 +57,9 @@ module move in Stage 2.
 
 | Stage | Item | Benefit | Status |
 |---|---|---|---|
-| 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done — see below |
-| 2 | Extract `verification-core` and the adapter SPI (lift `verifyOrThrow`'s body; move the result model, notification, location and registry code; neutral `invaract.*` config namespace) | Removes leaks #2, #3, #5, #7: a second adapter no longer depends on `spark-adapter` or copies its orchestration | Not started |
+| 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done (PR #102) — see below |
+| 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change (package names kept) | Done — see below |
+| 2b | Adapter SPI: lift `verifyOrThrow`'s orchestration into a neutral `VerificationPipeline`; neutral `invaract.*` config namespace; engine-neutral fail-closed vocabulary; decide neutral package names with FQN compatibility for deployed configs | Removes leak #2 and the rest of #5/#7: a second adapter no longer copies ~200 lines of orchestration | Not started |
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered | Not started |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes or declares N/A (with a reason) on the same scenarios | Not started |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic fingerprints the same, and `GENERATE_UUID()` is not "deterministic" | Not started |
@@ -103,3 +104,55 @@ apart from converting their Spark schemas at the call.
   Spark's `typeName` (same strings); routing it through `LogicalType` belongs with the
   notification move in Stage 2.
 - The IR's own `Literal.literalType`/`Cast.targetType` remain plain strings.
+
+## Stage 2a — the `verification-core` module
+
+**What changed**
+
+- New sbt module `verification-core` (no Spark dependency; `contract`, `ir`, `fingerprint`
+  as dependencies; `slf4j-api` and Hadoop's client API `provided`, as before). It now holds
+  the structural checkers, the rule/data-quality/role verifiers, the result model
+  (`Violation`, `VerificationResult`, `ContractViolationException`), `ContractInference`,
+  and the whole `notification/` and `location/` packages — moved with `git mv` so
+  history follows.
+- `spark-adapter` depends on it (0.10.0 → 0.11.0) and its assembly jar bundles it, exactly
+  as it already bundles `fingerprint`, so installing the one jar is unchanged.
+- The Spark-free specs moved with the code and run in the new module without Spark
+  (24 suites, 402 tests; coverage 91.54% statements / 89.88% branches; whole-module mutation
+  score 89.18%); `SchemaCheckerSpec` and `InputOutputCheckerSpec` were rebuilt on
+  `LogicalSchema` (a tiny `Cols` builder) so the checkers are tested in the module that owns
+  them. `spark-adapter` keeps 28 suites / 684 tests, all passing.
+
+**Three seams, because three things were genuinely Spark-specific**
+
+| Was | Now |
+|---|---|
+| `InputChecker` read `CheckpointRegistry.BoundarySourceTypes` (Spark node names) | The adapter passes the `ir.UnknownPlan` source types it treats as a lineage boundary to `StructuralVerifier.verify`; the default is empty ("this engine has none"), so a boundary-less engine can never report an input as merely "unverifiable" |
+| `RuleVerifier` took `RowMutationSupport.Kind` | It takes the neutral `MutationKind`; `RowMutationSupport.Kind` is now an alias of it |
+| `ContractInference.infer` took Spark's `WriteCommandInfo` | It takes an engine-neutral `InferredWrite(location, format, saveMode, outputSchema)` |
+
+**Decision: package names are unchanged.** The earlier recommendation was to rename to
+neutral packages as a deliberate pre-1.0 break. Reading the configuration surface changed
+that: deployed `notify.properties` files name built-in sinks by fully-qualified class name
+(`sink.class=com.invaract.sparkadapter.notification.FileNotificationSink`), as do custom
+rule types and plug-ins. A rename would silently break every existing deployment's config,
+which is exactly what the External Attachability Requirement exists to prevent. Relocating
+the code between modules, keeping the package, is invisible to users; neutral names with
+FQN compatibility for existing configs is Stage 2b's decision.
+
+**MiMa.** Moving public classes out of `spark-adapter` is a deliberate break *of that
+artifact* (every moved class is a `MissingClassProblem`), though nothing changes for a user
+of the assembled jar. It is declared in `spark-adapter/build.sbt`'s `mimaBinaryIssueFilters`
+with the reason, per CLAUDE.md's API Compatibility Requirement, and `verification-core` gets
+its own MiMa entry (nothing to compare against until it is released).
+
+**Not done in 2a, deliberately**
+
+- Not yet published to Maven Central or wired into `release.yml` (the same disclosed gap
+  `fingerprint` has) — `spark-adapter`'s published POM depends on it, so this must land
+  before the next Maven Central release.
+- `registry/ContractSource` (reads a `SparkSession`) and `WriteFieldInfo`'s Spark type
+  strings stay in `spark-adapter`; both belong with 2b's neutral config namespace.
+- Test helpers `TestNotificationSink`, `EventSchema` and `CustomRuleVerifierFixtures` are
+  duplicated in both modules' test sources (separate sbt builds cannot share test classes).
+

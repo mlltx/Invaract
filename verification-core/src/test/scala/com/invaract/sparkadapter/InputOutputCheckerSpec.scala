@@ -6,13 +6,13 @@ package com.invaract.sparkadapter
 import com.invaract.contract.{ContractParser, Dataset, Schema}
 import com.invaract.ir.{CatalogIdentity, DatasetRef, Read, UnknownPlan, Write}
 
-import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
+import com.invaract.contract.LogicalType.{IntegerType, StringType}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** The small functions `InputChecker` and `OutputChecker` are made of, tested directly
   * (`StructuralVerifierSpec` covers the same behaviour end to end through `verify`).
   */
-class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
+class InputOutputCheckerSpec extends AnyFunSuite {
 
   private def ds(name: String, location: String, format: Option[String] = None, saveMode: Option[String] = None) =
     Dataset(name, location, format, Schema(Nil), saveMode = saveMode)
@@ -110,7 +110,7 @@ class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
         |""".stripMargin
     )
     val write = Write(DatasetRef("gold/typo"), Read(DatasetRef("src")), format = Some("csv"), saveMode = Some("append"))
-    val vs = OutputChecker.check(contract, write, new StructType().add("x", StringType), VerificationOptions(), caseSensitive = false)
+    val vs = OutputChecker.check(contract, write, Cols().add("x", StringType), VerificationOptions(), caseSensitive = false)
     assert(
       vs.map(_.violationType) == List(
         ViolationType.OutputLocationMismatch,
@@ -120,7 +120,7 @@ class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
         ViolationType.MissingOutputField
       )
     )
-    assert(OutputChecker.check(contract, Read(DatasetRef("src")), new StructType(), VerificationOptions(), caseSensitive = false).map(_.violationType) == List(ViolationType.MissingOutput))
+    assert(OutputChecker.check(contract, Read(DatasetRef("src")), Cols(), VerificationOptions(), caseSensitive = false).map(_.violationType) == List(ViolationType.MissingOutput))
   }
 
   // --- InputChecker ---------------------------------------------------------------------------
@@ -154,33 +154,42 @@ class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
     assert(InputChecker.notRead(InputChecker.Declared(Nil), List("bronze/a")).isEmpty)
   }
 
+  // What an engine adapter declares as its lineage-boundary node types (for Spark, LogicalRDD / InMemoryRelation).
+  private val boundary = "SomeBoundaryNode"
+  private val boundaries = Set(boundary)
+
   test("unverifiableEvidenceFor: only boundary node types count, each listed once in first-seen order") {
-    assert(InputChecker.unverifiableEvidenceFor(Nil).isEmpty)
-    assert(InputChecker.unverifiableEvidenceFor(List(UnknownPlan("x", "SomethingElse"))).isEmpty)
-    val boundary = CheckpointRegistry.BoundarySourceTypes.head
-    assert(InputChecker.unverifiableEvidenceFor(List(UnknownPlan("a", boundary), UnknownPlan("b", "Other"), UnknownPlan("c", boundary))).contains(List(boundary)))
+    assert(InputChecker.unverifiableEvidenceFor(Nil, boundaries).isEmpty)
+    assert(InputChecker.unverifiableEvidenceFor(List(UnknownPlan("x", "SomethingElse")), boundaries).isEmpty)
+    assert(InputChecker.unverifiableEvidenceFor(List(UnknownPlan("a", boundary), UnknownPlan("b", "Other"), UnknownPlan("c", boundary)), boundaries).contains(List(boundary)))
+  }
+
+  test("an engine that declares no lineage-boundary types never treats an unread input as unverifiable") {
+    assert(InputChecker.unverifiableEvidenceFor(List(UnknownPlan("a", boundary)), Set.empty).isEmpty)
+    val (missing, unverifiable) = InputChecker.classifyUnread(twoInputs.inputs, List(UnknownPlan("a", boundary)), None, 1, Set.empty)
+    assert(missing.map(_.violationType) == List(ViolationType.MissingInput, ViolationType.MissingInput))
+    assert(unverifiable.isEmpty)
   }
 
   test("classifyUnread: no evidence => MISSING_INPUT; evidence => unverifiable instead; the derivedFrom nudge only for a derivedFrom-less output of a multi-output contract") {
     val unread = twoInputs.inputs
-    val (missing, unverifiable) = InputChecker.classifyUnread(unread, Nil, None, declaredOutputCount = 1)
+    val (missing, unverifiable) = InputChecker.classifyUnread(unread, Nil, None, declaredOutputCount = 1, boundaries)
     assert(missing.map(_.violationType) == List(ViolationType.MissingInput, ViolationType.MissingInput))
     assert(unverifiable.isEmpty)
     assert(missing.head.message == "declared input 'a' (bronze/a) was not read by this plan")
     assert(missing.head.remediation.startsWith("Add a read of 'bronze/a' to the transformation"))
     assert(!missing.head.remediation.contains("derivedFrom"))
 
-    val boundary = CheckpointRegistry.BoundarySourceTypes.head
-    val (m2, u2) = InputChecker.classifyUnread(unread, List(UnknownPlan("x", boundary)), None, 1)
+    val (m2, u2) = InputChecker.classifyUnread(unread, List(UnknownPlan("x", boundary)), None, 1, boundaries)
     assert(m2.isEmpty)
     assert(u2 == List(UnverifiableInput("a", "bronze/a", List(boundary)), UnverifiableInput("b", "bronze/b", List(boundary))))
 
     val noDerived = Some(ds("o", "gold/o")) // derivedFrom = None
-    assert(InputChecker.classifyUnread(unread, Nil, noDerived, declaredOutputCount = 2)._1.head.remediation.contains("derivedFrom"))
-    assert(!InputChecker.classifyUnread(unread, Nil, noDerived, declaredOutputCount = 1)._1.head.remediation.contains("derivedFrom"))
-    assert(!InputChecker.classifyUnread(unread, Nil, None, declaredOutputCount = 2)._1.head.remediation.contains("derivedFrom"))
+    assert(InputChecker.classifyUnread(unread, Nil, noDerived, declaredOutputCount = 2, boundaries)._1.head.remediation.contains("derivedFrom"))
+    assert(!InputChecker.classifyUnread(unread, Nil, noDerived, declaredOutputCount = 1, boundaries)._1.head.remediation.contains("derivedFrom"))
+    assert(!InputChecker.classifyUnread(unread, Nil, None, declaredOutputCount = 2, boundaries)._1.head.remediation.contains("derivedFrom"))
     val withDerived = Some(ds("o", "gold/o").copy(derivedFrom = Some(List("a"))))
-    assert(!InputChecker.classifyUnread(unread, Nil, withDerived, declaredOutputCount = 2)._1.head.remediation.contains("derivedFrom"))
+    assert(!InputChecker.classifyUnread(unread, Nil, withDerived, declaredOutputCount = 2, boundaries)._1.head.remediation.contains("derivedFrom"))
   }
 
   test("undeclaredReads: wholly undeclared vs declared-but-not-this-output's-source wording; nothing when all reads are scoped") {
@@ -216,11 +225,11 @@ class InputOutputCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
         |    schema: {fields: [{name: id, type: integer, required: true, nullable: false}]}""".stripMargin
     )
     val all = InputChecker.Declared(contract.inputs)
-    val wrong = new StructType().add("id", StringType, nullable = false)
+    val wrong = Cols().add("id", StringType, nullable = false)
     assert(InputChecker.schemaFindings(all, Nil, rejectUndeclaredFields = false, caseSensitive = false).isEmpty)
     val vs = InputChecker.schemaFindings(all, List("s3://x/bronze/b" -> wrong), rejectUndeclaredFields = false, caseSensitive = false)
     assert(vs.map(_.violationType) == List(ViolationType.InputFieldTypeMismatch))
-    val ok = new StructType().add("id", IntegerType, nullable = false)
+    val ok = Cols().add("id", IntegerType, nullable = false)
     assert(InputChecker.schemaFindings(all, List("bronze/a" -> ok, "bronze/b" -> ok), rejectUndeclaredFields = false, caseSensitive = false).isEmpty)
 
     assert(InputChecker.catalogFindings(all, Nil).isEmpty) // not read: MISSING_INPUT's job

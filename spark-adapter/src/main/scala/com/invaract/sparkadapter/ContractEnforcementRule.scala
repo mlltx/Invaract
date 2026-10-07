@@ -21,16 +21,6 @@ import org.apache.spark.sql.types.StructType
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
-/** Thrown by `ContractEnforcementRule` to abort a Spark write that violates
-  * its contract, before Spark executes it. `result` carries the full
-  * `VerificationResult`; `getMessage` is a complete, human-readable
-  * explanation (see `ContractEnforcementRule.explain`) — a developer
-  * reading only the exception text, with no other context, should be able
-  * to answer all four of: what the contract expected, what the plan
-  * contains, why it violates the contract, and how to correct it.
-  */
-class ContractViolationException(val result: VerificationResult, message: String) extends RuntimeException(message)
-
 /** Gates a Spark write on contract verification, per ROADMAP.md Phase 5:
   *
   * {{{
@@ -678,7 +668,7 @@ object ContractEnforcementRule {
         // thread this rule runs on.
         val caseSensitive = SQLConf.get.caseSensitiveAnalysis
         val structuralResult =
-          StructuralVerifier.verify(contract, planFacts, inputSchemas, outputSchema, options, caseSensitive)
+          StructuralVerifier.verify(contract, planFacts, inputSchemas, outputSchema, options, caseSensitive, CheckpointRegistry.BoundarySourceTypes)
         // Checked alongside (never instead of) StructuralVerifier's own
         // checks: RowMutationSupport.classify is a separate, independent
         // classifier over the same `plan` (see its class doc for why it
@@ -908,7 +898,11 @@ object ContractEnforcementRule {
         val inputSchemas = collectInputSchemas(plan, Some(writeInfo.query))
         Some(
           InferenceOutcome.Inferred(
-            ContractInference.infer(writeInfo, inputSchemas, translated.plan),
+            ContractInference.infer(
+              InferredWrite(writeInfo.location, writeInfo.format, writeInfo.saveMode, SparkSchemas.toLogicalSchema(writeInfo.outputSchema)),
+              inputSchemas,
+              translated.plan
+            ),
             plan,
             translated,
             writeInfo,

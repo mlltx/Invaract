@@ -6,10 +6,10 @@ package com.invaract.sparkadapter
 import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType, Field => CField}
 import com.invaract.sparkadapter.SchemaChecker.Side
 
-import org.apache.spark.sql.types._
+import com.invaract.contract.LogicalType._
 import org.scalatest.funsuite.AnyFunSuite
 
-class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
+class SchemaCheckerSpec extends AnyFunSuite {
 
   private def check(
       fields: List[CField],
@@ -24,7 +24,7 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   // --- scalar behaviour is unchanged ----------------------------------------
 
   test("scalars: matching type and nullability is clean; a wrong scalar type reports the bare typeName on both sides") {
-    val schema = new StructType().add("id", IntegerType, nullable = false).add("name", StringType)
+    val schema = Cols().add("id", IntegerType, nullable = false).add("name", StringType)
     assert(check(List(CField("id", "integer", nullable = false), CField("name", "string")), schema).isEmpty)
 
     val vs = check(List(CField("id", "string")), schema)
@@ -35,28 +35,28 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   }
 
   test("declared type is compared case-insensitively and trimmed; decimal keeps its precision") {
-    val schema = new StructType().add("id", IntegerType).add("amt", DecimalType(10, 2))
+    val schema = Cols().add("id", IntegerType).add("amt", DecimalType(10, 2))
     assert(check(List(CField("id", "  INTEGER ")), schema).isEmpty)
     assert(check(List(CField("amt", "decimal(10,2)")), schema).isEmpty)
     assert(types(check(List(CField("amt", "decimal(12,2)")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
   }
 
   test("a bare 'decimal' does not match a column of a particular precision: declare decimal(p,s)") {
-    val vs = check(List(CField("amt", "decimal")), new StructType().add("amt", DecimalType(10, 2)))
+    val vs = check(List(CField("amt", "decimal")), Cols().add("amt", DecimalType(10, 2)))
     assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
     assert(vs.head.expected.contains("decimal") && vs.head.actual.contains("decimal(10,2)"))
   }
 
   test("a plain (non-nested) declared type must be the contract vocabulary's own keyword: 'int' is not 'integer'") {
     // Only types written with '<' are parsed as Spark DDL; a plain keyword keeps the strict, existing comparison.
-    val schema = new StructType().add("id", IntegerType)
+    val schema = Cols().add("id", IntegerType)
     val vs = check(List(CField("id", "int")), schema)
     assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
     assert(vs.head.expected.contains("int") && vs.head.actual.contains("integer"))
   }
 
   test("input and output sides differ only in violation types and wording") {
-    val schema = new StructType().add("a", StringType)
+    val schema = Cols().add("a", StringType)
     val fields = List(CField("a", "integer", required = true), CField("missing", "integer", required = true), CField("n", "string", nullable = false))
     val in = check(fields, schema.add("n", StringType), Side.Input, rejectUndeclared = true)
     val out = check(fields, schema.add("n", StringType), Side.Output, rejectUndeclared = true)
@@ -65,14 +65,14 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
     assert(in.forall(_.message.contains("INPUT")) && out.forall(_.message.contains("OUTPUT")))
     assert(in(1).remediation.contains("to the input") && out(1).remediation.contains("to the output"))
     assert(in(2).remediation.contains("before the input is produced") && out(2).remediation.contains("before the output is produced"))
-    val undeclaredIn = check(Nil, new StructType().add("z", StringType), Side.Input, rejectUndeclared = true)
-    val undeclaredOut = check(Nil, new StructType().add("z", StringType), Side.Output, rejectUndeclared = true)
+    val undeclaredIn = check(Nil, Cols().add("z", StringType), Side.Input, rejectUndeclared = true)
+    val undeclaredOut = check(Nil, Cols().add("z", StringType), Side.Output, rejectUndeclared = true)
     assert(types(undeclaredIn) == List(ViolationType.UndeclaredInputColumn) && types(undeclaredOut) == List(ViolationType.UndeclaredOutputColumn))
     assert(undeclaredIn.head.remediation.contains("transformation's input") && undeclaredOut.head.remediation.contains("transformation's output"))
   }
 
   test("a missing field is only flagged when required; nullability is one-directional") {
-    val schema = new StructType().add("a", StringType, nullable = true).add("b", StringType, nullable = false)
+    val schema = Cols().add("a", StringType, nullable = true).add("b", StringType, nullable = false)
     assert(check(List(CField("gone", "string")), schema).isEmpty)
     assert(types(check(List(CField("gone", "string", required = true)), schema)) == List(ViolationType.MissingOutputField))
     assert(types(check(List(CField("a", "string", nullable = false)), schema)) == List(ViolationType.OutputFieldNullabilityMismatch))
@@ -80,7 +80,7 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   }
 
   test("undeclared columns are reported only under rejectUndeclaredFields, in schema order") {
-    val schema = new StructType().add("a", StringType).add("z", StringType).add("y", StringType)
+    val schema = Cols().add("a", StringType).add("z", StringType).add("y", StringType)
     assert(check(List(CField("a", "string")), schema).isEmpty)
     assert(check(List(CField("a", "string")), schema, rejectUndeclared = true).flatMap(_.column) == List("z", "y"))
   }
@@ -88,34 +88,34 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   // --- case sensitivity -------------------------------------------------------
 
   test("case-insensitive (Spark's default): a differently-cased declared name matches the actual column") {
-    val schema = new StructType().add("id", IntegerType, nullable = false)
+    val schema = Cols().add("id", IntegerType, nullable = false)
     assert(check(List(CField("ID", "integer", required = true, nullable = false)), schema, caseSensitive = false).isEmpty)
     assert(check(List(CField("ID", "integer", required = true, nullable = false)), schema, rejectUndeclared = true).isEmpty) // default is insensitive
   }
 
   test("case-insensitive: type and nullability are still checked on the case-matched column") {
-    val schema = new StructType().add("id", StringType)
+    val schema = Cols().add("id", StringType)
     val vs = check(List(CField("ID", "integer", nullable = false)), schema)
     assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch, ViolationType.OutputFieldNullabilityMismatch))
     assert(vs.forall(_.column.contains("ID"))) // reported under the contract's own spelling
   }
 
   test("case-sensitive: the same names are a missing field and an undeclared column") {
-    val schema = new StructType().add("id", IntegerType)
+    val schema = Cols().add("id", IntegerType)
     val vs = check(List(CField("ID", "integer", required = true)), schema, rejectUndeclared = true, caseSensitive = true)
     assert(types(vs) == List(ViolationType.MissingOutputField, ViolationType.UndeclaredOutputColumn))
     assert(vs.flatMap(_.column) == List("ID", "id"))
   }
 
   test("case-sensitive: exact-case names still match") {
-    val schema = new StructType().add("ID", IntegerType)
+    val schema = Cols().add("ID", IntegerType)
     assert(check(List(CField("ID", "integer", required = true)), schema, rejectUndeclared = true, caseSensitive = true).isEmpty)
   }
 
   // --- nested: struct via `properties` ---------------------------------------
 
-  private val address = new StructType().add("zip", StringType, nullable = false).add("city", StringType)
-  private val customer = new StructType().add("id", IntegerType).add("address", address)
+  private val address = Cols().add("zip", StringType, nullable = false).add("city", StringType)
+  private val customer = Cols().add("id", IntegerType).add("address", address)
 
   private def addressField(props: CField*) = CField("address", "struct", properties = props.toList)
 
@@ -147,7 +147,7 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
     assert(vs.head.column.contains("address.city"))
     assert(check(List(CField("id", "integer"), addressField(CField("zip", "string"))), customer).isEmpty)
 
-    val deeper = new StructType().add("a", new StructType().add("b", new StructType().add("c", IntegerType).add("extra", IntegerType)))
+    val deeper = Cols().add("a", Cols().add("b", Cols().add("c", IntegerType).add("extra", IntegerType)))
     val declared = CField("a", "struct", properties = List(CField("b", "struct", properties = List(CField("c", "integer")))))
     assert(check(List(declared), deeper, rejectUndeclared = true).flatMap(_.column) == List("a.b.extra"))
   }
@@ -161,7 +161,7 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   }
 
   test("struct properties: a declared struct whose actual column is not a struct is one type mismatch, with no recursion") {
-    val schema = new StructType().add("address", StringType)
+    val schema = Cols().add("address", StringType)
     val vs = check(List(addressField(CField("zip", "string", required = true))), schema)
     assert(types(vs) == List(ViolationType.OutputFieldTypeMismatch))
     assert(vs.head.actual.contains("string"))
@@ -177,10 +177,10 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
 
   // --- nested: DDL-typed array / map / struct ---------------------------------
 
-  private val schema = new StructType()
-    .add("tags", ArrayType(StringType, containsNull = true))
-    .add("scores", MapType(StringType, IntegerType, valueContainsNull = false))
-    .add("pt", new StructType().add("x", IntegerType).add("y", IntegerType))
+  private val schema = Cols()
+    .add("tags", ArrayType(StringType))
+    .add("scores", MapType(StringType, IntegerType))
+    .add("pt", Cols().add("x", IntegerType).add("y", IntegerType))
     .add("matrix", ArrayType(ArrayType(DoubleType)))
 
   test("DDL types: an exact structural match passes, whatever the inner nullability flags") {
@@ -208,8 +208,8 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
 
   test("DDL types: a container declared against a different kind of actual column is a mismatch") {
     assert(types(check(List(CField("tags", "map<string,string>")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
-    assert(types(check(List(CField("id", "array<int>")), new StructType().add("id", IntegerType))) == List(ViolationType.OutputFieldTypeMismatch))
-    val scalarActual = check(List(CField("id", "array<int>")), new StructType().add("id", IntegerType))
+    assert(types(check(List(CField("id", "array<int>")), Cols().add("id", IntegerType))) == List(ViolationType.OutputFieldTypeMismatch))
+    val scalarActual = check(List(CField("id", "array<int>")), Cols().add("id", IntegerType))
     assert(scalarActual.head.actual.contains("integer")) // a scalar actual keeps the plain typeName
   }
 
@@ -225,12 +225,11 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   }
 
   test("a DDL type's own field nullability is still checked at the field level") {
-    val vs = check(List(CField("tags", "array<string>", nullable = false)), new StructType().add("tags", ArrayType(StringType), nullable = true))
+    val vs = check(List(CField("tags", "array<string>", nullable = false)), Cols().add("tags", ArrayType(StringType), nullable = true))
     assert(types(vs) == List(ViolationType.OutputFieldNullabilityMismatch))
   }
 
   test("sameShape: scalars compare by value, containers recurse, nullability flags are ignored") {
-    import LogicalType._
     assert(SchemaChecker.sameShape(IntegerType, IntegerType, caseSensitive = false))
     assert(!SchemaChecker.sameShape(IntegerType, LongType, caseSensitive = false))
     assert(SchemaChecker.sameShape(DecimalType(10, 2), DecimalType(10, 2), caseSensitive = true))
@@ -256,7 +255,6 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   // reachable from Spark.
 
   test("a schema built directly from LogicalTypes is checked exactly as a Spark-derived one is") {
-    import LogicalType._
     val schema = LogicalSchema(
       List(
         LogicalField("id", LongType, nullable = false),
@@ -282,14 +280,12 @@ class SchemaCheckerSpec extends AnyFunSuite with SparkSchemaConversions {
   }
 
   test("an engine type with no logical equivalent never satisfies a declared standard type") {
-    import LogicalType._
     val schema = LogicalSchema(List(LogicalField("area", OtherType("geography"))))
     assert(types(check(List(CField("area", "string")), schema)) == List(ViolationType.OutputFieldTypeMismatch))
     assert(check(List(CField("area", "geography")), schema).isEmpty) // its own native keyword still matches
   }
 
   test("undeclared columns and nested NOT NULL / COMMENT in a declared type behave as before") {
-    import LogicalType._
     val schema = LogicalSchema(List(LogicalField("p", StructType(List(LogicalField("x", IntegerType)))), LogicalField("extra", DoubleType)))
     val vs = check(List(CField("p", "struct<x:int NOT NULL COMMENT 'the x'>")), schema, rejectUndeclared = true)
     assert(types(vs) == List(ViolationType.UndeclaredOutputColumn))
