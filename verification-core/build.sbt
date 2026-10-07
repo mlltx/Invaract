@@ -33,6 +33,17 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-verification-core" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.1.0")
 )
 
+import com.typesafe.tools.mima.core._
+
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2c): this module's packages moved from
+// `com.invaract.sparkadapter` to `com.invaract.verification` before anything was released - there
+// are no consumers, so no forwarding classes. Against a baseline built at the old package names
+// every class is reported missing; excluding the whole old package is the one honest way to say
+// "all of it moved". Inert once the base branch carries the rename.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*")
+)
+
 versionScheme := Some("early-semver")
 
 val hadoopVersion = "3.3.4"
