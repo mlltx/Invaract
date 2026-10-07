@@ -1,0 +1,27 @@
+{
+  "eventType": "CONTRACT_VALIDATION",
+  "timestamp": 1791231567062,
+  "applicationId": "local-1791231561015",
+  "unverifiableInputs": [],
+  "eventId": "6f4922abb565180fd4773a7d273c8a9e760a8b193fd97f99ee72c89957f837cb",
+  "fingerprints": null,
+  "status": "FAILED",
+  "metadata": {
+    "description": "{purpose=A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n}",
+    "owner": "invaract-demo"
+  },
+  "violations": [
+    {
+      "type": "MISSING_OUTPUT_FIELD",
+      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
+      "column": "customer_name",
+      "location": "file:/workspace/demo/output/result_broken_example.parquet",
+      "expected": "string"
+    }
+  ],
+  "schemaVersion": 1,
+  "roleConformance": [],
+  "dataQuality": [],
+  "contract": "invaract_demo_output@1.0.0"
+}
