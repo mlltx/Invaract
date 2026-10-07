@@ -3,7 +3,6 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.SaveModes
 import com.invaract.ir.CatalogIdentity
 
 import org.apache.spark.sql.catalyst.analysis.{NamedRelation, ResolvedIdentifier}
@@ -460,7 +459,7 @@ private[sparkadapter] object WriteCommandSupport {
         location = location,
         query = cmd.query,
         format = format,
-        saveMode = Some(SaveModes.Append),
+        saveMode = Some("append"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
@@ -487,7 +486,7 @@ private[sparkadapter] object WriteCommandSupport {
         location = location,
         query = cmd.query,
         format = format,
-        saveMode = Some(SaveModes.Overwrite),
+        saveMode = Some("overwrite"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
@@ -521,7 +520,7 @@ private[sparkadapter] object WriteCommandSupport {
         location = location,
         query = cmd.query,
         format = format,
-        saveMode = Some(SaveModes.Overwrite),
+        saveMode = Some("overwrite"),
         outputSchema = outputSchema,
         diagnostic = diagnostic.orElse(generatedColumnsDiagnostic),
         catalogTableRef = catalogTableRefOf(cmd.table),
@@ -552,7 +551,7 @@ private[sparkadapter] object WriteCommandSupport {
         // OverwriteByExpression above, there's no partial/conditional
         // case to blur, so "overwrite" is exact here, not an
         // approximation.
-        saveMode = Some(SaveModes.Overwrite),
+        saveMode = Some("overwrite"),
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
         catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
@@ -597,7 +596,7 @@ private[sparkadapter] object WriteCommandSupport {
         // skip if the table's already there) from a bare CREATE TABLE
         // (error if it is) - the same distinction SaveMode.Ignore/
         // SaveMode.ErrorIfExists make on the V1 side.
-        saveMode = Some(if (cmd.ignoreIfExists) SaveModes.Ignore else SaveModes.Error),
+        saveMode = Some(if (cmd.ignoreIfExists) "ignore" else "error"),
         outputSchema = cmd.query.schema,
         diagnostic = diagnostic,
         catalogIdentity = v2CreateOrReplaceCatalogIdentity(cmd.name),
@@ -1330,7 +1329,7 @@ private[sparkadapter] object WriteCommandSupport {
             location = location,
             query = query,
             format = Some(table.provider.getOrElse("hive")),
-            saveMode = Some(if (overwrite) SaveModes.Overwrite else SaveModes.Append),
+            saveMode = Some(if (overwrite) "overwrite" else "append"),
             outputSchema = outputSchema,
             diagnostic = locationDiagnostic.orElse(evolutionDiagnostic),
             catalogIdentity = Some(CatalogIdentitySupport.fromCatalogTable(table)),
@@ -1378,7 +1377,7 @@ private[sparkadapter] object WriteCommandSupport {
             location = location,
             query = query,
             format = Some("hive"),
-            saveMode = Some(if (overwrite) SaveModes.Overwrite else SaveModes.Append),
+            saveMode = Some(if (overwrite) "overwrite" else "append"),
             outputSchema = query.schema,
             diagnostic = diagnostic
           )

@@ -3,7 +3,6 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.contract.SaveModes
 import com.invaract.ir
 
 import org.apache.spark.sql.SaveMode
@@ -456,16 +455,16 @@ private[sparkadapter] object SparkPlanAdapter {
   }
 
   /** Normalizes Spark's `SaveMode` enum to the same lowercase string
-    * vocabulary a contract's `saveMode` field uses (`com.invaract.contract.SaveModes`:
-    * "append", "overwrite", "ignore", "error") — mirroring `formatOf`'s convention of matching
+    * vocabulary a contract's `saveMode` field uses ("append", "overwrite",
+    * "ignore", "error") — mirroring `formatOf`'s convention of matching
     * whatever a contract author would naturally write. Shared with
     * `WriteCommandSupport` for the same reason as `formatOf` above.
     */
   private[sparkadapter] def saveModeOf(mode: SaveMode): Option[String] = mode match {
-    case SaveMode.Append        => Some(SaveModes.Append)
-    case SaveMode.Overwrite     => Some(SaveModes.Overwrite)
-    case SaveMode.ErrorIfExists => Some(SaveModes.Error)
-    case SaveMode.Ignore        => Some(SaveModes.Ignore)
+    case SaveMode.Append        => Some("append")
+    case SaveMode.Overwrite     => Some("overwrite")
+    case SaveMode.ErrorIfExists => Some("error")
+    case SaveMode.Ignore        => Some("ignore")
   }
 
   /** Translates one standalone Catalyst expression via the same
