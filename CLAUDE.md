@@ -18,11 +18,9 @@ surfaced (opt-in, via `VerificationOptions.computeFingerprint`) through
 `spark-adapter`'s existing validation message and notification-publishing
 channels. It now has its own MiMa/`api-compatibility` check and its own
 whole-module + PR-scoped incremental mutation-testing CI jobs, the same
-guarantees `contract`/`ir`/`spark-adapter` have — but it is still not
-wired into `release.yml`'s Maven Central publish, which covers only
-`contract`/`ir`/`spark-adapter` today (see `fingerprint/build.sbt`'s own
-"FOLLOW-UP" comment) — a real, narrower gap to close, not a signal it's
-harness code. This is what a real user of Invaract would depend on.
+guarantees `contract`/`ir`/`spark-adapter` have, and `release.yml` publishes it to
+Maven Central with the others (so do `verification-core` and `adapter-testkit`; see
+docs/RELEASING.md). This is what a real user of Invaract would depend on.
 
 **`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
 test harness, not the product.** `plugin/` is a small illustrative Spark
@@ -135,9 +133,8 @@ bar this section describes below. It now has the same automatic backing
 `ir`/`spark-adapter` do: `.github/workflows/test.yml`'s
 `mutation-testing-fingerprint` job runs both a whole-module Stryker4s pass
 and its own PR-scoped incremental check, and `api-compatibility` covers it
-too. The one still-open, disclosed gap for this module is narrower —
-Maven Central publishing (see the "What's the product" section above) —
-not mutation testing or API compatibility.
+too. Nothing is left open for this module: mutation testing, API compatibility and
+Maven Central publishing are all in place.
 
 So: when a feature adds or changes code in `ir/src/main/scala/...`,
 `spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,

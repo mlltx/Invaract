@@ -1,8 +1,8 @@
 name: Release to Maven Central
 
-# Publishes contract/ir/spark-adapter to Maven Central via Sonatype's
+# Publishes contract/ir/fingerprint/verification-core/adapter-testkit/spark-adapter to Maven Central via Sonatype's
 # Central Portal — see docs/RELEASING.md for the full process, the
-# required repo secrets, and why only these three modules (not
+# required repo secrets, and why only these six modules (not
 # plugin/runner/notification-kafka) are published (CLAUDE.md's "What's
 # the product").
 #
@@ -12,7 +12,7 @@ name: Release to Maven Central
 # for the separate `mlltx/invaract-registry` repo (docs/CONTRACT_REGISTRY.md
 # §2), which needs a real, pinnable `contract` coordinate to depend on and
 # can't wait on Sonatype's namespace verification (docs/RELEASING.md)
-# landing first. `ir`/`spark-adapter`/`fingerprint` aren't
+# landing first. The other modules aren't
 # invaract-registry's dependencies, so only `contract` gets this second
 # destination.
 #
@@ -20,7 +20,7 @@ name: Release to Maven Central
 # maintainer chooses per docs/RELEASING.md — the tag itself carries no
 # version number the workflow reads; each module's own `build.sbt`
 # `ThisBuild / version` is authoritative) or manually via
-# workflow_dispatch. Always attempts to release all three modules at
+# workflow_dispatch. Always attempts to release all six modules at
 # their current build.sbt versions — Central rejects re-publishing a
 # version that already exists, so re-running this workflow (or tagging
 # again before bumping every module) is a safe no-op for whichever
@@ -115,10 +115,37 @@ jobs:
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
         run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
 
-      # Resolves contract/ir from this runner's local Ivy cache, populated
-      # by the two publishLocal steps above (same libraryDependencies fix
-      # dev/build relies on for local builds — see spark-adapter/build.sbt's
-      # own comment on the coordinates it depends on).
+      # fingerprint depends on ir, verification-core on contract/ir/fingerprint, adapter-testkit on
+      # contract/ir/verification-core, and spark-adapter on all of them (the kit as a test dependency):
+      # each resolves its dependencies from this runner's local Ivy cache, so each of these steps
+      # publishLocal's as well as publishing, and the order below is the dependency order.
+      - name: Publish fingerprint
+        working-directory: fingerprint
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      - name: Publish verification-core
+        working-directory: verification-core
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      - name: Publish adapter-testkit
+        working-directory: adapter-testkit
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishLocal publishSigned sonatypeCentralRelease
+
+      # Resolves contract/ir/fingerprint/verification-core/adapter-testkit from this runner's local Ivy
+      # cache, populated by the publishLocal steps above (same libraryDependencies fix dev/build relies
+      # on for local builds — see spark-adapter/build.sbt's own comment on the coordinates it depends on).
       - name: Publish spark-adapter
         working-directory: spark-adapter
         env:

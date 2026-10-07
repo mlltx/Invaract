@@ -12,10 +12,13 @@ not before.
 
 ## What gets published
 
-Only `contract`, `ir`, and `spark-adapter` — the three modules CLAUDE.md's
-"What's the product" section identifies as the verification engine, and
-the only three with Maven Central publishing settings in their
-`build.sbt`/`project/*.sbt` at all.
+Six modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
+`spark-adapter`. The first five plus `spark-adapter` are the verification engine CLAUDE.md's
+"What's the product" section describes, and `spark-adapter`'s published POM depends on all the
+others, so a release that left any of them out would be unresolvable. `adapter-testkit` is
+test-scope infrastructure, but it is what a third-party adapter compiles its conformance tests
+against, and `spark-adapter` itself lists it as a test dependency. All six have Maven Central
+publishing settings in their `build.sbt`/`project/*.sbt` (identical, copied from `ir`).
 
 `plugin`, `runner`, `demo`, and `web` are the example harness — never
 published, nothing to release. `notification-kafka` is an optional
@@ -31,8 +34,7 @@ release.yml run, alongside its Sonatype release — see that workflow's own
 top comment and `docs/CONTRACT_REGISTRY.md`'s §2 for why: the separate
 `mlltx/invaract-registry` repo needs a real, pinnable `contract`
 coordinate to depend on, and can't wait for Sonatype namespace
-verification (below) to land first. `ir`/`spark-adapter`/`fingerprint`
-have no GitHub Packages destination — nothing outside this repo depends
+verification (below) to land first. The other five have no GitHub Packages destination — nothing outside this repo depends
 on them the way `invaract-registry` depends on `contract`.
 
 ## One-time setup (a human must do this; nothing here is automatable)
@@ -46,7 +48,7 @@ on them the way `invaract-registry` depends on `contract`.
    group-ID ownership either via GitHub OAuth (for an `io.github.<user>`
    namespace) or a DNS TXT record proving control of the domain (for a
    reverse-domain namespace like `com.invaract`). This project's
-   `organization` is `com.invaract` in all three modules, so this step
+   `organization` is `com.invaract` in all six modules, so this step
    requires owning `invaract.com` and adding the TXT record Central
    Portal's namespace-verification flow gives you. See
    [central.sonatype.org's namespace docs](https://central.sonatype.org/register/central-portal/)
@@ -113,9 +115,9 @@ project's Sonatype account.
    git push origin v2026.09.0
    ```
    This triggers `.github/workflows/release.yml`, which builds, signs, and
-   releases `contract`, `ir`, then `spark-adapter` in that order (order
-   matters: `spark-adapter`'s own `libraryDependencies` resolve
-   `contract`/`ir` from the same runner's local Ivy cache — see
+   releases `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit`, then
+   `spark-adapter` in that order (order matters: each module's own `libraryDependencies` resolve
+   the earlier ones from the same runner's local Ivy cache — see
    `spark-adapter/build.sbt`'s comment on that dependency, and
    `dev/build`'s matching local-build pattern). `contract`'s step
    additionally publishes to GitHub Packages right after its Sonatype
