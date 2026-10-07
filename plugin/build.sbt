@@ -21,11 +21,16 @@ libraryDependencies ++= Seq(
   // org.lz4:lz4-java is unmaintained (upstream archived) and vulnerable
   // to CVE-2025-12183 and CVE-2025-66566 - see spark-adapter/build.sbt's
   // comment for the full detail (Maven Central's own relocation POM for
-  // org.lz4:lz4-java:1.8.1 points at this fork; added directly at 1.11.1
-  // rather than relying on Ivy to follow the relocation). Same
-  // net.jpountz.lz4 package namespace, so Spark's shuffle-compression
-  // code needs no changes; org.lz4 excluded below.
-  "at.yawk.lz4" % "lz4-java" % "1.11.1" % "test"
+  // org.lz4:lz4-java:1.8.1 points at this fork). Same net.jpountz.lz4
+  // package namespace, so Spark's shuffle-compression code needs no
+  // changes; org.lz4 excluded below.
+  //
+  // 1.11.1 -> 1.11.4: four more advisories against this same jar since -
+  // see spark-adapter/build.sbt's comment for the full detail, including
+  // why 1.11.4 (every fix, verified drop-in) rather than 1.12.0 (the
+  // maintainer's own notes flag extra validation tightening that "could
+  // in theory break some users").
+  "at.yawk.lz4" % "lz4-java" % "1.11.4" % "test"
 )
 excludeDependencies += ExclusionRule("org.lz4", "lz4-java")
 

@@ -40,7 +40,13 @@ libraryDependencies ++= Seq(
 // A dependencyOverrides entry rather than a direct dependency: lz4-java must
 // stay a runtime-only transitive, not become a compile dependency of this
 // module's own code.
-dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.1"
+//
+// 1.11.1 -> 1.11.4: four more advisories against this same jar since -
+// see spark-adapter/build.sbt's comment for the full detail, including
+// why 1.11.4 (every fix, verified drop-in) rather than 1.12.0 (the
+// maintainer's own notes flag extra validation tightening that "could
+// in theory break some users").
+dependencyOverrides += "at.yawk.lz4" % "lz4-java" % "1.11.4"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

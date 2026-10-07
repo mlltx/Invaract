@@ -347,16 +347,37 @@ libraryDependencies ++= Seq(
   // directly against Maven Central's own relocation POM for
   // org.lz4:lz4-java:1.8.1 (`<relocation><groupId>at.yawk.lz4</groupId>
   // </relocation>`), which points at the community fork that continues
-  // receiving fixes. Added directly at 1.11.1 (the latest release,
-  // covering both CVEs - 1.8.1 alone only fixes the first) rather than
-  // relying on Ivy to follow the relocation, which sbt/Ivy has
-  // historically been inconsistent about; the org.lz4 coordinate is
-  // excluded below. Same `net.jpountz.lz4` Java package namespace as the
-  // original (confirmed a drop-in replacement, not a rewrite), so
-  // Spark's own shuffle-compression code - a real, exercised code path
-  // even under local[*] for any shuffle stage, unlike some of the other
-  // overrides in this file - needs no changes to keep working.
-  "at.yawk.lz4" % "lz4-java" % "1.11.1" % "test"
+  // receiving fixes; the org.lz4 coordinate is excluded below. Same
+  // `net.jpountz.lz4` Java package namespace as the original (confirmed a
+  // drop-in replacement, not a rewrite), so Spark's own shuffle-compression
+  // code - a real, exercised code path even under local[*] for any shuffle
+  // stage, unlike some of the other overrides in this file - needs no
+  // changes to keep working.
+  //
+  // 1.11.1 -> 1.11.4: the fork has since published four more advisories
+  // against the versions in between. The one that prompted this bump is
+  // GHSA-4v53-57pg-c464 (<= 1.11.1, fixed 1.11.2): `LZ4BlockInputStream`
+  // grows its compressed-input buffer to the attacker-controlled
+  // `compressedLen` value from the legacy LZ4Block stream header before
+  // reading any payload bytes, so a header-only input can trigger a
+  // near-2 GiB allocation and exhaust the heap. Rather than stopping at
+  // 1.11.2 (the bare minimum), bumped to 1.11.4, which also carries three
+  // more fixes against the same jar: GHSA-gm45-99xc-r7wv (LZ4FrameInputStream
+  // reallocating up to 8 MiB of buffers per frame on a minimal empty-frame
+  // input - CPU/GC amplification), GHSA-343h-94h5-c4wr (LZ4BlockInputStream
+  // with stopOnEmptyBlock=false recursing once per empty block ->
+  // StackOverflowError) and GHSA-mcr4-qmvw-px4g (native-library extraction
+  // to a shared temp dir racing another local user). 1.12.0 exists and
+  // carries the same four fixes, but its own release notes disclose
+  // "additional tightening of input validation" beyond the security fixes,
+  // which the maintainer themselves flag as something that "could in theory
+  // break some users," recommending 1.11.4 as the safe fallback - taken
+  // here deliberately instead of 1.12.0's unexamined latest. Checked for a
+  // repackaging break before trusting it, not assumed: both jars' `unzip -l`
+  // output lists the identical 110 `net/jpountz/**` classes, and
+  // `LZ4BlockInputStream.class`'s bytecode major version (51, Java 7) is
+  // unchanged between 1.11.1 and 1.11.4.
+  "at.yawk.lz4" % "lz4-java" % "1.11.4" % "test"
 )
 
 // Not a plain unconditional entry, unlike every other test dependency
