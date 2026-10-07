@@ -257,9 +257,12 @@ There is no Maven Central release yet to compare against, so each
 module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
 `com.invaract %% <module> % <previous version>` coordinate, and CI's
 `api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
-base branch to the runner's local Ivy cache under that exact coordinate
-before running `sbt mimaReportBinaryIssues` against the PR's head — "did
-this PR, as a whole, break compatibility with what existed before it."
+base branch into its own isolated Ivy home (`-Dsbt.ivy.home`), separate from
+the PR head's, then runs `sbt mimaReportBinaryIssues` against the PR's head
+with `mimaPreviousClassfiles` pointing at the base ref's jar — "did
+this PR, as a whole, break compatibility with what existed before it." The
+two builds never share a coordinate, so a version bump is needed only when
+the version should change, not to keep CI's two publishes apart.
 The base is the PR's actual base commit
 (`github.event.pull_request.base.sha`), a fixed anchor for the PR's
 lifetime, deliberately **not** the previous push's HEAD — a sliding
