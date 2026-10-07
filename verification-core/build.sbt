@@ -9,23 +9,24 @@ name := "invaract-verification-core"
 // (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2): no Spark dependency, so a
 // second engine's adapter depends on this, not on `spark-adapter`.
 //
-// Package names are DELIBERATELY unchanged (`com.invaract.sparkadapter`,
-// `.notification`, `.location`): deployed configurations name built-in
+// Packages are `com.invaract.verification` (with `.notification` and
+// `.location`) - neutral, not Spark's. Deployed configurations name built-in
 // sinks and custom plug-ins by fully-qualified class name
-// (`sink.class=com.invaract.sparkadapter.notification.FileNotificationSink`,
-// `customRuleTypes`, ...), so renaming a package would silently break every
-// existing deployment's config - the External Attachability Requirement's
-// whole point is that a platform team changes none of that. The relocation
-// is invisible to a user of the `spark-adapter` jar, which bundles this
-// module's classes (sbt-assembly, the same way it bundles `fingerprint`'s).
-// Neutral package names, with FQN compatibility for existing configs, are a
-// separate follow-up decision.
+// (`sink.class=com.invaract.verification.notification.FileNotificationSink`,
+// `customRuleTypes`, ...); the rename from `com.invaract.sparkadapter` was made
+// before any release, so there is no forwarding layer (docs/MULTI_ENGINE_ADAPTERS.md,
+// Stage 2c).
 //
 // Not yet wired into Maven Central publishing or `release.yml` (the same
 // disclosed gap `fingerprint` has - see CLAUDE.md "What's the product"):
 // `spark-adapter`'s published POM depends on it, so that follow-up has to
 // land before the next Maven Central release.
-ThisBuild / version := "0.1.0"
+// 0.2.0: Stage 2c moved every class to `com.invaract.verification`. The version
+// has to change with the package: CI's api-compatibility job publishes the
+// base ref's modules to the local Ivy cache by coordinate, and the base
+// ref's spark-adapter (still importing `com.invaract.sparkadapter.*` from
+// the core) must resolve the OLD core, not this one, under that coordinate.
+ThisBuild / version := "0.2.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -39,14 +40,13 @@ mimaPreviousArtifacts := Set(
 
 import com.typesafe.tools.mima.core._
 
-// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 3): `VerificationPipeline.verifyWrite`
-// gained a sixth parameter, the adapter's `AdapterCapabilities`, which the pipeline now checks the
-// contract against (UNSUPPORTED_CONTRACT_FEATURE). A parameter added to a method changes its
-// compiled signature even with a default. Nothing outside this repository calls the method yet
-// (the module is unreleased), so there is no overload kept for the old shape. MiMa's own
-// suggested filter, verbatim; inert once the base branch carries this change.
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2c): this module's packages moved from
+// `com.invaract.sparkadapter` to `com.invaract.verification` before anything was released - there
+// are no consumers, so no forwarding classes. Against a baseline built at the old package names
+// every class is reported missing; excluding the whole old package is the one honest way to say
+// "all of it moved". Inert once the base branch carries the rename.
 mimaBinaryIssueFilters ++= Seq(
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.sparkadapter.VerificationPipeline.verifyWrite")
+  ProblemFilters.exclude[Problem]("com.invaract.sparkadapter.*")
 )
 
 versionScheme := Some("early-semver")
@@ -74,7 +74,7 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
-assembly / assemblyJarName := "invaract-verification-core-0.1.0.jar"
+assembly / assemblyJarName := "invaract-verification-core-0.2.0.jar"
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",

@@ -58,8 +58,9 @@ module move in Stage 2.
 | Stage | Item | Benefit | Status |
 |---|---|---|---|
 | 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done (PR #102) — see below |
-| 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change (package names kept) | Done — see below |
-| 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (neutral package names, `ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
+| 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change at the time (the package rename is Stage 2c) | Done — see below |
+| 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (`ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
+| 2c | Neutral package names: `verification-core` is `com.invaract.verification` (`.notification`, `.location`), `notification-kafka` follows; no forwarding classes | Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released | In review |
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes or declares N/A (with a reason) on the same scenarios | Not started |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic fingerprints the same, and `GENERATE_UUID()` is not "deterministic" | Not started |
@@ -131,14 +132,11 @@ apart from converting their Spark schemas at the call.
 | `RuleVerifier` took `RowMutationSupport.Kind` | It takes the neutral `MutationKind`; `RowMutationSupport.Kind` is now an alias of it |
 | `ContractInference.infer` took Spark's `WriteCommandInfo` | It takes an engine-neutral `InferredWrite(location, format, saveMode, outputSchema)` |
 
-**Decision: package names are unchanged.** The earlier recommendation was to rename to
-neutral packages as a deliberate pre-1.0 break. Reading the configuration surface changed
-that: deployed `notify.properties` files name built-in sinks by fully-qualified class name
-(`sink.class=com.invaract.sparkadapter.notification.FileNotificationSink`), as do custom
-rule types and plug-ins. A rename would silently break every existing deployment's config,
-which is exactly what the External Attachability Requirement exists to prevent. Relocating
-the code between modules, keeping the package, is invisible to users; neutral names with
-FQN compatibility for existing configs is Stage 2b's decision.
+**Package names.** Stage 2a moved the code between modules and kept the package, on the
+reasoning that deployed `notify.properties` files name built-in sinks by fully-qualified class
+name (`sink.class=com.invaract.sparkadapter.notification.FileNotificationSink`), as do custom
+rule types and plug-ins. That reasoning was superseded in Stage 2c: there are no deployed
+consumers, so the neutral names were adopted at once instead of carrying a forwarding layer.
 
 **MiMa.** Moving public classes out of `spark-adapter` is a deliberate break *of that
 artifact* (every moved class is a `MissingClassProblem`), though nothing changes for a user
@@ -210,9 +208,7 @@ branch coverage; the three SPI files score 100% under mutation testing.
 
 **Not done in 2b, deliberately**
 
-- *Neutral package names.* Still `com.invaract.sparkadapter.*`, for the reason in Stage 2a (deployed
-  configs name classes by FQN). Doing it safely needs forwarding classes under the old names plus a
-  deprecation period, which is a release decision rather than a refactor.
+- *Neutral package names.* Done in Stage 2c (below).
 - *`registry/ContractSource`* (reads a `SparkSession`) and `InvaractSparkSessionExtension`'s own
   keys (`contract`, `dryRun`, `notifyConfig`, `jobId`, `registryUrl`, ...) stay in `spark-adapter`:
   they are the Spark *attach* mechanism, and each adapter has its own.
@@ -263,3 +259,27 @@ shape, each side of every condition), `CapabilityMatrixSpec` (rendering and drif
 **Not done in 3, deliberately.** Spark's `docs/connectors/*.md` per-connector gaps stay prose — they are
 about *data sources*, not about the adapter's own capabilities; the testkit (Stage 4) is what will
 check the declarations are *true*, since a declaration only says what an adapter claims.
+
+## Stage 2c — neutral package names
+
+`verification-core` was extracted in Stage 2a with its packages unchanged. With no consumers
+to protect, the rename was made at once instead of being deferred behind a forwarding layer:
+
+| Was | Now |
+|---|---|
+| `com.invaract.sparkadapter.{Violation, VerificationPipeline, StructuralVerifier, ...}` | `com.invaract.verification.*` |
+| `com.invaract.sparkadapter.notification.*` (sinks, events, config) | `com.invaract.verification.notification.*` |
+| `com.invaract.sparkadapter.location.*` | `com.invaract.verification.location.*` |
+| `com.invaract.sparkadapter.notification.kafka.KafkaNotificationSink` | `com.invaract.verification.notification.kafka.KafkaNotificationSink` |
+
+What stays in `com.invaract.sparkadapter` is what is Spark's: the enforcement rule, the
+session extension, the listener, plan translation, dry-run reporting, `SparkSchemas`,
+`SparkConfigSource`, `SparkCapabilities`, `registry/`. Configuration that names a class by
+fully-qualified name must be updated — `sink.class=` in notification properties, and any
+custom `customRuleTypes` plug-in that imported the moved types. The `spark.*` configuration
+keys and `InvaractSparkSessionExtension`'s own class name are unchanged.
+
+Members the adapter needs from the core that were `private[sparkadapter]` are
+`private[invaract]` (the two modules now sit in different packages). `spark-adapter`'s MiMa
+filters record the move; the one signature of this module's own surface that changes is
+`ContractEnforcementRule.forContract`.

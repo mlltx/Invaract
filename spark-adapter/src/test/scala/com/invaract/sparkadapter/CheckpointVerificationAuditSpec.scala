@@ -3,9 +3,11 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractViolationException, DataQualityVerdict, RoleConformanceVerdict, SensitivityLineage, VerificationOptions, ViolationType}
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir
-import com.invaract.sparkadapter.notification.{ContractValidationEvent, NotificationSink, TestNotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, NotificationSink, TestNotificationSink}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan

@@ -3,10 +3,13 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractInference, VerificationOptions, ViolationType}
+import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, DryRunSummaryEvent, InferenceStatus, JobInfo, NotificationEvent, NotificationSink}
 import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.ir
 import com.invaract.sparkadapter.ContractEnforcementRule.InferenceOutcome
-import com.invaract.sparkadapter.notification._
+import com.invaract.verification.notification._
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Attribute

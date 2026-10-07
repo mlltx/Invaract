@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.StructuralVerifier
 import com.invaract.ir
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.analysis.DeduplicateRelations

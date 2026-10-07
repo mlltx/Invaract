@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{CustomRuleVerifier, MutationKind, Violation, ViolationType}
 import com.invaract.contract.ContractRule
 import com.invaract.ir.RowMutation
 

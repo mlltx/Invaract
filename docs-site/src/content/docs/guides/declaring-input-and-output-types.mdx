@@ -156,8 +156,8 @@ in an [organizational policy](/guides/enforcing-organizational-policy/), alongsi
 Setting it explicitly in code works the same way too:
 
 ```scala
-import com.invaract.sparkadapter.{ContractEnforcementRule, VerificationOptions}
-
+import com.invaract.sparkadapter.{ContractEnforcementRule}
+import com.invaract.verification.{VerificationOptions}
 val spark = SparkSession.builder()
   .withExtensions(_.injectCheckRule(
     ContractEnforcementRule.forContract(contract, VerificationOptions(roleConsistency = true))

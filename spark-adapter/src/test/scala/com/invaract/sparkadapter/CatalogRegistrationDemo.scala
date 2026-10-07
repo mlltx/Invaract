@@ -3,8 +3,11 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractViolationException, VerificationOptions}
+import com.invaract.verification.notification.WriteEvent
 import com.invaract.contract.ContractParser
-import com.invaract.sparkadapter.notification.FileNotificationSink
+import com.invaract.verification.notification.FileNotificationSink
 
 import org.apache.spark.sql.SparkSession
 

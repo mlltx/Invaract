@@ -14,7 +14,7 @@ echo "ref://<id> reference (demo/contracts/invaract_output_location_ref.yaml),"
 echo "resolved purely via spark-submit --conf spark.invaract.locationMap=..."
 echo "- no change to DemoJobHarness's own code, the same way a platform or"
 echo "orchestration framework would attach this to any real job. See"
-echo "com.invaract.sparkadapter.location's package and docs-site's 'Resolve"
+echo "com.invaract.verification.location's package and docs-site's 'Resolve"
 echo "Dataset Locations at Runtime' guide."
 echo ""
 

@@ -3,7 +3,7 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.sparkadapter.notification.{TestNotificationSink, WriteEvent}
+import com.invaract.verification.notification.{TestNotificationSink, WriteEvent}
 
 import org.apache.spark.sql.SparkSession
 import org.scalatest.BeforeAndAfterAll

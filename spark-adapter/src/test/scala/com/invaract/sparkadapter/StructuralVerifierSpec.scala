@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{StructuralVerifier, UnverifiableInput, VerificationOptions, VerificationResult, Violation, ViolationType}
 import com.invaract.contract.ContractParser
 import com.invaract.ir.{DatasetRef, Lineage, Read}
 

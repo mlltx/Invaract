@@ -72,7 +72,7 @@ message (trimmed here to the useful part — the full message also shows
 what the contract expects and the full translated plan) reads:
 
 ```
-Exception in thread "main" com.invaract.sparkadapter.ContractViolationException:
+Exception in thread "main" com.invaract.verification.ContractViolationException:
 Contract violation: 'invaract_demo_output@1.0.0' rejected this transformation. Write aborted.
 
 What the plan contains:

@@ -3943,12 +3943,13 @@ Extend verification engine to support multiple execution engines.
         longer import Spark types; Spark mapping isolated in `SparkSchemas`, pinned to
         Spark's own output by `SparkSchemasSpec`. No verdict or message changed.
   - [x] Stage 2a: `verification-core` module extracted from `spark-adapter` (package
-        names unchanged — deployed configs name classes by FQN); seams for lineage-boundary
+        names unchanged at that stage); seams for lineage-boundary
         types, `MutationKind`, `InferredWrite`
   - [x] Stage 2b: adapter SPI — `VerificationPipeline` (`verifyWrite` /
         `verifyStateChange` / `rejectUnverifiableWrite`) and `VerificationSetup` +
         `ConfigSource` (neutral `InvaractConf` names; Spark spells them `spark.invaract.*`,
-        unchanged). Neutral package names deferred (deployed configs name classes by FQN)
+        unchanged)
+  - [x] Stage 2c: neutral package names (`com.invaract.verification`), no forwarding layer
   - [x] Stage 3: per-adapter capability declaration (`invaract-capabilities-<adapter>.yaml`),
         generated docs-site matrix with a drift test, `UNSUPPORTED_CONTRACT_FEATURE` fail-closed
   - [ ] Stage 4: `adapter-testkit` conformance scenarios

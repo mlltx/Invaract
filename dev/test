@@ -91,7 +91,7 @@ echo "  Report: $REPORT_FILE"
 echo "  Notification config: demo/notify.properties (events -> $EVENTS_FILE)"
 
 # The 5th argument enables the notification sink (see
-# com.invaract.sparkadapter.notification's package doc) - demo/notify.properties
+# com.invaract.verification.notification's package doc) - demo/notify.properties
 # is a FileNotificationSink writing to $EVENTS_FILE, so this run also proves
 # real ContractValidationEvent/WriteEvent publishing against a real Spark
 # job, not just in isolated unit tests. The 4th argument (contract) has to

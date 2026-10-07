@@ -958,7 +958,7 @@ libraryDependencies ++= Seq(
   // The engine-neutral verification core (this module's own former
   // checkers/result model/notification/location code) - same real,
   // Maven-resolvable-dependency reasoning as the three above.
-  "com.invaract" %% "invaract-verification-core" % "0.1.0"
+  "com.invaract" %% "invaract-verification-core" % "0.2.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.11.0.jar"
@@ -1452,4 +1452,17 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Extracted$"),
   ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Unverifiable"),
   ProblemFilters.exclude[MissingClassProblem]("com.invaract.sparkadapter.RowMutationSupport$Classification$Unverifiable$")
+)
+
+// Deliberate break (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2c): the engine-neutral
+// classes `verification-core` holds moved from `com.invaract.sparkadapter` to
+// `com.invaract.verification` (no consumers existed, so no forwarding classes).
+// The Stage 2a/2b filters above still name the old package because that is where
+// the classes were in the baseline; the only member of this module's own surface
+// whose signature changes is `ContractEnforcementRule.forContract`, which takes
+// `VerificationOptions` and `NotificationSink`. Every line is MiMa's own
+// suggested filter for this change, pasted verbatim.
+mimaBinaryIssueFilters ++= Seq(
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.sparkadapter.ContractEnforcementRule.forContract"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.sparkadapter.ContractEnforcementRule.forContract$default$2")
 )

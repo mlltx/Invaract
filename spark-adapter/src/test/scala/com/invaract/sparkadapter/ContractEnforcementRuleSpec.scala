@@ -3,8 +3,11 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractViolationException, RoleConformanceVerdict, StructuralVerifier, UnverifiableInput, VerificationOptions, VerificationPipeline, VerificationResult, Violation, ViolationType}
+import com.invaract.verification.notification.ContractValidationEvent
 import com.invaract.contract.ContractParser
-import com.invaract.sparkadapter.notification.{NotificationSink, TestNotificationSink}
+import com.invaract.verification.notification.{NotificationSink, TestNotificationSink}
 
 import io.delta.tables.DeltaTable
 import org.apache.spark.sql.SparkSession
@@ -169,7 +172,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       df.write.mode("overwrite").parquet(outputPath)
     }
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty, "expected at least one ContractValidationEvent")
     val event = events.last
     assert(event.status == "PASSED")
@@ -209,7 +212,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty, "expected at least one ContractValidationEvent, even though the write was rejected")
     val event = events.last
     assert(event.status == "FAILED")
@@ -295,7 +298,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(Files.exists(java.nio.file.Paths.get(outputPath)), "the write must not be blocked by a false-positive MISSING_INPUT")
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty, "expected at least one ContractValidationEvent")
     val event = events.last
     assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
@@ -383,7 +386,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(Files.exists(java.nio.file.Paths.get(outputPath)), "the write must not be blocked by a false-positive MISSING_INPUT")
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty, "expected at least one ContractValidationEvent")
     val event = events.last
     assert(event.status == "PASSED", s"expected PASSED, got violations: ${event.violations}")
@@ -469,7 +472,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     assert(Files.exists(java.nio.file.Paths.get(outputPath)))
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "PASSED", event.violations.toString)
     assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
   }
@@ -534,7 +537,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       checkpointed.write.mode("overwrite").parquet(outputPath) // must not throw
     }
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "PASSED", event.violations.toString)
     assert(event.unverifiableInputs.map(_.inputName) == List("raw"))
     assert(event.unverifiableInputs.head.unknownNodeTypes == List("LogicalRDD"))
@@ -581,7 +584,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
       assert(StructuralVerifier.collectReads(translation.plan).map(_.dataset.location.split('/').last) == List("lw_resolved_in.csv"))
       assert(StructuralVerifier.collectUnknownPlans(translation.plan).isEmpty, com.invaract.ir.PlanPrinter.render(translation.plan))
-      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      val validation = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
       assert(validation.status == "PASSED" && validation.unverifiableInputs.isEmpty, validation.toString)
     } finally spark.listenerManager.unregister(listener)
   }
@@ -604,7 +607,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         listener.lastWrite.filter(onlyWritesTo("lw_unseen_out")).getOrElse(fail("listener has not captured the write yet"))
       }
       assert(StructuralVerifier.collectUnknownPlans(translation.plan).map(_.sourceType) == List("LogicalRDD"))
-      val validation = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+      val validation = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
       assert(validation.unverifiableInputs.map(_.inputName) == List("raw"))
     } finally spark.listenerManager.unregister(listener)
   }
@@ -686,7 +689,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         .write.format("delta").mode("overwrite").save(outputPath) // must not throw
     }
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "PASSED", event.violations.toString)
     assert(event.unverifiableInputs.isEmpty, event.unverifiableInputs.toString)
   }
@@ -745,7 +748,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
             .write.format("delta").mode("overwrite").save(outputPath)
         }
       }
-      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      val fp = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
         .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
       (fp, fingerprintingWarnings(warnings))
     }
@@ -930,7 +933,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("output 'out2' at " + out2 + " (derived from no declared input)"), ex.getMessage)
   }
 
-  // com.invaract.sparkadapter.location - resolving a contract's ref://<id>
+  // com.invaract.verification.location - resolving a contract's ref://<id>
   // locations from Spark configuration (spark.invaract.locationMap), so a
   // platform invoking spark-submit can attach this without the job's own
   // code calling ContractLocationResolution.resolve itself. resolveContractLocations
@@ -991,7 +994,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("resolveContractLocations: a ref:// location with the conf unset fails closed with a clear message") {
     val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", "ref://result-output"))
-    val ex = intercept[com.invaract.sparkadapter.location.LocationResolutionException] {
+    val ex = intercept[com.invaract.verification.location.LocationResolutionException] {
       ContractEnforcementRule.resolveContractLocations(contract, spark)
     }
     assert(ex.getMessage.contains("ref://result-output"))
@@ -1144,7 +1147,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     assert(ex.result.fingerprints.isEmpty)
     assert(!ex.getMessage.contains("Fingerprints"))
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.fingerprints.isEmpty)
   }
 
@@ -1181,7 +1184,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("Fingerprints"))
     assert(ex.getMessage.contains(expected.overall.value))
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.fingerprints.contains(expected))
   }
 
@@ -1215,7 +1218,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         val df = spark.range(5).withColumn("r", rand())
         df.write.mode("overwrite").parquet(outputPath) // must not throw - this contract declares no rule
       }
-      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
         .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
     }
 
@@ -1257,7 +1260,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
         val df = checkpointed.withColumn("doubled", col("id") * 2)
         df.write.mode("overwrite").parquet(outputPath) // must not throw
       }
-      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
         .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
     }
 
@@ -1291,7 +1294,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
             .select(col("l.id"), (col("r.id") * 2).as("doubled")).write.mode("overwrite").parquet(outputPath)
         }
       }
-      val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      val fp = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
         .getOrElse(fail("computeFingerprint = true must populate a fingerprint"))
       (fp, fingerprintingWarnings(warnings))
     }
@@ -1353,7 +1356,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
     val fingerprinted = sink.events
-      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
       .lastOption.exists(_.fingerprints.isDefined)
     (fingerprintingWarnings(warnings), fingerprinted)
   }
@@ -1386,7 +1389,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     val warnings = fingerprintingWarnings(captured)
     val fingerprinted = sink.events
-      .collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+      .collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
       .lastOption.exists(_.fingerprints.isDefined)
 
     assert(fingerprinted)
@@ -1504,7 +1507,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       case other => fail(s"unexpected join condition shape: $other")
     }
 
-    val fp = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+    val fp = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
       .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing write too"))
     assert(
       fp.outputs("lvalue") != fp.outputs("rvalue"),
@@ -2895,7 +2898,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
              |""".stripMargin).collect() // must not throw - this contract declares no rule
       }
 
-      sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last.fingerprints
+      sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last.fingerprints
         .getOrElse(fail("computeFingerprint = true must always populate a fingerprint on a PASSing MERGE too"))
     }
 
@@ -3819,7 +3822,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
 
     rule(spark)(writePlan) // must not throw - it's the same passing contract
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty)
     assert(events.last.status == "PASSED")
     assert(events.last.applicationId.contains(spark.sparkContext.applicationId))
@@ -3952,7 +3955,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("DATA_QUALITY_VIOLATION"))
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "FAILED")
     assert(event.violations.exists(_.violationType == ViolationType.DataQualityViolation))
   }
@@ -4100,7 +4103,7 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("ROLE_CONSISTENCY_VIOLATION"))
     assert(!Files.exists(java.nio.file.Paths.get(outputPath)), "the write must be aborted before any data is written")
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "FAILED")
     assert(event.roleConformance.exists(_.verdict == RoleConformanceVerdict.Contradicts))
   }

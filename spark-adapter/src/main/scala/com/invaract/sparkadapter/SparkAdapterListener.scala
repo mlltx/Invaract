@@ -3,8 +3,10 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.StructuralVerifier
 import com.invaract.contract.{Contract, Dataset, DatasetType}
-import com.invaract.sparkadapter.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
+import com.invaract.verification.notification.{CatalogInfo, NotificationSink, WriteEvent, WriteFieldInfo}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan

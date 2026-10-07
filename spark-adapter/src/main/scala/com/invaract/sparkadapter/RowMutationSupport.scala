@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{MutationClassification, MutationKind}
 import com.invaract.ir
 
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}

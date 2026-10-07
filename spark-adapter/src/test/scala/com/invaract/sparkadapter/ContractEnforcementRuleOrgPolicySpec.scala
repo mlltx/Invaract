@@ -3,8 +3,11 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractViolationException, VerificationOptions, ViolationType}
+import com.invaract.verification.notification.ContractValidationEvent
 import com.invaract.contract.{ContractParser, ContractRule, OrgPolicyParseException}
-import com.invaract.sparkadapter.notification.TestNotificationSink
+import com.invaract.verification.notification.TestNotificationSink
 
 import org.apache.spark.sql.SparkSession
 import org.scalatest.BeforeAndAfterAll
@@ -281,7 +284,7 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
       rule(spark) // must not throw
     }
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }
     assert(events.nonEmpty, "expected a ContractValidationEvent for the Warn-mode violation")
     val event = events.last
     // PASSED, not FAILED: nothing was actually blocked - a Warn violation
@@ -309,7 +312,7 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
       intercept[ContractViolationException] { rule(spark) }
     }
 
-    val event = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractValidationEvent => e }.last
+    val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "FAILED")
     assert(event.violations.exists(_.violationType == ViolationType.OrgPolicyViolation))
     assert(event.applicationId.isDefined, "the sink overload always threads a real applicationId through")

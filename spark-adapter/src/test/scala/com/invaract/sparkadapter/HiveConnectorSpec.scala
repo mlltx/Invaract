@@ -3,7 +3,10 @@
 
 package com.invaract.sparkadapter
 
-import com.invaract.sparkadapter.notification.FileNotificationSink
+
+import com.invaract.verification.{ContractViolationException, StructuralVerifier, ViolationType}
+import com.invaract.verification.notification.{ContractValidationEvent, WriteEvent}
+import com.invaract.verification.notification.FileNotificationSink
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier

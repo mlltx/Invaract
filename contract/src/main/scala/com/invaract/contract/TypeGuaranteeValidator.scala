@@ -5,7 +5,7 @@ package com.invaract.contract
 
 /** The three-state verdict a `TypeGuaranteeCheck` reaches — the spec's own
   * vocabulary (docs/CONTRACT_MODEL.md's "Input and Output Types" section),
-  * identical to `com.invaract.sparkadapter.RoleConformanceVerdict`'s three
+  * identical to `com.invaract.verification.RoleConformanceVerdict`'s three
   * names so the whole feature (role-consistency at the plan level, type
   * guarantees at the cross-contract level) shares one vocabulary rather than
   * two parallel ones for the same underlying idea: never collapse an
@@ -59,7 +59,7 @@ case class TypeGuaranteeResult(
 /** Extension point for a "stronger semantic and guarantee validation" check
   * outside the built-in `TypeGuaranteeType` set — the same reflective,
   * no-source-change escape hatch `CustomPolicyEvaluator`/
-  * `com.invaract.sparkadapter.CustomRuleVerifier` already establish. Given
+  * `com.invaract.verification.CustomRuleVerifier` already establish. Given
   * the *whole* set of contracts a run is considering (never just one): a
   * type guarantee is inherently a claim about how a dataset's declared role
   * holds up across everything Invaract can see about it, the same reason

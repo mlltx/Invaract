@@ -3,6 +3,8 @@
 
 package com.invaract.sparkadapter
 
+
+import com.invaract.verification.{ContractViolationException, VerificationOptions, ViolationType}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwritePartitionsDynamic}
 import org.apache.spark.sql.functions._
@@ -1633,13 +1635,13 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     val callPlan = capturedPlans.toList.find(p => StateChangingCallSupport.extract(p).isDefined)
       .getOrElse(fail("the CALL's analyzed plan was never captured"))
 
-    val sink = new com.invaract.sparkadapter.notification.TestNotificationSink
-    val reporter = new DryRunReporter(sink, com.invaract.sparkadapter.notification.JobInfo(), VerificationOptions())
+    val sink = new com.invaract.verification.notification.TestNotificationSink
+    val reporter = new DryRunReporter(sink, com.invaract.verification.notification.JobInfo(), VerificationOptions())
     reporter.check(callPlan)
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractInferenceEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractInferenceEvent => e }
     assert(events.size == 1)
-    assert(events.head.status == com.invaract.sparkadapter.notification.InferenceStatus.SkippedUnsupported)
+    assert(events.head.status == com.invaract.verification.notification.InferenceStatus.SkippedUnsupported)
     assert(events.head.reason.exists(_.contains("rollback_to_snapshot")))
     assert(events.head.contractYaml.isEmpty)
   }
@@ -1654,13 +1656,13 @@ class IcebergConnectorSpec extends ConnectorSpecBase {
     val dmlPlan = capturedPlans.toList.find(p => RowMutationSupport.classify(p).isDefined)
       .getOrElse(fail("the DELETE's analyzed plan was never captured"))
 
-    val sink = new com.invaract.sparkadapter.notification.TestNotificationSink
-    val reporter = new DryRunReporter(sink, com.invaract.sparkadapter.notification.JobInfo(), VerificationOptions())
+    val sink = new com.invaract.verification.notification.TestNotificationSink
+    val reporter = new DryRunReporter(sink, com.invaract.verification.notification.JobInfo(), VerificationOptions())
     reporter.check(dmlPlan)
 
-    val events = sink.events.collect { case e: com.invaract.sparkadapter.notification.ContractInferenceEvent => e }
+    val events = sink.events.collect { case e: com.invaract.verification.notification.ContractInferenceEvent => e }
     assert(events.size == 1)
-    assert(events.head.status == com.invaract.sparkadapter.notification.InferenceStatus.InferredDegraded)
+    assert(events.head.status == com.invaract.verification.notification.InferenceStatus.InferredDegraded)
     assert(events.head.diagnostics.exists(_.contains("row-level DML")))
     assert(events.head.contractYaml.exists(_.contains("dryrun_dml_tbl")))
   }
