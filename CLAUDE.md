@@ -960,6 +960,14 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   (blocking at each module's `break` threshold), plus the incremental
   changed-files check on PRs (70% bar) — see "Mutation Testing
   Requirement" above
+  The whole-module runs (every `ir`/`fingerprint`/`verification-core`
+  file, and all `spark-adapter` shards) execute on pushes to `main`/
+  `develop`/`feature/**` only; a PR push runs just the incremental
+  changed-files check, so a whole-module regression is caught on the merge
+  commit's run, not before it
+- **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
+  run on a PR — only when `spark-adapter/`, `verification-core/` or
+  `.github/workflows/test.yml` changed; pushes always run them
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.
