@@ -571,11 +571,12 @@ runs, judged against that adapter’s <em>own declaration</em>.</p>
 <p><strong>A scenario</strong> is a contract, a job described in no engine’s terms, and a verdict. The job
 (<code dir="auto">ScenarioJob</code>) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 20 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario’s schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
-invalid contract, the PASSED/FAILED events published and (from Stage 5) non-determinism in the fingerprint.</p>
+invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5) and
+fail-closed behaviour (below).</p>
 <p><strong>An adapter</strong> implements <code dir="auto">ConformanceAdapter</code>: its <code dir="auto">AdapterCapabilities</code>, and <code dir="auto">run(...)</code>, which
 turns the neutral job into a real job on its engine, runs it through the <em>real</em> enforcement path, and
 reports <code dir="auto">Passed</code> or <code dir="auto">Rejected(violation types)</code> plus the validation statuses it published. Spark’s
@@ -609,17 +610,27 @@ adapter mixes <code dir="auto">AdapterConformanceSpec</code> into a test, which 
 
 
 <table><thead><tr><th>The adapter declares…</th><th>The scenario’s expected result</th></tr></thead><tbody><tr><td>everything the scenario needs <code dir="auto">supported</code> / <code dir="auto">partial</code></td><td>the neutral verdict, exactly (the same violation types)</td></tr><tr><td>a capability the scenario’s contract relies on <code dir="auto">unsupported</code> (and it <code dir="auto">enforcesContract</code>)</td><td>a rejection including <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> - a quiet pass is a failure</td></tr><tr><td>a needed capability <code dir="auto">not-applicable</code>, or a needed operation unsupported</td><td>the scenario is <strong>canceled</strong> with the adapter’s own note, visible in the report</td></tr><tr><td><code dir="auto">reporting.notifications</code> supported</td><td>exactly one <code dir="auto">PASSED</code> (or <code dir="auto">FAILED</code>) validation event</td></tr></tbody></table>
+<p><strong>Fail-closed has its own job shape.</strong> A <code dir="auto">ScenarioJob</code> with <code dir="auto">untranslatableWrite</code> set is not a
+read-transform-write at all but a data-changing operation the adapter has no translation for; the
+adapter picks its engine’s representative (Spark: <code dir="auto">TRUNCATE TABLE</code> on a managed table) and must block
+it as <code dir="auto">UNVERIFIABLE_WRITE</code> rather than let it through unchecked. This is the property that makes
+“supported” safe to rely on, so it is verified, not attested.</p>
 <p>An exception out of <code dir="auto">run</code> is a divergence, not a verdict. A capability an adapter claims that no
-scenario is evidence for (<code dir="auto">Scenarios.notCovered</code>, each with a reason - streaming, DML, catalogs, the
-opt-in analyses, the attachment mechanisms) is listed as <em>unverified</em>, never counted as passing; the
-kit’s own tests fail if a capability is in neither list.</p>
+scenario is evidence for is listed as <em>unverified</em>, never counted as passing, and the report says which
+kind of unverified it is: <strong>attested</strong> (<code dir="auto">Scenarios.attested</code>) when no job could check it by its nature</p>
+<ul>
+<li>how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
+adapter’s own tests carry it; or a <strong>gap</strong> (<code dir="auto">Scenarios.gaps</code>) when a job could check it but the kit
+cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit’s own tests fail
+if a capability is in neither list or in both.</li>
+</ul>
 <p><strong>The kit is tested against itself.</strong> <code dir="auto">ReferenceAdapter</code> is a complete adapter built on nothing but
 the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
 scenarios are consistent with the SPI before any real engine is involved. Then deliberately dishonest
 adapters must be caught: one that claims <code dir="auto">check.format</code> but never checks it fails exactly the format
 scenario; one that lets everything through fails every scenario expecting a rejection; one that
 blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
-none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5).</p>
+none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5, 21 with fail-closed).</p>
 <p><strong>Adding an adapter</strong> is therefore: write its capability declaration, implement <code dir="auto">ConformanceAdapter</code>,
 mix in <code dir="auto">AdapterConformanceSpec</code>, and see which scenarios fail or are canceled. Where Spark’s own
 behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
@@ -627,8 +638,11 @@ third place for the difference to hide.</p>
 <p><strong>Not done in 4, deliberately.</strong> The scenario language has no streaming, row-level DML, catalog or
 checkpoint shapes yet (see <code dir="auto">Scenarios.notCovered</code>); each grows the neutral job description and is its own
 step. The kit is not mutation-tested (it is test infrastructure, like <code dir="auto">plugin</code>/<code dir="auto">runner</code>; its
-<code dir="auto">ConformanceKitSpec</code> is the equivalent proof that it fails what it should) and is not published
-anywhere but the local Ivy cache.</p>
+<code dir="auto">ConformanceKitSpec</code> is the equivalent proof that it fails what it should), but it is held to the
+other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
+coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
+<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code> job needs a table format that supports it (Delta or Iceberg on Spark),
+which a plain local session does not have.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="stage-5--function-canonicalisation">Stage 5 — function canonicalisation</h2><a class="sl-anchor-link" href="#stage-5--function-canonicalisation"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 5 — function canonicalisation”</span></a></div>
 <p>Leak #4: an IR <code dir="auto">Function</code> carried whatever name its engine’s translator wrote - Spark’s <code dir="auto">prettyName</code></p>
 <ul>
