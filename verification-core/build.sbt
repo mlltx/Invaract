@@ -74,6 +74,23 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
+// CVE remediation (see docs/CVE_REMEDIATION.md): org.apache.hadoop:hadoop-client-api/
+// hadoop-client-runtime 3.3.4 (above) transitively resolve org.xerial.snappy:
+// snappy-java:1.1.8.2 (confirmed via `sbt Test/dependencyTree` - hadoop-client-api
+// is `provided`, hadoop-client-runtime is `test`, so this never shows under
+// Compile/dependencyTree). 1.1.8.2 <= 1.1.10.0 is vulnerable to CVE-2023-43642
+// (GHSA-55g7-9cwv-5qfv): SnappyInputStream has no upper-bound check on the
+// declared chunk length, so a crafted input can force an inappropriately large
+// heap allocation (OutOfMemoryError DoS); fixed in 1.1.10.1. Same jar, same CVE,
+// same fix spark-adapter/plugin/runner already override to for their own
+// Hadoop-via-Spark/Spark dependency trees (see spark-adapter/build.sbt's own
+// override comment) - pinned to that same 1.1.10.4 here rather than the bare
+// minimum 1.1.10.1, for one consistent version across every module that
+// resolves this jar.
+dependencyOverrides ++= Seq(
+  "org.xerial.snappy" % "snappy-java" % "1.1.10.4"
+)
+
 assembly / assemblyJarName := "invaract-verification-core-0.2.0.jar"
 
 scalacOptions ++= Seq(
