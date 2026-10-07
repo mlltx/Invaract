@@ -92,10 +92,11 @@ model (<code dir="auto">VerificationModel</code>, <code dir="auto">Violations</c
 <code dir="auto">ContractInference</code>, and the whole <code dir="auto">notification/</code> and <code dir="auto">location/</code> packages — now
 lives in the sibling <code dir="auto">verification-core/</code> module, which has no Spark dependency, so a
 second engine’s adapter can reuse it (docs/MULTI_ENGINE_ADAPTERS.md, Stage 2). The
-package names are unchanged (deployed configs name sinks and plug-ins by
-fully-qualified class name), and <code dir="auto">spark-adapter</code>’s assembly jar bundles the core, so
-nothing about how you install or configure this adapter changes. Where this document
+packages are <code dir="auto">com.invaract.verification</code> (<code dir="auto">.notification</code>, <code dir="auto">.location</code>) — a configuration
+that names a sink or plug-in by fully-qualified class name uses those — and <code dir="auto">spark-adapter</code>’s
+assembly jar bundles the core, so how you install or configure this adapter is unchanged. Where this document
 says a class “lives in <code dir="auto">spark-adapter</code>” for one of those, read <code dir="auto">verification-core</code>.
+The orchestration is core too: <code dir="auto">VerificationPipeline</code> is what <code dir="auto">ContractEnforcementRule.verifyOrThrow</code> used to do inline once a plan is translated, and <code dir="auto">VerificationSetup</code> + <code dir="auto">ConfigSource</code> are the session-start half (<code dir="auto">ref://</code> locations, option overlay, organizational policy) — <code dir="auto">ContractEnforcementRule</code> keeps same-signature methods that delegate to them with <code dir="auto">SparkConfigSource</code> (<code dir="auto">spark.invaract.&#x3C;name></code>, every key unchanged). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 What stays here is what is genuinely Spark: Catalyst translation (<code dir="auto">SparkPlanAdapter</code>,
 <code dir="auto">WriteCommandSupport</code>), the enforcement rule and listener, dry-run reporting,
 checkpoint resolution, catalog identity, fail-closed command classification, and
@@ -1480,8 +1481,8 @@ before the fix. <code dir="auto">ContractInference.normalizeLocation</code> stri
 inferred locations the same way <code dir="auto">locationsMatch</code> expects.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="notification-sinks">Notification sinks</h2><a class="sl-anchor-link" href="#notification-sinks"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Notification sinks”</span></a></div>
 <p>Everything above answers “does this write satisfy its contract” and, if
-not, aborts it. <code dir="auto">com.invaract.sparkadapter.notification</code>
-(<code dir="auto">spark-adapter/src/main/scala/com/invaract/sparkadapter/notification/</code>)
+not, aborts it. <code dir="auto">com.invaract.verification.notification</code>
+(<code dir="auto">spark-adapter/src/main/scala/com/invaract/verification/notification/</code>)
 answers a different, additive question: how does an external system find
 out that a check happened at all — PASS or FAIL — or that a write actually
 completed? This is opt-in observability, not a new enforcement mechanism:
@@ -1987,8 +1988,8 @@ dependency at all, so it’s fully and directly testable with a real
 without needing a Spark job to prove anything a Spark job wouldn’t
 actually exercise differently.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="location-resolution">Location resolution</h2><a class="sl-anchor-link" href="#location-resolution"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Location resolution”</span></a></div>
-<p><code dir="auto">com.invaract.sparkadapter.location</code>
-(<code dir="auto">spark-adapter/src/main/scala/com/invaract/sparkadapter/location/</code>) answers a
+<p><code dir="auto">com.invaract.verification.location</code>
+(<code dir="auto">spark-adapter/src/main/scala/com/invaract/verification/location/</code>) answers a
 different question again: where does a contract’s declared <code dir="auto">location</code> actually
 come from? Every check above assumes <code dir="auto">Dataset.location</code> is already a real,
 literal path or table name — but a contract author sometimes wants to avoid
@@ -2989,6 +2990,15 @@ Iceberg-backed Spark sessions, which is genuine, unavoidable work, not
 overhead. The two levers above reduced wasted time around that core cost
 (serialization, under-utilized cores), not the cost itself.</p>
 <div class="sl-heading-wrapper level-h4"><h4 id="sharding-spark-adapters-whole-module-run">Sharding <code dir="auto">spark-adapter</code>’s whole-module run</h4><a class="sl-anchor-link" href="#sharding-spark-adapters-whole-module-run"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Sharding spark-adapter’s whole-module run”</span></a></div>
+<blockquote>
+<p><strong>When the shards run.</strong> The sharded whole-module job runs on pushes to
+<code dir="auto">main</code>/<code dir="auto">develop</code>/<code dir="auto">feature/**</code>, not on pull-request pushes: a PR is held to
+the 70% bar on the files it changed by the incremental job, and the
+merge commit’s push run re-checks the whole module against its <code dir="auto">break</code>
+threshold. (<code dir="auto">ir</code>, <code dir="auto">fingerprint</code> and <code dir="auto">verification-core</code> follow the same
+rule — their whole-module step is skipped on PRs; their incremental step
+still runs.)</p>
+</blockquote>
 <p>The bottleneck named above was addressed directly by splitting
 <code dir="auto">mutation-testing-spark-adapter</code> itself into a matrix job (5 legs when this was first written, 10 until the engine-neutral code moved to <code dir="auto">verification-core</code>, 8 now — see “Runner memory and runner loss” below)
 (<code dir="auto">.github/workflows/test.yml</code>), each leg running <code dir="auto">sbt stryker --mutate</code>

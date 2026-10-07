@@ -4023,11 +4023,15 @@ repository (separate repo).</li>
 longer import Spark types; Spark mapping isolated in <code dir="auto">SparkSchemas</code>, pinned to
 Spark’s own output by <code dir="auto">SparkSchemasSpec</code>. No verdict or message changed.</li>
 <li class="task-list-item"><input type="checkbox" checked disabled> Stage 2a: <code dir="auto">verification-core</code> module extracted from <code dir="auto">spark-adapter</code> (package
-names unchanged — deployed configs name classes by FQN); seams for lineage-boundary
+names unchanged at that stage); seams for lineage-boundary
 types, <code dir="auto">MutationKind</code>, <code dir="auto">InferredWrite</code></li>
-<li class="task-list-item"><input type="checkbox" disabled> Stage 2b: adapter SPI (<code dir="auto">VerificationPipeline</code>), neutral <code dir="auto">invaract.*</code> config
-namespace, neutral package names with FQN compatibility</li>
-<li class="task-list-item"><input type="checkbox" disabled> Stage 3: per-adapter capability declaration, generated matrix, CI drift check</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 2b: adapter SPI — <code dir="auto">VerificationPipeline</code> (<code dir="auto">verifyWrite</code> /
+<code dir="auto">verifyStateChange</code> / <code dir="auto">rejectUnverifiableWrite</code>) and <code dir="auto">VerificationSetup</code> +
+<code dir="auto">ConfigSource</code> (neutral <code dir="auto">InvaractConf</code> names; Spark spells them <code dir="auto">spark.invaract.*</code>,
+unchanged)</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 2c: neutral package names (<code dir="auto">com.invaract.verification</code>), no forwarding layer</li>
+<li class="task-list-item"><input type="checkbox" checked disabled> Stage 3: per-adapter capability declaration (<code dir="auto">invaract-capabilities-&#x3C;adapter>.yaml</code>),
+generated docs-site matrix with a drift test, <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> fail-closed</li>
 <li class="task-list-item"><input type="checkbox" disabled> Stage 4: <code dir="auto">adapter-testkit</code> conformance scenarios</li>
 <li class="task-list-item"><input type="checkbox" disabled> Stage 5: function canonicalisation</li>
 </ul>
