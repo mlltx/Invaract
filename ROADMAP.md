@@ -1082,10 +1082,11 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
 - [x] **CI job (`spark-version-matrix`, `.github/workflows/test.yml`)**
       runs `spark-adapter`'s full `sbt test` suite — not a "core" subset —
       against every Spark 3.5.x patch this repo claims to support: 3.5.6
-      (the floor), 3.5.7 (the current pin), and 3.5.9 (newest). One job
-      per patch, `fail-fast: false` so a failure on one patch doesn't hide
-      results for the others. Added to the `summary` gate like every other
-      guardrail here.
+      (the floor), 3.5.7 (the pin at the time this job was built; see the
+      3.5.9 promotion note below), and 3.5.9 (newest, and the pin as of
+      that note). One job per patch, `fail-fast: false` so a failure on
+      one patch doesn't hide results for the others. Added to the
+      `summary` gate like every other guardrail here.
     - **The floor is 3.5.6, not the originally-planned 3.5.1** — found by
       the matrix itself, not assumed: the first real CI run of this job
       failed its 3.5.1 leg with `ClassNotFoundException` on
@@ -1105,8 +1106,9 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
       spark-adapter source references `SPARK_HOME`.
     - **Mechanism**: `spark-adapter/build.sbt`'s `sparkVersion` val reads
       an `INVARACT_TEST_SPARK_VERSION` environment variable, falling back
-      to `3.5.7` when unset so a plain local `sbt test` is unaffected —
-      only the CI matrix sets it per leg.
+      to `supported-versions.properties`' `spark.primary` when unset so a
+      plain local `sbt test` is unaffected — only the CI matrix sets it
+      per leg.
     - Iceberg/ClickHouse/Hive/Avro's test-scope dependencies
       (`iceberg-spark-runtime-3.5_2.12`, `clickhouse-spark-runtime-3.5`,
       `spark-hive`/`spark-avro`) are published per-Spark-*minor*-line, not
@@ -1124,6 +1126,21 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md's
       `runner`'s/`plugin`'s) own `build.sbt` had already moved to 3.5.7 for
       a CVE fix (docs/CVE_REMEDIATION.md) — the bump never propagated.
       Brought all of them to 3.5.7 to match.
+    - **3.5.7 -> 3.5.9 (CVE-2026-32773 / GHSA-9437-39hj-3c93)**: a Spark
+      History Server stored-XSS issue (unescaped application names,
+      CWE-80) affecting Spark through 3.5.7, patched in 3.5.8 — see
+      docs/CVE_REMEDIATION.md's worked example. Promoted straight to
+      3.5.9 rather than the bare-minimum 3.5.8, since 3.5.9 was already
+      this matrix's newest `spark.verified` entry with its own real,
+      passing CI leg — a zero-new-risk promotion of an already-proven
+      version. `supported-versions.properties`' `spark.primary` is now
+      the single edit that moves every consumer (`spark-adapter/build.sbt`'s
+      default, `plugin`/`runner`'s own `sparkVersion` vals, the
+      `test`/`mutation-testing-spark-adapter`/`docker-regression` jobs'
+      Spark binary download, `docker/Dockerfile`,
+      `.devcontainer/post-create.sh`) — the exact propagation-gap class
+      the note above once caught is now a single source of truth instead
+      of six hand-synced copies.
     - **Deferred, not attempted**: Spark 4.x. Every module here pins
       `scalaVersion := "2.12.18"` with no cross-build configured, and
       Spark 4.0 requires Scala 2.13 — supporting 4.x is a real

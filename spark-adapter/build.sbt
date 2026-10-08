@@ -173,18 +173,35 @@ def primaryVersion(key: String): String = {
 // spark-sql/spark-hive/spark-avro (Spark's own per-release artifacts)
 // move with this bump.
 //
+// 3.5.7 -> 3.5.9: CVE-2026-32773 (GHSA-9437-39hj-3c93, Spark History
+// Server stored XSS via unescaped application names, reported by Google,
+// CWE-80) - a malicious Spark job can submit an application name carrying
+// script content that the History Server's web UI renders unescaped,
+// running in the browser of whoever later opens that application's
+// history page (fixed by SPARK-53337). Patched in 3.5.8; this bumps to
+// 3.5.9 rather than the bare-minimum 3.5.8 because 3.5.9 is already this
+// module's newest `spark.verified` entry in supported-versions.properties
+// with its own real, passing spark-version-matrix CI run against this
+// exact codebase (Delta/Iceberg/HadoopFsNotificationSink included) - a
+// zero-new-risk promotion of an already-proven version, rather than
+// introducing an untested patch release. Same direct-dependency reasoning
+// as the 3.5.7 bump above applies: no dependencyOverrides workaround
+// exists for a bug in Spark's own code.
+//
 // Overridable via INVARACT_TEST_SPARK_VERSION for the spark-version-matrix
 // CI job (.github/workflows/test.yml), which runs this module's full suite
 // against every Spark 3.5.x patch this repo claims to support (currently
 // 3.5.6/3.5.7/3.5.9 - see docs/SPARK_ADAPTER.md's "Spark version
 // compatibility" section), without editing this file per matrix leg. A
 // plain local `sbt test` is unaffected - the env var is unset, so this
-// still resolves to 3.5.7, today's real pin. Only the Spark-version-owned
-// artifacts below (spark-core/spark-sql/spark-hive/spark-avro) move with
-// this override; Delta/Iceberg/ClickHouse stay pinned independently since
-// they're not part of what the matrix is proving (Catalyst plan-shape
-// stability across Spark 3.5.x patches), and their own artifacts are
-// already confirmed compatible across this same 3.5.x line.
+// still resolves to 3.5.9, today's real pin (read from
+// supported-versions.properties' spark.primary, not hardcoded here). Only
+// the Spark-version-owned artifacts below (spark-core/spark-sql/
+// spark-hive/spark-avro) move with this override; Delta/Iceberg/
+// ClickHouse stay pinned independently since they're not part of what the
+// matrix is proving (Catalyst plan-shape stability across Spark 3.5.x
+// patches), and their own artifacts are already confirmed compatible
+// across this same 3.5.x line.
 val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", primaryVersion("spark.primary"))
 
 // Test-scope only, not provided: empirical investigation (see

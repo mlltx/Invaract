@@ -72,7 +72,7 @@ fi
 
 # --- Spark (for spark-submit; sbt itself only compiles against the Spark
 # artifacts it resolves as a library dependency, not this distribution) -----
-SPARK_VERSION="3.5.7"
+SPARK_VERSION="3.5.9"
 if [ ! -x /opt/spark/bin/spark-submit ]; then
   echo "Installing Spark ${SPARK_VERSION}..."
   for i in 1 2 3 4 5; do
