@@ -1,0 +1,429 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Engine research: BigQuery and Apache Beam | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-127/design/engine-research-bigquery-beam/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-127/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-127/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.5"/><meta name="generator" content="Starlight v0.42.5"/><meta property="og:title" content="Engine research: BigQuery and Apache Beam"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-127/design/engine-research-bigquery-beam/"/><meta property="og:locale" content="en"/><meta property="og:description" content="The BigQuery and Beam rows in docs/MULTIENGINEADAPTERS.md (write modes, types) were written from memory of public documentation and marked unverified. T..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="The BigQuery and Beam rows in docs/MULTIENGINEADAPTERS.md (write modes, types) were written from memory of public documentation and marked unverified. T..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-127/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-127/_astro/common.D_L-1Y3_.css"><style>@layer starlight.components{.card:where(.astro-oag6qnet){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-oag6qnet):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-oag6qnet):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-oag6qnet):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-oag6qnet):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-oag6qnet){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-oag6qnet) .icon:where(.astro-oag6qnet){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-oag6qnet) .body:where(.astro-oag6qnet){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-7qmvx3iy){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-7qmvx3iy)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-7qmvx3iy){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-7qmvx3iy){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-7qmvx3iy)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-127/_astro/page.Dwipeu-R.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-127/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-127/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-127/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-127/_astro/Search.astro_astro_type_script_index_0_lang.DOaeO0qs.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="1f84zte" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-127/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-this-was-checked-and-what-could-not-be" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How this was checked, and what could not be</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#findings-that-correct-the-existing-tables" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Findings that correct the existing tables</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#write-modes" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Write modes</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#types" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Types</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#where-each-engine-can-be-gated" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Where each engine can be gated</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#apache-beam-a-pre-submit-gate-and-a-real-one" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Apache Beam: a pre-submit gate, and a real one</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#bigquery-a-pre-flight-check-for-clients-that-opt-in-and-an-observer-for-the-rest" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">BigQuery: a pre-flight check for clients that opt in, and an observer for the rest</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-ci-gets-real-engine-evidence" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How CI gets real-engine evidence</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-this-means-for-the-order-of-work" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What this means for the order of work</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#still-to-confirm-against-the-engines" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Still to confirm against the engines</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-127/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-this-was-checked-and-what-could-not-be" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How this was checked, and what could not be</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#findings-that-correct-the-existing-tables" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Findings that correct the existing tables</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#write-modes" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Write modes</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#types" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Types</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#where-each-engine-can-be-gated" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Where each engine can be gated</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#apache-beam-a-pre-submit-gate-and-a-real-one" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Apache Beam: a pre-submit gate, and a real one</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#bigquery-a-pre-flight-check-for-clients-that-opt-in-and-an-observer-for-the-rest" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">BigQuery: a pre-flight check for clients that opt in, and an observer for the rest</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#how-ci-gets-real-engine-evidence" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">How CI gets real-engine evidence</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-this-means-for-the-order-of-work" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What this means for the order of work</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#still-to-confirm-against-the-engines" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Still to confirm against the engines</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-127/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Engine research: BigQuery and Apache Beam</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>The BigQuery and Beam rows in <code dir="auto">docs/MULTI_ENGINE_ADAPTERS.md</code> (write modes, types) were written from memory
+of public documentation and marked unverified. This document replaces memory with primary sources, corrects
+those tables where they were wrong, and settles the three questions an adapter’s author has to answer before
+writing code: <strong>where can the engine be gated</strong>, <strong>what can be known about a job at that point</strong>, and <strong>how does
+CI get real-engine evidence without secrets</strong>. It is research, not a design for either adapter; no adapter code
+exists, and neither adapter starts without a go-ahead.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="how-this-was-checked-and-what-could-not-be">How this was checked, and what could not be</h2><a class="sl-anchor-link" href="#how-this-was-checked-and-what-could-not-be"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “How this was checked, and what could not be”</span></a></div>
+<p>Read directly from source, on the day of writing (<code dir="auto">master</code> of each repository, so a later reader should
+re-check anything that matters, especially anything marked <em>Beam</em> or <em>BigQuery API</em> below):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Source</th><th>What it settles</th></tr></thead><tbody><tr><td><code dir="auto">apache/beam</code> <code dir="auto">sdks/java/core/.../schemas/Schema.java</code></td><td>the Beam schema type system (<code dir="auto">Schema.TypeName</code>)</td></tr><tr><td><code dir="auto">apache/beam</code> <code dir="auto">sdks/java/io/google-cloud-platform/.../bigquery/BigQueryUtils.java</code></td><td>Beam’s own mapping to and from BigQuery types</td></tr><tr><td><code dir="auto">apache/beam</code> <code dir="auto">.../bigquery/BigQueryIO.java</code></td><td><code dir="auto">WriteDisposition</code>, what a <code dir="auto">BigQueryIO</code> transform exposes about itself</td></tr><tr><td><code dir="auto">apache/beam</code> <code dir="auto">sdks/java/core/.../Pipeline.java</code>, <code dir="auto">PipelineRunner.java</code>, <code dir="auto">values/PCollection.java</code></td><td>how a pipeline is traversed, how a runner is chosen, schemas, boundedness</td></tr><tr><td><code dir="auto">apache/beam</code> <code dir="auto">.../BigQueryIOWriteTest.java</code></td><td>how Beam itself tests BigQuery writes without a service</td></tr><tr><td><code dir="auto">googleapis/googleapis</code> <code dir="auto">google/cloud/bigquery/v2/{standard_sql,job_config,job_stats,table_schema}.proto</code></td><td>BigQuery’s type kinds, dispositions, dry run, what a dry run reports</td></tr></tbody></table>
+<p><strong>Not checked.</strong> The environment’s egress policy blocks <code dir="auto">beam.apache.org</code> and the Google Cloud documentation
+hosts, so nothing below rests on those pages. Where a statement comes from general knowledge and not from the
+sources above it is marked <strong>unverified</strong>; those are the ones to confirm first when an adapter is started, ideally
+against a real project.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="findings-that-correct-the-existing-tables">Findings that correct the existing tables</h2><a class="sl-anchor-link" href="#findings-that-correct-the-existing-tables"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Findings that correct the existing tables”</span></a></div>
+<div class="sl-heading-wrapper level-h3"><h3 id="write-modes">Write modes</h3><a class="sl-anchor-link" href="#write-modes"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Write modes”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>BigQuery (query job)</th><th>Beam <code dir="auto">BigQueryIO.Write</code></th><th>Canonical</th><th>Notes</th></tr></thead><tbody><tr><td><code dir="auto">WRITE_TRUNCATE</code></td><td><code dir="auto">WRITE_TRUNCATE</code></td><td><code dir="auto">overwrite</code></td><td>BigQuery: the table’s schema becomes the query result’s, constraints are removed. Beam: <strong>only supported with the <code dir="auto">FILE_LOADS</code> write method</strong></td></tr><tr><td><code dir="auto">WRITE_TRUNCATE_DATA</code></td><td>(none)</td><td><code dir="auto">overwrite</code></td><td><strong>Missing from the old table.</strong> Replaces the data but keeps the existing table’s schema and constraints, so the schema to verify is the <em>table’s</em>, not the query’s</td></tr><tr><td><code dir="auto">WRITE_APPEND</code></td><td><code dir="auto">WRITE_APPEND</code></td><td><code dir="auto">append</code></td><td></td></tr><tr><td><code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">error</code> (approximate)</td><td>Fails only if the table <em>contains data</em>; an existing empty table succeeds, which <code dir="auto">ErrorIfExists</code> would not. Beam’s check “may occur long before data is written, and does not guarantee exclusive access”</td></tr></tbody></table>
+<p>The <strong>default differs by job kind</strong> in the BigQuery API: a query job defaults to <code dir="auto">WRITE_EMPTY</code>, a load job to
+<code dir="auto">WRITE_APPEND</code> (<code dir="auto">job_config.proto</code>). An adapter that reads an unset disposition must apply the default of the
+job kind it is looking at, not one global default, or it will report <code dir="auto">error</code> for loads and <code dir="auto">append</code> for queries.
+Beam’s <code dir="auto">BigQueryIO.Write</code> defaults to <code dir="auto">WRITE_EMPTY</code>.</p>
+<p>The canonical vocabulary is unchanged (<code dir="auto">append</code>, <code dir="auto">overwrite</code>, <code dir="auto">ignore</code>, <code dir="auto">error</code>); the approximation on
+<code dir="auto">WRITE_EMPTY</code> is the thing to document in each adapter’s capability note, not a reason for a fifth name.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="types">Types</h3><a class="sl-anchor-link" href="#types"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Types”</span></a></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Neutral type</th><th>BigQuery</th><th>Beam schema</th><th>Correction or confirmation</th></tr></thead><tbody><tr><td><code dir="auto">string</code>, <code dir="auto">boolean</code>, <code dir="auto">long</code>, <code dir="auto">double</code></td><td><code dir="auto">STRING</code>, <code dir="auto">BOOL</code>, <code dir="auto">INT64</code>, <code dir="auto">FLOAT64</code></td><td><code dir="auto">STRING</code>, <code dir="auto">BOOLEAN</code>, <code dir="auto">INT64</code>, <code dir="auto">DOUBLE</code></td><td>Confirmed. A BigQuery column schema also spells these <code dir="auto">INTEGER</code>, <code dir="auto">FLOAT</code>, <code dir="auto">BOOLEAN</code> (legacy names), and a nested one <code dir="auto">RECORD</code>: normalise on read</td></tr><tr><td><code dir="auto">byte</code>, <code dir="auto">short</code>, <code dir="auto">integer</code>, <code dir="auto">float</code></td><td>none (<code dir="auto">INT64</code> only, <code dir="auto">FLOAT64</code> only)</td><td><code dir="auto">BYTE</code>, <code dir="auto">INT16</code>, <code dir="auto">INT32</code>, <code dir="auto">FLOAT</code></td><td><strong>New.</strong> Beam has the narrow types; BigQuery has none. A Beam <code dir="auto">INT32</code> output is <code dir="auto">integer</code>, which a contract declaring <code dir="auto">long</code> will correctly not match</td></tr><tr><td><code dir="auto">decimal(p,s)</code></td><td><code dir="auto">NUMERIC</code> default <code dir="auto">(38,9)</code>; declared <code dir="auto">NUMERIC(p,s)</code> needs <code dir="auto">1 ≤ p-s ≤ 29</code>, <code dir="auto">0 ≤ s ≤ 9</code>. <code dir="auto">BIGNUMERIC(p,s)</code> needs <code dir="auto">1 ≤ p-s ≤ 38</code>, <code dir="auto">0 ≤ s ≤ 38</code></td><td><code dir="auto">DECIMAL</code>, <strong>no precision or scale in the type</strong></td><td><strong>Refined.</strong> A parameterised <code dir="auto">NUMERIC(p,s)</code> is <code dir="auto">decimal(p,s)</code>; a <code dir="auto">BIGNUMERIC(p,s)</code> is <code dir="auto">decimal(p,s)</code> only when <code dir="auto">p ≤ 38</code>, otherwise (and unparameterised, which is <code dir="auto">(76.76, 38)</code>) <code dir="auto">OtherType("BIGNUMERIC", ...)</code>. Beam can only say <code dir="auto">OtherType("DECIMAL", ...)</code>: its own BigQuery reader maps both <code dir="auto">NUMERIC</code> and <code dir="auto">BIGNUMERIC</code> to the same <code dir="auto">DECIMAL</code></td></tr><tr><td><code dir="auto">date</code></td><td><code dir="auto">DATE</code></td><td>logical type <code dir="auto">SqlTypes.DATE</code></td><td>Confirmed</td></tr><tr><td><code dir="auto">time</code></td><td><code dir="auto">TIME</code></td><td>logical type <code dir="auto">SqlTypes.TIME</code></td><td>Confirmed</td></tr><tr><td><code dir="auto">timestamp_ntz</code></td><td><code dir="auto">DATETIME</code></td><td>logical type <code dir="auto">SqlTypes.DATETIME</code></td><td><strong>Resolved</strong> (was “decide per type”): the local date-time logical type</td></tr><tr><td><code dir="auto">timestamp</code></td><td><code dir="auto">TIMESTAMP</code></td><td><code dir="auto">DATETIME</code> (the primitive; a Joda instant) and <code dir="auto">SqlTypes.TIMESTAMP</code></td><td><strong>Resolved</strong>: Beam’s primitive <code dir="auto">DATETIME</code> is an instant, so it is <code dir="auto">timestamp</code>, not <code dir="auto">timestamp_ntz</code>. Beam itself maps it to BigQuery <code dir="auto">TIMESTAMP</code></td></tr><tr><td><code dir="auto">timestamp</code> (picoseconds)</td><td><code dir="auto">TIMESTAMP</code> with <code dir="auto">timestamp_precision = 12</code> (6 is the default)</td><td><code dir="auto">Timestamp.MILLIS</code>/<code dir="auto">MICROS</code>/<code dir="auto">NANOS</code> logical types, or <code dir="auto">STRING</code> for picos, by a reader option</td><td><strong>New.</strong> A 12-digit BigQuery timestamp is not the neutral microsecond <code dir="auto">timestamp</code>: report <code dir="auto">OtherType</code></td></tr><tr><td><code dir="auto">json</code></td><td><code dir="auto">JSON</code></td><td>none: Beam’s own reader maps <code dir="auto">JSON</code> and <code dir="auto">GEOGRAPHY</code> to <code dir="auto">STRING</code></td><td><strong>Confirmed and sharpened.</strong> On Beam a JSON or geography column from BigQuery is a <code dir="auto">string</code>, so a contract declaring <code dir="auto">json</code> against a Beam pipeline fails as a type mismatch. That is correct and should be said in the Beam adapter’s notes</td></tr><tr><td><code dir="auto">geography</code></td><td><code dir="auto">GEOGRAPHY</code></td><td>none (as above)</td><td>as above</td></tr><tr><td><code dir="auto">interval</code></td><td><code dir="auto">INTERVAL</code></td><td>none</td><td>Confirmed by absence in <code dir="auto">Schema.TypeName</code> and <code dir="auto">BigQueryUtils</code></td></tr><tr><td><code dir="auto">binary</code></td><td><code dir="auto">BYTES</code></td><td><code dir="auto">BYTES</code></td><td>Confirmed</td></tr><tr><td><code dir="auto">array</code></td><td><code dir="auto">ARRAY</code></td><td><code dir="auto">ARRAY</code>, <code dir="auto">ITERABLE</code></td><td>Confirmed; Beam’s <code dir="auto">ITERABLE</code> is an array that need not fit in memory. A BigQuery array of arrays is not allowed (<strong>unverified</strong>), so a nested-array contract on BigQuery is a mismatch by construction</td></tr><tr><td><code dir="auto">struct</code></td><td><code dir="auto">STRUCT</code> (<code dir="auto">RECORD</code> in a table schema)</td><td><code dir="auto">ROW</code></td><td>Confirmed</td></tr><tr><td><code dir="auto">map</code></td><td>none</td><td><code dir="auto">MAP</code></td><td>Confirmed: <code dir="auto">standard_sql.proto</code> has no map kind. Beam’s BigQuery reader can <em>infer</em> a map from a repeated record whose two fields are named <code dir="auto">key</code> and <code dir="auto">value</code> (<code dir="auto">inferMaps</code> option); an adapter must not do this silently</td></tr><tr><td>no neutral type</td><td><code dir="auto">RANGE</code></td><td><code dir="auto">ITERABLE</code> aside, custom logical types</td><td>Beam’s own BigQuery reader throws on <code dir="auto">RANGE</code> (“unsupported”), so a <code dir="auto">RANGE</code> column is <code dir="auto">OtherType</code> on BigQuery and an error on Beam</td></tr></tbody></table>
+<p>Beam’s nullability is a property of the field, not the type (<code dir="auto">Field.withNullable</code>), and carries straight to
+<code dir="auto">LogicalField.nullable</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="where-each-engine-can-be-gated">Where each engine can be gated</h2><a class="sl-anchor-link" href="#where-each-engine-can-be-gated"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Where each engine can be gated”</span></a></div>
+<p><code dir="auto">EnforcementPoint</code> has three values (<code dir="auto">in-engine-blocking</code>, <code dir="auto">pre-submit-gate</code>, <code dir="auto">observe-only</code>). Both engines are
+<strong>not</strong> <code dir="auto">in-engine-blocking</code>: neither lets an extension abort a write from inside, the way Spark’s check rule does.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="apache-beam-a-pre-submit-gate-and-a-real-one">Apache Beam: a pre-submit gate, and a real one</h3><a class="sl-anchor-link" href="#apache-beam-a-pre-submit-gate-and-a-real-one"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Apache Beam: a pre-submit gate, and a real one”</span></a></div>
+<ul>
+<li><strong>The graph is available before anything runs.</strong> <code dir="auto">Pipeline.traverseTopologically(PipelineVisitor)</code> walks every
+transform and <code dir="auto">PCollection</code> of a constructed pipeline; <code dir="auto">PCollection.isBounded()</code> says batch or streaming
+(read/write streaming capabilities), and <code dir="auto">PCollection.hasSchema()</code>/<code dir="auto">getSchema()</code> gives the row schema when the
+collection has one.</li>
+<li><strong>A <code dir="auto">BigQueryIO</code> transform describes itself.</strong> Its <code dir="auto">DisplayData</code> carries <code dir="auto">table</code>, <code dir="auto">schema</code> (as JSON),
+<code dir="auto">createDisposition</code> and <code dir="auto">writeDisposition</code> on the write side, and <code dir="auto">table</code>, <code dir="auto">query</code>, <code dir="auto">useLegacySql</code> on the read
+side (<code dir="auto">populateDisplayData</code> in <code dir="auto">BigQueryIO.java</code>). Display data is a public, stable API, so an adapter need
+not reflect on private fields.</li>
+<li><strong>It can be attached with no change to the job’s source.</strong> <code dir="auto">PipelineRunner.fromOptions</code> instantiates the class
+named by <code dir="auto">--runner</code> through a <code dir="auto">fromOptions(PipelineOptions)</code> factory. A wrapper runner that verifies the
+pipeline and then delegates to the configured real runner is therefore attachable with <code dir="auto">--runner=...</code> alone,
+which is what the External Attachability Requirement asks for. The limit: a job that sets its runner in code
+bypasses it, which the capability note must say. (How the wrapper learns the delegate is a design question:
+a custom option registered through a <code dir="auto">PipelineOptionsRegistrar</code> is the obvious route; <strong>unverified</strong>.)</li>
+<li><strong>Where it cannot see.</strong> A <code dir="auto">PCollection</code> of plain Java objects with no schema has no output schema to verify:
+that is an <em>unverifiable</em> write, and fail-closed, not a pass. A custom <code dir="auto">DoFn</code> is opaque to lineage, the way a
+Spark UDF is. A write method that never goes through <code dir="auto">BigQueryIO</code> (a custom sink) is an operation the adapter
+has no translation for: <code dir="auto">UNVERIFIABLE_WRITE</code>.</li>
+</ul>
+<p>Declared enforcement point: <code dir="auto">pre-submit-gate</code>.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="bigquery-a-pre-flight-check-for-clients-that-opt-in-and-an-observer-for-the-rest">BigQuery: a pre-flight check for clients that opt in, and an observer for the rest</h3><a class="sl-anchor-link" href="#bigquery-a-pre-flight-check-for-clients-that-opt-in-and-an-observer-for-the-rest"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “BigQuery: a pre-flight check for clients that opt in, and an observer for the rest”</span></a></div>
+<ul>
+<li><strong>There is no hook inside the service.</strong> A statement or load submitted by any client other than the one that
+carries the check is not seen. Writes by the Storage Write API, streaming inserts and loads are different
+paths again. The service cannot be asked to refuse a job on a contract’s behalf.</li>
+<li><strong>What a pre-flight can know without running the job.</strong> A job submitted with <code dir="auto">dryRun</code> returns “a mostly empty
+response with some processing statistics” (<code dir="auto">job_config.proto</code>), and those statistics include
+<code dir="auto">referencedTables</code>, the result <code dir="auto">schema</code>, <code dir="auto">statementType</code> (<code dir="auto">SELECT</code>, <code dir="auto">INSERT</code>, <code dir="auto">UPDATE</code>, <code dir="auto">DELETE</code>, <code dir="auto">MERGE</code>,
+<code dir="auto">CREATE_TABLE_AS_SELECT</code>, <code dir="auto">TRUNCATE_TABLE</code>, <code dir="auto">LOAD_DATA</code>, <code dir="auto">EXPORT_DATA</code>, <code dir="auto">CALL</code>, <code dir="auto">SCRIPT</code>, …) and
+<code dir="auto">ddlTargetTable</code> (<code dir="auto">job_stats.proto</code>). A <code dir="auto">SCRIPT</code> runs child statements the dry run does not enumerate, and
+<code dir="auto">TRUNCATE_TABLE</code> is BigQuery’s own “changes data but is not a write”: both are the fail-closed case. The job
+configuration itself carries <code dir="auto">destinationTable</code>, <code dir="auto">writeDisposition</code> and <code dir="auto">createDisposition</code>. That is enough for:
+declared inputs read, output location, output schema (type and nullability), format (always a BigQuery
+table), save mode, catalog registration (always registered), row-level DML recognised as a write, and
+fail-closed on any <code dir="auto">statementType</code> the adapter does not recognise.</li>
+<li><strong>What it cannot know.</strong> A dry run returns no plan: no filters, joins, groupings, column derivations or
+function calls. Plan-shape rules, column lineage, sensitivity propagation, static data quality, role
+consistency, boundaries and the fingerprint all need the statement analysed. The honest declaration is
+<code dir="auto">unsupported</code> for those (a contract that relies on one is then rejected as <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>, which
+is the point of the declaration), until and unless a SQL analyzer is added as a deliberate piece of work.
+(BigQuery’s dialect is GoogleSQL; the open-source ZetaSQL analyzer exists, but whether it is a workable
+dependency here is <strong>unverified</strong> and not assumed.)</li>
+<li><strong>Zero-code attach exists only for observation</strong>, if at all: reading the service’s own job history after the
+fact (<strong>unverified</strong>: the audit-log and <code dir="auto">INFORMATION_SCHEMA</code> routes were not checked). A gate that a platform
+team can switch on for a job it does not own is not available, and the declaration must say so rather than
+claim <code dir="auto">config.zeroCodeInstall</code>.</li>
+</ul>
+<p>Declared enforcement point: <code dir="auto">pre-submit-gate</code> for a client that calls the check, with the bypass stated; the
+observation route, if built, is <code dir="auto">observe-only</code> and a different adapter mode.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="how-ci-gets-real-engine-evidence">How CI gets real-engine evidence</h2><a class="sl-anchor-link" href="#how-ci-gets-real-engine-evidence"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “How CI gets real-engine evidence”</span></a></div>
+<p>The conformance kit judges an adapter by running neutral jobs <em>on the real engine</em> through the real
+enforcement path. Each engine needs an answer to “what runs in CI, with no credentials”.</p>
+<ul>
+<li><strong>Beam: a real, hermetic runner.</strong> <code dir="auto">DirectRunner</code> (<code dir="auto">runners/direct-java</code>) runs a pipeline in-process, so a
+<code dir="auto">ConformanceAdapter</code> can build each neutral job as a real Beam pipeline, run it through the wrapper, and judge
+the outcome, exactly as Spark’s does on <code dir="auto">local[*]</code>. File-based transforms (<code dir="auto">TextIO</code>, <code dir="auto">ParquetIO</code>) cover the
+parts that need no service. For <code dir="auto">BigQueryIO</code>, Beam’s own write tests (<code dir="auto">BigQueryIOWriteTest</code>) run against
+in-repo fakes (<code dir="auto">FakeBigQueryServices</code>, <code dir="auto">FakeDatasetService</code>, <code dir="auto">FakeJobService</code>) under <code dir="auto">TestPipeline</code>; whether
+those fakes are consumable from a published artifact, or would have to be re-created, is <strong>unverified</strong> and
+decides how far the <code dir="auto">BigQueryIO</code> scenarios can go without a service.</li>
+<li><strong>BigQuery: no local engine was found.</strong> No official emulator was identified. The options are (a) a recorded
+fixture layer: dry-run responses and table schemas captured once from a real project and replayed, which
+proves the adapter’s <em>reading</em> of the real response shape (the shapes are defined in the protos above) but not
+that the service still returns them; (b) a credentialed job that runs the same scenarios against a real
+project, on a schedule and not on every pull request, kept outside the required checks because it needs
+secrets and costs money. The honest combination is (a) as the required check and (b) as the periodic proof,
+with the capability page saying which of the two backs each “verified”.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="what-this-means-for-the-order-of-work">What this means for the order of work</h2><a class="sl-anchor-link" href="#what-this-means-for-the-order-of-work"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What this means for the order of work”</span></a></div>
+<ol>
+<li><strong>Beam first.</strong> It has a real in-process runner, a graph visible before submission, schemas, boundedness and
+a zero-code attach point. Every capability has a way to be verified in CI, so it is the adapter that can
+exercise the whole kit and the skill’s process.</li>
+<li><strong>BigQuery second, as a deliberately partial adapter.</strong> Structural checks only, fail-closed everywhere else,
+with the fixture layer as its required CI evidence. That is a feature of the kit (an adapter declares what it
+cannot do and is held to it), not a shortfall.</li>
+<li><strong>Draft declarations</strong> (to be confirmed by the adapter’s own work, not taken as given):</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Capability</th><th>Beam</th><th>BigQuery</th></tr></thead><tbody><tr><td><code dir="auto">read.batch</code> / <code dir="auto">write.batch</code></td><td>supported (<code dir="auto">BigQueryIO</code>, file IO)</td><td>supported (query, load)</td></tr><tr><td><code dir="auto">read.streaming</code> / <code dir="auto">write.streaming</code></td><td>supported (<code dir="auto">isBounded</code>)</td><td>not-applicable (a job is bounded)</td></tr><tr><td><code dir="auto">write.rowLevelDml</code></td><td>not-applicable</td><td>partial (<code dir="auto">statementType</code> <code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code>/<code dir="auto">MERGE</code>; the rule inputs need the statement)</td></tr><tr><td><code dir="auto">check.location</code>, <code dir="auto">check.schema</code>, <code dir="auto">check.format</code>, <code dir="auto">check.saveMode</code>, <code dir="auto">check.catalogRegistration</code>, <code dir="auto">check.inputExistence</code></td><td>supported</td><td>supported</td></tr><tr><td><code dir="auto">check.nestedTypes</code></td><td>supported (<code dir="auto">ROW</code>/<code dir="auto">ARRAY</code>/<code dir="auto">MAP</code>)</td><td>supported (<code dir="auto">STRUCT</code>/<code dir="auto">ARRAY</code>)</td></tr><tr><td><code dir="auto">rules.planShape</code>, <code dir="auto">rules.dml</code></td><td>partial (transform graph, not SQL)</td><td>unsupported</td></tr><tr><td><code dir="auto">analysis.fingerprint</code>, <code dir="auto">analysis.functionCatalog</code>, lineage, sensitivity, static data quality, role consistency</td><td>partial: opaque <code dir="auto">DoFn</code>s, SQL transforms</td><td>unsupported (no plan)</td></tr><tr><td><code dir="auto">config.zeroCodeInstall</code></td><td>partial (<code dir="auto">--runner</code>; a job that sets its runner in code bypasses it)</td><td>unsupported</td></tr><tr><td><code dir="auto">failClosed.unverifiableWrites</code></td><td>supported (a sink that is not a recognised write)</td><td>supported (an unrecognised <code dir="auto">statementType</code>)</td></tr><tr><td>enforcement point</td><td><code dir="auto">pre-submit-gate</code></td><td><code dir="auto">pre-submit-gate</code>, caller-cooperative</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="still-to-confirm-against-the-engines">Still to confirm against the engines</h2><a class="sl-anchor-link" href="#still-to-confirm-against-the-engines"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Still to confirm against the engines”</span></a></div>
+<p>Everything marked <strong>unverified</strong> above, plus: Beam’s <code dir="auto">PipelineOptionsRegistrar</code> route for a wrapper runner’s
+delegate option; whether Beam’s BigQuery fakes ship in a consumable artifact; the exact <code dir="auto">DisplayData</code> keys on the
+Beam read/write transforms in the Beam version the adapter will target (the file is <code dir="auto">master</code>); BigQuery’s
+array-of-arrays rule; and the audit-log or <code dir="auto">INFORMATION_SCHEMA</code> route for observation. Each is a small, concrete
+check that belongs at the start of the adapter that needs it, recorded in that adapter’s friction log.</p></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
