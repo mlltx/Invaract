@@ -93,8 +93,16 @@ trait AttestedClaimsSpec extends AnyFunSuite {
   /** For each attested capability the adapter claims, the test that demonstrates it. */
   protected def attestations: Map[Capability, Attestation]
 
+  /** Attested capabilities whose test is not compiled into this build for a reason of the environment (a test
+    * dependency with a newer JDK floor, say), with that reason. Such a capability's check is canceled with the
+    * reason, visible in the report, instead of failing for a test that is deliberately absent; the same claim is
+    * checked on every build where the test exists. Empty unless the adapter has a real reason.
+    */
+  protected def notCheckableHere: Map[Capability, String] = Map.empty
+
   Scenarios.attested.keys.toList.sortBy(_.id).foreach { capability =>
     test(s"attested: ${capability.id} - ${AttestedClaims.requirements(capability)}") {
+      notCheckableHere.get(capability).foreach(why => cancel(s"not checkable in this build: $why"))
       val problems = AttestedClaims.problems(capabilities, attestations, getClass.getClassLoader).filter(_.startsWith(capability.id))
       assert(problems.isEmpty, problems.mkString("; "))
       val support = capabilities.supportOf(capability)

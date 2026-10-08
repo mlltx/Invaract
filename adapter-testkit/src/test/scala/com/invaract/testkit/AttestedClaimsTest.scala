@@ -130,11 +130,12 @@ class AttestedClaimsMixinTest extends AnyFunSuite {
     AdapterCapabilities.parse(out.toString).fold(e => throw new AssertionError(e.mkString("; ")), identity)
   }
 
-  private def runSpec(status: String, named: Map[Capability, Attestation]): Recorder = {
+  private def runSpec(status: String, named: Map[Capability, Attestation], unavailable: Map[Capability, String] = Map.empty): Recorder = {
     val recorder = new Recorder
     new AttestedClaimsSpec {
       override protected def capabilities: AdapterCapabilities = declared(status)
       override protected def attestations: Map[Capability, Attestation] = named
+      override protected def notCheckableHere: Map[Capability, String] = unavailable
     }.run(None, Args(recorder))
     recorder
   }
@@ -157,6 +158,12 @@ class AttestedClaimsMixinTest extends AnyFunSuite {
   test("capabilities the adapter does not claim are canceled, not failed or passed") {
     val r = runSpec("unsupported", Map.empty)
     assert(r.canceled.size == perCapability && r.failed == Nil)
+  }
+
+  test("a capability whose test is not compiled into this build is canceled with the reason, not failed") {
+    val r = runSpec("supported", Map.empty, unavailable = Map(Capability.WriteStateChange -> "needs a newer JDK"))
+    assert(r.canceled.size == 1 && r.canceled.head.contains("write.stateChange"))
+    assert(r.failed.size == perCapability - 1, "the other claims, with no test named, still fail")
   }
 
   test("an attestation for something a scenario checks fails the last check") {
