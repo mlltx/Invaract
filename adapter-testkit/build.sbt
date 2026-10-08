@@ -15,6 +15,56 @@
 ThisBuild / version := "0.3.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
+
+// --- Maven Central publishing (Central Portal) ---
+// Published with contract/ir/spark-adapter: spark-adapter's POM depends on this module, so a release
+// that left it out would be unresolvable (docs/RELEASING.md). Everything below is the POM metadata and
+// Central Portal settings Sonatype requires, copied from ir/build.sbt so the modules cannot drift.
+publishMavenStyle := true
+Test / publishArtifact := false
+pomIncludeRepository := { _ => false }
+
+homepage := Some(url("https://github.com/mlltx/Invaract"))
+licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0.txt"))
+scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/mlltx/Invaract"),
+    "scm:git@github.com:mlltx/Invaract.git"
+  )
+)
+developers := List(
+  // id/url are the real GitHub org this repo lives under; email is
+  // GitHub's own noreply-alias convention, to avoid publishing a personal
+  // address in a public POM. Update `name` with a real maintainer name
+  // before the first real release.
+  Developer(
+    id = "mlltx",
+    name = "mlltx",
+    email = "mlltx@users.noreply.github.com",
+    url = url("https://github.com/mlltx")
+  )
+)
+
+// Pre-1.0 (docs/VERSIONING.md): a 0.x -> 0.(x+1) bump may be
+// binary-breaking, so "early-semver" is the accurate scheme - the same
+// convention this file's own mimaPreviousArtifacts comment already bumps
+// MINOR (not PATCH) for a deliberate break under.
+versionScheme := Some("early-semver")
+
+// The OSSRH/Nexus staging host sbt-sonatype originally targeted is
+// retired; Central Portal (central.sonatype.com) is the only route onto
+// Maven Central now. See docs/RELEASING.md for credentials/CI wiring and
+// the actual release commands (publishSigned, then sonatypeCentralRelease).
+import xerial.sbt.Sonatype.sonatypeCentralHost
+sonatypeCredentialHost := sonatypeCentralHost
+publishTo := sonatypePublishToBundle.value
+
+// Non-interactive PGP passphrase for CI (crazy-max/ghaction-import-gpg
+// imports the key + configures gpg-agent; this just supplies the
+// passphrase sbt-pgp needs when it shells out to gpg). Unset locally -
+// sbt-pgp falls back to an interactive prompt, which is fine for a
+// maintainer cutting a release by hand.
+pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 name := "invaract-adapter-testkit"
 
 libraryDependencies ++= Seq(

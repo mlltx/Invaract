@@ -1313,22 +1313,10 @@ jobs:
     # break binary compatibility with its own base branch." Only
     # meaningful with a base to diff against, so PR-only.
     #
-    # The comparison coordinate's VERSION is read directly off base-ref's
-    # own checked-out build.sbt (see the loop below) and passed to PR
-    # head's `mimaReportBinaryIssues` via INVARACT_MIMA_BASELINE_VERSION,
-    # rather than relying on each module's own hardcoded
-    # `mimaPreviousArtifacts` literal matching base-ref's actual version.
-    # That literal used to be the only source of truth and had to be
-    # manually "flipped" in a separate follow-up PR every time a module's
-    # version bumped; when that flip was skipped or merely delayed (it was,
-    # repeatedly - see contract/ir/spark-adapter/fingerprint's own
-    # build.sbt comments), base-ref would publish under its new version
-    # while PR head still asked MiMa for the old, now-unpublished
-    # coordinate, failing every OTHER PR's api-compatibility job with an
-    # "Error downloading ... Not found" until someone noticed. Deriving the
-    # baseline from base-ref's actual state instead of a hand-maintained
-    # copy of it removes that failure mode by construction: the two values
-    # can no longer drift apart, because there's only one of them now.
+    # The comparison jar is the one the base ref's own build published, found via the version
+    # read off base-ref's checked-out build.sbt (the steps below). A module's hardcoded
+    # `mimaPreviousArtifacts` literal is therefore only a local-development fallback: it can no
+    # longer go stale and break CI, and a flip-it-in-a-follow-up-PR step no longer exists.
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout PR head
@@ -1366,148 +1354,65 @@ jobs:
       - name: Set up sbt
         uses: sbt/setup-sbt@v1
 
-      # fingerprint's own build.sbt resolves ir as a real libraryDependency
-      # against its own published coordinate, so it needs publishing before
-      # `sbt publishLocal` below can even compile fingerprint's sources -
-      # nothing has published PR head's (or base-ref's) ir yet at this point
-      # in the job, since the per-module loop below hasn't started.
-      - name: Publish PR head's ir locally (fingerprint's libraryDependency)
-        run: cd ir && sbt publishLocal
-
-      # fingerprint (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md) IS MiMa-gated
-      # (mimaPreviousArtifacts set - see its own build.sbt) and IS one of the
-      # `for module in ...` loop's entries below, same as contract/ir/
-      # spark-adapter. But spark-adapter's own build.sbt resolves it as a
-      # real libraryDependency, so the PR head's copy still needs publishing
-      # before spark-adapter's iteration of that loop can even compile for
-      # its own MiMa check - unconditionally and up front here, not only
-      # inside the loop's own per-module "publish PR head's build" step
-      # (which runs too late for spark-adapter's iteration to see it, and -
-      # for whichever PR first adds fingerprint/ to the repository - the
-      # loop's fingerprint iteration is skipped entirely per the "did not
-      # exist at the base commit" branch below, so this step is the only
-      # place that PR's own fingerprint build gets published at all).
-      - name: Publish PR head's fingerprint locally (spark-adapter's libraryDependency)
-        run: cd fingerprint && sbt publishLocal
-
-      # One module at a time, in dependency order: contract, ir, then
-      # fingerprint (depends on ir alone), THEN spark-adapter last, since
-      # spark-adapter's own build.sbt depends on all three (contract, ir,
-      # fingerprint) as real libraryDependencies. fingerprint must run
-      # before spark-adapter, not after - confirmed the hard way by a real
-      # CI failure, not assumed: this loop's own "publish base-ref build to
-      # the local Ivy cache" step for spark-adapter needs BASE-REF's
-      # fingerprint coordinate resolvable (base-ref/spark-adapter's
-      # build.sbt still declares whatever fingerprint version was current
-      # at the base commit), and the only thing that ever publishes that
-      # exact coordinate is fingerprint's own base-ref iteration of this
-      # same loop - there is no Maven Central release to fall back to. With
-      # the old contract/ir/spark-adapter/fingerprint order, this
-      # accidentally worked only so long as fingerprint's own version never
-      # changed across a PR (base-ref's and PR-head's fingerprint shared one
-      # coordinate, so the unconditional "Publish PR head's fingerprint
-      # locally" step above happened to satisfy both) - the first PR to
-      # actually bump fingerprint's own version (this one, forced by ir's
-      # version bump landing alongside it) broke that coincidence outright:
-      # "Error downloading com.invaract:invaract-fingerprint_2.12:0.1.0 -
-      # Not found", since only PR-head's fingerprint (now a different,
-      # newer coordinate) had been published anywhere by the time
-      # spark-adapter's base-ref iteration needed the old one.
+      # The base ref's modules are published into an ISOLATED Ivy home, the PR head's into the
+      # default one. They used to share one cache, so a module whose dependency set changed had to
+      # take a new version even with no code change, or whichever publish ran last clobbered the
+      # other's POM (the 0.2.0 -> 0.3.0 style bumps in fingerprint/verification-core/adapter-testkit).
+      # With two Ivy homes the base ref resolves only base coordinates, the head only head ones, and a
+      # version bump is needed only when the version should change. MiMa is then pointed at the base
+      # ref's jar directly (`mimaPreviousClassfiles`), so it can never resolve the head's own
+      # artifact under an unchanged coordinate and compare the head with itself.
       #
-      # If a module doesn't exist at the base commit, it has no prior
-      # public API to be compatible with, so it's skipped entirely rather
-      # than erroring (base-ref/$module wouldn't exist to build) or
-      # treating "brand new" as "broke everything" - the correct, honest
-      # answer either way is "nothing to compare, nothing can have broken."
-      # That's the normal case for PR #1 specifically (contract/ir/
-      # spark-adapter all postdate its base commit - introducing them *is*
-      # what that PR does) and, later, for whichever PR first adds
-      # fingerprint/ to the repository; for any normal future PR opened
-      # against an up-to-date base branch, every module will already exist
-      # there and this check runs for real.
-      #
-      # PR-head's own contract/ir/fingerprint builds are published to the
-      # local Ivy cache in their own loop iterations below (overwriting
-      # nothing - base-ref and PR-head never share a coordinate once a
-      # module's version has actually changed, and when it hasn't, PR-head's
-      # republish is simply a no-op refresh of the same content), so
-      # spark-adapter's iteration compiles against the PR's actual current
-      # contract/ir/fingerprint, not whatever version happens to already be
-      # sitting in the cache. Without this, spark-adapter's compile step
-      # here would only work by coincidence when none of its dependencies'
-      # versions changed in the same PR - exactly the trap a version bump
-      # landing alongside a spark-adapter change would fall into.
-      # fingerprint's own PR-head build is additionally published
-      # unconditionally above (see that step's own comment for why:
-      # spark-adapter needs it even on the one PR where this loop's own
-      # fingerprint iteration is skipped for having no base-ref counterpart
-      # yet).
+      # Order is the dependency order: contract, ir, fingerprint (needs ir), verification-core (needs
+      # all three), adapter-testkit (needs verification-core), spark-adapter (needs everything,
+      # the kit as a test dependency). A module absent at the base commit has no prior public API to
+      # be compatible with, so it is skipped rather than treated as "broke everything" - the normal
+      # case for the PR that introduces a module.
+      - name: Publish the base ref's modules to an isolated Ivy home
+        shell: bash
+        run: |
+          BASE_IVY="$RUNNER_TEMP/ivy-base"
+          mkdir -p "$BASE_IVY"
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+            if [ ! -d "base-ref/$module" ]; then
+              echo "=== $module: did not exist at the PR's base commit, skipping ==="
+              continue
+            fi
+            echo "=== $module: publishing the base ref's build to $BASE_IVY ==="
+            (cd "base-ref/$module" && sbt -Dsbt.ivy.home="$BASE_IVY" publishLocal)
+          done
+
       - name: Check API compatibility for each module that existed at the base commit
         shell: bash
         run: |
-          # adapter-testkit sits before spark-adapter: spark-adapter's tests depend on it, so the base
-          # ref's kit (the coordinate base-ref/spark-adapter resolves) must be published before
-          # base-ref/spark-adapter is, and the PR head's kit before head's spark-adapter is compiled.
+          BASE_IVY="$RUNNER_TEMP/ivy-base"
           for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
             if [ ! -d "base-ref/$module" ]; then
-              echo "=== $module: did not exist at the PR's base commit, nothing to compare, skipping ==="
-              # Still publish the PR head's own build when something downstream
-              # (spark-adapter) resolves it as a libraryDependency - e.g.
-              # verification-core, introduced by the PR that extracted it from
-              # spark-adapter. contract/ir/fingerprint are published by now (they
-              # precede it in this loop's order), which it itself depends on.
-              if [ "$module" != "spark-adapter" ]; then
-                echo "=== $module: publishing PR head's own build to the local Ivy cache (spark-adapter's libraryDependencies) ==="
-                (cd "$module" && sbt publishLocal)
+              echo "=== $module: did not exist at the PR's base commit, nothing to compare ==="
+            else
+              # The base ref's own version, read off its checked-out build.sbt: the exact
+              # coordinate the publish step above used.
+              BASE_VERSION=$(grep -oP '(?<=ThisBuild / version := ")[^"]+' "base-ref/$module/build.sbt" | head -1)
+              if [ -z "$BASE_VERSION" ]; then
+                echo "::error::Could not read ThisBuild / version from base-ref/$module/build.sbt"
+                exit 1
               fi
-              continue
+              JAR="$BASE_IVY/local/com.invaract/invaract-${module}_2.12/$BASE_VERSION/jars/invaract-${module}_2.12.jar"
+              if [ ! -f "$JAR" ]; then
+                echo "::error::Expected the base ref's published jar at $JAR"
+                exit 1
+              fi
+              echo "=== $module: checking the PR head against the base ref's $BASE_VERSION ==="
+              # A real binary-incompatible change fails here with the offending symbol and a
+              # ready-to-paste ProblemFilters.exclude(...) line for a deliberate, documented
+              # exception - CLAUDE.md's "API Compatibility Requirement".
+              (cd "$module" && sbt "set mimaPreviousClassfiles := Map((\"com.invaract\" % \"invaract-${module}_2.12\" % \"$BASE_VERSION\") -> file(\"$JAR\"))" mimaReportBinaryIssues)
             fi
 
-            if [ "$module" != "spark-adapter" ] && [ "$module" != "adapter-testkit" ]; then
-              # (adapter-testkit has no assembly: it is never bundled into a jar.)
-              # base-ref is checked out at the PR's base commit, which
-              # predates this fix - base-ref/spark-adapter's build.sbt still
-              # uses the OLD unmanagedJars, needing base-ref/contract's and
-              # base-ref/ir's assembly jar physically on disk (relative
-              # ../contract, ../ir paths) to even compile, let alone
-              # publishLocal. PR-head's own contract/ir no longer need this
-              # (real libraryDependencies now - see spark-adapter/build.sbt's
-              # comment), so this only runs for the base-ref checkout.
-              echo "=== $module: building base-ref's assembly jar (base-ref/spark-adapter's own unmanagedJars dependency) ==="
-              (cd "base-ref/$module" && sbt assembly)
-            fi
-
-            echo "=== $module: publishing base-ref build to the local Ivy cache ==="
-            (cd "base-ref/$module" && sbt publishLocal)
-
-            # Read base-ref's own version straight off its checked-out
-            # build.sbt - the exact coordinate `sbt publishLocal` just used
-            # above - rather than trusting PR head's own hardcoded
-            # `mimaPreviousArtifacts` fallback to already match it. This is
-            # the fix for the recurring "Error downloading ... Not found"
-            # failure mode: see this job's own top-of-file comment and
-            # each module's build.sbt for the root-cause history.
-            BASE_VERSION=$(grep -oP '(?<=ThisBuild / version := ")[^"]+' "base-ref/$module/build.sbt" | head -1)
-            if [ -z "$BASE_VERSION" ]; then
-              echo "::error::Could not read ThisBuild / version from base-ref/$module/build.sbt - refusing to fall back to a possibly-stale hardcoded mimaPreviousArtifacts value."
-              exit 1
-            fi
-            echo "=== $module: base-ref's own version is $BASE_VERSION ==="
-
-            # Compiles the PR head's current sources and diffs the result
-            # against the locally-published base-ref artifact just above,
-            # comparing against base-ref's ACTUAL version regardless of
-            # whatever this module's own build.sbt hardcodes as its local-
-            # dev fallback. A real binary-incompatible change fails here
-            # with the exact offending symbol and a ready-to-paste
-            # ProblemFilters.exclude(...) line for a deliberate, documented
-            # exception - see CLAUDE.md's "API Compatibility Requirement"
-            # for when that's the right call versus a MAJOR version bump.
-            echo "=== $module: checking PR head for binary compatibility ==="
-            (cd "$module" && INVARACT_MIMA_BASELINE_VERSION="$BASE_VERSION" sbt mimaReportBinaryIssues)
-
+            # The PR head's own build, for the modules after it (spark-adapter is last: nothing
+            # resolves it). Also the case for a module new in this PR.
             if [ "$module" != "spark-adapter" ]; then
-              echo "=== $module: publishing PR head's own build to the local Ivy cache (spark-adapter's libraryDependencies) ==="
+              echo "=== $module: publishing the PR head's build to the default Ivy home ==="
               (cd "$module" && sbt publishLocal)
             fi
           done
@@ -1733,7 +1638,7 @@ jobs:
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

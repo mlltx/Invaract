@@ -405,6 +405,37 @@ all, throwing at session-construction time. Confirmed against Spark's own
 `applyExtensions` source, not assumed from the constructor signature Delta
 happens to use.
 
+### ADR-010: Which `verification-core` members are an adapter SPI (`private[invaract]`)
+
+**Decision:** `verification-core` marks the members an adapter needs from it, but a
+job's author must not call, `private[invaract]`. An audit (a script matching every
+`private[invaract]` name in `verification-core` against `spark-adapter/src/main/scala`) found 53
+such members, of which 18 are referenced by `spark-adapter`: the checkers
+(`StructuralVerifier`, `InputChecker`, `OutputChecker`, `SchemaChecker`, `RuleVerifier`), the
+`Violations` constructors, `ContractInference`/`InferredWrite`, the `VerificationSetup` helpers
+(`applyMinVerificationOptions`, `requireKnownMinVerificationOptionKeys`,
+`resolveOrgPolicyLayers`, `splitCommaSeparated`), `VerificationPipeline.explain` and a few
+plan-fact helpers (`collectReads`, `collectUnknownPlans`, `locationsMatch`,
+`verifyStateChange`, `writeLocation`). Those 18 are the de-facto adapter SPI; the other 35 are
+internal to the core. They stay `private[invaract]` for now.
+
+**Rationale:**
+- Adapters that live in this repository (`com.invaract.<engine>adapter`) can use them
+  unchanged, so BigQuery and Beam adapters in-tree are not blocked.
+- Which of the 18 a *second* adapter really needs is unknown until one exists. Promoting them to
+  public now would freeze signatures chosen for Spark's needs, and the first non-Spark adapter is
+  the cheapest moment to learn what is wrong with them (nothing external depends on the core yet,
+  so the change is free today and is not once an outside adapter exists).
+- The 35 unreferenced members are not worth any stability promise.
+
+**Consequence:** an adapter outside the `com.invaract` package tree cannot compile against the
+checkers yet. That is a known, accepted limit, not an oversight. When the first in-tree non-Spark
+adapter lands, review which of the 18 it used, make exactly those public (documented, MiMa-bound),
+and keep the rest private.
+
+**Alternative considered:** make all 18 public now. **Rejected** for the reason above: the set
+would be Spark's guess at what any adapter needs.
+
 ## Module Dependencies
 
 ```
@@ -429,10 +460,9 @@ web/              next, react, typescript — independent of every Scala module
 
 Cross-module references go through real `libraryDependencies` against each
 module's own coordinate, resolved from the local Ivy cache via
-`publishLocal` (`contract`/`ir`/`spark-adapter` are the three modules
-also published to Maven Central, see "API Contracts" below and
-docs/RELEASING.md; `fingerprint` resolves the same way but isn't published
-to Central yet — see `fingerprint/build.sbt`'s own FOLLOW-UP comment),
+`publishLocal` (`contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
+`spark-adapter` are the six modules also published to Maven Central, see "API Contracts" below
+and docs/RELEASING.md),
 except `plugin` (harness-only, never published), which stays on
 `unmanagedJars` pointing at its assembled jar directly. Either way, there is still no aggregating root `build.sbt` —
 each module remains an independent sbt project — so `dev/build`'s build
