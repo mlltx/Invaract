@@ -1232,10 +1232,11 @@ stable node-by-node release to release (see docs/SPARK_ADAPTER.md’s
 <li class="task-list-item"><input type="checkbox" checked disabled> <strong>CI job (<code dir="auto">spark-version-matrix</code>, <code dir="auto">.github/workflows/test.yml</code>)</strong>
 runs <code dir="auto">spark-adapter</code>’s full <code dir="auto">sbt test</code> suite — not a “core” subset —
 against every Spark 3.5.x patch this repo claims to support: 3.5.6
-(the floor), 3.5.7 (the current pin), and 3.5.9 (newest). One job
-per patch, <code dir="auto">fail-fast: false</code> so a failure on one patch doesn’t hide
-results for the others. Added to the <code dir="auto">summary</code> gate like every other
-guardrail here.
+(the floor), 3.5.7 (the pin at the time this job was built; see the
+3.5.9 promotion note below), and 3.5.9 (newest, and the pin as of
+that note). One job per patch, <code dir="auto">fail-fast: false</code> so a failure on
+one patch doesn’t hide results for the others. Added to the
+<code dir="auto">summary</code> gate like every other guardrail here.
 <ul>
 <li><strong>The floor is 3.5.6, not the originally-planned 3.5.1</strong> — found by
 the matrix itself, not assumed: the first real CI run of this job
@@ -1255,8 +1256,9 @@ ordinary managed dependency and spins up its own in-process
 spark-adapter source references <code dir="auto">SPARK_HOME</code>.</li>
 <li><strong>Mechanism</strong>: <code dir="auto">spark-adapter/build.sbt</code>’s <code dir="auto">sparkVersion</code> val reads
 an <code dir="auto">INVARACT_TEST_SPARK_VERSION</code> environment variable, falling back
-to <code dir="auto">3.5.7</code> when unset so a plain local <code dir="auto">sbt test</code> is unaffected —
-only the CI matrix sets it per leg.</li>
+to <code dir="auto">supported-versions.properties</code>’ <code dir="auto">spark.primary</code> when unset so a
+plain local <code dir="auto">sbt test</code> is unaffected — only the CI matrix sets it
+per leg.</li>
 <li>Iceberg/ClickHouse/Hive/Avro’s test-scope dependencies
 (<code dir="auto">iceberg-spark-runtime-3.5_2.12</code>, <code dir="auto">clickhouse-spark-runtime-3.5</code>,
 <code dir="auto">spark-hive</code>/<code dir="auto">spark-avro</code>) are published per-Spark-<em>minor</em>-line, not
@@ -1274,6 +1276,21 @@ the real <code dir="auto">spark-submit</code> runtime, while <code dir="auto">sp
 <code dir="auto">runner</code>’s/<code dir="auto">plugin</code>’s) own <code dir="auto">build.sbt</code> had already moved to 3.5.7 for
 a CVE fix (docs/CVE_REMEDIATION.md) — the bump never propagated.
 Brought all of them to 3.5.7 to match.</li>
+<li><strong>3.5.7 -> 3.5.9 (CVE-2026-32773 / GHSA-9437-39hj-3c93)</strong>: a Spark
+History Server stored-XSS issue (unescaped application names,
+CWE-80) affecting Spark through 3.5.7, patched in 3.5.8 — see
+docs/CVE_REMEDIATION.md’s worked example. Promoted straight to
+3.5.9 rather than the bare-minimum 3.5.8, since 3.5.9 was already
+this matrix’s newest <code dir="auto">spark.verified</code> entry with its own real,
+passing CI leg — a zero-new-risk promotion of an already-proven
+version. <code dir="auto">supported-versions.properties</code>’ <code dir="auto">spark.primary</code> is now
+the single edit that moves every consumer (<code dir="auto">spark-adapter/build.sbt</code>’s
+default, <code dir="auto">plugin</code>/<code dir="auto">runner</code>’s own <code dir="auto">sparkVersion</code> vals, the
+<code dir="auto">test</code>/<code dir="auto">mutation-testing-spark-adapter</code>/<code dir="auto">docker-regression</code> jobs’
+Spark binary download, <code dir="auto">docker/Dockerfile</code>,
+<code dir="auto">.devcontainer/post-create.sh</code>) — the exact propagation-gap class
+the note above once caught is now a single source of truth instead
+of six hand-synced copies.</li>
 <li><strong>Deferred, not attempted</strong>: Spark 4.x. Every module here pins
 <code dir="auto">scalaVersion := "2.12.18"</code> with no cross-build configured, and
 Spark 4.0 requires Scala 2.13 — supporting 4.x is a real

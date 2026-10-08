@@ -220,7 +220,7 @@ module move in Stage 2.</p>
 
 
 
-<table><thead><tr><th>Stage</th><th>Item</th><th>Benefit</th><th>Status</th></tr></thead><tbody><tr><td>1</td><td>Engine-neutral logical type model: <code dir="auto">contract.LogicalType</code>/<code dir="auto">LogicalSchema</code>; the schema/input/output checkers and <code dir="auto">ContractInference</code> stop importing Spark types; Spark mapping isolated in <code dir="auto">SparkSchemas</code>, pinned to Spark’s own output by <code dir="auto">SparkSchemasSpec</code></td><td>Removes leak #1: an adapter for any engine supplies a <code dir="auto">LogicalSchema</code>; no existing verdict or message changes</td><td>Done (PR #102) — see below</td></tr><tr><td>2a</td><td>Extract the <code dir="auto">verification-core</code> module: the engine-neutral checkers, verifiers, result model, notification and location code move out of <code dir="auto">spark-adapter</code>; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write)</td><td>Removes leak #3 (and the module half of #5/#7): a second adapter depends on <code dir="auto">verification-core</code>, not <code dir="auto">spark-adapter</code>; no user-visible change at the time (the package rename is Stage 2c)</td><td>Done — see below</td></tr><tr><td>2b</td><td>Adapter SPI: <code dir="auto">VerificationPipeline</code> (the write / state-change / fail-closed branches of <code dir="auto">verifyOrThrow</code>) and <code dir="auto">VerificationSetup</code> + <code dir="auto">ConfigSource</code> (options, <code dir="auto">ref://</code> locations, org policy, read through a neutral config view)</td><td>Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every <code dir="auto">--conf</code>-style capability by spelling the neutral keys its own way</td><td>Done — see below (<code dir="auto">ContractSource</code> and the fail-closed wording are deferred, see “Not done in 2b”)</td></tr><tr><td>2c</td><td>Neutral package names: <code dir="auto">verification-core</code> is <code dir="auto">com.invaract.verification</code> (<code dir="auto">.notification</code>, <code dir="auto">.location</code>), <code dir="auto">notification-kafka</code> follows; no forwarding classes</td><td>Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released</td><td>In review</td></tr><tr><td>3</td><td>Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check</td><td>Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked</td><td>Done — see below</td></tr><tr><td>4</td><td><code dir="auto">adapter-testkit</code>: engine-neutral conformance scenarios, Spark as the first adapter</td><td>Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour</td><td>In review</td></tr><tr><td>5</td><td>Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism)</td><td>Removes leak #4: the same logic is classified the same on every engine, and <code dir="auto">GENERATE_UUID()</code> is not “deterministic”</td><td>In review</td></tr><tr><td>—</td><td>BigQuery / Beam adapters</td><td>The goal; deliberately last</td><td>Not started — needs a go-ahead after Stage 5</td></tr></tbody></table>
+<table><thead><tr><th>Stage</th><th>Item</th><th>Benefit</th><th>Status</th></tr></thead><tbody><tr><td>1</td><td>Engine-neutral logical type model: <code dir="auto">contract.LogicalType</code>/<code dir="auto">LogicalSchema</code>; the schema/input/output checkers and <code dir="auto">ContractInference</code> stop importing Spark types; Spark mapping isolated in <code dir="auto">SparkSchemas</code>, pinned to Spark’s own output by <code dir="auto">SparkSchemasSpec</code></td><td>Removes leak #1: an adapter for any engine supplies a <code dir="auto">LogicalSchema</code>; no existing verdict or message changes</td><td>Done (PR #102) — see below</td></tr><tr><td>2a</td><td>Extract the <code dir="auto">verification-core</code> module: the engine-neutral checkers, verifiers, result model, notification and location code move out of <code dir="auto">spark-adapter</code>; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write)</td><td>Removes leak #3 (and the module half of #5/#7): a second adapter depends on <code dir="auto">verification-core</code>, not <code dir="auto">spark-adapter</code>; no user-visible change at the time (the package rename is Stage 2c)</td><td>Done — see below</td></tr><tr><td>2b</td><td>Adapter SPI: <code dir="auto">VerificationPipeline</code> (the write / state-change / fail-closed branches of <code dir="auto">verifyOrThrow</code>) and <code dir="auto">VerificationSetup</code> + <code dir="auto">ConfigSource</code> (options, <code dir="auto">ref://</code> locations, org policy, read through a neutral config view)</td><td>Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every <code dir="auto">--conf</code>-style capability by spelling the neutral keys its own way</td><td>Done — see below (<code dir="auto">ContractSource</code> and the fail-closed wording are deferred, see “Not done in 2b”)</td></tr><tr><td>2c</td><td>Neutral package names: <code dir="auto">verification-core</code> is <code dir="auto">com.invaract.verification</code> (<code dir="auto">.notification</code>, <code dir="auto">.location</code>), <code dir="auto">notification-kafka</code> follows; no forwarding classes</td><td>Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released</td><td>In review</td></tr><tr><td>3</td><td>Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check</td><td>Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked</td><td>Done — see below</td></tr><tr><td>4</td><td><code dir="auto">adapter-testkit</code>: engine-neutral conformance scenarios, Spark as the first adapter</td><td>Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour</td><td>In review</td></tr><tr><td>5</td><td>Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism)</td><td>Removes leak #4: the same logic is classified the same on every engine, and <code dir="auto">GENERATE_UUID()</code> is not “deterministic”</td><td>In review</td></tr><tr><td>—</td><td>BigQuery / Beam adapters</td><td>The goal; deliberately last</td><td>Not started — needs a go-ahead. Prerequisites in progress: kit hardening (Stage 4), module registration and the adapter guide, and the engine research (<code dir="auto">docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md</code>)</td></tr></tbody></table>
 <div class="sl-heading-wrapper level-h2"><h2 id="stage-1--the-logical-type-model">Stage 1 — the logical type model</h2><a class="sl-anchor-link" href="#stage-1--the-logical-type-model"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 1 — the logical type model”</span></a></div>
 <p><strong>What changed</strong></p>
 <ul>
@@ -311,9 +311,8 @@ with the reason, per CLAUDE.md’s API Compatibility Requirement, and <code dir=
 its own MiMa entry (nothing to compare against until it is released).</p>
 <p><strong>Not done in 2a, deliberately</strong></p>
 <ul>
-<li>Not yet published to Maven Central or wired into <code dir="auto">release.yml</code> (the same disclosed gap
-<code dir="auto">fingerprint</code> has) — <code dir="auto">spark-adapter</code>’s published POM depends on it, so this must land
-before the next Maven Central release.</li>
+<li>Published to Maven Central by <code dir="auto">release.yml</code> since review pass 3 (<code dir="auto">spark-adapter</code>’s published POM
+depends on it, so a release without it would not resolve).</li>
 <li><code dir="auto">registry/ContractSource</code> (reads a <code dir="auto">SparkSession</code>) and <code dir="auto">WriteFieldInfo</code>’s Spark type
 strings stay in <code dir="auto">spark-adapter</code>; both belong with 2b’s neutral config namespace.</li>
 <li>Test helpers <code dir="auto">TestNotificationSink</code>, <code dir="auto">EventSchema</code> and <code dir="auto">CustomRuleVerifierFixtures</code> are
@@ -472,11 +471,23 @@ checked by the conformance kit.</p>
 <p><strong>Locations are canonical <code dir="auto">/</code>-separated strings.</strong> The pipeline compares a contract’s declared
 location with the location the adapter reports using one rule (<code dir="auto">LocationMatching</code>): equal, or the
 declared one is a <code dir="auto">/</code>-boundary suffix of the reported one. An engine whose names are not paths
-converts them first: a BigQuery table <code dir="auto">project.dataset.table</code> is reported as
-<code dir="auto">project/dataset/table</code>, and a contract author writes <code dir="auto">dataset/table</code> (or the full form to pin
-one project). An absolute declaration (<code dir="auto">/data/orders</code>, <code dir="auto">gs://bucket/orders</code>) matches only itself;
+converts them first with <code dir="auto">LocationMatching.fromParts(Seq("project", "dataset", "table"))</code>
+(<code dir="auto">project/dataset/table</code>; it trims, drops one pair of backticks or double quotes and empty parts, and the
+adapter splits the engine’s identifier by the engine’s own rules), and a contract author writes
+<code dir="auto">dataset/table</code> (or the full form to pin one project). A dotted declaration (<code dir="auto">ds.orders</code>) is one path
+segment and never matches the converted name, so write <code dir="auto">/</code>. An absolute declaration (<code dir="auto">/data/orders</code>, <code dir="auto">gs://bucket/orders</code>) matches only itself;
 a relative one matches any location ending in it, so a contract that must distinguish tenants
 declares it absolute.</p>
+<p><strong>Formats and catalog technologies use canonical names too.</strong> <code dir="auto">ir.Write.format</code> and
+<code dir="auto">CatalogIdentity.technology</code> are <code dir="auto">com.invaract.contract.Formats</code> (<code dir="auto">parquet</code>, <code dir="auto">orc</code>, <code dir="auto">avro</code>, <code dir="auto">csv</code>, <code dir="auto">json</code>,
+<code dir="auto">text</code>, <code dir="auto">table</code>, <code dir="auto">delta</code>, <code dir="auto">iceberg</code>, <code dir="auto">hudi</code>, <code dir="auto">hive</code>, <code dir="auto">jdbc</code>, <code dir="auto">bigquery</code>, <code dir="auto">kafka</code>) and
+<code dir="auto">CatalogTechnologies</code> (<code dir="auto">hive</code>, <code dir="auto">delta</code>, <code dir="auto">iceberg</code>, <code dir="auto">hudi</code>, <code dir="auto">jdbc</code>, <code dir="auto">glue</code>, <code dir="auto">bigquery</code>, <code dir="auto">in-memory</code>). Both are
+open in the same way as write modes: an engine whose format is none of these reports its own name, and a
+contract declaring a name outside the set still validates, with a warning. What an adapter must not do is
+spell a listed format its own way (<code dir="auto">BIGQUERY_TABLE</code>, <code dir="auto">SparkCatalog</code>): Spark reports a data source’s
+registered short name and maps its catalog plugins (<code dir="auto">DeltaCatalog</code> -> <code dir="auto">delta</code>, <code dir="auto">SparkCatalog</code> ->
+<code dir="auto">iceberg</code>), both guarded by <code dir="auto">FormatVocabularySpec</code>. <code dir="auto">UnknownPlan.sourceType</code> is deliberately not a
+vocabulary: it is the engine’s own label for a node it could not translate, there for diagnostics.</p>
 <p><strong>Write modes use the four canonical names.</strong> <code dir="auto">ir.Write.saveMode</code> is <code dir="auto">append</code>, <code dir="auto">overwrite</code>,
 <code dir="auto">ignore</code> or <code dir="auto">error</code> (<code dir="auto">com.invaract.contract.SaveModes</code>), or <code dir="auto">None</code> when the adapter cannot tell.
 An adapter maps its engine’s dispositions onto them; one with no equivalent leaves it <code dir="auto">None</code>
@@ -507,13 +518,16 @@ same way. A contract that declares another string still validates, with a warnin
 
 
 
-<table><thead><tr><th>Engine disposition</th><th>Canonical</th></tr></thead><tbody><tr><td>Spark <code dir="auto">SaveMode.Append</code> / <code dir="auto">Overwrite</code> / <code dir="auto">ErrorIfExists</code> / <code dir="auto">Ignore</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code> / <code dir="auto">ignore</code></td></tr><tr><td>BigQuery <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code></td></tr><tr><td>Beam <code dir="auto">BigQueryIO</code> <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code></td></tr><tr><td><code dir="auto">MERGE</code> / <code dir="auto">UPDATE</code> / <code dir="auto">DELETE</code> (row-level DML)</td><td><code dir="auto">None</code>: reported through <code dir="auto">rowMutation</code>, not as a write mode</td></tr></tbody></table>
+<table><thead><tr><th>Engine disposition</th><th>Canonical</th></tr></thead><tbody><tr><td>Spark <code dir="auto">SaveMode.Append</code> / <code dir="auto">Overwrite</code> / <code dir="auto">ErrorIfExists</code> / <code dir="auto">Ignore</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code> / <code dir="auto">ignore</code></td></tr><tr><td>BigQuery <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> / <code dir="auto">WRITE_TRUNCATE_DATA</code> / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code> (approximate: fails only on a table that has data)</td></tr><tr><td>Beam <code dir="auto">BigQueryIO</code> <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> (file loads only) / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code> (approximate, as above)</td></tr><tr><td><code dir="auto">MERGE</code> / <code dir="auto">UPDATE</code> / <code dir="auto">DELETE</code> (row-level DML)</td><td><code dir="auto">None</code>: reported through <code dir="auto">rowMutation</code>, not as a write mode</td></tr></tbody></table>
 <p>The Spark row is what ships today. The BigQuery and Beam rows are the intended mapping for adapters
-that do not exist yet, written from the engines’ public documentation and not yet exercised by an
-adapter: confirm each against the engine’s current documentation when its adapter is written.</p>
+that do not exist yet. They are checked against the engines’ own source (<code dir="auto">docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md</code>,
+which also records the defaults that differ by job kind and what could not be checked) but not yet exercised by an
+adapter.</p>
 <p><strong>Types map into <code dir="auto">LogicalType</code>.</strong> An adapter converts its engine’s schema into <code dir="auto">LogicalSchema</code>;
 anything with no neutral equivalent becomes <code dir="auto">OtherType(typeName, catalogString)</code>, which compares
-by its catalog string and never matches a declared neutral type. The intended mappings (same caveat as the write-mode table):</p>
+by its catalog string and never matches a declared neutral type. The intended mappings (same status as the
+write-mode table; the research document has the reasoning, including the narrow integer types, picosecond
+timestamps and <code dir="auto">BIGNUMERIC</code> precision that this summary leaves out):</p>
 
 
 
@@ -554,9 +568,38 @@ by its catalog string and never matches a declared neutral type. The intended ma
 
 
 
-<table><thead><tr><th>Neutral type</th><th>BigQuery</th><th>Beam schema</th></tr></thead><tbody><tr><td><code dir="auto">string</code> / <code dir="auto">boolean</code> / <code dir="auto">long</code> / <code dir="auto">double</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOL</code> / <code dir="auto">INT64</code> / <code dir="auto">FLOAT64</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOLEAN</code> / <code dir="auto">INT64</code> / <code dir="auto">DOUBLE</code></td></tr><tr><td><code dir="auto">decimal(p,s)</code></td><td><code dir="auto">NUMERIC</code> = <code dir="auto">decimal(38,9)</code>; <code dir="auto">BIGNUMERIC</code> is wider than <code dir="auto">decimal(38,_)</code>, so it is <code dir="auto">OtherType("BIGNUMERIC", ...)</code></td><td><code dir="auto">DECIMAL</code> (arbitrary precision: <code dir="auto">OtherType</code> unless a precision is declared)</td></tr><tr><td><code dir="auto">date</code> / <code dir="auto">timestamp</code> / <code dir="auto">timestamp_ntz</code></td><td><code dir="auto">DATE</code> / <code dir="auto">TIMESTAMP</code> / <code dir="auto">DATETIME</code></td><td><code dir="auto">DATETIME</code> and the date/time logical types: decide per type when the adapter is written, else <code dir="auto">OtherType</code></td></tr><tr><td><code dir="auto">binary</code></td><td><code dir="auto">BYTES</code></td><td><code dir="auto">BYTES</code></td></tr><tr><td><code dir="auto">array</code> / <code dir="auto">struct</code> / <code dir="auto">map</code></td><td><code dir="auto">ARRAY</code> / <code dir="auto">STRUCT</code> (BigQuery has no map: a repeated <code dir="auto">STRUCT&#x3C;key,value></code> stays an array)</td><td><code dir="auto">ARRAY</code> / <code dir="auto">ROW</code> / <code dir="auto">MAP</code></td></tr><tr><td>no neutral type</td><td><code dir="auto">JSON</code>, <code dir="auto">GEOGRAPHY</code>, <code dir="auto">INTERVAL</code>, <code dir="auto">TIME</code>, <code dir="auto">RANGE</code></td><td><code dir="auto">ITERABLE</code>, custom logical types</td></tr></tbody></table>
-<p>Each adapter documents its own table next to its capability declaration and adds a conformance
-scenario for any type whose mapping is not obvious.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Neutral type</th><th>BigQuery</th><th>Beam schema</th></tr></thead><tbody><tr><td><code dir="auto">string</code> / <code dir="auto">boolean</code> / <code dir="auto">long</code> / <code dir="auto">double</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOL</code> / <code dir="auto">INT64</code> / <code dir="auto">FLOAT64</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOLEAN</code> / <code dir="auto">INT64</code> / <code dir="auto">DOUBLE</code></td></tr><tr><td><code dir="auto">decimal(p,s)</code></td><td><code dir="auto">NUMERIC</code> (default <code dir="auto">(38,9)</code>, or the declared <code dir="auto">(p,s)</code>); <code dir="auto">BIGNUMERIC(p,s)</code> only when <code dir="auto">p &#x3C;= 38</code>, otherwise <code dir="auto">OtherType("BIGNUMERIC", ...)</code></td><td><code dir="auto">DECIMAL</code> carries no precision or scale: <code dir="auto">OtherType("DECIMAL", ...)</code></td></tr><tr><td><code dir="auto">byte</code> / <code dir="auto">short</code> / <code dir="auto">integer</code> / <code dir="auto">float</code></td><td>none (<code dir="auto">INT64</code> and <code dir="auto">FLOAT64</code> only)</td><td><code dir="auto">BYTE</code> / <code dir="auto">INT16</code> / <code dir="auto">INT32</code> / <code dir="auto">FLOAT</code></td></tr><tr><td><code dir="auto">date</code> / <code dir="auto">timestamp</code> / <code dir="auto">timestamp_ntz</code></td><td><code dir="auto">DATE</code> / <code dir="auto">TIMESTAMP</code> (microseconds; a 12-digit one is <code dir="auto">OtherType</code>) / <code dir="auto">DATETIME</code></td><td>the <code dir="auto">SqlTypes.DATE</code> logical type / the primitive <code dir="auto">DATETIME</code> (an instant) / the <code dir="auto">SqlTypes.DATETIME</code> logical type</td></tr><tr><td><code dir="auto">time</code></td><td><code dir="auto">TIME</code></td><td>the <code dir="auto">SqlTypes.TIME</code> logical type</td></tr><tr><td><code dir="auto">json</code></td><td><code dir="auto">JSON</code></td><td>none: Beam reads a BigQuery <code dir="auto">JSON</code> as <code dir="auto">STRING</code>, so it is a <code dir="auto">string</code></td></tr><tr><td><code dir="auto">geography</code></td><td><code dir="auto">GEOGRAPHY</code></td><td>none: read as <code dir="auto">STRING</code></td></tr><tr><td><code dir="auto">interval</code></td><td><code dir="auto">INTERVAL</code></td><td>none (Spark’s calendar interval is <code dir="auto">interval</code>; its year-month and day-time intervals stay <code dir="auto">OtherType</code>)</td></tr><tr><td><code dir="auto">binary</code></td><td><code dir="auto">BYTES</code></td><td><code dir="auto">BYTES</code></td></tr><tr><td><code dir="auto">array</code> / <code dir="auto">struct</code> / <code dir="auto">map</code></td><td><code dir="auto">ARRAY</code> / <code dir="auto">STRUCT</code> (BigQuery has no map: a repeated <code dir="auto">STRUCT&#x3C;key,value></code> stays an array)</td><td><code dir="auto">ARRAY</code> (or <code dir="auto">ITERABLE</code>) / <code dir="auto">ROW</code> / <code dir="auto">MAP</code></td></tr><tr><td>no neutral type</td><td><code dir="auto">RANGE</code></td><td>custom logical types (Beam’s own BigQuery reader rejects <code dir="auto">RANGE</code>)</td></tr></tbody></table>
+<p><code dir="auto">time</code>, <code dir="auto">json</code>, <code dir="auto">geography</code> and <code dir="auto">interval</code> are real logical types (<code dir="auto">LogicalType.TimeType</code>, <code dir="auto">JsonType</code>,
+<code dir="auto">GeographyType</code>, <code dir="auto">IntervalType</code>), so a contract can declare them. An engine without one reports the type
+it does have, and the declaration then fails as a type mismatch rather than passing: the
+<code dir="auto">extended-type-not-produced</code> scenario holds every adapter to that. Each adapter documents its own table
+next to its capability declaration and adds a conformance scenario for any type whose mapping is not
+obvious.</p>
 <p><strong>Events are engine-neutral.</strong> A published event names no engine’s concepts: <code dir="auto">runId</code> is the
 engine’s own run identifier, and <code dir="auto">JobInfo</code> carries <code dir="auto">engine</code>, <code dir="auto">engineVersion</code> and a free-form
 <code dir="auto">engineDetails</code> map for whatever else the adapter wants to record. An adapter fills those in;
@@ -571,12 +614,12 @@ runs, judged against that adapter’s <em>own declaration</em>.</p>
 <p><strong>A scenario</strong> is a contract, a job described in no engine’s terms, and a verdict. The job
 (<code dir="auto">ScenarioJob</code>) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 41 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario’s schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
-invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5) and
-fail-closed behaviour (below).</p>
+invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5),
+fail-closed behaviour, and the analyses (below).</p>
 <p><strong>An adapter</strong> implements <code dir="auto">ConformanceAdapter</code>: its <code dir="auto">AdapterCapabilities</code>, and <code dir="auto">run(...)</code>, which
 turns the neutral job into a real job on its engine, runs it through the <em>real</em> enforcement path, and
 reports <code dir="auto">Passed</code> or <code dir="auto">Rejected(violation types)</code> plus the validation statuses it published. Spark’s
@@ -610,39 +653,81 @@ adapter mixes <code dir="auto">AdapterConformanceSpec</code> into a test, which 
 
 
 <table><thead><tr><th>The adapter declares…</th><th>The scenario’s expected result</th></tr></thead><tbody><tr><td>everything the scenario needs <code dir="auto">supported</code> / <code dir="auto">partial</code></td><td>the neutral verdict, exactly (the same violation types)</td></tr><tr><td>a capability the scenario’s contract relies on <code dir="auto">unsupported</code> (and it <code dir="auto">enforcesContract</code>)</td><td>a rejection including <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> - a quiet pass is a failure</td></tr><tr><td>a needed capability <code dir="auto">not-applicable</code>, or a needed operation unsupported</td><td>the scenario is <strong>canceled</strong> with the adapter’s own note, visible in the report</td></tr><tr><td><code dir="auto">reporting.notifications</code> supported</td><td>exactly one <code dir="auto">PASSED</code> (or <code dir="auto">FAILED</code>) validation event</td></tr></tbody></table>
+<p><strong>Row-level changes and catalog tables have job shapes too.</strong> A <code dir="auto">ScenarioJob</code> with <code dir="auto">rowChange</code> set changes the
+rows of its output in place (a <code dir="auto">DELETE</code>, with or without a predicate) instead of reading and writing; the
+adapter creates the dataset first with no contract active, then runs the change under enforcement. The
+three DML scenarios check that such a change is recognised as a write to its table, that
+<code dir="auto">forbid_unconditional_delete</code> blocks a <code dir="auto">DELETE</code> with no predicate, and that it lets a filtered one
+through. A <code dir="auto">ScenarioOutput</code> with <code dir="auto">registeredAs</code> set registers the data in the engine’s catalog under that
+name; two scenarios check that a contract’s <code dir="auto">catalog: required</code> blocks a bare path and allows a catalog
+table. Spark runs the DML scenarios on a Delta table (the conformance session enables Delta, which
+changes nothing for the parquet, csv and json scenarios).</p>
 <p><strong>Fail-closed has its own job shape.</strong> A <code dir="auto">ScenarioJob</code> with <code dir="auto">untranslatableWrite</code> set is not a
 read-transform-write at all but a data-changing operation the adapter has no translation for; the
 adapter picks its engine’s representative (Spark: <code dir="auto">TRUNCATE TABLE</code> on a managed table) and must block
 it as <code dir="auto">UNVERIFIABLE_WRITE</code> rather than let it through unchecked. This is the property that makes
 “supported” safe to rely on, so it is verified, not attested.</p>
+<p><strong>Streaming and boundaries are job shapes too.</strong> <code dir="auto">streaming</code> reads the one input as a stream and writes the
+output as a stream sink, run to completion; two scenarios hold it to the batch job’s verdicts (the stream is
+the declared input, a sink elsewhere is blocked). <code dir="auto">boundary</code> runs the work so far (read, join, filter)
+through the engine’s checkpoint or cache before the projection; the scenarios require a filter made before
+the boundary to still satisfy a <code dir="auto">required_filter_columns</code> rule, no declared input to be reported hidden, and
+a genuinely unread input to still be missing. An adapter that cannot see through its boundary fails them.</p>
+<p><strong>The analyses are read from what the run reported and from the adapter’s own translation.</strong> The outcome
+carries the static data-quality results, the role-consistency verdicts and the inputs reported hidden
+behind a boundary, all read off the last <code dir="auto">ContractValidationEvent</code> (so an adapter fills them in by finishing
+a run with <code dir="auto">RecordingSink.passed</code> / <code dir="auto">rejected(...)</code>, never by building an outcome by hand). Lineage and
+sensitivity are properties of the translated <code dir="auto">ir.Plan</code>, and no event carries them, so the adapter exposes
+its translation (<code dir="auto">ConformanceAdapter.translation</code>: the plan its enforcement would check for a neutral job,
+nothing written) and the kit runs <code dir="auto">ir.Lineage</code> and <code dir="auto">SensitivityLineage</code> over it, comparing with what the
+scenario says each output column derives from. An adapter that claims either capability and exposes no
+translation diverges: a claim the kit cannot look at is not a pass.</p>
 <p>An exception out of <code dir="auto">run</code> is a divergence, not a verdict. A capability an adapter claims that no
 scenario is evidence for is listed as <em>unverified</em>, never counted as passing, and the report says which
 kind of unverified it is: <strong>attested</strong> (<code dir="auto">Scenarios.attested</code>) when no job could check it by its nature</p>
 <ul>
 <li>how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
 adapter’s own tests carry it; or a <strong>gap</strong> (<code dir="auto">Scenarios.gaps</code>) when a job could check it but the kit
-cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit’s own tests fail
-if a capability is in neither list or in both.</li>
+cannot yet. There are no gaps today: every capability a job can show is shown by a scenario. The kit’s own
+tests fail if a capability is in neither list or in both.</li>
 </ul>
+<p><strong>Attested claims have a standard shape.</strong> For each attested capability an adapter declares <code dir="auto">supported</code> or
+<code dir="auto">partial</code>, the adapter names the test that demonstrates it (<code dir="auto">Attestation(suite, test)</code>), by mixing
+<code dir="auto">AttestedClaimsSpec</code> into a test (Spark’s is <code dir="auto">SparkAttestedClaimsSpec</code>). The kit checks the named test exists
+(the suite loads and has a test of that exact name), that no attestation is left for a capability the adapter
+does not claim, and that nothing is attested that a scenario already checks; <code dir="auto">AttestedClaims.requirements</code>
+says what each test must show, which is the review checklist for the named test (the kit cannot judge
+that). A rename or deletion of the test fails the build, and a new claim without a test fails it too. The generated engine-capabilities page says the same per
+capability in its <em>Suite check</em> column (<code dir="auto">verified (n)</code>, <code dir="auto">attested</code>, <code dir="auto">gap</code>); the page is generated by the
+kit, not by <code dir="auto">verification-core</code>, because only the kit knows the scenarios (<code dir="auto">./dev/capabilities</code>).</p>
 <p><strong>The kit is tested against itself.</strong> <code dir="auto">ReferenceAdapter</code> is a complete adapter built on nothing but
 the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
 scenarios are consistent with the SPI before any real engine is involved. Then deliberately dishonest
 adapters must be caught: one that claims <code dir="auto">check.format</code> but never checks it fails exactly the format
 scenario; one that lets everything through fails every scenario expecting a rejection; one that
 blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
-none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5, 21 with fail-closed).</p>
+none fails all of them; one that throws is a divergence.</p>
+<p><strong>Every scenario is also shown to be able to fail.</strong> <code dir="auto">BrokenAdapterSpec</code> subclasses the reference adapter
+with one mistake at a time - a filter lost in translation, a join lost, a format spelled the engine’s own
+way, a catalog identity never reported, a unique-id function under its native name, a column’s derivation
+lost, a stream not recognised as a read, a checkpoint it cannot see through, and so on - and lists the
+scenarios that must catch each. The suite fails if a mistake gets past one of them, and fails if a scenario
+is the target of no mistake and is not listed as a control with the reason (the ones left are the shared
+checks <code dir="auto">verification-core</code> already holds, and the control for each option’s default). A scenario added
+later therefore arrives with the mistake it is there to catch; one that nothing could make fail says
+nothing about a real adapter.</p>
 <p><strong>Adding an adapter</strong> is therefore: write its capability declaration, implement <code dir="auto">ConformanceAdapter</code>,
 mix in <code dir="auto">AdapterConformanceSpec</code>, and see which scenarios fail or are canceled. Where Spark’s own
 behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
 third place for the difference to hide.</p>
-<p><strong>Not done in 4, deliberately.</strong> The scenario language has no streaming, row-level DML, catalog or
-checkpoint shapes yet (see <code dir="auto">Scenarios.notCovered</code>); each grows the neutral job description and is its own
-step. The kit is not mutation-tested (it is test infrastructure, like <code dir="auto">plugin</code>/<code dir="auto">runner</code>; its
-<code dir="auto">ConformanceKitSpec</code> is the equivalent proof that it fails what it should), but it is held to the
-other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
-coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
-<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code> job needs a table format that supports it (Delta or Iceberg on Spark),
-which a plain local session does not have.</p>
+<p><strong>Held to the same gates as the engine.</strong> The kit is held to all three: MiMa (it is what a third-party adapter compiles its tests against),
+line/branch coverage, and mutation testing (<code dir="auto">mutation-testing-adapter-testkit</code>; a whole-module score of 88.1%
+measured with the break threshold at 70%). It defines “conformant”, so a judge or a reference translation a
+mutant can change without <code dir="auto">ConformanceKitSpec</code> noticing would be a hole in every adapter’s guarantee.
+<code dir="auto">Scenarios.scala</code> alone is excluded: it is the declarative catalogue, and the code Stryker injects pushes its
+object initialiser past the JVM’s 64KB method limit; the reference adapter and every real adapter’s run hold
+its content. It is published to Maven Central with the other engine modules (<code dir="auto">docs/RELEASING.md</code>), because a third-party
+adapter compiles its conformance tests against it.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="stage-5--function-canonicalisation">Stage 5 — function canonicalisation</h2><a class="sl-anchor-link" href="#stage-5--function-canonicalisation"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 5 — function canonicalisation”</span></a></div>
 <p>Leak #4: an IR <code dir="auto">Function</code> carried whatever name its engine’s translator wrote - Spark’s <code dir="auto">prettyName</code></p>
 <ul>
