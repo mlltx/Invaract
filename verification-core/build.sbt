@@ -144,6 +144,16 @@ libraryDependencies ++= Seq(
   "com.fasterxml.jackson.core" % "jackson-annotations" % "2.18.11" % "test"
 )
 
+// A snappy-java dependencyOverrides entry (CVE-2023-43642, GHSA-55g7-9cwv-5qfv)
+// lived here briefly, pinning the org.xerial.snappy:snappy-java:1.1.8.2 that
+// org.apache.hadoop:hadoop-client-api/hadoop-client-runtime transitively
+// resolved. That Hadoop dependency - and the snappy-java exposure that came
+// with it - left this module in the same review pass that moved
+// HadoopFsNotificationSink to spark-adapter (see this file's own
+// "Deliberately no Hadoop here" comment above): with no Hadoop dependency,
+// there is nothing left for that override to pin. spark-adapter, which now
+// hosts HadoopFsNotificationSink, already carries its own snappy-java
+// override at the same 1.1.10.4 (see its build.sbt).
 assembly / assemblyJarName := "invaract-verification-core-0.4.0.jar"
 
 scalacOptions ++= Seq(
