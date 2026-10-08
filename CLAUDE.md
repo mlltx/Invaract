@@ -395,6 +395,12 @@ position; regenerate the docs-site matrix with `./dev/capabilities` (a drift tes
 `adapter-testkit` fails otherwise; the kit generates it because the page also says how the
 conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
 
+**Adding an adapter for a new engine** follows `docs/ADDING_AN_ENGINE_ADAPTER.md` (investigate the engine, then
+`dev/new-adapter <engine>`, then walk the kit's scenarios one capability at a time). `modules.json` is the one
+list of the repository's sbt modules; `.github/scripts/check_modules.py` (CI's "Workflow script tests" job) fails
+when any file that lists modules - the CI loops, the release steps, `dev/build`, the warm-up list, the dependency
+graph, the mutation jobs - disagrees with it, naming the file and line. A new module is added there first.
+
 **Every adapter is checked against its own declaration** by the conformance kit
 (`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
 and each must come out as the adapter's declaration promises (a capability declared
@@ -633,6 +639,8 @@ would be.
 │   ├── next.config.js
 │   └── .eslintrc.json
 │
+├── modules.json                  # The one list of the repository's sbt modules (checked by check_modules.py)
+├── adapter-scaffold/             # Templates dev/new-adapter turns into a new engine adapter module
 ├── dev/                          # Development scripts
 │   ├── build                    # Builds all 5 modules in dependency order
 │   ├── test                     # End-to-end harness run (7-step verification)

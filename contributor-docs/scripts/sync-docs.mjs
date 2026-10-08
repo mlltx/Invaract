@@ -82,6 +82,13 @@ const PAGES = [
     order: 7,
   },
   {
+    src: 'docs/ADDING_AN_ENGINE_ADAPTER.md',
+    slug: 'design/adding-an-engine-adapter',
+    section: 'Design Docs',
+    label: 'Adding an Engine Adapter',
+    order: 8,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

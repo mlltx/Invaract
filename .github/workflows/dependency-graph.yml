@@ -32,11 +32,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Kept in sync by hand with the module list in test.yml's `sbom`
-        # job (and, transitively, dev/build's own dependency order) -
-        # there's no single source of truth across the three, so a new
-        # module added to one needs the same edit made in the others.
-        module: [contract, ir, fingerprint, verification-core, plugin, runner, spark-adapter, notification-kafka]
+        # Every module in modules.json - .github/scripts/check_modules.py (CI's "Module registry
+        # check") fails when this list and the registry disagree.
+        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, notification-kafka, registry-client]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -71,18 +69,23 @@ jobs:
       # triggers on a push to main and fingerprint's own real dependency on
       # ir predates that run.
       - name: Publish local dependencies for ${{ matrix.module }}
-        if: matrix.module == 'fingerprint' || matrix.module == 'verification-core' || matrix.module == 'spark-adapter' || matrix.module == 'runner'
+        if: matrix.module == 'fingerprint' || matrix.module == 'verification-core' || matrix.module == 'adapter-testkit' || matrix.module == 'spark-adapter' || matrix.module == 'runner' || matrix.module == 'registry-client'
         run: |
           if [ "${{ matrix.module }}" = "fingerprint" ]; then
             cd ir && sbt -batch publishLocal && cd ..
           fi
-          if [ "${{ matrix.module }}" = "verification-core" ] || [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
+          if [ "${{ matrix.module }}" = "verification-core" ] || [ "${{ matrix.module }}" = "adapter-testkit" ] || [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
             cd contract && sbt -batch publishLocal && cd ..
             cd ir && sbt -batch publishLocal && cd ..
             cd fingerprint && sbt -batch publishLocal && cd ..
           fi
-          if [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
+          if [ "${{ matrix.module }}" = "registry-client" ]; then
+            cd contract && sbt -batch publishLocal && cd ..
+          fi
+          if [ "${{ matrix.module }}" = "adapter-testkit" ] || [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
             cd verification-core && sbt -batch publishLocal && cd ..
+          fi
+          if [ "${{ matrix.module }}" = "spark-adapter" ] || [ "${{ matrix.module }}" = "runner" ]; then
             cd adapter-testkit && sbt -batch publishLocal && cd ..
           fi
           if [ "${{ matrix.module }}" = "runner" ]; then

@@ -1293,6 +1293,17 @@ jobs:
         shell: bash
         run: cd .github/scripts && python3 -m unittest -v test_runner_loss
 
+      # modules.json is the one list of the repository's sbt modules; every file that keeps its own
+      # (the CI loops, the release steps, dev/build, the warm-up list, the dependency graph, the mutation
+      # jobs) must agree with it, and each adapter must run the conformance kit. See check_modules.py.
+      - name: Unit-test check_modules.py and dev/new-adapter
+        shell: bash
+        run: cd .github/scripts && python3 -m unittest -v test_check_modules test_new_adapter
+
+      - name: Module registry check (modules.json against every file that lists modules)
+        shell: bash
+        run: python3 .github/scripts/check_modules.py
+
       - name: memwatch.sh passes the wrapped command's exit status through
         shell: bash
         run: |
@@ -1303,6 +1314,34 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 7 || { echo "expected exit status 7, got $status"; exit 1; }
+
+  adapter-scaffold-check:
+    name: Adapter scaffold check (dev/new-adapter builds and passes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # dev/new-adapter generates the skeleton a new engine adapter starts from (docs/ADDING_AN_ENGINE_ADAPTER.md).
+    # A template nobody builds rots: it would drift from the kit's API or the sibling modules' versions and
+    # then fail the first person who used it. So every run generates a skeleton into a scratch directory
+    # (without registering it) and builds and tests it against the modules as they are now. As generated, every
+    # capability is declared unsupported, so every conformance scenario is canceled and the build passes; what
+    # fails here is a template that no longer compiles.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish the engine modules and the conformance kit locally
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Generate a skeleton
+        shell: bash
+        run: python3 dev/new-adapter scaffoldcheck --display ScaffoldCheck --out "$RUNNER_TEMP/scaffold"
+
+      - name: Build and test the skeleton
+        shell: bash
+        run: cd "$RUNNER_TEMP/scaffold/scaffoldcheck-adapter" && sbt test
 
   api-compatibility:
     name: API compatibility (contract, ir, fingerprint, verification-core, spark-adapter)
@@ -1608,12 +1647,12 @@ jobs:
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else

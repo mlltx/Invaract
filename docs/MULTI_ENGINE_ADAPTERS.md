@@ -467,7 +467,9 @@ later therefore arrives with the mistake it is there to catch; one that nothing 
 nothing about a real adapter.
 
 **Adding an adapter** is therefore: write its capability declaration, implement `ConformanceAdapter`,
-mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. Where Spark's own
+mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. The step-by-step process, the
+questions to answer about an engine first, and the generator (`dev/new-adapter`) that creates the module and
+registers it in `modules.json` are in `docs/ADDING_AN_ENGINE_ADAPTER.md`. Where Spark's own
 behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
 third place for the difference to hide.
 
