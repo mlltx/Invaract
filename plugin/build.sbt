@@ -10,7 +10,13 @@ organization := "com.invaract"
 // POM still declares the same jackson-module-scala:2.15.2 as 3.5.1 does,
 // so this doesn't reopen that module's Netty->Arrow->Jackson conflict
 // class.
-val sparkVersion = "3.5.7"
+//
+// 3.5.7 -> 3.5.9: CVE-2026-32773 / GHSA-9437-39hj-3c93 (Spark History
+// Server stored XSS via unescaped application names, fixed in 3.5.8;
+// 3.5.7 was still affected) - see spark-adapter/build.sbt's comment for
+// the full detail, including why 3.5.9 rather than the bare-minimum
+// 3.5.8.
+val sparkVersion = "3.5.9"
 
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",

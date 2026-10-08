@@ -87,9 +87,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.7-hadoop3
+          key: spark-${{ runner.os }}-3.5.9-hadoop3
 
-      - name: Download Spark 3.5.7
+      - name: Download Spark 3.5.9
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         # On windows-latest, $RUNNER_TEMP is a native path (D:\a\_temp\...).
@@ -100,7 +100,7 @@ jobs:
         # path everywhere; it's a no-op passthrough on Linux/macOS where
         # cygpath doesn't exist.
         run: |
-          SPARK_VERSION="3.5.7"
+          SPARK_VERSION="3.5.9"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
 
@@ -111,7 +111,7 @@ jobs:
           fi
           SPARK_DIR="${RUNNER_TEMP_POSIX}/spark"
 
-          echo "Installing Apache Spark 3.5.7..."
+          echo "Installing Apache Spark 3.5.9..."
           curl -fsSL "$SPARK_URL" -o "${RUNNER_TEMP_POSIX}/spark.tgz"
           mkdir -p "$SPARK_DIR"
           tar -xzf "${RUNNER_TEMP_POSIX}/spark.tgz" -C "$SPARK_DIR" --strip-components=1
@@ -228,7 +228,7 @@ jobs:
 
       # Validates the same path a contributor with only Docker installed
       # takes via ./dev/regression-docker: build docker/Dockerfile (JDK 21,
-      # sbt, Spark 3.5.7, every module built at image-build time) and run
+      # sbt, Spark 3.5.9, every module built at image-build time) and run
       # it. docker run's exit code is dev/regression's — non-zero fails
       # this step, and therefore the job, exactly as a local run would.
       #
@@ -634,13 +634,13 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.7-hadoop3
+          key: spark-${{ runner.os }}-3.5.9-hadoop3
 
-      - name: Download Spark 3.5.7
+      - name: Download Spark 3.5.9
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          SPARK_VERSION="3.5.7"
+          SPARK_VERSION="3.5.9"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
           SPARK_DIR="${RUNNER_TEMP}/spark"
@@ -727,13 +727,13 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/spark
-          key: spark-${{ runner.os }}-3.5.7-hadoop3
+          key: spark-${{ runner.os }}-3.5.9-hadoop3
 
-      - name: Download Spark 3.5.7
+      - name: Download Spark 3.5.9
         if: steps.cache-spark.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          SPARK_VERSION="3.5.7"
+          SPARK_VERSION="3.5.9"
           SPARK_PACKAGE="spark-${SPARK_VERSION}-bin-hadoop3"
           SPARK_URL="https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz"
           SPARK_DIR="${RUNNER_TEMP}/spark"

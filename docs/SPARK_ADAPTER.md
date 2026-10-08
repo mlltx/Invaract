@@ -3445,12 +3445,20 @@ for the currently-supported floor, Spark 3.5.x: it runs this module's
 subset — against every 3.5.x patch this repo claims to support (currently
 3.5.6, 3.5.7, 3.5.9), one job per patch. `spark-adapter/build.sbt`'s
 `sparkVersion` val reads an `INVARACT_TEST_SPARK_VERSION` environment
-variable (falling back to `3.5.7`, today's real pin, when unset — so a
-plain local `sbt test` is unaffected):
+variable (falling back to `supported-versions.properties`' `spark.primary`,
+`3.5.9` today's real pin, when unset — so a plain local `sbt test` is
+unaffected):
 
 ```scala
-val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", "3.5.7")
+val sparkVersion = sys.env.getOrElse("INVARACT_TEST_SPARK_VERSION", primaryVersion("spark.primary"))
 ```
+
+(`3.5.7` was the pin until CVE-2026-32773 / GHSA-9437-39hj-3c93 — a Spark
+History Server stored-XSS issue patched in 3.5.8 — showed 3.5.7 was still
+affected; see `docs/CVE_REMEDIATION.md`'s worked example for the full
+detail. 3.5.9 was already this repo's newest `spark.verified` entry with
+its own passing matrix leg, so the fix promotes to it rather than the
+bare-minimum 3.5.8.)
 
 Run a single leg locally with:
 

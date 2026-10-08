@@ -91,8 +91,8 @@ marked "Verified" on every push, not a one-time spot check. See
 |-------|--------|-------|
 | < 3.5.6 (incl. 3.5.1) | Not supported | Fails for real, confirmed by CI, not assumed: `delta-spark` 3.3.3 (this module's pinned Delta version) needs a class (`SupportsNonDeterministicExpression`) that doesn't exist before Spark 3.5.6, so any spec building a Delta-extended session aborts with `ClassNotFoundException`. |
 | 3.5.6 | <!-- generate-version-docs:BEGIN spark 3.5.6 -->✓ Verified<!-- generate-version-docs:END --> | Floor of the supported range — the actual, CI-confirmed floor, not 3.5.1. |
-| 3.5.7 | <!-- generate-version-docs:BEGIN spark 3.5.7 -->✓ Verified, Primary<!-- generate-version-docs:END --> | Current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
-| 3.5.9 | <!-- generate-version-docs:BEGIN spark 3.5.9 -->✓ Verified<!-- generate-version-docs:END --> | Newest verified patch. |
+| 3.5.7 | <!-- generate-version-docs:BEGIN spark 3.5.7 -->✓ Verified<!-- generate-version-docs:END --> | Verified patch. No longer the default — superseded by 3.5.9 below after CVE-2026-32773 (GHSA-9437-39hj-3c93, Spark History Server stored XSS) showed 3.5.7 was still affected. |
+| 3.5.9 | <!-- generate-version-docs:BEGIN spark 3.5.9 -->✓ Verified, Primary<!-- generate-version-docs:END --> | Newest verified patch, and the current default (`spark-adapter/build.sbt`'s `sparkVersion`); what a real `./dev/test` run installs. |
 | Other 3.5.x ≥ 3.5.6 | Expected, unverified | Spark's own patch releases don't change Catalyst's plan shapes, but only the three rows above are actually CI-checked. |
 | 3.4.x | Not supported | Never verified; not a claim this repo makes. |
 | 4.x | Not supported | Requires Scala 2.13 (Spark 4.0 dropped 2.12); this repo has no Scala cross-build. A real project, not a CI-leg addition — see `docs/SPARK_ADAPTER.md`'s "Deferred: Spark 4.x" note. |

@@ -1304,6 +1304,14 @@ alert text I was given did not state an upstream severity or CVE ID.
       2.x-line fix accepted as risk, and two alerts (Guava DoS,
       `commons-lang` recursion) confirmed as duplicates of §7b's existing
       accepted-risk decisions rather than new work.
+- [x] Fix the Spark History Server stored-XSS CVE (CVE-2026-32773,
+      GHSA-9437-39hj-3c93, Direct dependency, Low/Moderate depending on
+      source) — Spark 3.5.7 → 3.5.9 (this change). See §7o: a second,
+      distinct Spark CVE from §7e's (unescaped application names, not the
+      Jackson deserialization RCE), patched in 3.5.8; promoted straight to
+      3.5.9 since it was already this repo's newest verified/CI-proven
+      patch, confirmed via `./dev/test` and `./dev/regression` with a real
+      `spark-submit` 3.5.9.
 - [ ] Walk the rest of the Scala/Maven bucket per §4's manual workflow,
       batched per §5 — one coordinate (or tightly-related group, per §7a's
       Netty→Arrow→Jackson chain) at a time, real test suite run after
