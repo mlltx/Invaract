@@ -67,11 +67,10 @@ jobs:
             dir=$(find "$staging" -mindepth 1 -maxdepth 1 -type d | head -1)
             echo "=== $module: $dir ==="
             ls "$dir"
-            for kind in '.pom' '.jar' '-sources.jar' '-javadoc.jar'; do
-              file=$(ls "$dir"/*"$kind" 2>/dev/null | grep -v -e '-sources.jar$' -e '-javadoc.jar$' -e '.asc$' | head -1 || true)
-              if [ "$kind" = '-sources.jar' ] || [ "$kind" = '-javadoc.jar' ]; then file=$(ls "$dir"/*"$kind" 2>/dev/null | head -1 || true); fi
-              if [ -z "$file" ]; then echo "::error::$module: missing *$kind"; fail=1; continue; fi
-              if [ ! -f "$file.asc" ]; then echo "::error::$module: $(basename "$file") has no .asc signature"; fail=1; fi
+            pom=$(ls "$dir"/*.pom | head -1); base=${pom%.pom}
+            for f in "$base.pom" "$base.jar" "$base-sources.jar" "$base-javadoc.jar"; do
+              [ -f "$f" ] || { echo "::error::$module: missing $(basename "$f")"; fail=1; continue; }
+              [ -f "$f.asc" ] || { echo "::error::$module: $(basename "$f") has no .asc signature"; fail=1; }
             done
           done
           exit $fail

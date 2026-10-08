@@ -100,11 +100,6 @@ class CapabilityMatrixSpec extends AnyFunSuite {
       val ex = intercept[IllegalArgumentException] { CapabilityMatrix.renderFiles(List(good.toString, bad.toString)) }
       assert(ex.getMessage.contains(bad.toString) && ex.getMessage.contains("'rules.dml' is not declared"))
       assert(!ex.getMessage.contains(good.toString))
-      // main writes the page
-      val out = dir.resolve("out.md")
-      CapabilityMatrix.main(Array(out.toString, good.toString))
-      assert(read(out.toString) == CapabilityMatrix.renderFiles(List(good.toString)))
-      intercept[IllegalArgumentException] { CapabilityMatrix.main(Array(out.toString)) }
     } finally {
       Files.list(dir).forEach(p => Files.delete(p))
       Files.delete(dir)

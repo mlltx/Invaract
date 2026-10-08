@@ -3,6 +3,8 @@
 
 package com.invaract.verification.notification
 
+import com.invaract.contract.ReflectivePluginResolver
+
 /** Builds the `NotificationSink` a `NotificationConfig` describes. */
 object NotificationSinkFactory {
 
@@ -41,20 +43,7 @@ object NotificationSinkFactory {
     * constructor). Shared by `create` and by sinks that build a sink of their own from
     * configuration, such as `HttpNotificationSink`'s dead letter.
     */
-  def instantiate(className: String): NotificationSink = {
-    def cannotInstantiate(e: Throwable) =
-      new IllegalArgumentException(
-        s"Could not instantiate notification sink '$className' (it needs a public no-arg constructor)",
-        e
-      )
-    // Loaded without initializing and checked before construction, so naming a class that is not a sink
-    // never runs its static initializer or constructor (the same rule as `ReflectivePluginResolver`).
-    val loaded =
-      try Class.forName(className, false, getClass.getClassLoader)
-      catch { case e: ReflectiveOperationException => throw cannotInstantiate(e) }
-    if (!classOf[NotificationSink].isAssignableFrom(loaded))
-      throw new IllegalArgumentException(s"'$className' does not implement NotificationSink")
-    try loaded.getDeclaredConstructor().newInstance().asInstanceOf[NotificationSink]
-    catch { case e: ReflectiveOperationException => throw cannotInstantiate(e) }
-  }
+  def instantiate(className: String): NotificationSink =
+    // Uncached on purpose: a sink is stateful, so each caller gets its own.
+    ReflectivePluginResolver.instantiate[NotificationSink](className)
 }

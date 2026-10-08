@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, LogicalSchema, LogicalType}
 import com.invaract.testkit.{ColumnSource, ConformanceAdapter, RecordingSink, RowChange, ScenarioJob, ScenarioOutcome}
 import com.invaract.verification.{AdapterCapabilities, ContractViolationException, VerificationOptions}
 
-import org.apache.spark.sql.{Column, Row, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions.{expr, lit}
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -51,50 +51,35 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
   override def capabilities: AdapterCapabilities =
     SparkCapabilities.declared.getOrElse(throw new IllegalStateException("Spark's capability declaration did not load"))
 
-  override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
-    val base = scratch.resolve(scenarioId)
-    def path(location: String): String = base.resolve(location).toString
+  override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome =
+    if (job.untranslatableWrite) runUntranslatable(scenarioId, contract, options)
+    else
+      job.rowChange match {
+        case Some(change) => runRowChange(scenarioId, contract, job, change, options)
+        case None         => runTransform(scenarioId, contract, job, options)
+      }
 
-    if (job.untranslatableWrite) return runUntranslatable(scenarioId, contract, options)
-    job.rowChange.foreach(change => return runRowChange(scenarioId, contract, job, change, options))
-
-    job.inputs.foreach { input =>
-      val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema))
-      empty.write.mode("overwrite").parquet(path(input.location))
-    }
-
-    val frames = job.inputs.map(i => spark.read.parquet(path(i.location)))
+  /** The ordinary job: read the inputs, filter, join, project, write. */
+  private def runTransform(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
+    val frames = inputFrames(scenarioId, job)
     val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
     val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
-    val columns: List[Column] = job.columns.map { c =>
-      (c.source match {
-        case ColumnSource.FromInput(i, col)    => frames(i)(col)
-        case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
-        case ColumnSource.NonNullLong(v)       => lit(v)
-        case ColumnSource.UniqueId             => expr("uuid()")
-      }).as(c.name)
-    }
-    val result = filtered.select(columns: _*)
+    val result = filtered.select(selectColumns(job, frames): _*)
+    val target = path(scenarioId, job.output.location)
     // A write that registers a catalog table is an append onto a table that already exists: Spark plans a
     // `.saveAsTable()` that creates a new table as an outer command plus a nested insert that carries no
-    // catalog identity, which a `catalog.required` contract then rejects (docs/SPARK_ADAPTER.md, "Known gaps").
+    // catalog identity, which a `catalog.required` contract then rejects (docs/SPARK_ADAPTER.md, "Known limitations").
     // So the table is created first, with no contract active, and only the registered write is checked.
     job.output.registeredAs.foreach { table =>
-      result.limit(0).write.format(job.output.format).mode("overwrite").option("path", path(job.output.location)).saveAsTable(table)
+      result.limit(0).write.format(job.output.format).mode("overwrite").option("path", target).saveAsTable(table)
     }
-
-    val sink = new RecordingSink
-    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
-    try {
+    enforced(contract, options) {
       val writer = result.write.format(job.output.format).mode(job.output.saveMode)
       job.output.registeredAs match {
         case Some(table) => writer.insertInto(table)
-        case None        => writer.save(path(job.output.location))
+        case None        => writer.save(target)
       }
-      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
-    } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
-    } finally active = None
+    }
   }
 
   /** Spark's representative of "a data-changing operation the adapter has no translation for": `TRUNCATE TABLE` on a
@@ -102,16 +87,9 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     * on the known-safe list. The table is created while no contract is active, so only the truncate is checked.
     */
   private def runUntranslatable(scenarioId: String, contract: Contract, options: VerificationOptions): ScenarioOutcome = {
-    val table = "conformance_" + scenarioId.replace('-', '_')
+    val table = tableName(scenarioId)
     spark.sql(s"CREATE TABLE IF NOT EXISTS $table (id BIGINT) USING parquet")
-    val sink = new RecordingSink
-    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
-    try {
-      spark.sql(s"TRUNCATE TABLE $table")
-      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
-    } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
-    } finally active = None
+    enforced(contract, options)(spark.sql(s"TRUNCATE TABLE $table"))
   }
 
   /** Spark's representative of a row-level change: a Delta `DELETE FROM` on a catalog table over a Delta path.
@@ -122,11 +100,45 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     */
   private def runRowChange(scenarioId: String, contract: Contract, job: ScenarioJob, change: RowChange, options: VerificationOptions): ScenarioOutcome = {
     val target = path(scenarioId, job.output.location)
+    val frames = inputFrames(scenarioId, job)
+    frames.head.select(selectColumns(job, frames): _*).write.format("delta").mode("overwrite").save(target)
+    val table = tableName(scenarioId)
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $table USING delta LOCATION '${target.replace('\\', '/')}'")
+    val where = change match {
+      case RowChange.UnconditionalDelete => ""
+      case RowChange.FilteredDelete      => " WHERE id > 0"
+    }
+    enforced(contract, options)(spark.sql(s"DELETE FROM $table$where").collect())
+  }
+
+  /** Runs `body` with the contract enforced - the same rule `InvaractSparkSessionExtension` installs - and reports
+    * what happened: a clean run is `Passed`, a `ContractViolationException` is `Rejected` with its violation types.
+    * Everything the scenario needs to exist is created before this, while no contract is active.
+    */
+  private def enforced(contract: Contract, options: VerificationOptions)(body: => Unit): ScenarioOutcome = {
+    val sink = new RecordingSink
+    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
+    try {
+      body
+      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
+    } catch {
+      case e: ContractViolationException =>
+        ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
+    } finally active = None
+  }
+
+  /** The scenario's inputs as empty parquet datasets of their schema (every check is about shape, not values),
+    * read back as the frames the job works on.
+    */
+  private def inputFrames(scenarioId: String, job: ScenarioJob): List[DataFrame] = {
     job.inputs.foreach { input =>
       spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite").parquet(path(scenarioId, input.location))
     }
-    val frames = job.inputs.map(i => spark.read.parquet(path(scenarioId, i.location)))
-    val columns: List[Column] = job.columns.map { c =>
+    job.inputs.map(i => spark.read.parquet(path(scenarioId, i.location)))
+  }
+
+  private def selectColumns(job: ScenarioJob, frames: List[DataFrame]): List[Column] =
+    job.columns.map { c =>
       (c.source match {
         case ColumnSource.FromInput(i, col)    => frames(i)(col)
         case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
@@ -134,23 +146,8 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
         case ColumnSource.UniqueId             => expr("uuid()")
       }).as(c.name)
     }
-    frames.head.select(columns: _*).write.format("delta").mode("overwrite").save(target)
-    val table = "conformance_" + scenarioId.replace('-', '_')
-    spark.sql(s"CREATE TABLE IF NOT EXISTS $table USING delta LOCATION '${target.replace('\\', '/')}'")
 
-    val sink = new RecordingSink
-    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
-    try {
-      val where = change match {
-        case RowChange.UnconditionalDelete => ""
-        case RowChange.FilteredDelete      => " WHERE id > 0"
-      }
-      spark.sql(s"DELETE FROM $table$where").collect()
-      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
-    } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
-    } finally active = None
-  }
+  private def tableName(scenarioId: String): String = "conformance_" + scenarioId.replace('-', '_')
 
   private def path(scenarioId: String, location: String): String = scratch.resolve(scenarioId).resolve(location).toString
 

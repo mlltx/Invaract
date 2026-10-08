@@ -194,6 +194,27 @@ object ContractValidator {
     )
   }
 
+  /** A warning (never an error - these vocabularies are open) when `value` is set and outside `all`: only an adapter
+    * reporting exactly that string can match it. `consequence`, when non-empty, is appended after the common reason.
+    */
+  private def nonCanonicalWarning(
+      path: String,
+      label: String,
+      value: Option[String],
+      plural: String,
+      all: Set[String],
+      isCanonical: String => Boolean,
+      consequence: String
+  ): List[ValidationIssue] =
+    value.filterNot(isCanonical).toList.map { v =>
+      ValidationIssue(
+        ValidationSeverity.Warning,
+        path,
+        s"$label '$v' is not one of the canonical $plural (${all.toList.sorted.mkString(", ")}); " +
+          "it can only match an adapter that reports exactly this string" + (if (consequence.isEmpty) "" else s", $consequence")
+      )
+    }
+
   private def validateDataset(path: String, dataset: Dataset): List[ValidationIssue] = {
     val issues = List.newBuilder[ValidationIssue]
 
@@ -219,32 +240,12 @@ object ContractValidator {
       }
     }
 
-    dataset.saveMode.filterNot(SaveModes.isCanonical).foreach { mode =>
-      issues += ValidationIssue(
-        ValidationSeverity.Warning,
-        s"$path.saveMode",
-        s"saveMode '$mode' is not one of the canonical write modes (${SaveModes.All.toList.sorted.mkString(", ")}); " +
-          "it can only match an adapter that reports exactly this string, so the same contract may fail on another engine"
-      )
-    }
-
-    dataset.format.filterNot(Formats.isCanonical).foreach { format =>
-      issues += ValidationIssue(
-        ValidationSeverity.Warning,
-        s"$path.format",
-        s"format '$format' is not one of the canonical formats (${Formats.All.toList.sorted.mkString(", ")}); " +
-          "it can only match an adapter that reports exactly this string, so the same contract may fail on another engine"
-      )
-    }
-
-    dataset.catalog.flatMap(_.technology).filterNot(CatalogTechnologies.isCanonical).foreach { technology =>
-      issues += ValidationIssue(
-        ValidationSeverity.Warning,
-        s"$path.catalog.technology",
-        s"catalog technology '$technology' is not one of the canonical technologies " +
-          s"(${CatalogTechnologies.All.toList.sorted.mkString(", ")}); it can only match an adapter that reports exactly this string"
-      )
-    }
+    issues ++= nonCanonicalWarning(s"$path.saveMode", "saveMode", dataset.saveMode, "write modes", SaveModes.All, SaveModes.isCanonical,
+      "so the same contract may fail on another engine")
+    issues ++= nonCanonicalWarning(s"$path.format", "format", dataset.format, "formats", Formats.All, Formats.isCanonical,
+      "so the same contract may fail on another engine")
+    issues ++= nonCanonicalWarning(s"$path.catalog.technology", "catalog technology", dataset.catalog.flatMap(_.technology), "technologies",
+      CatalogTechnologies.All, CatalogTechnologies.isCanonical, "")
 
     if (dataset.schema.fields.isEmpty) {
       issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", "Schema must declare at least one field")

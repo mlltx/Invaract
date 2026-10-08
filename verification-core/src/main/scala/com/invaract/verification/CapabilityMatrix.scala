@@ -6,14 +6,6 @@ package com.invaract.verification
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
-/** Renders the engine capability matrix - what every adapter verifies and where it can stop a bad
-  * write - from the adapters' own `AdapterCapabilities` declarations, so the documentation can never
-  * disagree with them: it is generated, and a test fails if the committed page differs from what this
-  * produces (see `CapabilityMatrixSpec`).
-  *
-  * Run it through `./dev/capabilities`, which runs `adapter-testkit`'s `CapabilityMatrixPage` (the same
-  * rendering with the conformance suite's coverage folded in) over every adapter's declaration file.
-  */
 /** What the conformance suite does for each capability, so the page can say how far a declaration is checked:
   * `verified` capabilities have scenarios (the ids) that run as real jobs on every adapter, `attested` ones
   * cannot be checked by a job by their nature (the reason says why), `gaps` could be but are not yet.
@@ -21,6 +13,15 @@ import java.nio.file.{Files, Paths}
   */
 final case class SuiteCoverage(verified: Map[Capability, List[String]], attested: Map[Capability, String], gaps: Map[Capability, String])
 
+/** Renders the engine capability matrix - what every adapter verifies and where it can stop a bad
+  * write - from the adapters' own `AdapterCapabilities` declarations, so the documentation can never
+  * disagree with them: it is generated, and a test fails if the committed page differs from what this
+  * produces (see `CapabilityMatrixSpec`).
+  *
+  * It is rendered with the conformance suite's coverage by `adapter-testkit`'s `CapabilityMatrixPage`, which
+  * `./dev/capabilities` runs over every adapter's declaration file; that is the only generator, because only the
+  * kit knows the scenarios (a page rendered here without them differs from the committed one).
+  */
 object CapabilityMatrix {
 
   val GeneratedNotice: String =
@@ -67,8 +68,8 @@ object CapabilityMatrix {
       val capabilities = Capability.all.filter(_.category == category)
       if (capabilities.nonEmpty) {
         sb.append(s"### ${category.title}\n\n")
-        val suiteHeader = if (suite.isDefined) " Suite check |" else ""
-        val suiteRule = if (suite.isDefined) "---|" else ""
+        val suiteHeader = suite.fold("")(_ => " Suite check |")
+        val suiteRule = suite.fold("")(_ => "---|")
         sb.append("| Capability | What it means |" + suiteHeader + sorted.map(a => s" ${a.adapter} |").mkString + "\n")
         sb.append("|---|---|" + suiteRule + sorted.map(_ => "---|").mkString + "\n")
         capabilities.foreach { c =>
@@ -86,16 +87,14 @@ object CapabilityMatrix {
       sb.append("- **verified** — scenarios run as real jobs on every adapter that declares the capability, and each must come out as the declaration promises.\n")
       sb.append("- **attested** — no job can check it by its nature; the adapter's own tests carry it.\n")
       sb.append("- **gap** — a job could check it, but the suite cannot yet; a declaration of support is a claim only.\n\n")
-      if (sc.attested.nonEmpty) {
-        sb.append("Attested:\n\n")
-        Capability.all.filter(sc.attested.contains).foreach(c => sb.append(s"- `${c.id}` — ${cell(sc.attested(c))}\n"))
-        sb.append("\n")
-      }
-      if (sc.gaps.nonEmpty) {
-        sb.append("Gaps:\n\n")
-        Capability.all.filter(sc.gaps.contains).foreach(c => sb.append(s"- `${c.id}` — ${cell(sc.gaps(c))}\n"))
-        sb.append("\n")
-      }
+      def tier(title: String, entries: Map[Capability, String]): Unit =
+        if (entries.nonEmpty) {
+          sb.append(s"$title:\n\n")
+          Capability.all.filter(entries.contains).foreach(c => sb.append(s"- `${c.id}` — ${cell(entries(c))}\n"))
+          sb.append("\n")
+        }
+      tier("Attested", sc.attested)
+      tier("Gaps", sc.gaps)
     }
 
     sb.append("## Notes\n\n")
@@ -148,9 +147,4 @@ object CapabilityMatrix {
     render(parsed.collect { case Right(a) => a }, suite)
   }
 
-  /** `args`: the output page, then each adapter's declaration file. */
-  def main(args: Array[String]): Unit = {
-    require(args.length >= 2, "usage: CapabilityMatrix <output.md> <invaract-capabilities-*.yaml>...")
-    Files.write(Paths.get(args.head), renderFiles(args.tail.toList).getBytes(StandardCharsets.UTF_8))
-  }
 }

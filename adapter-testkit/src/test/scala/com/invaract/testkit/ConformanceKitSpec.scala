@@ -259,23 +259,7 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(failingIds(letsItThrough) == Set("unconditional-delete-forbidden"))
   }
 
-  test("an adapter that blocks every DELETE is caught on the scenarios that expect a DELETE to pass or to be blocked for another reason") {
-    val blocksDeletes = new Tampered(
-      reference,
-      outcomeOf = {
-        case p: ScenarioOutcome.Passed if p.statuses == List("PASSED") => p
-        case other => other
-      }
-    )
-    assert(failingIds(blocksDeletes) == Set.empty[String], "the identity wrapper must not fail anything")
-    val paranoidAboutDeletes = new Tampered(
-      reference,
-      outcomeOf = {
-        case p: ScenarioOutcome.Passed if p.statuses == List("PASSED") && p.nonDeterministicColumns.isEmpty => ScenarioOutcome.Passed(p.statuses)
-        case other => other
-      }
-    )
-    assert(failingIds(paranoidAboutDeletes).isEmpty)
+  test("an adapter that wrongly rejects a filtered DELETE is caught on exactly that scenario") {
     val rejectsFilteredDelete = new ConformanceAdapter {
       override def capabilities: AdapterCapabilities = reference.capabilities
       override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =

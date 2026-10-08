@@ -14,13 +14,6 @@ class CapabilityMatrixPageSpec extends AnyFunSuite {
 
   private def read(path: String): String = new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8)
 
-  test("every capability is verified, attested or a gap - never silently absent from the page's suite column") {
-    val c = CapabilityMatrixPage.coverage
-    Capability.all.foreach { cap =>
-      assert(c.verified.contains(cap) || c.attested.contains(cap) || c.gaps.contains(cap), cap.id)
-    }
-  }
-
   test("a capability is in exactly one of verified, attested, gap") {
     val c = CapabilityMatrixPage.coverage
     Capability.all.foreach { cap =>

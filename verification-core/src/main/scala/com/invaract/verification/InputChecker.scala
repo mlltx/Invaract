@@ -56,11 +56,15 @@ private[invaract] object InputChecker {
     // An in-place row change (DELETE / UPDATE / MERGE) reads the table it changes: that read is the change
     // itself, not a second dataset the job draws on, so it is never an undeclared input. (A declared input that
     // happens to be that table is still matched above, so this only quiets the undeclared check.)
-    val undeclaredCandidates = inPlaceTarget.fold(readLocations) { target =>
-      val normalized = LocationMatching.normalizeActual(target)
-      readLocations.filterNot(loc => LocationMatching.normalizeActual(loc) == normalized)
-    }
-    val undeclared = if (options.rejectUndeclaredInputs) undeclaredReads(undeclaredCandidates, all, scoped, scopedOutput) else Nil
+    val undeclared =
+      if (!options.rejectUndeclaredInputs) Nil
+      else {
+        val candidates = inPlaceTarget.fold(readLocations) { target =>
+          val normalized = LocationMatching.normalizeActual(target)
+          readLocations.filterNot(loc => LocationMatching.normalizeActual(loc) == normalized)
+        }
+        undeclaredReads(candidates, all, scoped, scopedOutput)
+      }
     val schema = schemaFindings(all, inputSchemas, options.rejectUndeclaredFields, caseSensitive)
     val catalog = catalogFindings(all, facts.reads)
 
