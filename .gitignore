@@ -47,3 +47,4 @@ demo/output/**/*.json
 ## Local development
 .env.local
 .env.*.local
+__pycache__/

@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invaract Contributors
+
+package com.invaract.@@pkg@@
+
+import com.invaract.contract.Contract
+import com.invaract.ir.Plan
+import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
+
+/** @@Engine@@ as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
+  *
+  * `run` turns a neutral `ScenarioJob` into a real @@Engine@@ job and runs it through the adapter's REAL
+  * enforcement path - the engine's own hook, not a direct call to `VerificationPipeline` (that is what
+  * `ReferenceAdapter` does, and why it proves nothing about an engine). It finishes with `sink.passed` or
+  * `sink.rejected(violationTypes)`; the sink is handed to the enforcement as its notification sink.
+  *
+  * Everything the declaration marks `unsupported` or `not-applicable` is skipped by the kit, so with the
+  * generated declaration (all unsupported) every conformance test is canceled and this compiles and passes.
+  * Work through the capabilities one at a time: investigate, implement, flip the declaration to `supported`,
+  * and the scenarios for it start to run here.
+  */
+class @@Engine@@ConformanceAdapter extends ConformanceAdapter {
+
+  override def capabilities: AdapterCapabilities =
+    @@Engine@@Capabilities.declared.getOrElse(throw new IllegalStateException("@@Engine@@'s capability declaration did not load"))
+
+  override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
+    val sink = new RecordingSink
+    // TODO: build the job on @@Engine@@, enforce `contract` with `options` and `sink` through the engine's own hook,
+    // run it, and answer `sink.passed` or, when the engine's enforcement rejects it, `sink.rejected(types)`.
+    // See ReferenceAdapter (adapter-testkit) for the translation, schemas and rejection handling an adapter owns.
+    throw new NotImplementedError("@@Engine@@ConformanceAdapter.run is not implemented")
+  }
+
+  /** The `ir.Plan` this adapter's enforcement would check for `job` (nothing written, nothing enforced), for the
+    * lineage and sensitivity scenarios. Leave it `None` only while `lineage.columnLevel` and
+    * `analysis.sensitivityPropagation` are declared unsupported. */
+  override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+}

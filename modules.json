@@ -1,0 +1,15 @@
+{
+  "_comment": "The one list of the sbt modules in this repository. .github/scripts/check_modules.py (CI job 'Module registry check') fails if a file that hand-lists modules disagrees with it, naming the file and the line; to add a module, add it here first (dev/new-adapter does this for an adapter) and let the check say what else to edit. 'modules' is in dependency order. roles: engine (contract, ir, fingerprint, verification-core), kit (adapter-testkit), adapter (one per engine, spark-adapter first), harness (plugin, runner), extension (notification-kafka). 'published' modules go to Maven Central and run through the API-compatibility, coverage and release-dry-run loops; 'mutation' modules have a mutation-testing-<name> job in test.yml.",
+  "modules": [
+    {"name": "contract", "role": "engine", "published": true, "mutation": false},
+    {"name": "ir", "role": "engine", "published": true, "mutation": true},
+    {"name": "fingerprint", "role": "engine", "published": true, "mutation": true},
+    {"name": "verification-core", "role": "engine", "published": true, "mutation": true},
+    {"name": "adapter-testkit", "role": "kit", "published": true, "mutation": true},
+    {"name": "spark-adapter", "role": "adapter", "published": true, "mutation": true, "capabilities": "invaract-capabilities-spark.yaml"},
+    {"name": "plugin", "role": "harness", "published": false, "mutation": false},
+    {"name": "runner", "role": "harness", "published": false, "mutation": false},
+    {"name": "notification-kafka", "role": "extension", "published": false, "mutation": false, "built": false},
+    {"name": "registry-client", "role": "extension", "published": false, "mutation": false, "built": false}
+  ]
+}

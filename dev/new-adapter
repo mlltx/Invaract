@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Generates the skeleton of a new engine adapter module and registers it in modules.json.
+
+    dev/new-adapter <engine> [--display "Name"] [--out DIR] [--no-register]
+
+<engine> is the lowercase engine name (beam, bigquery); the module is <engine>-adapter, the package
+com.invaract.<engine>adapter. --display sets the spelling used in class names (default: <engine> capitalised).
+--out writes the module under DIR instead of the repository root and implies --no-register (CI's scaffold
+check uses it, so the skeleton is built on every run and cannot rot).
+
+The skeleton compiles and passes as generated: every capability is declared `unsupported`, so every
+conformance scenario is canceled, and ConformanceAdapter.run is a stub. What to do next, and in what order, is
+docs/ADDING_AN_ENGINE_ADAPTER.md; .github/scripts/check_modules.py names every other file that must list the
+new module.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+
+def read(path):
+    with open(path) as f:
+        return f.read()
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def version_of(repo, module):
+    match = re.search(r'ThisBuild / version := "([^"]+)"', read(os.path.join(repo, module, "build.sbt")))
+    if not match:
+        raise SystemExit(f"cannot read the version of {module} from {module}/build.sbt")
+    return match.group(1)
+
+
+def publishing_block(repo):
+    """The Maven Central publishing settings, taken from the conformance kit's build so they cannot drift."""
+    sbt = read(os.path.join(repo, "adapter-testkit", "build.sbt"))
+    start = sbt.index("publishMavenStyle := true")
+    end = sbt.index('name := "invaract-adapter-testkit"')
+    return sbt[start:end].rstrip() + "\n"
+
+
+def capability_ids(repo):
+    """Every capability in the vocabulary, in the order the reference adapter's declaration lists them."""
+    text = read(os.path.join(repo, "adapter-testkit", "src", "main", "resources", "reference", "invaract-capabilities-reference.yaml"))
+    body = text.split("\ncapabilities:\n", 1)[1]
+    return re.findall(r"^  ([a-zA-Z.]+):\s*$", body, re.M)
+
+
+def capabilities_block(repo, engine_display):
+    return "\n".join(
+        f"  {cap}:\n    status: unsupported\n    note: Not yet investigated for {engine_display}." for cap in capability_ids(repo)
+    )
+
+
+def substitutions(repo, engine, display):
+    return {
+        "@@engine@@": engine,
+        "@@Engine@@": display,
+        "@@pkg@@": f"{engine}adapter",
+        "@@CONTRACT_VERSION@@": version_of(repo, "contract"),
+        "@@IR_VERSION@@": version_of(repo, "ir"),
+        "@@VERIFICATION_CORE_VERSION@@": version_of(repo, "verification-core"),
+        "@@KIT_VERSION@@": version_of(repo, "adapter-testkit"),
+        "@@PUBLISHING@@": publishing_block(repo),
+        "@@CAPABILITIES@@": capabilities_block(repo, display),
+    }
+
+
+def render(text, subs):
+    # the large blocks first, so a placeholder inside one of them is also replaced
+    for key in sorted(subs, key=lambda k: -len(subs[k])):
+        text = text.replace(key, subs[key])
+    left = re.findall(r"@@[A-Za-z_]+@@", text)
+    if left:
+        raise SystemExit(f"unreplaced placeholder(s) in a template: {sorted(set(left))}")
+    return text
+
+
+def generate(repo, engine, display, out):
+    name = f"{engine}-adapter"
+    pkg = f"{engine}adapter"
+    module = os.path.join(out, name)
+    if os.path.exists(module):
+        raise SystemExit(f"{module} already exists; remove it first or choose another engine name")
+    scaffold = os.path.join(repo, "adapter-scaffold")
+    subs = substitutions(repo, engine, display)
+    main = os.path.join(module, "src", "main")
+    test = os.path.join(module, "src", "test", "scala", "com", "invaract", pkg)
+
+    def template(name_):
+        return render(read(os.path.join(scaffold, name_)), subs)
+
+    write(os.path.join(module, "build.sbt"), template("build.sbt.tmpl"))
+    write(os.path.join(main, "resources", f"invaract-capabilities-{engine}.yaml"), template("capabilities.yaml.tmpl"))
+    write(os.path.join(main, "scala", "com", "invaract", pkg, f"{display}Capabilities.scala"), template("Capabilities.scala.tmpl"))
+    write(os.path.join(test, f"{display}CapabilitiesSpec.scala"), template("CapabilitiesSpec.scala.tmpl"))
+    write(os.path.join(test, f"{display}ConformanceAdapter.scala"), template("ConformanceAdapter.scala.tmpl"))
+    write(os.path.join(test, f"{display}ConformanceSpec.scala"), template("ConformanceSpec.scala.tmpl"))
+    write(os.path.join(test, f"{display}AttestedClaimsSpec.scala"), template("AttestedClaimsSpec.scala.tmpl"))
+    # sbt plugins and the sbt version are the kit's, copied as they are
+    kit_project = os.path.join(repo, "adapter-testkit", "project")
+    for f in ("build.properties", "coverage.sbt", "mima.sbt", "pgp.sbt", "sonatype.sbt", "stryker4s.sbt"):
+        write(os.path.join(module, "project", f), read(os.path.join(kit_project, f)))
+    return name
+
+
+def register(repo, engine):
+    path = os.path.join(repo, "modules.json")
+    data = json.loads(read(path))
+    name = f"{engine}-adapter"
+    if any(m["name"] == name for m in data["modules"]):
+        raise SystemExit(f"{name} is already in modules.json")
+    entry = {"name": name, "role": "adapter", "published": True, "mutation": True, "capabilities": f"invaract-capabilities-{engine}.yaml"}
+    modules = data["modules"]
+    last_published = max(i for i, m in enumerate(modules) if m.get("published"))
+    modules.insert(last_published + 1, entry)
+    lines = ["{", f'  "_comment": {json.dumps(data["_comment"])},', '  "modules": [']
+    rendered = [json.dumps(m) for m in modules]
+    lines += [f"    {r}{',' if i < len(rendered) - 1 else ''}" for i, r in enumerate(rendered)]
+    lines += ["  ]", "}"]
+    write(path, "\n".join(lines) + "\n")
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description="Generate a new engine adapter module")
+    parser.add_argument("engine", help="lowercase engine name, e.g. beam or bigquery")
+    parser.add_argument("--display", help="spelling for class names (default: the engine name capitalised)")
+    parser.add_argument("--out", help="write the module under this directory instead of the repository root (implies --no-register)")
+    parser.add_argument("--no-register", action="store_true", help="do not add the module to modules.json")
+    args = parser.parse_args(argv[1:])
+    if not re.fullmatch(r"[a-z][a-z0-9]*", args.engine):
+        raise SystemExit("the engine name must be lowercase letters and digits, starting with a letter (e.g. beam, bigquery)")
+    display = args.display or args.engine.capitalize()
+    if not re.fullmatch(r"[A-Z][A-Za-z0-9]*", display):
+        raise SystemExit("--display must be a Scala class-name prefix, e.g. BigQuery")
+    out = os.path.abspath(args.out) if args.out else REPO
+    name = generate(REPO, args.engine, display, out)
+    if not args.out and not args.no_register:
+        register(REPO, args.engine)
+    print(f"Generated {os.path.join(out, name)}")
+    if not args.out and not args.no_register:
+        print("Registered in modules.json. Now run: python3 .github/scripts/check_modules.py")
+        print("and edit every file it names, then follow docs/ADDING_AN_ENGINE_ADAPTER.md.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
