@@ -24,5 +24,8 @@
   },
   "devDependencies": {
     "ajv": "^8.20.0"
+  },
+  "overrides": {
+    "postcss-selector-parser": "^7.1.6"
   }
 }
