@@ -43,7 +43,8 @@ private[invaract] object InputChecker {
       inputSchemas: List[(String, LogicalSchema)],
       options: VerificationOptions,
       caseSensitive: Boolean,
-      lineageBoundaryTypes: Set[String]
+      lineageBoundaryTypes: Set[String],
+      inPlaceTarget: Option[String] = None
   ): Findings = {
     val all = Declared(contract.inputs)
     val scoped = if (scopedOutput.isEmpty) all else Declared(contract.inputsFor(scopedOutput.get))
@@ -52,7 +53,18 @@ private[invaract] object InputChecker {
     val declaredButNotRead = notRead(scoped, readLocations)
     val (missing, unverifiable) = classifyUnread(declaredButNotRead, facts.unknownPlans, scopedOutput, contract.outputs.size, lineageBoundaryTypes)
 
-    val undeclared = if (options.rejectUndeclaredInputs) undeclaredReads(readLocations, all, scoped, scopedOutput) else Nil
+    // An in-place row change (DELETE / UPDATE / MERGE) reads the table it changes: that read is the change
+    // itself, not a second dataset the job draws on, so it is never an undeclared input. (A declared input that
+    // happens to be that table is still matched above, so this only quiets the undeclared check.)
+    val undeclared =
+      if (!options.rejectUndeclaredInputs) Nil
+      else {
+        val candidates = inPlaceTarget.fold(readLocations) { target =>
+          val normalized = LocationMatching.normalizeActual(target)
+          readLocations.filterNot(loc => LocationMatching.normalizeActual(loc) == normalized)
+        }
+        undeclaredReads(candidates, all, scoped, scopedOutput)
+      }
     val schema = schemaFindings(all, inputSchemas, options.rejectUndeclaredFields, caseSensitive)
     val catalog = catalogFindings(all, facts.reads)
 

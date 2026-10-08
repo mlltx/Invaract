@@ -68,6 +68,24 @@ object LogicalType {
   case object TimestampNtzType extends Scalar("timestamp_ntz", "timestamp_ntz")
   case object BinaryType extends Scalar("binary", "binary")
 
+  /** A time of day with no date and no timezone. */
+  case object TimeType extends Scalar("time", "time")
+
+  /** A JSON document held as a typed value (BigQuery `JSON`), as distinct from a string that
+    * happens to contain JSON: an engine without a JSON type reports `string`, and a contract
+    * declaring `json` then fails against it rather than being quietly satisfied.
+    */
+  case object JsonType extends Scalar("json", "json")
+
+  /** A geographic value on the Earth's surface (BigQuery `GEOGRAPHY`). */
+  case object GeographyType extends Scalar("geography", "geography")
+
+  /** A span of time as one value (BigQuery `INTERVAL`, Spark's calendar interval). Spark's
+    * year-month and day-time intervals are separate, parameterised types and stay `OtherType`:
+    * collapsing them into this one would make a mismatch invisible.
+    */
+  case object IntervalType extends Scalar("interval", "interval")
+
   case class DecimalType(precision: Int, scale: Int) extends LogicalType {
     def typeName: String = s"decimal($precision,$scale)"
     def catalogString: String = typeName
@@ -113,7 +131,7 @@ object LogicalType {
     *   - scalar keywords and their aliases: `int`/`integer`, `bigint`/`long`,
     *     `smallint`/`short`, `tinyint`/`byte`, `float`/`real`, `double`,
     *     `string`, `boolean`, `date`, `timestamp`/`timestamp_ltz`,
-    *     `timestamp_ntz`, `binary`;
+    *     `timestamp_ntz`, `binary`, `time`, `json`, `geography`, `interval`;
     *   - `decimal`/`dec`/`numeric`, `decimal(p)` and `decimal(p,s)` — a bare
     *     `decimal` is `decimal(10,0)`, as in Spark;
     *   - `array<T>`, `map<K,V>`, `struct<name:T,...>` (`name T` also works; a
@@ -177,6 +195,10 @@ object LogicalType {
         case "timestamp" | "timestamp_ltz" => TimestampType
         case "timestamp_ntz"               => TimestampNtzType
         case "binary"                      => BinaryType
+        case "time"                        => TimeType
+        case "json"                        => JsonType
+        case "geography"                   => GeographyType
+        case "interval"                    => IntervalType
         case other =>
           val params = readParameters()
           OtherType(if (params.isEmpty) other else s"$other($params)")

@@ -67,7 +67,7 @@ extensions:
 |---|---|---|
 | `name` | yes | Logical name, referenced in lookups and violation messages. |
 | `location` | yes | Physical location (table name, path, topic) — see [location matching](#location-matching) below. |
-| `format` | no | Storage/serialization format (e.g. `csv`, `parquet`, `delta`). |
+| `format` | no | Storage/serialization format, compared case-insensitively. The canonical names are `parquet`, `orc`, `avro`, `csv`, `json`, `text`, `table`, `delta`, `iceberg`, `hudi`, `hive`, `jdbc`, `bigquery` and `kafka`. Any other value is accepted but draws a validation warning, since only an adapter that reports exactly that string can match it. |
 | `saveMode` | no | Expected write behavior toward existing data (`append`/`overwrite`/`ignore`/`error`, compared case-insensitively). Outputs only; checked against the plan's actual write mode when both are known. Any other value is accepted but draws a validation warning, since only an adapter that reports exactly that string can match it. |
 | `catalog` | no | Expected data-catalog registration — see [Catalog registration](#catalog-registration) below. Meaningful for both inputs and outputs. |
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked against a real write. An [organizational policy](/guides/enforcing-organizational-policy/) can require every dataset to declare one. |
@@ -90,9 +90,13 @@ extensions:
 ### Known types
 
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`, `boolean`,
-`date`, `timestamp`, `binary`, `struct`, `array`, `map`. An unlisted type is a validator
-warning, not a rejection — a contract using a type Invaract doesn't yet recognize still
-validates and parses.
+`date`, `timestamp`, `timestamp_ntz`, `binary`, `time`, `json`, `geography`, `interval`,
+`struct`, `array`, `map`. An unlisted type is a validator warning, not a rejection — a contract
+using a type Invaract doesn't yet recognize still validates and parses.
+
+`time`, `json`, `geography` and `interval` are matched exactly: an engine without that type
+reports the type it does have (a JSON document held in a `string` column is a `string`), and the
+declaration then fails as a type mismatch instead of being quietly satisfied.
 
 Types can carry parameters, written as Spark writes them — `decimal(10,2)`,
 `array<int>`, `map<string,long>`, `struct<a:int,b:string>`, nested to any depth. Only the
@@ -154,6 +158,7 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |
 | Field marked both `required` and `nullable` | Warning |
+| Output `saveMode`, dataset `format` or `catalog.technology` outside the canonical names | Warning |
 | Rule with empty `type` | Error |
 | Interpretable rule type (the three [DML rule types](/guides/enforcing-dml-rules/) or the four [transformation shape rule types](/guides/enforcing-transformation-rules/)) with malformed/missing properties | Error |
 
@@ -255,7 +260,7 @@ outputs:
 | Key | Required | Meaning |
 |---|---|---|
 | `required` | yes (within a present `catalog:` block) | Whether this dataset must be registered in a catalog at all. `false` records an expected shape without gating anything — `ContractValidator` warns on this combination. |
-| `technology` | no | The catalog implementation, e.g. `hive`, `delta`, `iceberg`. Open vocabulary, not a closed enum. |
+| `technology` | no | The catalog implementation. The canonical names are `hive`, `delta`, `iceberg`, `hudi`, `jdbc`, `glue`, `bigquery` and `in-memory`; any other value is accepted but draws a validation warning, since only an adapter that reports exactly that string can match it. |
 | `catalogName` | no | The Spark-level catalog plugin/session-catalog name, e.g. `spark_catalog` — a local alias. |
 | `location` | no | The catalog *service's* own address (e.g. a Hive metastore's `thrift://host:port` URI) — real and checked for Hive; always unset (and never compared) for Delta/Iceberg/JDBC today, since no reflective accessor exists for those catalogs' own network endpoints. See [Require Catalog Registration](/guides/requiring-catalog-registration/#what-location-can-and-cant-check) for the full explanation. |
 | `namespace` | no | The database/schema path within the catalog, as an ordered list, e.g. `[default]`. |
@@ -275,6 +280,11 @@ reports an absolute `file:` URI at runtime
 (`file:/home/user/.../demo/input/sample.csv`). Locations are matched by normalized
 suffix, not exact equality: the `file:` scheme is stripped, and a declared location
 matches if it equals, or is a path-boundary suffix of, the actual one.
+
+Locations are compared as `/`-separated strings. An engine that names data by parts rather than by
+path is converted to that form (BigQuery's `project.dataset.table` is `project/dataset/table`), so
+write `dataset/table` to match that table in any project or the full form to pin one. A dotted
+declaration such as `dataset.table` is a single segment and does not match the converted name.
 
 ### Resolving a location at runtime
 

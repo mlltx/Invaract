@@ -1,0 +1,76 @@
+name: Release dry run
+
+# release.yml publishes six modules to Maven Central when a maintainer pushes a tag, and nothing
+# before that tag exercises the publishing configuration: a broken POM, a missing signing plugin or
+# a module left out of the sequence would first show up on release day. This runs the same build
+# steps up to the upload - `publishLocal` then `publishSigned`, signed with a throwaway key - on
+# every change to the files that configure publishing, and checks that each module produced a signed
+# bundle with its jar, sources, javadoc and POM. It uploads nothing and uses no secrets.
+#
+# What it cannot prove: that Sonatype accepts the namespace, the real key or the credentials
+# (docs/RELEASING.md's one-time setup); only a real release does.
+on:
+  pull_request:
+    paths:
+      - '*/build.sbt'
+      - '*/project/*.sbt'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-dry-run.yml'
+      - 'docs/RELEASING.md'
+  workflow_dispatch: {}
+
+jobs:
+  dry-run:
+    name: Release dry run (sign and bundle all six modules)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      # A key that exists only for this run. Loopback pinentry lets gpg take the passphrase from the
+      # environment, which is how sbt-pgp supplies it in release.yml too.
+      - name: Create a throwaway signing key
+        shell: bash
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent || true
+          gpg --batch --pinentry-mode loopback --passphrase "dry-run" \
+            --quick-generate-key "Invaract release dry run <dry-run@invalid>" rsa3072 sign never
+          gpg --list-secret-keys
+
+      # Same order as release.yml: each module resolves the earlier ones from the local Ivy cache.
+      - name: Publish and sign each module's bundle
+        shell: bash
+        env:
+          PGP_PASSPHRASE: dry-run
+        run: |
+          set -e
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+            echo "=== $module ==="
+            (cd "$module" && sbt -batch publishLocal publishSigned)
+          done
+
+      # sbt-sonatype stages the bundle under target/sonatype-staging/<version>/. Central rejects an
+      # artifact without a signature, a sources jar or a javadoc jar, so check each is there.
+      - name: Check every module's bundle is complete and signed
+        shell: bash
+        run: |
+          set -e
+          fail=0
+          for module in contract ir fingerprint verification-core adapter-testkit spark-adapter; do
+            staging=$(find "$module/target/sonatype-staging" -type d -path '*com/invaract*' -name '*_2.12' | head -1)
+            if [ -z "$staging" ]; then echo "::error::$module: no staged bundle under $module/target/sonatype-staging"; fail=1; continue; fi
+            dir=$(find "$staging" -mindepth 1 -maxdepth 1 -type d | head -1)
+            echo "=== $module: $dir ==="
+            ls "$dir"
+            pom=$(ls "$dir"/*.pom | head -1); base=${pom%.pom}
+            for f in "$base.pom" "$base.jar" "$base-sources.jar" "$base-javadoc.jar"; do
+              [ -f "$f" ] || { echo "::error::$module: missing $(basename "$f")"; fail=1; continue; }
+              [ -f "$f.asc" ] || { echo "::error::$module: $(basename "$f") has no .asc signature"; fail=1; }
+            done
+          done
+          exit $fail

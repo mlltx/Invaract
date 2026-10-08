@@ -5,7 +5,7 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
 import com.invaract.contract.LogicalType.{IntegerType, LongType}
-import com.invaract.ir.{ColumnRef, ColumnReference, DatasetRef, DeleteScope, NamedExpr, Plan, Project, Read, RowMutation, UnknownPlan, Write}
+import com.invaract.ir.{ColumnRef, ColumnReference, DatasetRef, DeleteScope, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, RowMutation, UnknownPlan, Write}
 import com.invaract.verification.notification.{ContractValidationEvent, TestNotificationSink}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -199,6 +199,54 @@ class VerificationPipelineSpec extends AnyFunSuite {
     }
     val v = ex.result.violations.find(_.violationType == ViolationType.RuleUnconditionalDelete).get
     assert(v.location.contains("out/report"))
+  }
+
+  // An in-place change reads the table it changes. That read is the change itself, not an input the job
+  // draws on, so `rejectUndeclaredInputs` must not report it - but a read-modify-write that is NOT a row
+  // mutation, and any other dataset read alongside the target, are still real undeclared inputs.
+  private val noInputs = contract.copy(inputs = Nil, outputs = contract.outputs.map(_.copy(derivedFrom = None)))
+  private val strictInputs = VerificationOptions(rejectUndeclaredInputs = true)
+  private val filteredDelete = Some(MutationClassification.Extracted(MutationKind.Delete, RowMutation(delete = DeleteScope.Conditional(Literal(true, "boolean")))))
+  private val selfRead: Plan = Write(DatasetRef("out/report"), Read(DatasetRef("out/report")))
+
+  private def undeclaredInputs(result: => Unit): List[String] =
+    try { result; Nil }
+    catch { case e: ContractViolationException => e.result.violations.filter(_.violationType == ViolationType.UndeclaredInput).map(_.location.getOrElse("")) }
+
+  test("DML: the table an in-place change reads is not an undeclared input") {
+    val found = undeclaredInputs(
+      VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead, rowMutation = filteredDelete), strictInputs)
+    )
+    assert(found == Nil)
+  }
+
+  test("DML: the same read-modify-write that is not a row mutation is still an undeclared input") {
+    val found = undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead), strictInputs))
+    assert(found == List("out/report"))
+  }
+
+  test("DML: an in-place Unverifiable change is in place too, so its own read is not undeclared either") {
+    val unverifiable = Some(MutationClassification.Unverifiable(MutationKind.Merge))
+    assert(undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = selfRead, rowMutation = unverifiable), strictInputs)) == Nil)
+  }
+
+  test("DML: another dataset read alongside the target (a MERGE source) is still an undeclared input") {
+    val merge: Plan = Write(DatasetRef("out/report"), Join(Read(DatasetRef("out/report")), Read(DatasetRef("in/other")), JoinType.Inner, None))
+    val found = undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = merge, rowMutation = filteredDelete), strictInputs))
+    assert(found == List("in/other"))
+  }
+
+  test("DML: the target is matched the way every location is, so a file: prefix and separators do not hide it") {
+    val prefixed: Plan = Write(DatasetRef("out/report"), Read(DatasetRef("file:out\\report")))
+    assert(undeclaredInputs(VerificationPipeline.verifyWrite(noInputs, checked(plan = prefixed, rowMutation = filteredDelete), strictInputs)) == Nil)
+  }
+
+  test("DML: a declared input that is the target is still matched, so excluding the self-read cannot make it 'missing'") {
+    val targetAsInput = noInputs.copy(inputs = List(com.invaract.contract.Dataset(
+      "tbl", "out/report", None, com.invaract.contract.Schema(List(com.invaract.contract.Field("id", "long")))
+    )))
+    val result = undeclaredInputs(VerificationPipeline.verifyWrite(targetAsInput, checked(plan = selfRead, rowMutation = filteredDelete), strictInputs))
+    assert(result == Nil)
   }
 
   test("DML: an Unverifiable DELETE fails closed only when a declared rule is about DELETE") {

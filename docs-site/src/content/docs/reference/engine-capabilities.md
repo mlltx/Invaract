@@ -5,7 +5,7 @@ sidebar:
   order: 7
 ---
 
-<!-- GENERATED from each adapter's invaract-capabilities-<adapter>.yaml by CapabilityMatrix (verification-core). Do not edit by hand: change the declaration and run ./dev/capabilities. -->
+<!-- GENERATED from each adapter's invaract-capabilities-<adapter>.yaml and the conformance scenarios (adapter-testkit). Do not edit by hand: change the declaration and run ./dev/capabilities. -->
 
 Invaract checks a data transformation against a contract through an *engine adapter*. Every adapter
 declares, for every capability below, whether it is supported, partly supported, unsupported, or does
@@ -30,73 +30,101 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 ### Operations an adapter recognizes
 
-| Capability | What it means | spark |
-|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | ✅ |
-| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | ✅ |
-| `write.streaming` | A streaming write is recognized and checked against the contract. | ◐ |
-| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | ✅ |
-| `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (23) | ✅ |
+| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | gap | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (24) | ✅ |
+| `write.streaming` | A streaming write is recognized and checked against the contract. | gap | ◐ |
+| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | ✅ |
+| `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | ✅ |
 
 ### Structural checks
 
-| Capability | What it means | spark |
-|---|---|---|
-| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | ✅ |
-| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | ◐ |
-| `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | ✅ |
-| `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | ✅ |
-| `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | ✅ |
-| `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | ✅ |
-| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | verified (3) | ✅ |
+| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | verified (3) | ◐ |
+| `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (7) | ✅ |
+| `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ |
+| `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ✅ |
+| `check.saveMode` | A declared save mode is checked (OUTPUT_SAVE_MODE_MISMATCH). *(blocks if unsupported)* | verified (2) | ✅ |
+| `check.catalogRegistration` | A declared catalog requirement is checked for inputs and outputs. *(blocks if unsupported)* | verified (2) | ✅ |
 
 ### Rules
 
-| Capability | What it means | spark |
-|---|---|---|
-| `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | ◐ |
-| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | ✅ |
-| `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | verified (2) | ◐ |
+| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (2) | ✅ |
+| `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | attested | ✅ |
 
 ### Analysis and lineage
 
-| Capability | What it means | spark |
-|---|---|---|
-| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | ✅ |
-| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | ✅ |
-| `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | ✅ |
-| `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | ✅ |
-| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | ✅ |
-| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | ◐ |
-| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | ◐ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | gap | ✅ |
+| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | gap | ✅ |
+| `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | verified (2) | ✅ |
+| `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | verified (2) | ✅ |
+| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | gap | ✅ |
+| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | gap | ◐ |
+| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | gap | ◐ |
 
 ### Governance
 
-| Capability | What it means | spark |
-|---|---|---|
-| `policy.organizational` | Organizational policy layers are enforced on the contract itself. | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `policy.organizational` | Organizational policy layers are enforced on the contract itself. | attested | ✅ |
 
 ### Attaching it to a job
 
-| Capability | What it means | spark |
-|---|---|---|
-| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | ✅ |
-| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | ✅ |
-| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `config.zeroCodeInstall` | Installed on a job through the engine's own configuration, with no change to the job's source. | attested | ✅ |
+| `config.locationRefs` | ref://<id> locations in a contract resolve through configuration. | attested | ✅ |
+| `config.contractRegistry` | The contract can be named as registry://<id>@<version> and fetched from a registry. | attested | ✅ |
 
 ### Reporting
 
-| Capability | What it means | spark |
-|---|---|---|
-| `reporting.notifications` | Validation and write events are published to a notification sink. | ✅ |
-| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `reporting.notifications` | Validation and write events are published to a notification sink. | verified (2) | ✅ |
+| `reporting.dryRunInference` | Dry-run mode infers a draft contract from a real write. | attested | ✅ |
 
 ### Fail-closed behaviour
 
-| Capability | What it means | spark |
-|---|---|---|
-| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | ✅ |
+| Capability | What it means | Suite check | spark |
+|---|---|---|---|
+| `failClosed.unverifiableWrites` | An operation that looks like it writes but cannot be translated is rejected rather than passed unchecked. | verified (1) | ✅ |
+
+## What the conformance suite checks
+
+The *Suite check* column says how far a declaration is verified rather than taken on trust.
+
+- **verified** — scenarios run as real jobs on every adapter that declares the capability, and each must come out as the declaration promises.
+- **attested** — no job can check it by its nature; the adapter's own tests carry it.
+- **gap** — a job could check it, but the suite cannot yet; a declaration of support is a claim only.
+
+Attested:
+
+- `write.stateChange` — a state change is not a read-transform-write job; each engine has its own
+- `rules.custom` — a custom rule type is a class resolved by the engine's own classpath; no neutral way to supply one
+- `policy.organizational` — applied to the contract at session start, not part of a job
+- `config.zeroCodeInstall` — how an adapter attaches to a job is engine-specific, not a job
+- `config.locationRefs` — how an adapter attaches to a job is engine-specific, not a job
+- `config.contractRegistry` — how an adapter attaches to a job is engine-specific, not a job
+- `reporting.dryRunInference` — dry-run mode is a mode of installing, not a job
+
+Gaps:
+
+- `read.streaming` — needs a streaming job shape the neutral job description does not have yet
+- `write.streaming` — needs a streaming job shape the neutral job description does not have yet
+- `analysis.staticDataQuality` — opt-in analysis; the outcome does not yet carry data-quality verdicts
+- `analysis.roleConsistency` — opt-in analysis; the outcome does not yet carry role verdicts
+- `analysis.sensitivityPropagation` — report-only; the outcome does not yet carry sensitivity propagation
+- `lineage.columnLevel` — the outcome does not yet carry lineage
+- `lineage.boundaryResolution` — needs a checkpoint/cache job shape the neutral job description does not have
 
 ## Notes
 

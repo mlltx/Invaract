@@ -27,7 +27,11 @@ class LogicalTypeTest extends AnyFunSuite {
       (DateType, "date", "date"),
       (TimestampType, "timestamp", "timestamp"),
       (TimestampNtzType, "timestamp_ntz", "timestamp_ntz"),
-      (BinaryType, "binary", "binary")
+      (BinaryType, "binary", "binary"),
+      (TimeType, "time", "time"),
+      (JsonType, "json", "json"),
+      (GeographyType, "geography", "geography"),
+      (IntervalType, "interval", "interval")
     )
     expected.foreach { case (t, name, catalog) =>
       assert(t.typeName == name, t)
@@ -57,7 +61,7 @@ class LogicalTypeTest extends AnyFunSuite {
   test("OtherType keeps the native spelling, and a one-argument form uses it for both renderings") {
     val other = OtherType("interval day to second", "interval day to second")
     assert(other.typeName == "interval day to second" && other.catalogString == "interval day to second")
-    assert(OtherType("geography") == OtherType("geography", "geography"))
+    assert(OtherType("variant") == OtherType("variant", "variant"))
     assert(OtherType("null", "void").catalogString == "void")
     assert(!other.isNested)
   }
@@ -74,7 +78,9 @@ class LogicalTypeTest extends AnyFunSuite {
       "float" -> FloatType, "real" -> FloatType,
       "double" -> DoubleType, "date" -> DateType,
       "timestamp" -> TimestampType, "timestamp_ltz" -> TimestampType,
-      "timestamp_ntz" -> TimestampNtzType, "binary" -> BinaryType
+      "timestamp_ntz" -> TimestampNtzType, "binary" -> BinaryType,
+      "time" -> TimeType, "json" -> JsonType, "geography" -> GeographyType, "interval" -> IntervalType,
+      "JSON" -> JsonType, " Geography " -> GeographyType
     )
     cases.foreach { case (text, expected) =>
       assert(parsed(text) == expected, text)
@@ -92,7 +98,7 @@ class LogicalTypeTest extends AnyFunSuite {
   }
 
   test("parse: an unknown identifier becomes OtherType, with its parameters whitespace-stripped") {
-    assert(parsed("geography") == OtherType("geography"))
+    assert(parsed("variant") == OtherType("variant"))
     assert(parsed("Varchar( 5 )") == OtherType("varchar(5)"))
     assert(parsed("foo(1, 2)") == OtherType("foo(1,2)"))
   }
@@ -161,5 +167,19 @@ class LogicalTypeTest extends AnyFunSuite {
     assert(LogicalField("a", IntegerType).nullable)
     assert(LogicalSchema.empty.isEmpty)
     assert(!LogicalSchema(List(LogicalField("a", IntegerType))).isEmpty)
+  }
+
+  test("the extended types nest like any other, and stay distinct from each other and from string") {
+    assert(parsed("array<json>") == ArrayType(JsonType))
+    assert(parsed("map<string,geography>") == MapType(StringType, GeographyType))
+    assert(parsed("struct<d:interval,t:time>") == StructType(List(LogicalField("d", IntervalType, true), LogicalField("t", TimeType, true))))
+    val all = List(TimeType, JsonType, GeographyType, IntervalType, StringType, BinaryType, TimestampNtzType)
+    assert(all.distinct.size == all.size)
+    assert(all.map(_.typeName).distinct.size == all.size)
+  }
+
+  test("an interval with qualifying fields (Spark's year-month / day-time forms) is not the plain interval") {
+    assert(parsed("interval") == IntervalType)
+    assert(LogicalType.parse("interval day to second").isEmpty, "multi-word interval spellings are not part of the type grammar")
   }
 }

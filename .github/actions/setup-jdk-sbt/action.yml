@@ -1,0 +1,31 @@
+name: Set up JDK and sbt
+description: >
+  Installs a Temurin JDK with sbt's dependency cache enabled, then sbt itself.
+  The pair every Scala job in test.yml needs, in one place.
+
+# Why this exists: the same two steps (actions/setup-java with the sbt cache, then
+# sbt/setup-sbt) were copied into a dozen jobs, and every new engine adapter's CI job
+# would have copied them again. Change the JDK distribution, the cache policy or the sbt
+# installer here, once.
+#
+# Run it after `actions/checkout` (a local action lives in the checkout, and the sbt cache
+# key is a hash of the checked-out build files).
+
+inputs:
+  java-version:
+    description: JDK major version to install
+    required: false
+    default: '21'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK ${{ inputs.java-version }}
+      uses: actions/setup-java@v6
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: 'temurin'
+        cache: 'sbt'
+
+    - name: Set up sbt
+      uses: sbt/setup-sbt@v1

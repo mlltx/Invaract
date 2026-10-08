@@ -100,11 +100,6 @@ class CapabilityMatrixSpec extends AnyFunSuite {
       val ex = intercept[IllegalArgumentException] { CapabilityMatrix.renderFiles(List(good.toString, bad.toString)) }
       assert(ex.getMessage.contains(bad.toString) && ex.getMessage.contains("'rules.dml' is not declared"))
       assert(!ex.getMessage.contains(good.toString))
-      // main writes the page
-      val out = dir.resolve("out.md")
-      CapabilityMatrix.main(Array(out.toString, good.toString))
-      assert(read(out.toString) == CapabilityMatrix.renderFiles(List(good.toString)))
-      intercept[IllegalArgumentException] { CapabilityMatrix.main(Array(out.toString)) }
     } finally {
       Files.list(dir).forEach(p => Files.delete(p))
       Files.delete(dir)
@@ -136,14 +131,57 @@ class CapabilityMatrixSpec extends AnyFunSuite {
     }
   }
 
-  test("the committed engine-capabilities page is exactly what the declarations generate - run ./dev/capabilities") {
-    val committed = new File(repoRoot, "docs-site/src/content/docs/reference/engine-capabilities.md")
-    assert(committed.exists(), "missing docs-site/src/content/docs/reference/engine-capabilities.md - run ./dev/capabilities")
-    val generated = CapabilityMatrix.renderFiles(declarations.map(_.getPath))
-    assert(
-      read(committed.getPath) == generated,
-      "docs-site/src/content/docs/reference/engine-capabilities.md is out of date with the adapters' invaract-capabilities-*.yaml - " +
-        "it is generated: run ./dev/capabilities and commit the result"
-    )
+  // The committed page is generated with the conformance suite's coverage, which only adapter-testkit knows;
+  // its drift test is adapter-testkit's CapabilityMatrixPageSpec.
+
+  // --- suite coverage ----------------------------------------------------------------------------
+
+  private val coverage = SuiteCoverage(
+    verified = Map(Capability.CheckSchema -> List("a", "b"), Capability.CheckLocation -> List("c")),
+    attested = Map(Capability.ConfigZeroCodeInstall -> "how an adapter attaches   to a job | is engine-specific"),
+    gaps = Map(Capability.ReadStreaming -> "needs a streaming job shape")
+  )
+
+  private val withSuite = CapabilityMatrix.render(List(toy, plain), Some(coverage))
+
+  test("without suite coverage the page has no suite column or section (the plain render is unchanged)") {
+    assert(CapabilityMatrix.render(List(toy, plain), None) == page)
+    assert(!page.contains("Suite check") && !page.contains("What the conformance suite checks"))
+  }
+
+  test("with suite coverage each capability row says verified (n), attested, gap or none, before the adapter columns") {
+    assert(withSuite.contains("| Capability | What it means | Suite check | alpha | toy |"))
+    assert(withSuite.contains("|---|---|---|---|---|"))
+    assert(withSuite.contains("| `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (2) | ✅ | ✅ |"))
+    assert(withSuite.contains("| `check.location` ") && withSuite.contains("| verified (1) |"))
+    assert(withSuite.contains("| attested | ✅ | ✅ |"))
+    assert(withSuite.contains("| gap | ✅ | — |"))
+    assert(withSuite.contains("| none | ✅ | ✅ |"), "a capability in no tier is shown as none, not as covered")
+    Capability.all.foreach(c => assert(withSuite.contains(s"| `${c.id}` |"), c.id))
+  }
+
+  test("the suite section lists attested and gap reasons on one line each, pipes escaped, in vocabulary order") {
+    assert(withSuite.contains("## What the conformance suite checks"))
+    assert(withSuite.contains("Attested:\n\n- `config.zeroCodeInstall` — how an adapter attaches to a job \\| is engine-specific\n"))
+    assert(withSuite.contains("Gaps:\n\n- `read.streaming` — needs a streaming job shape\n"))
+    assert(withSuite.indexOf("## What the conformance suite checks") < withSuite.indexOf("## Notes"))
+  }
+
+  test("an empty tier is not given a heading") {
+    val onlyVerified = CapabilityMatrix.render(List(plain), Some(SuiteCoverage(Map(Capability.CheckSchema -> List("a")), Map.empty, Map.empty)))
+    assert(onlyVerified.contains("## What the conformance suite checks"))
+    assert(!onlyVerified.contains("Attested:") && !onlyVerified.contains("Gaps:"))
+  }
+
+  test("renderFiles with suite coverage renders the suite column too") {
+    val dir = Files.createTempDirectory("capability-matrix-suite-test")
+    try {
+      val good = dir.resolve("good.yaml"); Files.write(good, yaml(adapter = "good").getBytes(StandardCharsets.UTF_8))
+      assert(CapabilityMatrix.renderFiles(List(good.toString), Some(coverage)).contains("| Suite check |"))
+      assert(!CapabilityMatrix.renderFiles(List(good.toString)).contains("Suite check"))
+    } finally {
+      Files.list(dir).forEach(p => Files.delete(p))
+      Files.delete(dir)
+    }
   }
 }

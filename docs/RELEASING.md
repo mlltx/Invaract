@@ -142,6 +142,16 @@ project's Sonatype account.
     release visible to a real Invaract user, per CLAUDE.md's Documentation
     Policy.
 
+## Dry run on every publishing change
+
+`.github/workflows/release-dry-run.yml` runs on any pull request that touches a `build.sbt`, a
+`project/*.sbt`, `release.yml` or this file. It creates a throwaway GPG key, runs `publishLocal` and
+`publishSigned` for all six modules in `release.yml`'s order, and checks that each produced a staged
+bundle with a jar, a sources jar, a javadoc jar and a POM, each with a `.asc` signature. It uses no
+secrets and uploads nothing, so it proves the build and signing configuration works; it cannot prove
+Sonatype accepts the namespace, the real key or the credentials (the one-time setup above), which only a
+real release does.
+
 ## Local dry run
 
 Everything except the final `sonatypeCentralRelease` upload can be

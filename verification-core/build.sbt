@@ -121,7 +121,15 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.<init>$default$6"),
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.apply$default$6"),
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.verification.notification.JobInfo.copy$default$6"),
-  ProblemFilters.exclude[MissingClassProblem]("com.invaract.verification.notification.HadoopFsNotificationSink")
+  ProblemFilters.exclude[MissingClassProblem]("com.invaract.verification.notification.HadoopFsNotificationSink"),
+  // Deliberate break, review pass 4: an in-place row change (DELETE / UPDATE / MERGE) reads the table it changes,
+  // and `rejectUndeclaredInputs` reported that read as an undeclared input. InputChecker.check takes the in-place
+  // target to leave out of the undeclared check (StructuralVerifier.verify keeps its old signature as an overload).
+  // InputChecker is private[invaract]: nothing outside this repository calls it.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.InputChecker.check"),
+  // CapabilityMatrix.main wrote a page without the conformance suite's coverage, which the drift test rejects; the
+  // generator is adapter-testkit's CapabilityMatrixPage (./dev/capabilities). Nothing outside this repository runs it.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CapabilityMatrix.main")
 )
 
 libraryDependencies ++= Seq(

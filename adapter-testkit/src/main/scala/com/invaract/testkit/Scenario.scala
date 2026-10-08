@@ -14,8 +14,10 @@ final case class ScenarioInput(location: String, schema: LogicalSchema)
 
 /** Where a scenario's job writes. `format` and `saveMode` use the engine-neutral spellings the
   * contract format uses (`parquet`, `csv`, `json`; `append`, `overwrite`, `ignore`, `error`).
+  * With `registeredAs` set the data is also registered in the engine's catalog under that table
+  * name (still stored at `location`), which is what a contract's `catalog:` requirement asks about.
   */
-final case class ScenarioOutput(location: String, format: String = "parquet", saveMode: String = "overwrite")
+final case class ScenarioOutput(location: String, format: String = "parquet", saveMode: String = "overwrite", registeredAs: Option[String] = None)
 
 /** What one output column is made of. Deliberately tiny: just enough to build every shape the
   * scenarios need on any engine - a pass-through, a cast, and a value that can never be null.
@@ -45,6 +47,21 @@ final case class OutColumn(name: String, source: ColumnSource)
 /** Join the two inputs on equality of one column from each. */
 final case class JoinOn(leftColumn: String, rightColumn: String)
 
+/** A row-level operation on the output dataset in place - not a read-transform-write. Only the
+  * shapes the scenarios need: a delete that touches every row, and one that touches the rows
+  * matching a predicate (`id > 0`).
+  */
+sealed trait RowChange
+
+object RowChange {
+
+  /** `DELETE FROM output` with no `WHERE`. */
+  case object UnconditionalDelete extends RowChange
+
+  /** `DELETE FROM output WHERE id > 0`. */
+  case object FilteredDelete extends RowChange
+}
+
 /** A job described in no engine's terms: read one or two inputs (two are inner-joined), optionally
   * keep the rows where a column of the first input is greater than zero, project `columns`, write
   * `output`. Each adapter turns this into its own engine's real job and runs it under enforcement.
@@ -54,6 +71,11 @@ final case class JoinOn(leftColumn: String, rightColumn: String)
   * translation for, and an adapter must refuse it (`UNVERIFIABLE_WRITE`) rather than let it through
   * unchecked. The adapter picks its own engine's representative (Spark: `TRUNCATE TABLE`); the
   * inputs and columns are not used.
+  *
+  * With `rowChange` set the job changes the rows of `output` in place instead, and `columns` describe
+  * that dataset's own columns: the adapter first creates it (in `output.format`, with no contract
+  * active), then runs the change under enforcement. The change reads no declared input, so a
+  * scenario using it declares none.
   */
 final case class ScenarioJob(
     inputs: List[ScenarioInput],
@@ -61,7 +83,8 @@ final case class ScenarioJob(
     output: ScenarioOutput,
     join: Option[JoinOn] = None,
     filterColumn: Option[String] = None,
-    untranslatableWrite: Boolean = false
+    untranslatableWrite: Boolean = false,
+    rowChange: Option[RowChange] = None
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
   require(inputs.size == 1 || join.isDefined, "a two-input job must say how its inputs are joined")

@@ -44,7 +44,9 @@ class NoArgConstructorTestSink(unused: String) extends NotificationSink {
   * `ClassCastException` handling, distinct from a missing-constructor
   * failure.
   */
-class NotASinkAtAll
+class NotASinkAtAll { NotASinkAtAll.constructed += 1 }
+
+object NotASinkAtAll { @volatile var constructed = 0 }
 
 class NotificationSinkFactorySpec extends AnyFunSuite {
 
@@ -104,7 +106,14 @@ class NotificationSinkFactorySpec extends AnyFunSuite {
     val ex = intercept[IllegalArgumentException] {
       NotificationSinkFactory.create(config)
     }
-    assert(ex.getCause.isInstanceOf[ClassCastException])
+    assert(ex.getMessage.contains("does not implement NotificationSink"))
+    assert(ex.getMessage.contains(classOf[NotASinkAtAll].getName))
+  }
+
+  test("a class that is not a sink is never constructed: naming it runs none of its code") {
+    NotASinkAtAll.constructed = 0
+    intercept[IllegalArgumentException](NotificationSinkFactory.instantiate(classOf[NotASinkAtAll].getName))
+    assert(NotASinkAtAll.constructed == 0)
   }
 
   test("create throws IllegalArgumentException for an unresolvable class name") {

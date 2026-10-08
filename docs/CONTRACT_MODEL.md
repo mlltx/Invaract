@@ -159,7 +159,11 @@ Each field has:
 
 Known types (validator warns, does not error, on anything else):
 `string`, `integer`, `long`, `short`, `byte`, `double`, `float`, `decimal`,
-`boolean`, `date`, `timestamp`, `binary`, `struct`, `array`, `map`.
+`boolean`, `date`, `timestamp`, `timestamp_ntz`, `binary`, `time`, `json`, `geography`,
+`interval`, `struct`, `array`, `map`. The validator also warns (never errors) on a `saveMode`,
+dataset `format` or `catalog.technology` outside the canonical vocabularies
+(`SaveModes`, `Formats`, `CatalogTechnologies`): the sets are open, but only an adapter reporting
+exactly the declared string can match another name.
 
 #### Logical types (`LogicalType`)
 
