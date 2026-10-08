@@ -75,6 +75,13 @@ const PAGES = [
     order: 6,
   },
   {
+    src: 'docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md',
+    slug: 'design/engine-research-bigquery-beam',
+    section: 'Design Docs',
+    label: 'Engine Research: BigQuery and Beam',
+    order: 7,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

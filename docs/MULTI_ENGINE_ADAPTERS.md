@@ -64,7 +64,7 @@ module move in Stage 2.
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour | In review |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic is classified the same on every engine, and `GENERATE_UUID()` is not "deterministic" | In review |
-| — | BigQuery / Beam adapters | The goal; deliberately last | Not started — needs a go-ahead after Stage 5 |
+| — | BigQuery / Beam adapters | The goal; deliberately last | Not started — needs a go-ahead. Prerequisites in progress: kit hardening (Stage 4), module registration and the adapter guide, and the engine research (`docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md`) |
 
 ## Stage 1 — the logical type model
 
@@ -320,30 +320,34 @@ same way. A contract that declares another string still validates, with a warnin
 | Engine disposition | Canonical |
 |---|---|
 | Spark `SaveMode.Append` / `Overwrite` / `ErrorIfExists` / `Ignore` | `append` / `overwrite` / `error` / `ignore` |
-| BigQuery `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
-| Beam `BigQueryIO` `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_EMPTY` | `append` / `overwrite` / `error` |
+| BigQuery `WRITE_APPEND` / `WRITE_TRUNCATE` / `WRITE_TRUNCATE_DATA` / `WRITE_EMPTY` | `append` / `overwrite` / `overwrite` / `error` (approximate: fails only on a table that has data) |
+| Beam `BigQueryIO` `WRITE_APPEND` / `WRITE_TRUNCATE` (file loads only) / `WRITE_EMPTY` | `append` / `overwrite` / `error` (approximate, as above) |
 | `MERGE` / `UPDATE` / `DELETE` (row-level DML) | `None`: reported through `rowMutation`, not as a write mode |
 
 The Spark row is what ships today. The BigQuery and Beam rows are the intended mapping for adapters
-that do not exist yet, written from the engines' public documentation and not yet exercised by an
-adapter: confirm each against the engine's current documentation when its adapter is written.
+that do not exist yet. They are checked against the engines' own source (`docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md`,
+which also records the defaults that differ by job kind and what could not be checked) but not yet exercised by an
+adapter.
 
 **Types map into `LogicalType`.** An adapter converts its engine's schema into `LogicalSchema`;
 anything with no neutral equivalent becomes `OtherType(typeName, catalogString)`, which compares
-by its catalog string and never matches a declared neutral type. The intended mappings (same caveat as the write-mode table):
+by its catalog string and never matches a declared neutral type. The intended mappings (same status as the
+write-mode table; the research document has the reasoning, including the narrow integer types, picosecond
+timestamps and `BIGNUMERIC` precision that this summary leaves out):
 
 | Neutral type | BigQuery | Beam schema |
 |---|---|---|
 | `string` / `boolean` / `long` / `double` | `STRING` / `BOOL` / `INT64` / `FLOAT64` | `STRING` / `BOOLEAN` / `INT64` / `DOUBLE` |
-| `decimal(p,s)` | `NUMERIC` = `decimal(38,9)`; `BIGNUMERIC` is wider than `decimal(38,_)`, so it is `OtherType("BIGNUMERIC", ...)` | `DECIMAL` (arbitrary precision: `OtherType` unless a precision is declared) |
-| `date` / `timestamp` / `timestamp_ntz` | `DATE` / `TIMESTAMP` / `DATETIME` | `DATETIME` and the date/time logical types: decide per type when the adapter is written, else `OtherType` |
-| `time` | `TIME` | the time-of-day logical type, if the schema has one |
-| `json` | `JSON` | none: a JSON string is a `string` |
-| `geography` | `GEOGRAPHY` | none |
+| `decimal(p,s)` | `NUMERIC` (default `(38,9)`, or the declared `(p,s)`); `BIGNUMERIC(p,s)` only when `p <= 38`, otherwise `OtherType("BIGNUMERIC", ...)` | `DECIMAL` carries no precision or scale: `OtherType("DECIMAL", ...)` |
+| `byte` / `short` / `integer` / `float` | none (`INT64` and `FLOAT64` only) | `BYTE` / `INT16` / `INT32` / `FLOAT` |
+| `date` / `timestamp` / `timestamp_ntz` | `DATE` / `TIMESTAMP` (microseconds; a 12-digit one is `OtherType`) / `DATETIME` | the `SqlTypes.DATE` logical type / the primitive `DATETIME` (an instant) / the `SqlTypes.DATETIME` logical type |
+| `time` | `TIME` | the `SqlTypes.TIME` logical type |
+| `json` | `JSON` | none: Beam reads a BigQuery `JSON` as `STRING`, so it is a `string` |
+| `geography` | `GEOGRAPHY` | none: read as `STRING` |
 | `interval` | `INTERVAL` | none (Spark's calendar interval is `interval`; its year-month and day-time intervals stay `OtherType`) |
 | `binary` | `BYTES` | `BYTES` |
-| `array` / `struct` / `map` | `ARRAY` / `STRUCT` (BigQuery has no map: a repeated `STRUCT<key,value>` stays an array) | `ARRAY` / `ROW` / `MAP` |
-| no neutral type | `RANGE` | `ITERABLE`, custom logical types |
+| `array` / `struct` / `map` | `ARRAY` / `STRUCT` (BigQuery has no map: a repeated `STRUCT<key,value>` stays an array) | `ARRAY` (or `ITERABLE`) / `ROW` / `MAP` |
+| no neutral type | `RANGE` | custom logical types (Beam's own BigQuery reader rejects `RANGE`) |
 
 `time`, `json`, `geography` and `interval` are real logical types (`LogicalType.TimeType`, `JsonType`,
 `GeographyType`, `IntervalType`), so a contract can declare them. An engine without one reports the type
