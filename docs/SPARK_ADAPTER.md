@@ -958,6 +958,20 @@ undetected — see "Mutation testing" below for the resulting score.
 
 ## Known limitations
 
+- **A new V1 data-source table created with `.saveAsTable()` fails a `catalog.required` contract.** Spark
+  plans it as an outer `CreateDataSourceTableAsSelectCommand` (which carries the table's catalog identity)
+  and a nested `InsertIntoHadoopFsRelationCommand` (which does not: its `catalogTable` is `None`). Both
+  reach the check rule, so a contract whose output declares `catalog: {required: true}` rejects the nested
+  insert with `MISSING_OUTPUT_CATALOG_REGISTRATION` although the write is registered. An append onto a table
+  that already exists is unaffected (the nested insert then carries the table), and so are Delta and
+  Iceberg, whose atomic create goes through DSv2. Found by the conformance kit's
+  `catalog-required-output-registered` scenario, whose Spark runner therefore creates the table first and
+  checks only the append. The failure is closed (a false rejection, never a false pass).
+- **A path-based Delta `DELETE`/`UPDATE`/`MERGE` (`delta.`/path``) has no catalog storage location.** The
+  write's location is a best-effort rendering of the target plan (with a diagnostic), so a contract that
+  declares the output's location rejects it with `OUTPUT_LOCATION_MISMATCH`. A catalog-registered Delta
+  table is unaffected, which is why the conformance kit's DML scenarios run on one.
+
 - **No `SparkSessionExtensions`-based capture.** Only a `DataFrame`'s own
   `.queryExecution` or a registered `QueryExecutionListener` are used to
   obtain a plan. This is deliberate (see *Integration point* above), not

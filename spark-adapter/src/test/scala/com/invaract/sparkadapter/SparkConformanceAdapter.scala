@@ -4,7 +4,7 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, LogicalSchema, LogicalType}
-import com.invaract.testkit.{ColumnSource, ConformanceAdapter, RecordingSink, ScenarioJob, ScenarioOutcome}
+import com.invaract.testkit.{ColumnSource, ConformanceAdapter, RecordingSink, RowChange, ScenarioJob, ScenarioOutcome}
 import com.invaract.verification.{AdapterCapabilities, ContractViolationException, VerificationOptions}
 
 import org.apache.spark.sql.{Column, Row, SparkSession}
@@ -38,6 +38,10 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       .config("spark.sql.warehouse.dir", scratch.resolve("warehouse").toString)
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.ui.enabled", "false")
+      // Delta, for the row-level DML scenarios (Spark has no row-level DELETE on a plain parquet table). It
+      // changes nothing for the scenarios that write parquet/csv/json by path.
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .withExtensions(_.injectCheckRule(_ => (plan: LogicalPlan) => active.foreach(_(plan))))
       .getOrCreate()
     session.sparkContext.setLogLevel("ERROR")
@@ -52,27 +56,41 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     def path(location: String): String = base.resolve(location).toString
 
     if (job.untranslatableWrite) return runUntranslatable(scenarioId, contract, options)
+    job.rowChange.foreach(change => return runRowChange(scenarioId, contract, job, change, options))
 
     job.inputs.foreach { input =>
       val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema))
       empty.write.mode("overwrite").parquet(path(input.location))
     }
 
+    val frames = job.inputs.map(i => spark.read.parquet(path(i.location)))
+    val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
+    val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
+    val columns: List[Column] = job.columns.map { c =>
+      (c.source match {
+        case ColumnSource.FromInput(i, col)    => frames(i)(col)
+        case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
+        case ColumnSource.NonNullLong(v)       => lit(v)
+        case ColumnSource.UniqueId             => expr("uuid()")
+      }).as(c.name)
+    }
+    val result = filtered.select(columns: _*)
+    // A write that registers a catalog table is an append onto a table that already exists: Spark plans a
+    // `.saveAsTable()` that creates a new table as an outer command plus a nested insert that carries no
+    // catalog identity, which a `catalog.required` contract then rejects (docs/SPARK_ADAPTER.md, "Known gaps").
+    // So the table is created first, with no contract active, and only the registered write is checked.
+    job.output.registeredAs.foreach { table =>
+      result.limit(0).write.format(job.output.format).mode("overwrite").option("path", path(job.output.location)).saveAsTable(table)
+    }
+
     val sink = new RecordingSink
     active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
     try {
-      val frames = job.inputs.map(i => spark.read.parquet(path(i.location)))
-      val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
-      val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
-      val columns: List[Column] = job.columns.map { c =>
-        (c.source match {
-          case ColumnSource.FromInput(i, col)    => frames(i)(col)
-          case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
-          case ColumnSource.NonNullLong(v)       => lit(v)
-          case ColumnSource.UniqueId             => expr("uuid()")
-        }).as(c.name)
+      val writer = result.write.format(job.output.format).mode(job.output.saveMode)
+      job.output.registeredAs match {
+        case Some(table) => writer.insertInto(table)
+        case None        => writer.save(path(job.output.location))
       }
-      filtered.select(columns: _*).write.format(job.output.format).mode(job.output.saveMode).save(path(job.output.location))
       ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
     } catch {
       case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
@@ -95,6 +113,46 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
     } finally active = None
   }
+
+  /** Spark's representative of a row-level change: a Delta `DELETE FROM` on a catalog table over a Delta path.
+    * The table is created first with the job's own columns while no contract is active (the neutral job's
+    * inputs are materialized for that, as for any job), so only the DELETE itself is checked. A catalog
+    * table, not `delta.`path``: a path-based DELETE has no catalog storage location to report, so it is the
+    * best-effort case (docs/SPARK_ADAPTER.md), not the one this scenario is about.
+    */
+  private def runRowChange(scenarioId: String, contract: Contract, job: ScenarioJob, change: RowChange, options: VerificationOptions): ScenarioOutcome = {
+    val target = path(scenarioId, job.output.location)
+    job.inputs.foreach { input =>
+      spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite").parquet(path(scenarioId, input.location))
+    }
+    val frames = job.inputs.map(i => spark.read.parquet(path(scenarioId, i.location)))
+    val columns: List[Column] = job.columns.map { c =>
+      (c.source match {
+        case ColumnSource.FromInput(i, col)    => frames(i)(col)
+        case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
+        case ColumnSource.NonNullLong(v)       => lit(v)
+        case ColumnSource.UniqueId             => expr("uuid()")
+      }).as(c.name)
+    }
+    frames.head.select(columns: _*).write.format("delta").mode("overwrite").save(target)
+    val table = "conformance_" + scenarioId.replace('-', '_')
+    spark.sql(s"CREATE TABLE IF NOT EXISTS $table USING delta LOCATION '${target.replace('\\', '/')}'")
+
+    val sink = new RecordingSink
+    active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
+    try {
+      val where = change match {
+        case RowChange.UnconditionalDelete => ""
+        case RowChange.FilteredDelete      => " WHERE id > 0"
+      }
+      spark.sql(s"DELETE FROM $table$where").collect()
+      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
+    } catch {
+      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
+    } finally active = None
+  }
+
+  private def path(scenarioId: String, location: String): String = scratch.resolve(scenarioId).resolve(location).toString
 
   private def structType(schema: LogicalSchema): StructType =
     StructType(schema.fields.map(f => StructField(f.name, DataType.fromDDL(f.dataType.catalogString), f.nullable)))

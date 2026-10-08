@@ -2,9 +2,13 @@
 # Regenerates the engine capability matrix page (docs-site: reference/engine-capabilities)
 # from every adapter's own declaration, <module>/src/main/resources/invaract-capabilities-<adapter>.yaml.
 #
-# The page is GENERATED - never edit it by hand. verification-core's CapabilityMatrixSpec fails
+# The page is GENERATED - never edit it by hand. adapter-testkit's CapabilityMatrixPageSpec fails
 # (in `sbt test`, so in CI and ./dev/build too) when the committed page differs from what this
-# produces, with this command in the failure message; that is the drift check.
+# produces, with this command in the failure message; that is the drift check. The kit generates it
+# (not verification-core) because the page also says how the conformance scenarios check each
+# capability, and only the kit knows the scenarios.
+#
+# Needs verification-core published locally (./dev/build does it).
 #
 # Adding an adapter: give its module a declaration file named as above (AdapterCapabilities.parse
 # refuses one that leaves any capability undeclared), then run this script and commit the result.
@@ -27,5 +31,5 @@ if [ "${#DECLARATIONS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-(cd verification-core && sbt -batch "runMain com.invaract.verification.CapabilityMatrix ../$OUTPUT ${DECLARATIONS[*]}")
+(cd adapter-testkit && sbt -batch "runMain com.invaract.testkit.CapabilityMatrixPage ../$OUTPUT ${DECLARATIONS[*]}")
 echo "Wrote $OUTPUT from ${#DECLARATIONS[@]} adapter declaration(s)."

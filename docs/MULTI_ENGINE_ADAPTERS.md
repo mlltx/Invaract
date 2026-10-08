@@ -146,9 +146,8 @@ its own MiMa entry (nothing to compare against until it is released).
 
 **Not done in 2a, deliberately**
 
-- Not yet published to Maven Central or wired into `release.yml` (the same disclosed gap
-  `fingerprint` has) — `spark-adapter`'s published POM depends on it, so this must land
-  before the next Maven Central release.
+- Published to Maven Central by `release.yml` since review pass 3 (`spark-adapter`'s published POM
+  depends on it, so a release without it would not resolve).
 - `registry/ContractSource` (reads a `SparkSession`) and `WriteFieldInfo`'s Spark type
   strings stay in `spark-adapter`; both belong with 2b's neutral config namespace.
 - Test helpers `TestNotificationSink`, `EventSchema` and `CustomRuleVerifierFixtures` are
@@ -293,11 +292,24 @@ checked by the conformance kit.
 **Locations are canonical `/`-separated strings.** The pipeline compares a contract's declared
 location with the location the adapter reports using one rule (`LocationMatching`): equal, or the
 declared one is a `/`-boundary suffix of the reported one. An engine whose names are not paths
-converts them first: a BigQuery table `project.dataset.table` is reported as
-`project/dataset/table`, and a contract author writes `dataset/table` (or the full form to pin
-one project). An absolute declaration (`/data/orders`, `gs://bucket/orders`) matches only itself;
+converts them first with `LocationMatching.fromParts(Seq("project", "dataset", "table"))`
+(`project/dataset/table`; it trims, drops one pair of backticks or double quotes and empty parts, and the
+adapter splits the engine's identifier by the engine's own rules), and a contract author writes
+`dataset/table` (or the full form to pin one project). A dotted declaration (`ds.orders`) is one path
+segment and never matches the converted name, so write `/`. An absolute declaration (`/data/orders`, `gs://bucket/orders`) matches only itself;
 a relative one matches any location ending in it, so a contract that must distinguish tenants
 declares it absolute.
+
+**Formats and catalog technologies use canonical names too.** `ir.Write.format` and
+`CatalogIdentity.technology` are `com.invaract.contract.Formats` (`parquet`, `orc`, `avro`, `csv`, `json`,
+`text`, `table`, `delta`, `iceberg`, `hudi`, `hive`, `jdbc`, `bigquery`, `kafka`) and
+`CatalogTechnologies` (`hive`, `delta`, `iceberg`, `hudi`, `jdbc`, `glue`, `bigquery`, `in-memory`). Both are
+open in the same way as write modes: an engine whose format is none of these reports its own name, and a
+contract declaring a name outside the set still validates, with a warning. What an adapter must not do is
+spell a listed format its own way (`BIGQUERY_TABLE`, `SparkCatalog`): Spark reports a data source's
+registered short name and maps its catalog plugins (`DeltaCatalog` -> `delta`, `SparkCatalog` ->
+`iceberg`), both guarded by `FormatVocabularySpec`. `UnknownPlan.sourceType` is deliberately not a
+vocabulary: it is the engine's own label for a node it could not translate, there for diagnostics.
 
 **Write modes use the four canonical names.** `ir.Write.saveMode` is `append`, `overwrite`,
 `ignore` or `error` (`com.invaract.contract.SaveModes`), or `None` when the adapter cannot tell.
@@ -325,12 +337,20 @@ by its catalog string and never matches a declared neutral type. The intended ma
 | `string` / `boolean` / `long` / `double` | `STRING` / `BOOL` / `INT64` / `FLOAT64` | `STRING` / `BOOLEAN` / `INT64` / `DOUBLE` |
 | `decimal(p,s)` | `NUMERIC` = `decimal(38,9)`; `BIGNUMERIC` is wider than `decimal(38,_)`, so it is `OtherType("BIGNUMERIC", ...)` | `DECIMAL` (arbitrary precision: `OtherType` unless a precision is declared) |
 | `date` / `timestamp` / `timestamp_ntz` | `DATE` / `TIMESTAMP` / `DATETIME` | `DATETIME` and the date/time logical types: decide per type when the adapter is written, else `OtherType` |
+| `time` | `TIME` | the time-of-day logical type, if the schema has one |
+| `json` | `JSON` | none: a JSON string is a `string` |
+| `geography` | `GEOGRAPHY` | none |
+| `interval` | `INTERVAL` | none (Spark's calendar interval is `interval`; its year-month and day-time intervals stay `OtherType`) |
 | `binary` | `BYTES` | `BYTES` |
 | `array` / `struct` / `map` | `ARRAY` / `STRUCT` (BigQuery has no map: a repeated `STRUCT<key,value>` stays an array) | `ARRAY` / `ROW` / `MAP` |
-| no neutral type | `JSON`, `GEOGRAPHY`, `INTERVAL`, `TIME`, `RANGE` | `ITERABLE`, custom logical types |
+| no neutral type | `RANGE` | `ITERABLE`, custom logical types |
 
-Each adapter documents its own table next to its capability declaration and adds a conformance
-scenario for any type whose mapping is not obvious.
+`time`, `json`, `geography` and `interval` are real logical types (`LogicalType.TimeType`, `JsonType`,
+`GeographyType`, `IntervalType`), so a contract can declare them. An engine without one reports the type
+it does have, and the declaration then fails as a type mismatch rather than passing: the
+`extended-type-not-produced` scenario holds every adapter to that. Each adapter documents its own table
+next to its capability declaration and adds a conformance scenario for any type whose mapping is not
+obvious.
 
 **Events are engine-neutral.** A published event names no engine's concepts: `runId` is the
 engine's own run identifier, and `JobInfo` carries `engine`, `engineVersion` and a free-form
@@ -350,7 +370,7 @@ runs, judged against that adapter's *own declaration*.
 **A scenario** is a contract, a job described in no engine's terms, and a verdict. The job
 (`ScenarioJob`) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 28 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario's schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
@@ -373,6 +393,16 @@ adapter mixes `AdapterConformanceSpec` into a test, which registers one test per
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |
 
+**Row-level changes and catalog tables have job shapes too.** A `ScenarioJob` with `rowChange` set changes the
+rows of its output in place (a `DELETE`, with or without a predicate) instead of reading and writing; the
+adapter creates the dataset first with no contract active, then runs the change under enforcement. The
+three DML scenarios check that such a change is recognised as a write to its table, that
+`forbid_unconditional_delete` blocks a `DELETE` with no predicate, and that it lets a filtered one
+through. A `ScenarioOutput` with `registeredAs` set registers the data in the engine's catalog under that
+name; two scenarios check that a contract's `catalog: required` blocks a bare path and allows a catalog
+table. Spark runs the DML scenarios on a Delta table (the conformance session enables Delta, which
+changes nothing for the parquet, csv and json scenarios).
+
 **Fail-closed has its own job shape.** A `ScenarioJob` with `untranslatableWrite` set is not a
 read-transform-write at all but a data-changing operation the adapter has no translation for; the
 adapter picks its engine's representative (Spark: `TRUNCATE TABLE` on a managed table) and must block
@@ -384,8 +414,10 @@ scenario is evidence for is listed as *unverified*, never counted as passing, an
 kind of unverified it is: **attested** (`Scenarios.attested`) when no job could check it by its nature
 - how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
 adapter's own tests carry it; or a **gap** (`Scenarios.gaps`) when a job could check it but the kit
-cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit's own tests fail
-if a capability is in neither list or in both.
+cannot yet (streaming, the opt-in analyses, lineage). The kit's own tests fail
+if a capability is in neither list or in both. The generated engine-capabilities page says the same per
+capability in its *Suite check* column (`verified (n)`, `attested`, `gap`); the page is generated by the
+kit, not by `verification-core`, because only the kit knows the scenarios (`./dev/capabilities`).
 
 **The kit is tested against itself.** `ReferenceAdapter` is a complete adapter built on nothing but
 the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
@@ -400,14 +432,13 @@ mix in `AdapterConformanceSpec`, and see which scenarios fail or are canceled. W
 behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
 third place for the difference to hide.
 
-**Not done in 4, deliberately.** The scenario language has no streaming, row-level DML, catalog or
-checkpoint shapes yet (see `Scenarios.notCovered`); each grows the neutral job description and is its own
-step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
+**Not done in 4, deliberately.** The scenario language has no streaming or checkpoint shapes yet, and the
+outcome carries no data-quality, role, sensitivity or lineage verdicts (see `Scenarios.gaps`); each grows
+the neutral job description or the outcome and is its own step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
 `ConformanceKitSpec` is the equivalent proof that it fails what it should), but it is held to the
 other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
-coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
-`MERGE`/`UPDATE`/`DELETE` job needs a table format that supports it (Delta or Iceberg on Spark),
-which a plain local session does not have.
+coverage. It is published to Maven Central with the other engine modules (`docs/RELEASING.md`), because a third-party
+adapter compiles its conformance tests against it.
 
 ## Stage 5 — function canonicalisation
 

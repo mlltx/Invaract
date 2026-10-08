@@ -36,6 +36,10 @@ object Scenarios {
   private val ordersContractFields = fields(8, ("id", "long", false), ("amount", "long", false), ("label", "string", false))
   private val defaultOutputFields = fields(8, ("id", "long", false), ("total", "long", true))
 
+  /** The columns of a table changed in place: nothing is promised about nullability, because a table format
+    * decides that for itself (Delta records every column as nullable). */
+  private val dmlOutputFields = fields(8, ("id", "long", false), ("total", "long", false))
+
   private def contract(
       outputFields: String = defaultOutputFields,
       outputExtras: String = "",
@@ -66,8 +70,9 @@ object Scenarios {
       output: ScenarioOutput = ScenarioOutput("out/report"),
       inputs: List[ScenarioInput] = List(orders),
       join: Option[JoinOn] = None,
-      filterColumn: Option[String] = None
-  ) = ScenarioJob(inputs, columns, output, join, filterColumn)
+      filterColumn: Option[String] = None,
+      rowChange: Option[RowChange] = None
+  ) = ScenarioJob(inputs, columns, output, join, filterColumn, rowChange = rowChange)
 
   private val defaults = VerificationOptions()
 
@@ -117,6 +122,54 @@ object Scenarios {
       Set(Capability.CheckSchema),
       contract(), job(columns = List(OutColumn("id", CastInput(0, "id", Str)), OutColumn("total", NonNullLong(1)))),
       defaults, Expectation.Reject(Set(ViolationType.OutputFieldTypeMismatch))
+    ),
+    Scenario(
+      "extended-type-not-produced",
+      "a declared interval, json, geography or time column is not satisfied by a column of another type - a type an engine lacks is a mismatch, never a pass",
+      Set(Capability.CheckSchema),
+      contract(outputFields = fields(8, ("id", "long", false), ("total", "interval", true))),
+      job(), defaults, Expectation.Reject(Set(ViolationType.OutputFieldTypeMismatch))
+    ),
+    Scenario(
+      "row-level-delete-checked-as-write",
+      "a row-level DELETE is recognized as a write to its table: aimed at a table the contract does not declare, it is blocked",
+      Set(Capability.WriteRowLevelDml, Capability.CheckLocation),
+      contract(outputFields = dmlOutputFields, inputs = "", outputLocation = "out/declared"),
+      job(output = ScenarioOutput("out/elsewhere", format = "delta"), rowChange = Some(RowChange.FilteredDelete)),
+      defaults, Expectation.Reject(Set(ViolationType.OutputLocationMismatch)),
+      operations = Set(Capability.WriteRowLevelDml)
+    ),
+    Scenario(
+      "unconditional-delete-forbidden",
+      "a DELETE with no predicate is blocked when the contract carries forbid_unconditional_delete",
+      Set(Capability.RulesDml, Capability.WriteRowLevelDml),
+      contract(outputFields = dmlOutputFields, inputs = "", rules = "  - type: forbid_unconditional_delete"),
+      job(output = ScenarioOutput("out/report", format = "delta"), rowChange = Some(RowChange.UnconditionalDelete)),
+      defaults, Expectation.Reject(Set(ViolationType.RuleUnconditionalDelete)),
+      operations = Set(Capability.WriteRowLevelDml)
+    ),
+    Scenario(
+      "filtered-delete-allowed",
+      "a DELETE with a predicate passes a contract that carries forbid_unconditional_delete",
+      Set(Capability.RulesDml, Capability.WriteRowLevelDml),
+      contract(outputFields = dmlOutputFields, inputs = "", rules = "  - type: forbid_unconditional_delete"),
+      job(output = ScenarioOutput("out/report", format = "delta"), rowChange = Some(RowChange.FilteredDelete)),
+      defaults, Expectation.Pass,
+      operations = Set(Capability.WriteRowLevelDml)
+    ),
+    Scenario(
+      "catalog-required-output-unregistered",
+      "an output the contract requires to be registered in a catalog is blocked when it is written to a bare path",
+      Set(Capability.CheckCatalogRegistration),
+      contract(outputExtras = "    catalog:\n      required: true"), job(), defaults,
+      Expectation.Reject(Set(ViolationType.MissingOutputCatalogRegistration))
+    ),
+    Scenario(
+      "catalog-required-output-registered",
+      "an output the contract requires to be registered in a catalog is allowed when it is written as a catalog table",
+      Set(Capability.CheckCatalogRegistration),
+      contract(outputExtras = "    catalog:\n      required: true"),
+      job(output = ScenarioOutput("out/report", saveMode = "append", registeredAs = Some("conformance_report"))), defaults, Expectation.Pass
     ),
     Scenario(
       "output-nullability-mismatch",
@@ -262,9 +315,6 @@ object Scenarios {
   val gaps: Map[Capability, String] = Map(
     Capability.ReadStreaming -> "needs a streaming job shape the neutral job description does not have yet",
     Capability.WriteStreaming -> "needs a streaming job shape the neutral job description does not have yet",
-    Capability.WriteRowLevelDml -> "needs a MERGE/UPDATE/DELETE job shape (and, on Spark, a table format that supports it) the neutral job description does not have yet",
-    Capability.CheckCatalogRegistration -> "needs a catalog-resident dataset, which the neutral job description does not model yet",
-    Capability.RulesDml -> "needs a MERGE/UPDATE/DELETE job shape the neutral job description does not have yet",
     Capability.AnalysisStaticDataQuality -> "opt-in analysis; the outcome does not yet carry data-quality verdicts",
     Capability.AnalysisRoleConsistency -> "opt-in analysis; the outcome does not yet carry role verdicts",
     Capability.AnalysisSensitivityPropagation -> "report-only; the outcome does not yet carry sensitivity propagation",

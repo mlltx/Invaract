@@ -12,7 +12,10 @@
 // 0.3.0: ScenarioJob gained `untranslatableWrite` and Scenarios split `notCovered` into `attested` and
 // `gaps` - a binary break of the kit's own API (declared below for MiMa), hence a new coordinate: the
 // base ref's spark-adapter resolves the kit by coordinate in CI.
-ThisBuild / version := "0.3.0"
+// 0.4.0: ScenarioJob gained `rowChange` (row-level DML scenarios), so rulesDml and write.rowLevelDml
+// are verified rather than unchecked gaps; ScenarioOutput gained `registeredAs` (catalog-registration
+// scenarios). The same deliberate ScenarioJob break, and the ScenarioOutput one, declared below.
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
 
@@ -92,17 +95,21 @@ versionScheme := Some("early-semver")
 // INVARACT_MIMA_BASELINE_VERSION from its build.sbt); the fallback is the last released-to-main version.
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set(
-  "com.invaract" %% "invaract-adapter-testkit" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
+  "com.invaract" %% "invaract-adapter-testkit" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.3.0")
 )
 
-// Deliberate break (review pass 1): ScenarioJob gained the `untranslatableWrite` parameter (the fail-closed
-// scenario's job shape). The kit has no consumers outside this repository yet; these are the exact lines
+// Deliberate break (review passes 1 and 4): ScenarioJob gained the `untranslatableWrite` and `rowChange`
+// parameters (the fail-closed and row-level DML scenarios' job shapes). The kit has no consumers outside this repository yet; these are the exact lines
 // MiMa's own output suggests.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioJob$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioJob$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutput$")
 )
 
 // Line/branch coverage gating (sbt-scoverage), same "measure first, then pin" discipline as the other

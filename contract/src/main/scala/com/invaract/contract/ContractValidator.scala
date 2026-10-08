@@ -32,7 +32,8 @@ object ContractValidator {
 
   private val KnownTypes = Set(
     "string", "integer", "long", "short", "byte", "double", "float", "decimal",
-    "boolean", "date", "timestamp", "binary", "struct", "array", "map"
+    "boolean", "date", "timestamp", "timestamp_ntz", "binary", "time", "json", "geography", "interval",
+    "struct", "array", "map"
   )
 
   /** The type's own keyword, lower-cased, ignoring any parameters: `decimal(10,2)`
@@ -224,6 +225,24 @@ object ContractValidator {
         s"$path.saveMode",
         s"saveMode '$mode' is not one of the canonical write modes (${SaveModes.All.toList.sorted.mkString(", ")}); " +
           "it can only match an adapter that reports exactly this string, so the same contract may fail on another engine"
+      )
+    }
+
+    dataset.format.filterNot(Formats.isCanonical).foreach { format =>
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        s"$path.format",
+        s"format '$format' is not one of the canonical formats (${Formats.All.toList.sorted.mkString(", ")}); " +
+          "it can only match an adapter that reports exactly this string, so the same contract may fail on another engine"
+      )
+    }
+
+    dataset.catalog.flatMap(_.technology).filterNot(CatalogTechnologies.isCanonical).foreach { technology =>
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        s"$path.catalog.technology",
+        s"catalog technology '$technology' is not one of the canonical technologies " +
+          s"(${CatalogTechnologies.All.toList.sorted.mkString(", ")}); it can only match an adapter that reports exactly this string"
       )
     }
 

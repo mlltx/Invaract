@@ -21,8 +21,8 @@ capabilities:
     status: not-applicable
     note: The reference engine has no such concept.
   write.rowLevelDml:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: A row-level DELETE is translated to a write plus a row mutation.
   write.stateChange:
     status: not-applicable
     note: The reference engine has no such concept.
@@ -39,11 +39,11 @@ capabilities:
   check.saveMode:
     status: supported
   check.catalogRegistration:
-    status: not-applicable
-    note: The reference engine has no such concept.
+    status: supported
+    note: A write can carry a catalog identity (a table name), which is all the registration check needs.
   rules.dml:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: partial
+    note: The DELETE rules are enforced; the reference adapter models only deletes.
   rules.planShape:
     status: supported
   rules.custom:

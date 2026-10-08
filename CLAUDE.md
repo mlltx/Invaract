@@ -392,7 +392,8 @@ organizational policy for free. A new neutral setting goes in `InvaractConf` and
 `verification-core`; an undeclared capability is a parse error). A new engine-neutral
 check, rule or analysis means a new `Capability`, which forces every adapter to take a
 position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
-`verification-core` fails otherwise). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+`adapter-testkit` fails otherwise; the kit generates it because the page also says how the
+conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
 
 **Every adapter is checked against its own declaration** by the conformance kit
 (`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs

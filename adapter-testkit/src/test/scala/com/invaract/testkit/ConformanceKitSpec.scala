@@ -218,8 +218,11 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noFilter = new ReferenceAdapter(declaring(Map("write.batch" -> (("not-applicable", Some("the engine only streams"))))))
     val report = Conformance.evaluate(noFilter)
     assert(report.failures == Nil)
-    assert(report.conforming == Nil)
-    assert(report.skipped.size == Scenarios.all.size)
+    // the row-level DML scenarios need a different operation than a batch write, so they still run, and conform
+    val needsBatchWrite = Scenarios.all.filter(_.operations.contains(Capability.WriteBatch))
+    assert(report.skipped.map(_.scenario.id).toSet == needsBatchWrite.map(_.id).toSet)
+    assert(report.conforming.map(_.scenario.id).toSet == Scenarios.all.filterNot(_.operations.contains(Capability.WriteBatch)).map(_.id).toSet)
+    assert(report.conforming.nonEmpty)
     assert(report.skipped.forall(_.verdict.asInstanceOf[ScenarioVerdict.Skipped].reason.contains("the engine only streams")))
   }
 
@@ -227,9 +230,12 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noRead = new ReferenceAdapter(declaring(Map("read.batch" -> (("unsupported", Some("sources are push-only"))))))
     val report = Conformance.evaluate(noRead)
     assert(report.failures == Nil)
-    // every scenario that reads is skipped; the one that only needs a write (fail-closed) still runs, and conforms
+    // every scenario that reads is skipped; those that need no batch read (fail-closed, row-level DML) still run, and conform
     assert(report.skipped.map(_.scenario.id).toSet == Scenarios.all.filter(_.operations.contains(Capability.ReadBatch)).map(_.id).toSet)
-    assert(report.conforming.map(_.scenario.id) == List("untranslatable-write-fails-closed"))
+    assert(
+      report.conforming.map(_.scenario.id).toSet ==
+        Set("untranslatable-write-fails-closed", "row-level-delete-checked-as-write", "unconditional-delete-forbidden", "filtered-delete-allowed")
+    )
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {

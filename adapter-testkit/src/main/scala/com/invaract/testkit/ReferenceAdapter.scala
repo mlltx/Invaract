@@ -4,8 +4,8 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
-import com.invaract.ir.{FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, VerificationOptions, VerificationPipeline}
+import com.invaract.ir.{CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, VerificationOptions, VerificationPipeline}
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
   * engine-neutral plan and handing it to `VerificationPipeline`, with no engine at all.
@@ -34,10 +34,10 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
         contract,
         CheckedWrite(
           plan = ReferenceAdapter.translate(job),
-          inputSchemas = job.inputs.map(i => i.location -> i.schema),
+          inputSchemas = if (job.rowChange.isDefined) Nil else job.inputs.map(i => i.location -> i.schema),
           outputSchema = ReferenceAdapter.outputSchema(job),
           caseSensitive = false,
-          rowMutation = None,
+          rowMutation = job.rowChange.map(ReferenceAdapter.mutationOf),
           lineageBoundaryTypes = Set.empty
         ),
         options,
@@ -64,7 +64,27 @@ object ReferenceAdapter {
   private def ref(job: ScenarioJob, input: Int, column: String): Expr =
     ColumnReference(ColumnRef(column, Some(job.inputs(input).location)))
 
-  def translate(job: ScenarioJob): Plan = {
+  /** What a row-level change looks like to the rule verifiers: the engine-neutral extraction every adapter makes. */
+  def mutationOf(change: RowChange): MutationClassification = {
+    val scope: DeleteScope = change match {
+      case RowChange.UnconditionalDelete => DeleteScope.Unconditional
+      case RowChange.FilteredDelete      => DeleteScope.Conditional(Comparison(">", ColumnReference(ColumnRef("id", None)), Literal(0L, "long")))
+    }
+    MutationClassification.Extracted(MutationKind.Delete, RowMutation(delete = scope))
+  }
+
+  private def catalogOf(output: ScenarioOutput): Option[CatalogIdentity] =
+    output.registeredAs.map(table => CatalogIdentity(table = Some(table)))
+
+  def translate(job: ScenarioJob): Plan = job.rowChange match {
+    // A row-level change in place is a write whose input is the table it changes - the shape Spark's
+    // translation of a Delta DELETE has too.
+    case Some(_) =>
+      Write(DatasetRef(job.output.location), Read(DatasetRef(job.output.location)), Some(job.output.format), None, catalogOf(job.output))
+    case None => translateTransform(job)
+  }
+
+  private def translateTransform(job: ScenarioJob): Plan = {
     val reads = job.inputs.map(i => Read(DatasetRef(i.location)))
     val joined: Plan = job.join.fold[Plan](reads.head)(j =>
       Join(reads(0), reads(1), JoinType.Inner, Some(Comparison("=", ref(job, 0, j.leftColumn), ref(job, 1, j.rightColumn))))
@@ -81,7 +101,7 @@ object ReferenceAdapter {
         }
       )
     }
-    Write(DatasetRef(job.output.location), Project(filtered, columns), Some(job.output.format), Some(job.output.saveMode))
+    Write(DatasetRef(job.output.location), Project(filtered, columns), Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
   }
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {
