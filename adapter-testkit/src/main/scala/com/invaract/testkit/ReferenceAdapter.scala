@@ -30,26 +30,29 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
           com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
           Some(sink)
         )
-      VerificationPipeline.verifyWrite(
-        contract,
-        CheckedWrite(
-          plan = ReferenceAdapter.translate(job),
-          inputSchemas = if (job.rowChange.isDefined) Nil else job.inputs.map(i => i.location -> i.schema),
-          outputSchema = ReferenceAdapter.outputSchema(job),
-          caseSensitive = false,
-          rowMutation = job.rowChange.map(ReferenceAdapter.mutationOf),
-          lineageBoundaryTypes = Set.empty
-        ),
-        options,
-        Some(sink),
-        None,
-        Some(capabilities)
-      )
-      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
+      VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities))
+      sink.passed
     } catch {
-      case e: ContractViolationException => ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
+      case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
     }
   }
+
+  /** What the reference adapter hands the pipeline for `job` - the whole of an adapter's engine-specific work:
+    * the translated plan, the schemas mapped to `LogicalSchema`, and the row-level classification. The conformance
+    * kit's own tests override this to break one thing at a time. */
+  protected def checkedWrite(job: ScenarioJob): CheckedWrite =
+    CheckedWrite(
+      plan = ReferenceAdapter.translate(job),
+      inputSchemas = if (job.rowChange.isDefined) Nil else job.inputs.map(i => i.location -> i.schema),
+      outputSchema = ReferenceAdapter.outputSchema(job),
+      caseSensitive = false,
+      rowMutation = job.rowChange.map(ReferenceAdapter.mutationOf),
+      lineageBoundaryTypes = Set.empty
+    )
+
+  /** The reference engine has no checkpoint or cache, so a job run through a boundary translates to the same
+    * plan as one without: there is nothing behind it to lose. */
+  override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = Some(checkedWrite(job).plan)
 }
 
 object ReferenceAdapter {

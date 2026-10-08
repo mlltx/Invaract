@@ -13,13 +13,13 @@ capabilities:
   read.batch:
     status: supported
   read.streaming:
-    status: not-applicable
-    note: The reference engine has no such concept.
+    status: supported
+    note: The reference engine has no separate streaming runtime, so a streaming job translates to the same plan as the batch job.
   write.batch:
     status: supported
   write.streaming:
-    status: not-applicable
-    note: The reference engine has no such concept.
+    status: supported
+    note: The reference engine has no separate streaming runtime, so a streaming job translates to the same plan as the batch job.
   write.rowLevelDml:
     status: supported
     note: A row-level DELETE is translated to a write plus a row mutation.
@@ -50,24 +50,24 @@ capabilities:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
   analysis.staticDataQuality:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Runs the shared verifier over the plan it translates.
   analysis.roleConsistency:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Runs the shared verifier over the plan it translates.
   analysis.fingerprint:
     status: supported
   analysis.functionCatalog:
     status: supported
   analysis.sensitivityPropagation:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Propagates over the plan it translates.
   lineage.columnLevel:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: Traces the plan it translates.
   lineage.boundaryResolution:
-    status: unsupported
-    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+    status: supported
+    note: The reference engine has no checkpoint or cache, so a boundary job translates to the plan it would without one, so there is nothing behind it to lose.
   policy.organizational:
     status: unsupported
     note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.

@@ -84,7 +84,8 @@ object Conformance {
       expected: Expected,
       outcome: ScenarioOutcome,
       capabilities: AdapterCapabilities,
-      expectNonDeterministic: Option[Set[String]] = None
+      expectNonDeterministic: Option[Set[String]] = None,
+      analysis: Analysis = Analysis()
   ): ScenarioVerdict = {
     val verdict: Option[String] = (expected, outcome) match {
       case (Expected.Pass, _: ScenarioOutcome.Passed) => None
@@ -117,10 +118,52 @@ object Conformance {
               ScenarioVerdict.Diverges(
                 s"the fingerprint must report exactly ${show(columns)} non-deterministic; it reported ${show(outcome.nonDeterministicColumns)} - an engine function name did not reach the catalog"
               )
-            case _ => ScenarioVerdict.Conforms
+            case _ => judgeAnalysis(analysis, outcome)
           }
     }
   }
+
+  /** The analysis results a scenario pins down, compared with what the run reported. */
+  private def judgeAnalysis(analysis: Analysis, outcome: ScenarioOutcome): ScenarioVerdict = {
+    def pairs(p: Set[(String, String)]): String = p.toList.sorted.map { case (k, v) => s"$k=$v" }.mkString("{", ", ", "}")
+    val problems = List(
+      analysis.dataQuality.filter(_ != outcome.dataQuality).map(e => s"the static data-quality results must be ${pairs(e)}; the adapter reported ${pairs(outcome.dataQuality)}"),
+      analysis.roles.filter(_ != outcome.roles).map(e => s"the role-consistency verdicts must be ${pairs(e.toSet)}; the adapter reported ${pairs(outcome.roles.toSet)}"),
+      analysis.unverifiableInputs.filter(_ != outcome.unverifiableInputs).map { e =>
+        s"the inputs reported unverifiable behind a lineage boundary must be ${show(e)}; the adapter reported ${show(outcome.unverifiableInputs)}"
+      }
+    ).flatten
+    problems.headOption.fold[ScenarioVerdict](ScenarioVerdict.Conforms)(ScenarioVerdict.Diverges(_))
+  }
+
+  /** Lineage and sensitivity are read from the adapter's own translation of the job, never from a run. */
+  private def judgeTranslation(adapter: ConformanceAdapter, scenario: Scenario): ScenarioVerdict =
+    if (!scenario.analysis.needsTranslation) ScenarioVerdict.Conforms
+    else
+      adapter.translation(scenario.id, scenario.job) match {
+        case None =>
+          ScenarioVerdict.Diverges(
+            "the adapter declares a capability this scenario checks on its translated plan, but exposes no translation (ConformanceAdapter.translation); " +
+              "declare it unsupported or not applicable instead of leaving it unchecked"
+          )
+        case Some(plan) =>
+          val lineage = scenario.analysis.lineage.flatMap { expected =>
+            val actual = TranslationProbe.lineage(plan, scenario.job)
+            if (actual == expected) None
+            else Some(ScenarioVerdict.Diverges(s"column lineage must be ${showLineage(expected)}; the adapter's translation gives ${showLineage(actual)}"))
+          }
+          lineage.orElse(scenario.analysis.sensitivity.flatMap { expected =>
+            val actual = TranslationProbe.sensitivity(plan, scenario.contract)
+            if (actual == expected) None
+            else Some(ScenarioVerdict.Diverges(s"sensitivity tags per output column must be ${showTags(expected)}; propagated over the adapter's translation they are ${showTags(actual)}"))
+          }).getOrElse(ScenarioVerdict.Conforms)
+      }
+
+  private def showLineage(m: Map[String, Set[(Int, String)]]): String =
+    m.toList.sortBy(_._1).map { case (col, srcs) => s"$col <- ${srcs.toList.sorted.map { case (i, c) => s"#$i.$c" }.mkString("{", ", ", "}")}" }.mkString("[", "; ", "]")
+
+  private def showTags(m: Map[String, Set[String]]): String =
+    m.toList.sortBy(_._1).map { case (col, tags) => s"$col=${show(tags)}" }.mkString("[", "; ", "]")
 
   /** Runs every scenario on `adapter` and compares it with what its declaration promises. An
     * exception out of `adapter.run` is a divergence, not a verdict: only the engine's own
@@ -136,7 +179,11 @@ object Conformance {
     expectationFor(scenario, caps) match {
       case Left(reason) => ScenarioVerdict.Skipped(reason)
       case Right(expected) =>
-        try judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic)
+        try
+          judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis) match {
+            case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
+            case other                    => other
+          }
         catch { case e: Exception => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}") }
     }
 

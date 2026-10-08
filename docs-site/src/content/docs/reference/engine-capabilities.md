@@ -32,10 +32,10 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (23) | ✅ |
-| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | gap | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (24) | ✅ |
-| `write.streaming` | A streaming write is recognized and checked against the contract. | gap | ◐ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (33) | ✅ |
+| `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (34) | ✅ |
+| `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | ✅ |
 
@@ -63,13 +63,13 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
-| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | gap | ✅ |
-| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | gap | ✅ |
+| `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | verified (3) | ✅ |
+| `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | verified (2) | ✅ |
 | `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | verified (2) | ✅ |
 | `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | verified (2) | ✅ |
-| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | gap | ✅ |
-| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | gap | ◐ |
-| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | gap | ◐ |
+| `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | verified (1) | ✅ |
+| `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | verified (2) | ◐ |
+| `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | verified (2) | ◐ |
 
 ### Governance
 
@@ -115,16 +115,6 @@ Attested:
 - `config.locationRefs` — how an adapter attaches to a job is engine-specific, not a job
 - `config.contractRegistry` — how an adapter attaches to a job is engine-specific, not a job
 - `reporting.dryRunInference` — dry-run mode is a mode of installing, not a job
-
-Gaps:
-
-- `read.streaming` — needs a streaming job shape the neutral job description does not have yet
-- `write.streaming` — needs a streaming job shape the neutral job description does not have yet
-- `analysis.staticDataQuality` — opt-in analysis; the outcome does not yet carry data-quality verdicts
-- `analysis.roleConsistency` — opt-in analysis; the outcome does not yet carry role verdicts
-- `analysis.sensitivityPropagation` — report-only; the outcome does not yet carry sensitivity propagation
-- `lineage.columnLevel` — the outcome does not yet carry lineage
-- `lineage.boundaryResolution` — needs a checkpoint/cache job shape the neutral job description does not have
 
 ## Notes
 

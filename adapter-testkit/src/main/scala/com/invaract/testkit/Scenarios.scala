@@ -96,6 +96,58 @@ object Scenarios {
 
   private val customers = ScenarioInput("in/customers", LogicalSchema(List(LogicalField("id", Long, nullable = true))))
 
+
+  private val profiles = ScenarioInput("in/profiles", LogicalSchema(List(LogicalField("id", Long, nullable = true), LogicalField("segment", Str, nullable = true))))
+
+  /** An output whose fields carry static data-quality properties: `total` is required, `id` is not. */
+  private def dqOutputFields(idConstraint: String, totalConstraint: String, totalRequired: Boolean): String =
+    s"""        - name: id
+       |          type: long$idConstraint
+       |        - name: total
+       |          type: long${if (totalRequired) "\n          required: true" else ""}$totalConstraint""".stripMargin
+  private def rangeGte(bound: Int): String = s"\n          constraints:\n            - type: range\n              gte: $bound"
+  private val staticDq = defaults.copy(staticDataQuality = true)
+
+  /** The orders input declared with a role (`type:`), for the role-consistency scenarios. */
+  private def roleInputs(role: String) =
+    s"""  - name: orders
+       |    location: in/orders
+       |    type: $role
+       |    schema:
+       |      fields:
+       |$ordersContractFields""".stripMargin
+  private val roleCheck = defaults.copy(roleConsistency = true)
+
+  /** The orders input with `amount` and `label` tagged sensitive, for the sensitivity scenario. */
+  private val sensitiveInputs =
+    s"""  - name: orders
+       |    location: in/orders
+       |    schema:
+       |      fields:
+       |        - name: id
+       |          type: long
+       |        - name: amount
+       |          type: long
+       |          sensitivityTags: [financial]
+       |        - name: label
+       |          type: string
+       |          sensitivityTags: [pii]""".stripMargin
+
+  private val twoInputs =
+    s"""  - name: orders
+       |    location: in/orders
+       |    schema:
+       |      fields:
+       |$ordersContractFields
+       |  - name: profiles
+       |    location: in/profiles
+       |    schema:
+       |      fields:
+       |${fields(8, ("id", "long", false), ("segment", "string", false))}""".stripMargin
+
+  private val castAmount = List(OutColumn("id", FromInput(0, "id")), OutColumn("amount_text", CastInput(0, "amount", Str)), OutColumn("total", NonNullLong(1)))
+  private val castAmountFields = fields(8, ("id", "long", false), ("amount_text", "string", false), ("total", "long", true))
+
   val all: List[Scenario] = List(
     Scenario(
       "conforming-write",
@@ -291,6 +343,105 @@ object Scenarios {
       expectNonDeterministic = Some(Set("token"))
     ),
     Scenario(
+      "static-data-quality-proves-a-constant",
+      "with staticDataQuality, a required column built from a constant is proven to satisfy its declared range, and the proof is reported",
+      Set(Capability.AnalysisStaticDataQuality),
+      contract(outputFields = dqOutputFields("", rangeGte(0), totalRequired = true)), job(), staticDq, Expectation.Pass,
+      analysis = Analysis(dataQuality = Some(Set("total" -> "Guaranteed")))
+    ),
+    Scenario(
+      "static-data-quality-cannot-prove-a-passthrough",
+      "with staticDataQuality, a range declared on a column copied from an unconstrained input is reported not guaranteed, and does not block",
+      Set(Capability.AnalysisStaticDataQuality),
+      contract(outputFields = dqOutputFields(rangeGte(0), "", totalRequired = true)), job(), staticDq, Expectation.Pass,
+      analysis = Analysis(dataQuality = Some(Set("id" -> "NotGuaranteed", "total" -> "Guaranteed")))
+    ),
+    Scenario(
+      "static-data-quality-violation-blocks",
+      "with staticDataQuality, a constant the declared range provably excludes blocks the write",
+      Set(Capability.AnalysisStaticDataQuality),
+      contract(outputFields = dqOutputFields("", rangeGte(5), totalRequired = false)), job(), staticDq,
+      Expectation.Reject(Set(ViolationType.DataQualityViolation)),
+      analysis = Analysis(dataQuality = Some(Set("total" -> "Violated")))
+    ),
+    Scenario(
+      "role-source-contributing-conforms",
+      "with roleConsistency, a SOURCE input whose data reaches the output is consistent with its declared role",
+      Set(Capability.AnalysisRoleConsistency),
+      contract(inputs = roleInputs("SOURCE")), job(), roleCheck, Expectation.Pass,
+      analysis = Analysis(roles = Some(Map("orders" -> "Conforms")))
+    ),
+    Scenario(
+      "role-control-contributing-contradicts",
+      "with roleConsistency, a CONTROL input whose data reaches the output contradicts its declared role and blocks the write",
+      Set(Capability.AnalysisRoleConsistency),
+      contract(inputs = roleInputs("CONTROL")), job(), roleCheck, Expectation.Reject(Set(ViolationType.RoleConsistencyViolation)),
+      analysis = Analysis(roles = Some(Map("orders" -> "Contradicts")))
+    ),
+    Scenario(
+      "lineage-passthrough-cast-and-constant",
+      "each output column traces to the input column it is copied or cast from, and a constant traces to none",
+      Set(Capability.LineageColumnLevel),
+      contract(outputFields = castAmountFields), job(columns = castAmount), defaults, Expectation.Pass,
+      analysis = Analysis(lineage = Some(Map("id" -> Set(0 -> "id"), "amount_text" -> Set(0 -> "amount"), "total" -> Set.empty)))
+    ),
+    Scenario(
+      "lineage-through-join-and-filter",
+      "a column read from the second input of a join traces to that input, and the join and filter do not add sources",
+      Set(Capability.LineageColumnLevel),
+      contract(outputFields = fields(8, ("id", "long", false), ("segment", "string", false), ("total", "long", true)), inputs = twoInputs),
+      job(
+        columns = List(OutColumn("id", FromInput(0, "id")), OutColumn("segment", FromInput(1, "segment")), OutColumn("total", NonNullLong(1))),
+        inputs = List(orders, profiles), join = Some(JoinOn("id", "id")), filterColumn = Some("amount")
+      ),
+      defaults, Expectation.Pass,
+      analysis = Analysis(lineage = Some(Map("id" -> Set(0 -> "id"), "segment" -> Set(1 -> "segment"), "total" -> Set.empty)))
+    ),
+    Scenario(
+      "sensitivity-follows-a-cast",
+      "tags declared on input fields reach the output columns derived from them, through a cast, and only those",
+      Set(Capability.AnalysisSensitivityPropagation),
+      contract(
+        outputFields = fields(8, ("id", "long", false), ("amount_text", "string", false), ("label", "string", false), ("total", "long", true)),
+        inputs = sensitiveInputs
+      ),
+      job(columns = castAmount.dropRight(1) ++ List(OutColumn("label", FromInput(0, "label")), OutColumn("total", NonNullLong(1)))),
+      defaults, Expectation.Pass,
+      analysis = Analysis(
+        sensitivity = Some(Map("id" -> Set.empty, "amount_text" -> Set("financial"), "label" -> Set("pii"), "total" -> Set.empty))
+      )
+    ),
+    Scenario(
+      "boundary-filter-is-seen-through",
+      "a filter made before a checkpoint or cache still satisfies a required_filter_columns rule, and no declared input is reported hidden",
+      Set(Capability.LineageBoundaryResolution),
+      contract(rules = "  - type: required_filter_columns\n    columns: [amount]"), job(filterColumn = Some("amount")).copy(boundary = true),
+      defaults, Expectation.Pass,
+      analysis = Analysis(unverifiableInputs = Some(Set.empty))
+    ),
+    Scenario(
+      "boundary-does-not-excuse-a-missing-input",
+      "a declared input that is genuinely never read is still reported missing when the job passes through a checkpoint or cache",
+      Set(Capability.LineageBoundaryResolution),
+      contract(inputs = twoInputs), job().copy(boundary = true), defaults, Expectation.Reject(Set(ViolationType.MissingInput)),
+      analysis = Analysis(unverifiableInputs = Some(Set.empty))
+    ),
+    Scenario(
+      "streaming-write-is-checked-like-a-batch-write",
+      "a streaming job whose source is the declared input and whose sink is the declared output is allowed",
+      Set(Capability.ReadStreaming, Capability.WriteStreaming),
+      contract(), job().copy(streaming = true), defaults, Expectation.Pass,
+      operations = Set(Capability.ReadStreaming, Capability.WriteStreaming)
+    ),
+    Scenario(
+      "streaming-write-to-the-wrong-location",
+      "a streaming job whose sink is not the declared output is blocked",
+      Set(Capability.WriteStreaming),
+      contract(), job(output = ScenarioOutput("out/elsewhere")).copy(streaming = true), defaults,
+      Expectation.Reject(Set(ViolationType.OutputLocationMismatch)),
+      operations = Set(Capability.ReadStreaming, Capability.WriteStreaming)
+    ),
+    Scenario(
       "untranslatable-write-fails-closed",
       "an operation that changes data but that the adapter cannot translate is blocked as unverifiable, never passed unchecked",
       Set(Capability.FailClosedUnverifiableWrites),
@@ -321,15 +472,7 @@ object Scenarios {
 
   /** Capabilities a job *could* be evidence for, but the kit cannot check yet - honest gaps in the kit, each with
     * why. An adapter's claim on one of these is reported as an unchecked gap, not as passing. */
-  val gaps: Map[Capability, String] = Map(
-    Capability.ReadStreaming -> "needs a streaming job shape the neutral job description does not have yet",
-    Capability.WriteStreaming -> "needs a streaming job shape the neutral job description does not have yet",
-    Capability.AnalysisStaticDataQuality -> "opt-in analysis; the outcome does not yet carry data-quality verdicts",
-    Capability.AnalysisRoleConsistency -> "opt-in analysis; the outcome does not yet carry role verdicts",
-    Capability.AnalysisSensitivityPropagation -> "report-only; the outcome does not yet carry sensitivity propagation",
-    Capability.LineageColumnLevel -> "the outcome does not yet carry lineage",
-    Capability.LineageBoundaryResolution -> "needs a checkpoint/cache job shape the neutral job description does not have"
-  )
+  val gaps: Map[Capability, String] = Map.empty
 
   /** Everything the kit does not verify with a job: `attested` plus `gaps`. */
   val notCovered: Map[Capability, String] = attested ++ gaps
