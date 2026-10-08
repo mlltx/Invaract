@@ -1241,6 +1241,84 @@ attacker-supplied array references or ranges, and only when LZ4 compression is
 configured. I did not trace other callers of lz4-java outside kafka-clients. The
 alert text I was given did not state an upstream severity or CVE ID.
 
+## 7o. Worked example: a second, distinct Spark CVE — 3.5.7 → 3.5.9
+
+A second Spark History Server CVE, unrelated to §7e's (CVE-2025-54920,
+the Jackson deserialization RCE that 3.5.7 already fixed): **CVE-2026-32773
+/ GHSA-9437-39hj-3c93**, a stored XSS via unescaped application names
+(CWE-80, reported by Google, fixed by SPARK-53337). Affected `>= 3.0.0,
+< 3.5.8`; patched in 3.5.8. Checked against the actual advisory before
+touching anything, not the scanner's prose alone — GHSA-9437-39hj-3c93
+confirms the CWE-80 classification, the fix PR (apache/spark#52851), and
+that this is genuinely a different bug than GHSA-jwp6-cvj8-fw65 (§7e's
+CVE), which is CWE-502 (deserialization) and was already fixed at 3.5.7.
+A Direct dependency again, same as §7e — no `dependencyOverrides`
+workaround exists for a bug in Spark's own code.
+
+| Artifact | Module(s) | Before | After | CVE |
+|---|---|---|---|---|
+| `org.apache.spark:spark-core`/`spark-sql` | `spark-adapter` (`provided`), `plugin` (`provided`), `runner` (compile-scope) | 3.5.7 | 3.5.9 | CVE-2026-32773 |
+
+**Promoted straight to 3.5.9, not the bare-minimum 3.5.8.** 3.5.9 was
+already this repo's newest `spark.verified` entry in
+`supported-versions.properties`, with its own real, passing
+`spark-version-matrix` CI leg against this exact `spark-adapter` codebase
+(Delta/Iceberg/Hive/ClickHouse connectors and `HadoopFsNotificationSink`
+included) from before this fix even existed — a zero-new-risk promotion
+of an already-proven version, rather than introducing an untested patch
+release that would need its own first-time verification pass.
+
+**Mechanism change, not just a version bump.** Unlike §7e (which hardcoded
+`sparkVersion` directly), this repo's Spark pin is now centralized in
+`spark-adapter/src/main/resources/supported-versions.properties`'
+`spark.primary` key (added by the version-matrix feature after §7e — see
+ROADMAP.md). Moving that one value is what moves every consumer:
+`spark-adapter/build.sbt`'s default, `ContractEnforcementRule`'s bundled
+compatibility guard, and `dev/generate-version-docs`' generated tables.
+`plugin`/`runner` still hardcode their own `sparkVersion` val (they don't
+read the properties file), so those needed a direct edit each, same as
+§7e. The CI workflow's three Spark-binary-download blocks (`test`,
+`mutation-testing-spark-adapter`, `docker-regression`), `docker/Dockerfile`,
+`.devcontainer/post-create.sh`, and `.claude/hooks/session-start.sh` all
+hardcode the runtime `spark-submit` distribution version independently of
+`build.sbt` entirely (confirmed by grepping the whole repo for the
+literal `3.5.7` string — 26 matches, each individually checked: some
+were this class of operational pin needing an edit, some were historical
+Scaladoc/test-fixture mentions of a specific past investigation left
+untouched, and a few were prose docs needing a careful correction rather
+than a silent rewrite) — exactly the propagation-gap class ROADMAP.md's
+own history already recorded once before (the 3.5.1 → 3.5.7 move not
+reaching CI/Docker/devcontainer until a later, separate pass caught it).
+All six were updated in this same change.
+
+**Verified past the unit suites, per this repo's Critical Requirement,**
+with a real matching `spark-submit` binary, not the one already on
+`PATH` from session provisioning (which was still 3.5.7 — this
+environment's dev container was provisioned before this fix, so trusting
+its pre-existing binary would have silently proven nothing): downloaded
+and installed the real Spark 3.5.9 `bin-hadoop3` distribution from
+`archive.apache.org` (the same source `.devcontainer/post-create.sh`
+uses) in place of it, confirmed `spark-submit --version` reports `3.5.9`,
+then re-ran everything against it:
+
+- `./dev/build`: all 8 modules built; `spark-adapter`'s full suite passed
+  733/733 with `sparkVersion` now resolving 3.5.9 by default (no
+  `INVARACT_TEST_SPARK_VERSION` override needed — the properties file
+  already made it primary).
+- `./dev/test`: passed; `report.json` shows `"sparkVersion": "3.5.9"` and
+  `"contractVerification": {"status": "PASSED", "violations": []}`.
+- `./dev/regression`: passed 10/10 cases (schema enforcement, static
+  data-quality, role-consistency, checkpoint-transparency, and
+  per-output input scoping via `derivedFrom`) — both the satisfying and
+  every violating case behaved exactly as contracted, proving
+  `ContractEnforcementRule` itself is unaffected by the version bump, not
+  just that a harness run completed.
+
+**Scope:** unlike §7e, this bump found no new regression — 3.5.9 already
+had a full, passing test history against this module's Delta/Iceberg/
+Hive/ClickHouse connectors from the version-matrix CI job, so there was
+no new DSv2/Catalyst-compatibility surface to discover here.
+
 ## 8. Next steps checklist
 
 - [x] Add `.github/dependabot.yml` for `web`, `docs-site`, `github-actions`
