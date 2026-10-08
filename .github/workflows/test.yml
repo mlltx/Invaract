@@ -500,7 +500,10 @@ jobs:
         shell: bash
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "adapter-testkit/src/main/scala/" | grep '\.scala$' | sed "s|^adapter-testkit/||" || true)
+          # Scenarios.scala is excluded from mutation (adapter-testkit/build.sbt says why: the injected code pushes its
+          # object initialiser past the JVM method-size limit), and a --mutate on the command line overrides that
+          # setting, so the file is dropped from the changed list here too.
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- "adapter-testkit/src/main/scala/" | grep '\.scala$' | grep -v 'testkit/Scenarios\.scala$' | sed "s|^adapter-testkit/||" || true)
 
           if [ -z "$CHANGED" ]; then
             echo "=== adapter-testkit: no changed files under src/main/scala, skipping ==="
