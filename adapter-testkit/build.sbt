@@ -109,7 +109,29 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutput.this"),
-  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutput$")
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutput$"),
+  // Kit hardening (stage 1 of the adapter-skill preparation): Scenario gained the `analysis` expectations, ScenarioJob the
+  // `boundary` and `streaming` shapes, and ScenarioOutcome the data-quality, role and unverifiable-input results, so
+  // an adapter reports them and the kit judges them. Same reason as above: no consumer outside this repository yet.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Conformance.judge"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.this"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.<init>$default$9"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.apply$default$9"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$9"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.Scenario$"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.dataQuality"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.roles"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.unverifiableInputs"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutcome$Passed$"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Rejected.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.ScenarioOutcome$Rejected$")
 )
 
 // Line/branch coverage gating (sbt-scoverage), same "measure first, then pin" discipline as the other

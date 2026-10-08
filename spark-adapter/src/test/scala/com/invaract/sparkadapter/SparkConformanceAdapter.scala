@@ -4,12 +4,14 @@
 package com.invaract.sparkadapter
 
 import com.invaract.contract.{Contract, LogicalSchema, LogicalType}
+import com.invaract.ir
 import com.invaract.testkit.{ColumnSource, ConformanceAdapter, RecordingSink, RowChange, ScenarioJob, ScenarioOutcome}
 import com.invaract.verification.{AdapterCapabilities, ContractViolationException, VerificationOptions}
 
 import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.functions.{expr, lit}
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 import java.nio.file.{Files, Path}
@@ -45,6 +47,8 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       .withExtensions(_.injectCheckRule(_ => (plan: LogicalPlan) => active.foreach(_(plan))))
       .getOrCreate()
     session.sparkContext.setLogLevel("ERROR")
+    // For the scenarios that run a job through a checkpoint (Spark's lineage-erasing point).
+    session.sparkContext.setCheckpointDir(scratch.resolve("checkpoints").toString)
     session
   }
 
@@ -53,33 +57,77 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
 
   override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome =
     if (job.untranslatableWrite) runUntranslatable(scenarioId, contract, options)
+    else if (job.streaming) runStreaming(scenarioId, contract, job, options)
     else
       job.rowChange match {
         case Some(change) => runRowChange(scenarioId, contract, job, change, options)
         case None         => runTransform(scenarioId, contract, job, options)
       }
 
-  /** The ordinary job: read the inputs, filter, join, project, write. */
+  /** The ordinary job: read the inputs, filter, join, project, write. The reads and the transformation are built
+    * inside the enforced block: a job that goes through a checkpoint is only seen through if the check rule saw the
+    * plan the checkpoint was made from, which happens when that plan is analyzed.
+    */
   private def runTransform(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
-    val frames = inputFrames(scenarioId, job)
-    val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
-    val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
-    val result = filtered.select(selectColumns(job, frames): _*)
+    materializeInputs(scenarioId, job)
     val target = path(scenarioId, job.output.location)
     // A write that registers a catalog table is an append onto a table that already exists: Spark plans a
     // `.saveAsTable()` that creates a new table as an outer command plus a nested insert that carries no
     // catalog identity, which a `catalog.required` contract then rejects (docs/SPARK_ADAPTER.md, "Known limitations").
     // So the table is created first, with no contract active, and only the registered write is checked.
     job.output.registeredAs.foreach { table =>
-      result.limit(0).write.format(job.output.format).mode("overwrite").option("path", target).saveAsTable(table)
+      resultFrame(job, readInputs(scenarioId, job)).limit(0).write.format(job.output.format).mode("overwrite").option("path", target).saveAsTable(table)
     }
     enforced(contract, options) {
+      val result = resultFrame(job, readInputs(scenarioId, job), materialize = job.boundary)
       val writer = result.write.format(job.output.format).mode(job.output.saveMode)
       job.output.registeredAs match {
         case Some(table) => writer.insertInto(table)
         case None        => writer.save(target)
       }
     }
+  }
+
+  /** The same job as a stream: the input is read with `readStream`, and the output is a stream sink, run to completion
+    * (`availableNow`) over what exists. The check rule sees the streaming write when the query is started, so a
+    * violation is thrown from `start()`, before any data moves.
+    */
+  private def runStreaming(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
+    materializeInputs(scenarioId, job)
+    val target = path(scenarioId, job.output.location)
+    val checkpoint = scratch.resolve(scenarioId).resolve("_checkpoint").toString
+    enforced(contract, options) {
+      val frames = job.inputs.map(i => spark.readStream.schema(structType(i.schema)).parquet(path(scenarioId, i.location)))
+      val query = resultFrame(job, frames).writeStream
+        .format(job.output.format)
+        .option("checkpointLocation", checkpoint)
+        .trigger(Trigger.AvailableNow())
+        .start(target)
+      query.awaitTermination()
+    }
+  }
+
+  /** What the enforcement rule would be handed for `job`: the job's plan, translated, as a write to its output. */
+  override def translation(scenarioId: String, job: ScenarioJob): Option[ir.Plan] =
+    if (job.untranslatableWrite || job.rowChange.isDefined || job.streaming) None
+    else {
+      materializeInputs(scenarioId, job)
+      val result = resultFrame(job, readInputs(scenarioId, job))
+      Some(SparkPlanAdapter.translateAsWrite(result.queryExecution.analyzed, ir.DatasetRef(path(scenarioId, job.output.location))).plan)
+    }
+
+  /** The frame a transform job writes: join, filter, then (when asked) the checkpoint every later step reads
+    * through, then the projection. After a checkpoint the columns are those of the checkpointed frame, so a job
+    * with a boundary reads one input (the projection refers to it by name).
+    */
+  private def resultFrame(job: ScenarioJob, frames: List[DataFrame], materialize: Boolean = false): DataFrame = {
+    val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
+    val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
+    if (materialize) {
+      require(job.inputs.size == 1, "a conformance job with a boundary reads one input")
+      val checkpointed = filtered.checkpoint()
+      checkpointed.select(selectColumns(job, List(checkpointed)): _*)
+    } else filtered.select(selectColumns(job, frames): _*)
   }
 
   /** Spark's representative of "a data-changing operation the adapter has no translation for": `TRUNCATE TABLE` on a
@@ -100,7 +148,8 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     */
   private def runRowChange(scenarioId: String, contract: Contract, job: ScenarioJob, change: RowChange, options: VerificationOptions): ScenarioOutcome = {
     val target = path(scenarioId, job.output.location)
-    val frames = inputFrames(scenarioId, job)
+    materializeInputs(scenarioId, job)
+    val frames = readInputs(scenarioId, job)
     frames.head.select(selectColumns(job, frames): _*).write.format("delta").mode("overwrite").save(target)
     val table = tableName(scenarioId)
     spark.sql(s"CREATE TABLE IF NOT EXISTS $table USING delta LOCATION '${target.replace('\\', '/')}'")
@@ -120,22 +169,23 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
     try {
       body
-      ScenarioOutcome.Passed(sink.statuses, sink.nonDeterministicOutputs)
+      sink.passed
     } catch {
-      case e: ContractViolationException =>
-        ScenarioOutcome.Rejected(e.result.violations.map(_.violationType).toSet, sink.statuses, sink.nonDeterministicOutputs)
+      case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
     } finally active = None
   }
 
-  /** The scenario's inputs as empty parquet datasets of their schema (every check is about shape, not values),
-    * read back as the frames the job works on.
+  /** Writes the scenario's inputs as empty parquet datasets of their schema (every check is about shape, not
+    * values). Done while no contract is active.
     */
-  private def inputFrames(scenarioId: String, job: ScenarioJob): List[DataFrame] = {
+  private def materializeInputs(scenarioId: String, job: ScenarioJob): Unit =
     job.inputs.foreach { input =>
       spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite").parquet(path(scenarioId, input.location))
     }
+
+  /** The materialized inputs, read back as the frames the job works on. */
+  private def readInputs(scenarioId: String, job: ScenarioJob): List[DataFrame] =
     job.inputs.map(i => spark.read.parquet(path(scenarioId, i.location)))
-  }
 
   private def selectColumns(job: ScenarioJob, frames: List[DataFrame]): List[Column] =
     job.columns.map { c =>

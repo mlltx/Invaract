@@ -401,8 +401,10 @@ and each must come out as the adapter's declaration promises (a capability decla
 unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
 is canceled with its note). A new engine-neutral check means a new scenario in
 `Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
-could check by its nature, the second for what the kit cannot check yet) — the kit's own
-tests fail if a capability is in neither. The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+could check by its nature, the second for what the kit cannot check yet; there are no gaps today) — the kit's own
+tests fail if a capability is in neither, and `BrokenAdapterSpec` fails if a new scenario is the catch for no
+deliberately broken adapter (add the mistake it exists to catch, or list it as a control). An attested capability
+an adapter claims names the test that demonstrates it (`AttestedClaimsSpec`). The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only

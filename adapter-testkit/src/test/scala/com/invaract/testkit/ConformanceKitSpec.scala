@@ -32,25 +32,24 @@ class ConformanceKitSpec extends AnyFunSuite {
   test("attested and gaps are disjoint, and together are exactly notCovered") {
     assert(Scenarios.attested.keySet.intersect(Scenarios.gaps.keySet).isEmpty)
     assert(Scenarios.notCovered == (Scenarios.attested ++ Scenarios.gaps))
-    assert(Scenarios.attested.nonEmpty && Scenarios.gaps.nonEmpty)
+    assert(Scenarios.attested.nonEmpty)
   }
 
-  test("a report splits an adapter's unchecked claims into those a job cannot check and those the kit cannot check yet") {
-    val claims = declaring(
-      Map(
-        "config.zeroCodeInstall" -> (("supported", None)),
-        "write.streaming" -> (("supported", None)),
-        "lineage.columnLevel" -> (("supported", None))
-      )
-    )
+  test("a report lists an adapter's unchecked claims as attested (a job cannot check them) or gaps (the kit cannot yet)") {
+    val claims = declaring(Map("config.zeroCodeInstall" -> (("supported", None)), "config.locationRefs" -> (("partial", Some("only maps"))))) 
     val report = Conformance.evaluate(new ReferenceAdapter(claims))
-    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.WriteStreaming, Capability.LineageColumnLevel))
-    assert(report.attestedClaims == List(Capability.ConfigZeroCodeInstall))
-    assert(report.gapClaims.toSet == Set(Capability.WriteStreaming, Capability.LineageColumnLevel))
+    assert(report.unverifiedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
+    assert(report.attestedClaims.toSet == Set(Capability.ConfigZeroCodeInstall, Capability.ConfigLocationRefs))
+    // The kit has no gap today: every capability a job can show is shown by a scenario.
+    assert(Scenarios.gaps.isEmpty && report.gapClaims.isEmpty)
   }
 
   // Capabilities no contract "relies on" (they describe what the engine reports, not what a contract asks for).
-  private val notDerivable = Set(Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog, Capability.FailClosedUnverifiableWrites)
+  // Lineage, sensitivity and boundary resolution describe what an adapter's translation preserves, not what a contract asks for.
+  private val notDerivable = Set(
+    Capability.ReportingNotifications, Capability.AnalysisFunctionCatalog, Capability.FailClosedUnverifiableWrites,
+    Capability.LineageColumnLevel, Capability.AnalysisSensitivityPropagation, Capability.LineageBoundaryResolution
+  )
 
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
@@ -95,6 +94,7 @@ class ConformanceKitSpec extends AnyFunSuite {
     override def capabilities: AdapterCapabilities = delegate.capabilities
     override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
       outcomeOf(delegate.run(id, contractOf(c), j, o))
+    override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = delegate.translation(id, j)
   }
 
   private def failingIds(adapter: ConformanceAdapter): Set[String] = Conformance.evaluate(adapter).failures.map(_.scenario.id).toSet
@@ -128,7 +128,7 @@ class ConformanceKitSpec extends AnyFunSuite {
   }
 
   test("an adapter that lets everything through is caught on every scenario that expects a rejection") {
-    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns))
+    val permissive = new Tampered(reference, outcomeOf = o => ScenarioOutcome.Passed(o.statuses, o.nonDeterministicColumns, o.dataQuality, o.roles, o.unverifiableInputs))
     val expectingReject = Scenarios.all.filter(_.expect.isInstanceOf[Expectation.Reject]).map(_.id).toSet
     assert(failingIds(permissive) == expectingReject)
   }
@@ -174,6 +174,14 @@ class ConformanceKitSpec extends AnyFunSuite {
       case r: ScenarioOutcome.Rejected => r
     })
     assert(failingIds(overeager) == Set("fingerprint-flags-nothing-for-a-deterministic-job", "fingerprint-flags-a-generated-id"))
+  }
+
+  test("an adapter that exposes no translation diverges on exactly the scenarios that read the plan, and nowhere else") {
+    val noPlan = new Tampered(reference) {
+      override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = None
+    }
+    assert(failingIds(noPlan) == Scenarios.all.filter(_.analysis.needsTranslation).map(_.id).toSet)
+    assert(Scenarios.all.exists(_.analysis.needsTranslation))
   }
 
   // --- honest declarations are held to what they say -----------------------------------------------
@@ -230,20 +238,21 @@ class ConformanceKitSpec extends AnyFunSuite {
     val noRead = new ReferenceAdapter(declaring(Map("read.batch" -> (("unsupported", Some("sources are push-only"))))))
     val report = Conformance.evaluate(noRead)
     assert(report.failures == Nil)
-    // every scenario that reads is skipped; those that need no batch read (fail-closed, row-level DML) still run, and conform
+    // every scenario that reads is skipped; those that need no batch read (fail-closed, row-level DML, streaming) still run, and conform
     assert(report.skipped.map(_.scenario.id).toSet == Scenarios.all.filter(_.operations.contains(Capability.ReadBatch)).map(_.id).toSet)
     assert(
       report.conforming.map(_.scenario.id).toSet ==
         Set(
           "untranslatable-write-fails-closed", "row-level-delete-checked-as-write", "row-level-delete-own-table-is-not-an-input",
-          "unconditional-delete-forbidden", "filtered-delete-allowed"
+          "unconditional-delete-forbidden", "filtered-delete-allowed",
+          "streaming-write-is-checked-like-a-batch-write", "streaming-write-to-the-wrong-location"
         )
     )
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {
-    val claims = declaring(Map("analysis.sensitivityPropagation" -> (("supported", None))))
-    assert(Conformance.unverifiedClaims(claims) == List(Capability.AnalysisSensitivityPropagation))
+    val claims = declaring(Map("config.contractRegistry" -> (("supported", None))))
+    assert(Conformance.unverifiedClaims(claims) == List(Capability.ConfigContractRegistry))
   }
 
   // --- the row-level DML and catalog scenarios must be able to fail too ------------------------
@@ -265,6 +274,7 @@ class ConformanceKitSpec extends AnyFunSuite {
       override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
         if (id == "filtered-delete-allowed") ScenarioOutcome.Rejected(Set(ViolationType.RuleUnconditionalDelete), List("FAILED"))
         else reference.run(id, c, j, o)
+      override def translation(id: String, j: ScenarioJob): Option[com.invaract.ir.Plan] = reference.translation(id, j)
     }
     assert(failingIds(rejectsFilteredDelete) == Set("filtered-delete-allowed"))
   }
