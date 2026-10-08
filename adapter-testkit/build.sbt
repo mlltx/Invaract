@@ -119,3 +119,15 @@ coverageMinimumStmtTotal := 91
 coverageMinimumBranchTotal := 82
 coverageFailOnMinimum := true
 coverageHighlighting := true
+
+// Mutation testing (Stryker4s), same convention as the other engine modules (CLAUDE.md's "Mutation Testing
+// Requirement"). The kit is what defines "conformant", so a scenario or judge that a mutant can change
+// without ConformanceKitSpec noticing is a hole in every adapter's guarantee. `StringLiteral` is excluded for
+// the reason it is in verification-core and spark-adapter: scenario descriptions and verdict messages are
+// human-readable text. The break threshold is pinned a few points under a real whole-module run (see the
+// measured figure in docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
+strykerMutate := Seq("src/main/scala/**/*.scala")
+strykerExcludedMutations := Seq("StringLiteral")
+strykerThresholdsHigh := 90
+strykerThresholdsLow := 80
+strykerThresholdsBreak := 70

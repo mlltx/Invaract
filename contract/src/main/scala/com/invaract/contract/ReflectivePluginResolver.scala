@@ -51,32 +51,40 @@ final class ReflectivePluginResolver[T: ClassTag] {
     */
   def tryResolve(className: String): Try[T] = Try(resolve(className))
 
-  // `T` is erased at runtime, so a plain `.asInstanceOf[T]` here would
-  // never actually throw ClassCastException at this call site - the JVM
-  // has no reified check to perform against an erased type parameter. The
-  // real cast only happens later, wherever the caller's own erasure
-  // boundary assigns this method's result to a concrete-typed location
-  // (e.g. CustomRuleVerifierFactory.resolve's `CustomRuleVerifier` return
-  // type) - by then it's outside this method's own try/catch, so a
-  // mis-implemented plugin class would surface a raw, unwrapped
-  // ClassCastException instead of the intended IllegalArgumentException.
-  // `ClassTag[T].runtimeClass.isInstance(...)` performs a real, reified
-  // check right here instead, using the one piece of runtime type
-  // information about T that erasure doesn't remove.
+  // The class is loaded WITHOUT initializing it, checked against `T`, and only then constructed.
+  // A class name comes from a contract (`Contract.customRuleTypes`) or an organizational policy, which
+  // can be authored or fetched from somewhere other than the job, so naming a class must not by itself
+  // run that class's code: `Class.forName(name)` initializes the class (its static initializer runs),
+  // and constructing it before the type check would run its constructor, for any class on the classpath
+  // with a public no-arg constructor. Loading with `initialize = false` and checking assignability first
+  // means a class that is not a `T` is never initialized or constructed; only a genuine plugin is.
+  //
+  // `T` is erased at runtime, so a plain `.asInstanceOf[T]` would never throw ClassCastException at this
+  // call site. `ClassTag[T].runtimeClass.isAssignableFrom(...)` performs a real, reified check right here
+  // instead, using the one piece of runtime type information about T that erasure doesn't remove.
   private def construct(className: String): T = {
-    val instance =
-      try Class.forName(className).getDeclaredConstructor().newInstance()
+    val expectedClass = implicitly[ClassTag[T]].runtimeClass
+    val loaded =
+      try Class.forName(className, false, getClass.getClassLoader)
       catch {
         case e: ReflectiveOperationException =>
           throw new IllegalArgumentException(
             s"Could not instantiate '$className' (it needs a public no-arg constructor)",
             e
           )
+        case e: LinkageError =>
+          throw new IllegalArgumentException(s"Could not load '$className': ${e.getMessage}", e)
       }
-    val expectedClass = implicitly[ClassTag[T]].runtimeClass
-    if (!expectedClass.isInstance(instance)) {
+    if (!expectedClass.isAssignableFrom(loaded)) {
       throw new IllegalArgumentException(s"'$className' does not implement ${expectedClass.getSimpleName}")
     }
-    instance.asInstanceOf[T]
+    try loaded.getDeclaredConstructor().newInstance().asInstanceOf[T]
+    catch {
+      case e: ReflectiveOperationException =>
+        throw new IllegalArgumentException(
+          s"Could not instantiate '$className' (it needs a public no-arg constructor)",
+          e
+        )
+    }
   }
 }

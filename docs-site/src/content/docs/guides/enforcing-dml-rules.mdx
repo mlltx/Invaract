@@ -160,6 +160,15 @@ no-arg constructor, is rejected before any plan is ever checked, not silently ig
 next time a governed job runs.
 </Aside>
 
+<Aside type="caution" title="A contract that names a class can run that class's constructor">
+`customRuleTypes` lives in the contract, so whoever can change the contract chooses which class
+Invaract instantiates in the driver. Invaract loads the named class without initializing it,
+checks that it implements `CustomRuleVerifier`, and only then constructs it, so a class that is
+not a verifier is rejected without any of its code running. A genuine verifier does run, in your
+job's JVM: treat the contract source (a file in your repository, a registry) as trusted code,
+the same as the job's jar, and restrict who can publish to it.
+</Aside>
+
 <Aside type="caution" title="A bug in your own verifier isn't swallowed">
 An exception thrown from `verify` itself propagates, the same as a bug anywhere else in a
 job's own installed check — it does not silently pass every mutation it was supposed to be

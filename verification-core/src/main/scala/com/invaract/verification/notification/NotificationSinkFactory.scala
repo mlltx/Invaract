@@ -41,16 +41,20 @@ object NotificationSinkFactory {
     * constructor). Shared by `create` and by sinks that build a sink of their own from
     * configuration, such as `HttpNotificationSink`'s dead letter.
     */
-  def instantiate(className: String): NotificationSink =
-    try {
-      Class.forName(className).getDeclaredConstructor().newInstance().asInstanceOf[NotificationSink]
-    } catch {
-      case e: ClassCastException =>
-        throw new IllegalArgumentException(s"'$className' does not implement NotificationSink", e)
-      case e: ReflectiveOperationException =>
-        throw new IllegalArgumentException(
-          s"Could not instantiate notification sink '$className' (it needs a public no-arg constructor)",
-          e
-        )
-    }
+  def instantiate(className: String): NotificationSink = {
+    def cannotInstantiate(e: Throwable) =
+      new IllegalArgumentException(
+        s"Could not instantiate notification sink '$className' (it needs a public no-arg constructor)",
+        e
+      )
+    // Loaded without initializing and checked before construction, so naming a class that is not a sink
+    // never runs its static initializer or constructor (the same rule as `ReflectivePluginResolver`).
+    val loaded =
+      try Class.forName(className, false, getClass.getClassLoader)
+      catch { case e: ReflectiveOperationException => throw cannotInstantiate(e) }
+    if (!classOf[NotificationSink].isAssignableFrom(loaded))
+      throw new IllegalArgumentException(s"'$className' does not implement NotificationSink")
+    try loaded.getDeclaredConstructor().newInstance().asInstanceOf[NotificationSink]
+    catch { case e: ReflectiveOperationException => throw cannotInstantiate(e) }
+  }
 }
