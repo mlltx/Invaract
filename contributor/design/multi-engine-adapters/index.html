@@ -717,7 +717,9 @@ checks <code dir="auto">verification-core</code> already holds, and the control 
 later therefore arrives with the mistake it is there to catch; one that nothing could make fail says
 nothing about a real adapter.</p>
 <p><strong>Adding an adapter</strong> is therefore: write its capability declaration, implement <code dir="auto">ConformanceAdapter</code>,
-mix in <code dir="auto">AdapterConformanceSpec</code>, and see which scenarios fail or are canceled. Where Spark’s own
+mix in <code dir="auto">AdapterConformanceSpec</code>, and see which scenarios fail or are canceled. The step-by-step process, the
+questions to answer about an engine first, and the generator (<code dir="auto">dev/new-adapter</code>) that creates the module and
+registers it in <code dir="auto">modules.json</code> are in <code dir="auto">docs/ADDING_AN_ENGINE_ADAPTER.md</code>. Where Spark’s own
 behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
 third place for the difference to hide.</p>
 <p><strong>Held to the same gates as the engine.</strong> The kit is held to all three: MiMa (it is what a third-party adapter compiles its tests against),
