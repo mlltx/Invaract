@@ -234,12 +234,107 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(report.skipped.map(_.scenario.id).toSet == Scenarios.all.filter(_.operations.contains(Capability.ReadBatch)).map(_.id).toSet)
     assert(
       report.conforming.map(_.scenario.id).toSet ==
-        Set("untranslatable-write-fails-closed", "row-level-delete-checked-as-write", "unconditional-delete-forbidden", "filtered-delete-allowed")
+        Set(
+          "untranslatable-write-fails-closed", "row-level-delete-checked-as-write", "row-level-delete-own-table-is-not-an-input",
+          "unconditional-delete-forbidden", "filtered-delete-allowed"
+        )
     )
   }
 
   test("an adapter claiming a capability the kit has no scenario for has it listed as unverified") {
     val claims = declaring(Map("analysis.sensitivityPropagation" -> (("supported", None))))
     assert(Conformance.unverifiedClaims(claims) == List(Capability.AnalysisSensitivityPropagation))
+  }
+
+  // --- the row-level DML and catalog scenarios must be able to fail too ------------------------
+
+  test("an adapter that lets an unconditional DELETE through is caught on exactly the DELETE rule scenario") {
+    val letsItThrough = new Tampered(
+      reference,
+      outcomeOf = {
+        case r: ScenarioOutcome.Rejected if r.violationTypes == Set(ViolationType.RuleUnconditionalDelete) => ScenarioOutcome.Passed(r.statuses)
+        case other => other
+      }
+    )
+    assert(failingIds(letsItThrough) == Set("unconditional-delete-forbidden"))
+  }
+
+  test("an adapter that blocks every DELETE is caught on the scenarios that expect a DELETE to pass or to be blocked for another reason") {
+    val blocksDeletes = new Tampered(
+      reference,
+      outcomeOf = {
+        case p: ScenarioOutcome.Passed if p.statuses == List("PASSED") => p
+        case other => other
+      }
+    )
+    assert(failingIds(blocksDeletes) == Set.empty[String], "the identity wrapper must not fail anything")
+    val paranoidAboutDeletes = new Tampered(
+      reference,
+      outcomeOf = {
+        case p: ScenarioOutcome.Passed if p.statuses == List("PASSED") && p.nonDeterministicColumns.isEmpty => ScenarioOutcome.Passed(p.statuses)
+        case other => other
+      }
+    )
+    assert(failingIds(paranoidAboutDeletes).isEmpty)
+    val rejectsFilteredDelete = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        if (id == "filtered-delete-allowed") ScenarioOutcome.Rejected(Set(ViolationType.RuleUnconditionalDelete), List("FAILED"))
+        else reference.run(id, c, j, o)
+    }
+    assert(failingIds(rejectsFilteredDelete) == Set("filtered-delete-allowed"))
+  }
+
+  test("an adapter that never checks catalog registration is caught on exactly the scenario that requires it") {
+    val liar = new Tampered(reference, contractOf = c => c.copy(outputs = c.outputs.map(_.copy(catalog = None))))
+    assert(failingIds(liar) == Set("catalog-required-output-unregistered"))
+  }
+
+  test("an adapter that declares catalog registration unsupported conforms by failing closed on both catalog scenarios") {
+    val caps = declaring(Map("check.catalogRegistration" -> (("unsupported", Some("no catalogs")))))
+    val honest = Conformance.evaluate(new ReferenceAdapter(caps))
+    assert(honest.failures == Nil)
+    assert(Set("catalog-required-output-unregistered", "catalog-required-output-registered").subsetOf(honest.conforming.map(_.scenario.id).toSet))
+    // ...and one that says so but lets the registered write through unchecked is caught on both.
+    val lying = new Tampered(new ReferenceAdapter(caps), outcomeOf = o => ScenarioOutcome.Passed(o.statuses))
+    assert(Set("catalog-required-output-unregistered", "catalog-required-output-registered").subsetOf(failingIds(lying)))
+  }
+
+  // --- the reference adapter's own translation --------------------------------------------------
+
+  private def scenario(id: String): Scenario = Scenarios.all.find(_.id == id).getOrElse(fail(s"no scenario '$id'"))
+
+  test("a row-level change reads no declared input: the job's inputs are not offered as read, so rejectUndeclaredInputs does not trip") {
+    val s = scenario("filtered-delete-allowed")
+    val strict = com.invaract.verification.VerificationOptions(rejectUndeclaredInputs = true)
+    assert(reference.run(s.id, s.contract, s.job, strict).isInstanceOf[ScenarioOutcome.Passed])
+  }
+
+  test("a transform job does offer its inputs' schemas: a declared input type that differs from the dataset's is blocked") {
+    val s = scenario("conforming-write")
+    val wrongInputType = s.contract.copy(inputs = s.contract.inputs.map(d =>
+      d.copy(schema = d.schema.copy(fields = d.schema.fields.map(f => if (f.name == "id") f.copy(fieldType = "string") else f)))
+    ))
+    reference.run(s.id, wrongInputType, s.job, s.options) match {
+      case r: ScenarioOutcome.Rejected => assert(r.violationTypes == Set(ViolationType.InputFieldTypeMismatch))
+      case other                       => fail(s"expected a rejection, got $other")
+    }
+  }
+
+  test("the reference adapter compares names case-insensitively, as Spark does by default") {
+    val s = scenario("conforming-write")
+    val upperCased = s.contract.copy(outputs = s.contract.outputs.map(d => d.copy(schema = d.schema.copy(fields = d.schema.fields.map(f => f.copy(name = f.name.toUpperCase))))))
+    assert(reference.run(s.id, upperCased, s.job, s.options).isInstanceOf[ScenarioOutcome.Passed])
+  }
+
+  test("an adapter that declares a capability unsupported but blocks for some other reason is a divergence naming UNSUPPORTED_CONTRACT_FEATURE") {
+    val caps = declaring(Map("check.nestedTypes" -> (("unsupported", Some("flat schemas only")))))
+    val wrongReason = new Tampered(
+      new ReferenceAdapter(caps),
+      outcomeOf = o => ScenarioOutcome.Rejected(Set(ViolationType.OutputFieldTypeMismatch), o.statuses)
+    )
+    val nested = Conformance.evaluate(wrongReason).failures.filter(_.scenario.id.startsWith("nested-type"))
+    assert(nested.nonEmpty)
+    nested.foreach(r => assert(r.verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("UNSUPPORTED_CONTRACT_FEATURE"), r.scenario.id))
   }
 }

@@ -97,8 +97,12 @@ object VerificationPipeline {
     // Every rule/data-quality finding below is about this write.
     val writeLocation = PlanRuleVerifier.writeLocation(planFacts)
 
+    // A row-level change (DELETE / UPDATE / MERGE) happens in place: the table it reads is the one it changes.
+    val inPlaceTarget = if (checked.rowMutation.isDefined) writeLocation else None
     val structuralResult =
-      StructuralVerifier.verify(contract, planFacts, checked.inputSchemas, checked.outputSchema, options, checked.caseSensitive, checked.lineageBoundaryTypes)
+      StructuralVerifier.verify(
+        contract, planFacts, checked.inputSchemas, checked.outputSchema, options, checked.caseSensitive, checked.lineageBoundaryTypes, inPlaceTarget
+      )
 
     // Checked alongside (never instead of) StructuralVerifier's own checks.
     // `Extracted` runs the normal rule check; `Unverifiable` (the adapter

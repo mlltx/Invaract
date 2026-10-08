@@ -402,7 +402,7 @@ unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared n
 is canceled with its note). A new engine-neutral check means a new scenario in
 `Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
 could check by its nature, the second for what the kit cannot check yet) — the kit's own
-tests fail if a capability is in neither. The kit is itself gated by MiMa and coverage in CI (not mutation testing). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+tests fail if a capability is in neither. The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
@@ -987,10 +987,15 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
   changed-files check, so a whole-module regression is caught on the merge
   commit's run, not before it
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
-  run on a PR — only when `spark-adapter/`, `verification-core/` or
-  `.github/workflows/test.yml` changed; pushes always run them
+  run on a PR — only when an engine module (`contract/`, `ir/`, `fingerprint/`,
+  `verification-core/`, `adapter-testkit/`, `spark-adapter/`), `.github/workflows/test.yml`
+  or a `.github/actions/` composite changed; pushes always run them
 - **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
   the job rebuilds every module
+- **`release-dry-run.yml`** (separate workflow, on changes to publishing files): signs and bundles all six
+  modules with a throwaway key; see docs/RELEASING.md
+- **Shared steps**: `.github/actions/setup-jdk-sbt` (JDK + sbt) and `.github/actions/publish-engine-modules`
+  (the local publish of the engine modules, cached) are used by the jobs above instead of copying the steps
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

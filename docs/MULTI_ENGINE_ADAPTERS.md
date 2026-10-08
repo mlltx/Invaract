@@ -370,7 +370,7 @@ runs, judged against that adapter's *own declaration*.
 **A scenario** is a contract, a job described in no engine's terms, and a verdict. The job
 (`ScenarioJob`) is: read one or two inputs (two are inner-joined), optionally filter a column,
 project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
-save mode. That is deliberately small - just enough to build every shape the 28 scenarios need on any
+save mode. That is deliberately small - just enough to build every shape the 29 scenarios need on any
 engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
 the scenario's schema. The scenarios cover location, schema (presence, type, nullability, undeclared
 columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
@@ -434,10 +434,13 @@ third place for the difference to hide.
 
 **Not done in 4, deliberately.** The scenario language has no streaming or checkpoint shapes yet, and the
 outcome carries no data-quality, role, sensitivity or lineage verdicts (see `Scenarios.gaps`); each grows
-the neutral job description or the outcome and is its own step. The kit is not mutation-tested (it is test infrastructure, like `plugin`/`runner`; its
-`ConformanceKitSpec` is the equivalent proof that it fails what it should), but it is held to the
-other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
-coverage. It is published to Maven Central with the other engine modules (`docs/RELEASING.md`), because a third-party
+the neutral job description or the outcome and is its own step. The kit is held to all three gates: MiMa (it is what a third-party adapter compiles its tests against),
+line/branch coverage, and mutation testing (`mutation-testing-adapter-testkit`; a whole-module score of 88.1%
+measured with the break threshold at 70%). It defines "conformant", so a judge or a reference translation a
+mutant can change without `ConformanceKitSpec` noticing would be a hole in every adapter's guarantee.
+`Scenarios.scala` alone is excluded: it is the declarative catalogue, and the code Stryker injects pushes its
+object initialiser past the JVM's 64KB method limit; the reference adapter and every real adapter's run hold
+its content. It is published to Maven Central with the other engine modules (`docs/RELEASING.md`), because a third-party
 adapter compiles its conformance tests against it.
 
 ## Stage 5 — function canonicalisation

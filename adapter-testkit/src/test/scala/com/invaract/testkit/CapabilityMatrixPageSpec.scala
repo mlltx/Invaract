@@ -31,7 +31,9 @@ class CapabilityMatrixPageSpec extends AnyFunSuite {
 
   test("the row-level DML capabilities are verified by their scenarios") {
     val c = CapabilityMatrixPage.coverage
-    assert(c.verified(Capability.WriteRowLevelDml).toSet == Set("row-level-delete-checked-as-write", "unconditional-delete-forbidden", "filtered-delete-allowed"))
+    assert(c.verified(Capability.WriteRowLevelDml).toSet == Set(
+      "row-level-delete-checked-as-write", "row-level-delete-own-table-is-not-an-input", "unconditional-delete-forbidden", "filtered-delete-allowed"
+    ))
     assert(c.verified(Capability.RulesDml).toSet == Set("unconditional-delete-forbidden", "filtered-delete-allowed"))
   }
 
@@ -61,5 +63,20 @@ class CapabilityMatrixPageSpec extends AnyFunSuite {
       "docs-site/src/content/docs/reference/engine-capabilities.md is out of date with the adapters' invaract-capabilities-*.yaml " +
         "or the conformance scenarios - it is generated: run ./dev/capabilities and commit the result"
     )
+  }
+
+  test("main writes the page the renderer produces, and needs an output path and at least one declaration") {
+    val dir = Files.createTempDirectory("capability-page-test")
+    try {
+      val out = dir.resolve("page.md")
+      val files = declarations.map(_.getPath)
+      CapabilityMatrixPage.main((out.toString :: files).toArray)
+      assert(read(out.toString) == CapabilityMatrixPage.renderFiles(files))
+      intercept[IllegalArgumentException](CapabilityMatrixPage.main(Array(out.toString)))
+      intercept[IllegalArgumentException](CapabilityMatrixPage.main(Array.empty[String]))
+    } finally {
+      Files.list(dir).forEach(p => Files.delete(p))
+      Files.delete(dir)
+    }
   }
 }

@@ -140,6 +140,15 @@ object Scenarios {
       operations = Set(Capability.WriteRowLevelDml)
     ),
     Scenario(
+      "row-level-delete-own-table-is-not-an-input",
+      "with rejectUndeclaredInputs, a row-level DELETE is not blocked for reading the table it changes",
+      Set(Capability.WriteRowLevelDml),
+      contract(outputFields = dmlOutputFields, inputs = ""),
+      job(output = ScenarioOutput("out/report", format = "delta"), rowChange = Some(RowChange.FilteredDelete)),
+      VerificationOptions(rejectUndeclaredInputs = true), Expectation.Pass,
+      operations = Set(Capability.WriteRowLevelDml)
+    ),
+    Scenario(
       "unconditional-delete-forbidden",
       "a DELETE with no predicate is blocked when the contract carries forbid_unconditional_delete",
       Set(Capability.RulesDml, Capability.WriteRowLevelDml),

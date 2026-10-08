@@ -126,7 +126,11 @@ coverageHighlighting := true
 // the reason it is in verification-core and spark-adapter: scenario descriptions and verdict messages are
 // human-readable text. The break threshold is pinned a few points under a real whole-module run (see the
 // measured figure in docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
-strykerMutate := Seq("src/main/scala/**/*.scala")
+// Scenarios.scala is left out: it is the declarative catalogue (one object initialiser building every
+// scenario), and the code Stryker injects pushes that initialiser past the JVM's 64KB method limit
+// ("Method too large"), so the module would not compile. Its content is already held by the reference adapter
+// and by every real adapter's conformance run, which fail on a scenario whose expectation is wrong.
+strykerMutate := Seq("src/main/scala/**/*.scala", "!src/main/scala/com/invaract/testkit/Scenarios.scala")
 strykerExcludedMutations := Seq("StringLiteral")
 strykerThresholdsHigh := 90
 strykerThresholdsLow := 80

@@ -36,7 +36,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | gap | ✅ |
 | `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (24) | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | gap | ◐ |
-| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (3) | ✅ |
+| `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | ✅ |
 
 ### Structural checks
