@@ -15,6 +15,12 @@ class SparkAttestedClaimsSpec extends AttestedClaimsSpec {
   override protected def capabilities: AdapterCapabilities =
     SparkCapabilities.declared.getOrElse(throw new IllegalStateException("Spark's capability declaration did not load"))
 
+  // IcebergConnectorSpec is compiled out below JDK 17 (the Iceberg test dependency needs 17; see build.sbt), so its
+  // attestation is checked on the JDK 17 and 21 builds, which CI gates the same way.
+  override protected def notCheckableHere: Map[Capability, String] =
+    if (scala.util.Properties.isJavaAtLeast("17")) Map.empty
+    else Map(Capability.WriteStateChange -> "the Iceberg test dependency needs JDK 17, so IcebergConnectorSpec is not compiled here")
+
   override protected def attestations: Map[Capability, Attestation] = Map(
     Capability.PolicyOrganizational ->
       Attestation("com.invaract.sparkadapter.ContractEnforcementRuleOrgPolicySpec", "enforce mode: a contract violating org policy throws before any plan is ever analyzed"),
