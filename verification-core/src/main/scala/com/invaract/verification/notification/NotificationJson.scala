@@ -59,7 +59,7 @@ object NotificationJson {
         "status" -> e.status,
         "violations" -> e.violations.map(_.toMap),
         "metadata" -> e.metadata,
-        "applicationId" -> e.applicationId,
+        "runId" -> e.runId,
         "fingerprints" -> e.fingerprints.map(_.toMap),
         "dataQuality" -> e.dataQuality.map(_.toMap),
         "roleConformance" -> e.roleConformance.map(_.toMap),
@@ -79,7 +79,7 @@ object NotificationJson {
         "rowCount" -> e.rowCount,
         "bytesWritten" -> e.bytesWritten,
         "fileCount" -> e.fileCount,
-        "applicationId" -> e.applicationId,
+        "runId" -> e.runId,
         "deltaVersion" -> e.deltaVersion,
         "icebergSnapshotId" -> e.icebergSnapshotId,
         "operation" -> e.operation,
@@ -97,7 +97,7 @@ object NotificationJson {
         "totalViolations" -> e.totalViolations,
         "durationMs" -> e.durationMs,
         "metadata" -> e.metadata,
-        "applicationId" -> e.applicationId
+        "runId" -> e.runId
       )
     case e: ContractInferenceEvent =>
       Map(

@@ -23,6 +23,9 @@ packages are `com.invaract.verification` (`.notification`, `.location`) — a co
 that names a sink or plug-in by fully-qualified class name uses those — and `spark-adapter`'s
 assembly jar bundles the core, so how you install or configure this adapter is unchanged. Where this document
 says a class "lives in `spark-adapter`" for one of those, read `verification-core`.
+Function names reach the IR in the catalog's vocabulary: `SparkFunctionAliases` maps Catalyst's `prettyName`
+(`random`, `now`, `monotonically_increasing_id`, ...) onto `ir.FunctionCatalog`, and a sweep of Spark's own function
+registry proves no non-deterministic function it can call with no arguments escapes it (docs/MULTI_ENGINE_ADAPTERS.md, Stage 5).
 The orchestration is core too: `VerificationPipeline` is what `ContractEnforcementRule.verifyOrThrow` used to do inline once a plan is translated, and `VerificationSetup` + `ConfigSource` are the session-start half (`ref://` locations, option overlay, organizational policy) — `ContractEnforcementRule` keeps same-signature methods that delegate to them with `SparkConfigSource` (`spark.invaract.<name>`, every key unchanged). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 What stays here is what is genuinely Spark: Catalyst translation (`SparkPlanAdapter`,
 `WriteCommandSupport`), the enforcement rule and listener, dry-run reporting,
@@ -1397,7 +1400,9 @@ after a capped exponential backoff (`retry.*`, default 3 attempts), using
 `CompletableFuture.delayedExecutor` so no thread is held and the caller is never
 blocked; any other non-2xx is a refusal and goes straight to the dead letter. An event
 that is given up on is handed to `deadLetter.path`'s sink: `FileNotificationSink` for a
-plain path, `HadoopFsNotificationSink` for a `scheme://` one (`deadLetter.*` is passed
+plain path, and the sink named by `deadLetter.class` (required for a `scheme://` path; this adapter's is
+`com.invaract.sparkadapter.notification.HadoopFsNotificationSink`, which moved out of `verification-core` so the
+core carries no Hadoop dependency) (`deadLetter.*` is passed
 through with the prefix stripped, so Hadoop keys work). `flush` waits on the whole
 chain, and an event still unfinished when its time runs out is handed to the dead
 letter immediately and marked abandoned so its late completion neither retries nor
@@ -1463,8 +1468,8 @@ whatever a contract author already recorded there (owner, team, upstream
 system, anything ODCS or this project doesn't itself interpret) rides
 along on every event, without a second, parallel metadata vocabulary.
 
-**Both events also carry `applicationId: Option[String]`** — the owning
-`SparkSession`'s `sparkContext.applicationId`, so a consumer aggregating
+**Both events also carry `runId: Option[String]`** (named `applicationId` before the
+event format went engine-neutral) — the owning `SparkSession`'s `sparkContext.applicationId`, so a consumer aggregating
 events from many concurrent jobs (or many runs of the same job over time)
 can group by run without inventing its own correlation ID.
 `ContractValidationEvent` gets it from the `SparkSession` captured by
@@ -1853,7 +1858,7 @@ this run go fine overall, and how much happened?" — `totalWrites`,
 `checksPassed`, `checksFailed`, `totalViolations` (summed across every
 FAILED check's own violation count, not just a count of FAILED checks),
 `durationMs` (wall-clock since construction or the last summary), and the
-same `metadata`/`applicationId` fields the other two events carry, for the
+same `metadata`/`runId` fields the other two events carry, for the
 same reason.
 
 - **`SummarizingNotificationSink(delegate: NotificationSink)`** wraps

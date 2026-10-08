@@ -116,12 +116,16 @@
       "type": "object",
       "required": ["attributes"],
       "properties": {
-        "applicationId": { "type": "string" },
-        "appName": { "type": "string" },
-        "jobId": { "type": "string", "description": "From spark.invaract.jobId: the job's stable identity across runs. Absent if the platform did not set it." },
-        "sparkVersion": { "type": "string" },
-        "master": { "type": "string" },
-        "deployMode": { "type": "string" },
+        "runId": { "type": "string", "description": "The engine's own identifier for this run (Spark: the application id)." },
+        "name": { "type": "string", "description": "The engine's own name for the application (Spark: spark.app.name)." },
+        "jobId": { "type": "string", "description": "The job's stable identity across runs, set through the engine's configuration (Spark: spark.invaract.jobId). Absent if the platform did not set it." },
+        "engine": { "type": "string", "description": "Which adapter produced the event, e.g. \"spark\"." },
+        "engineVersion": { "type": "string" },
+        "engineDetails": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Engine-specific facts about where the run executed (Spark: master, deployMode). Free-form by design."
+        },
         "user": { "type": "string" },
         "startTimeMs": { "type": "integer" },
         "attributes": {
@@ -136,14 +140,14 @@
       "description": "A write (or state-changing CALL) was checked against a contract. status is PASSED or FAILED.",
       "allOf": [{ "$ref": "#/$defs/Envelope" }],
       "type": "object",
-      "required": ["contract", "status", "violations", "metadata", "applicationId", "fingerprints", "dataQuality", "roleConformance", "unverifiableInputs"],
+      "required": ["contract", "status", "violations", "metadata", "runId", "fingerprints", "dataQuality", "roleConformance", "unverifiableInputs"],
       "properties": {
         "eventType": { "const": "CONTRACT_VALIDATION" },
         "contract": { "type": "string", "description": "id@version" },
         "status": { "type": "string", "description": "PASSED or FAILED." },
         "violations": { "type": "array", "items": { "$ref": "#/$defs/Violation" } },
         "metadata": { "type": "object", "description": "The contract's own `extensions` block, verbatim." },
-        "applicationId": { "type": ["string", "null"] },
+        "runId": { "type": ["string", "null"] },
         "fingerprints": { "oneOf": [{ "$ref": "#/$defs/TransformationFingerprint" }, { "type": "null" }] },
         "dataQuality": { "type": "array", "items": { "$ref": "#/$defs/DataQualityCheckResult" } },
         "roleConformance": { "type": "array", "items": { "$ref": "#/$defs/RoleConformanceCheckResult" } },
@@ -156,7 +160,7 @@
       "type": "object",
       "required": [
         "contract", "location", "format", "saveMode", "schema", "metadata", "durationMs", "rowCount", "bytesWritten",
-        "fileCount", "applicationId", "deltaVersion", "icebergSnapshotId", "operation", "catalog", "partitionColumns", "datasetType"
+        "fileCount", "runId", "deltaVersion", "icebergSnapshotId", "operation", "catalog", "partitionColumns", "datasetType"
       ],
       "properties": {
         "eventType": { "const": "WRITE" },
@@ -177,7 +181,7 @@
         "rowCount": { "type": ["integer", "null"] },
         "bytesWritten": { "type": ["integer", "null"] },
         "fileCount": { "type": ["integer", "null"] },
-        "applicationId": { "type": ["string", "null"] },
+        "runId": { "type": ["string", "null"] },
         "deltaVersion": { "type": ["integer", "null"] },
         "icebergSnapshotId": { "type": ["integer", "null"] },
         "operation": { "type": ["string", "null"], "description": "merge, update or delete for row-level DML; otherwise null." },
@@ -190,7 +194,7 @@
       "description": "Aggregate over the events a SummarizingNotificationSink saw (enforcement mode).",
       "allOf": [{ "$ref": "#/$defs/Envelope" }],
       "type": "object",
-      "required": ["totalWrites", "checksPassed", "checksFailed", "totalViolations", "durationMs", "metadata", "applicationId"],
+      "required": ["totalWrites", "checksPassed", "checksFailed", "totalViolations", "durationMs", "metadata", "runId"],
       "properties": {
         "eventType": { "const": "JOB_SUMMARY" },
         "totalWrites": { "type": "integer" },
@@ -199,7 +203,7 @@
         "totalViolations": { "type": "integer" },
         "durationMs": { "type": "integer" },
         "metadata": { "type": "object" },
-        "applicationId": { "type": ["string", "null"] }
+        "runId": { "type": ["string", "null"] }
       }
     },
     "ContractInferenceEvent": {

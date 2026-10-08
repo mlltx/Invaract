@@ -7,8 +7,8 @@
   "timestamp": 1791068443839,
   "rowCount": 10,
   "bytesWritten": 1324,
-  "applicationId": "local-1791068436169",
-  "eventId": "450619958edd30ec5232f4fc1e15c47fbc59dbe75ea6ee067e8077fd472298cc",
+  "runId": "local-1791068436169",
+  "eventId": "f1e047c3c0b970245117685b4b2f3997511b9c788f6d47fa20d35f2eb48c8db3",
   "operation": null,
   "partitionColumns": [],
   "schema": [

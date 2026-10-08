@@ -73,7 +73,7 @@
         },
         "saveMode": {
           "type": "string",
-          "description": "Optional expected write behavior for an output dataset, e.g. \"append\", \"overwrite\", \"ignore\", \"error\". Meaningless for an input dataset; only checked by StructuralVerifier against a plan's Write node. Not a closed set."
+          "description": "Optional expected write behavior for an output dataset, the canonical modes are \"append\", \"overwrite\", \"ignore\" and \"error\" (com.invaract.contract.SaveModes), compared case-insensitively. Any other string is accepted but draws a validation warning. Meaningless for an input dataset; only checked by StructuralVerifier against a plan's Write node."
         },
         "catalog": { "$ref": "#/$defs/catalog" },
         "description": {

@@ -1,9 +1,9 @@
 {
   "eventType": "CONTRACT_VALIDATION",
   "timestamp": 1791068443057,
-  "applicationId": "local-1791068436169",
+  "runId": "local-1791068436169",
   "unverifiableInputs": [],
-  "eventId": "7b0fe8272d75fe85301c355d214220e6b10ca9032c0f21f40b456d2f7c62f940",
+  "eventId": "524ceab0cb1ea891224ee9f502c0823e09aefa7cebae51243e749e13101c1ee4",
   "fingerprints": null,
   "status": "PASSED",
   "metadata": {

@@ -1,7 +1,57 @@
 name := "invaract-fingerprint"
-ThisBuild / version := "0.3.0"
+ThisBuild / version := "0.4.0"
 scalaVersion := "2.12.18"
 organization := "com.invaract"
+
+// --- Maven Central publishing (Central Portal) ---
+// Published with contract/ir/spark-adapter: spark-adapter's POM depends on this module, so a release
+// that left it out would be unresolvable (docs/RELEASING.md). Everything below is the POM metadata and
+// Central Portal settings Sonatype requires, copied from ir/build.sbt so the modules cannot drift.
+publishMavenStyle := true
+Test / publishArtifact := false
+pomIncludeRepository := { _ => false }
+
+homepage := Some(url("https://github.com/mlltx/Invaract"))
+licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0.txt"))
+scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/mlltx/Invaract"),
+    "scm:git@github.com:mlltx/Invaract.git"
+  )
+)
+developers := List(
+  // id/url are the real GitHub org this repo lives under; email is
+  // GitHub's own noreply-alias convention, to avoid publishing a personal
+  // address in a public POM. Update `name` with a real maintainer name
+  // before the first real release.
+  Developer(
+    id = "mlltx",
+    name = "mlltx",
+    email = "mlltx@users.noreply.github.com",
+    url = url("https://github.com/mlltx")
+  )
+)
+
+// Pre-1.0 (docs/VERSIONING.md): a 0.x -> 0.(x+1) bump may be
+// binary-breaking, so "early-semver" is the accurate scheme - the same
+// convention this file's own mimaPreviousArtifacts comment already bumps
+// MINOR (not PATCH) for a deliberate break under.
+versionScheme := Some("early-semver")
+
+// The OSSRH/Nexus staging host sbt-sonatype originally targeted is
+// retired; Central Portal (central.sonatype.com) is the only route onto
+// Maven Central now. See docs/RELEASING.md for credentials/CI wiring and
+// the actual release commands (publishSigned, then sonatypeCentralRelease).
+import xerial.sbt.Sonatype.sonatypeCentralHost
+sonatypeCredentialHost := sonatypeCentralHost
+publishTo := sonatypePublishToBundle.value
+
+// Non-interactive PGP passphrase for CI (crazy-max/ghaction-import-gpg
+// imports the key + configures gpg-agent; this just supplies the
+// passphrase sbt-pgp needs when it shells out to gpg). Unset locally -
+// sbt-pgp falls back to an interactive prompt, which is fine for a
+// maintainer cutting a release by hand.
+pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 
 // This module implements docs/SEMANTIC_LINEAGE_FINGERPRINTING.md: a pure,
 // engine-independent canonicalisation/fingerprinting layer over `ir.Plan`/
@@ -10,10 +60,8 @@ organization := "com.invaract"
 // from `contract` — this is meant to be usable by any future front end that
 // produces `ir.Plan`, not just `spark-adapter`.
 //
-// Deliberately NOT wired up for Maven Central publishing (no sonatype.sbt/
-// pgp.sbt) yet, unlike contract/ir/spark-adapter — no release metadata to
-// carry until this module is ready to actually be published there.
-// FOLLOW-UP, once it is: add sonatype.sbt/pgp.sbt (mirroring ir's own).
+// Wired up for Maven Central publishing below (sonatype.sbt/pgp.sbt, mirroring ir's own) and
+// published by release.yml: spark-adapter's POM depends on it.
 //
 // API compatibility (MiMa) IS wired up below, same as contract/ir/
 // spark-adapter - see contract/build.sbt's comment for the general
@@ -38,6 +86,11 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-fingerprint" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.2.0")
 )
 
+// 0.3.0 -> 0.4.0 (Stage 5, docs/MULTI_ENGINE_ADAPTERS.md): non-determinism and seed handling now come from
+// `ir.FunctionCatalog`, and the `invaract-ir` pin below moved 0.5.0 -> 0.6.0 - bumped for the same
+// Ivy-coordinate reason as the 0.2.0 -> 0.3.0 bump described next. The public API is unchanged
+// (MiMa clean); fingerprints of a job calling an aliased function (`random()`, `now()`) change.
+//
 // The 0.2.0 -> 0.3.0 bump (this file's version above): NOT a MiMa break -
 // this module's own compiled classes/public API are byte-for-byte
 // unchanged (sbt mimaReportBinaryIssues stays clean either way). The real,
@@ -61,13 +114,8 @@ mimaPreviousArtifacts := Set(
 // different dependency graphs can never collide under one coordinate like
 // this.
 
-// Pre-1.0 (docs/VERSIONING.md), same convention as contract/ir/
-// spark-adapter: a 0.x -> 0.(x+1) bump may be binary-breaking, so
-// "early-semver" is the accurate scheme.
-versionScheme := Some("early-semver")
-
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.5.0",
+  "com.invaract" %% "invaract-ir" % "0.6.0",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test"
 )
@@ -94,7 +142,7 @@ scalacOptions ++= Seq(
   "-Xfatal-warnings"
 )
 
-assembly / assemblyJarName := "invaract-fingerprint-0.3.0.jar"
+assembly / assemblyJarName := "invaract-fingerprint-0.4.0.jar"
 
 // Mutation testing (Stryker4s), same convention as ir/spark-adapter (see
 // CLAUDE.md's "Mutation Testing Requirement"). Whole-module scope from the

@@ -79,7 +79,7 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(events.map(_.status) == List("PASSED"))
     assert(events.head.contract == "pipe@1.0.0")
     assert(events.head.violations.isEmpty)
-    assert(events.head.applicationId.contains("app-1"))
+    assert(events.head.runId.contains("app-1"))
   }
 
   test("verifyWrite: with no sink a passing write just returns, and a failing one still throws") {
@@ -371,7 +371,7 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(ex.result.violations.head.message.contains("MergeIntoCommand"))
     assert(ex.getMessage.contains("UnknownPlan(a merge)"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
-    assert(validationEvents(sink).head.applicationId.contains("app-2"))
+    assert(validationEvents(sink).head.runId.contains("app-2"))
     // and without a sink it still throws
     intercept[ContractViolationException] {
       VerificationPipeline.rejectUnverifiableWrite(contract, "X", UnknownPlan("y"))

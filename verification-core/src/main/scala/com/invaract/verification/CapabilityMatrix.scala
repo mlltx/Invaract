@@ -40,6 +40,9 @@ object CapabilityMatrix {
     sb.append("an adapter declares **unsupported** (a catalog requirement, a rule, a nested type, a format, ...), the\n")
     sb.append("write is rejected with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed as if it had been checked.\n")
     sb.append("A **partial** capability never blocks on its own; the notes below say which shapes are not covered.\n\n")
+    sb.append("A declaration is a claim, and a shared conformance suite checks it: the same engine-neutral scenarios run\n")
+    sb.append("as real jobs on every adapter, and each must come out the way that adapter's declaration promises. A\n")
+    sb.append("capability the suite has no scenario for yet is listed by the suite as unverified rather than assumed.\n\n")
     sb.append("✅ supported · ◐ partial · ✖ unsupported · — not applicable\n\n")
 
     sb.append("## Where each adapter enforces\n\n")

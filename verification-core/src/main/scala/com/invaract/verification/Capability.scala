@@ -72,6 +72,7 @@ object Capability {
   val AnalysisStaticDataQuality = Capability("analysis.staticDataQuality", Analysis, "Static data-quality proof of nullable and constraint declarations (opt-in).", enforcesContract = true)
   val AnalysisRoleConsistency = Capability("analysis.roleConsistency", Analysis, "A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in).", enforcesContract = true)
   val AnalysisFingerprint = Capability("analysis.fingerprint", Analysis, "A semantic fingerprint of the transformation is computed (opt-in).", enforcesContract = false)
+  val AnalysisFunctionCatalog = Capability("analysis.functionCatalog", Analysis, "Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine.", enforcesContract = false)
   val AnalysisSensitivityPropagation = Capability("analysis.sensitivityPropagation", Analysis, "Input sensitivity tags are propagated to the output columns derived from them (report-only).", enforcesContract = false)
   val LineageColumnLevel = Capability("lineage.columnLevel", Analysis, "Column-level lineage through the transformation (what each output column derives from).", enforcesContract = false)
   val LineageBoundaryResolution = Capability("lineage.boundaryResolution", Analysis, "A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it.", enforcesContract = false)
@@ -96,7 +97,7 @@ object Capability {
     ReadBatch, ReadStreaming, WriteBatch, WriteStreaming, WriteRowLevelDml, WriteStateChange,
     CheckInputExistence, CheckLocation, CheckSchema, CheckNestedTypes, CheckFormat, CheckSaveMode, CheckCatalogRegistration,
     RulesDml, RulesPlanShape, RulesCustom,
-    AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
+    AnalysisStaticDataQuality, AnalysisRoleConsistency, AnalysisFingerprint, AnalysisFunctionCatalog, AnalysisSensitivityPropagation, LineageColumnLevel, LineageBoundaryResolution,
     PolicyOrganizational,
     ConfigZeroCodeInstall, ConfigLocationRefs, ConfigContractRegistry,
     ReportingNotifications, ReportingDryRun,

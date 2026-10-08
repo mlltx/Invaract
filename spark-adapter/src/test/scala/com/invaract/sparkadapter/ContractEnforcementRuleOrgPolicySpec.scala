@@ -315,7 +315,7 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     val event = sink.events.collect { case e: com.invaract.verification.notification.ContractValidationEvent => e }.last
     assert(event.status == "FAILED")
     assert(event.violations.exists(_.violationType == ViolationType.OrgPolicyViolation))
-    assert(event.applicationId.isDefined, "the sink overload always threads a real applicationId through")
+    assert(event.runId.isDefined, "the sink overload always threads a real runId through")
   }
 
   // -- injection: reuses RuleVerifier/VerificationOptions, no new evaluator ---

@@ -14,6 +14,10 @@ an adapter declares **unsupported** (a catalog requirement, a rule, a nested typ
 write is rejected with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed as if it had been checked.
 A **partial** capability never blocks on its own; the notes below say which shapes are not covered.
 
+A declaration is a claim, and a shared conformance suite checks it: the same engine-neutral scenarios run
+as real jobs on every adapter, and each must come out the way that adapter's declaration promises. A
+capability the suite has no scenario for yet is listed by the suite as unverified rather than assumed.
+
 ✅ supported · ◐ partial · ✖ unsupported · — not applicable
 
 ## Where each adapter enforces
@@ -62,6 +66,7 @@ A **partial** capability never blocks on its own; the notes below say which shap
 | `analysis.staticDataQuality` | Static data-quality proof of nullable and constraint declarations (opt-in). *(blocks if unsupported)* | ✅ |
 | `analysis.roleConsistency` | A dataset's declared role (SOURCE / CONTROL / DATA_ASSET) is checked against its observed use (opt-in). *(blocks if unsupported)* | ✅ |
 | `analysis.fingerprint` | A semantic fingerprint of the transformation is computed (opt-in). | ✅ |
+| `analysis.functionCatalog` | Engine-native function names are mapped onto the canonical function catalog, so non-determinism is classified - and fingerprints stay comparable - the same on every engine. | ✅ |
 | `analysis.sensitivityPropagation` | Input sensitivity tags are propagated to the output columns derived from them (report-only). | ✅ |
 | `lineage.columnLevel` | Column-level lineage through the transformation (what each output column derives from). | ◐ |
 | `lineage.boundaryResolution` | A point that erases lineage (a checkpoint, a cache) is seen through to the work behind it. | ◐ |

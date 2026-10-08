@@ -1,0 +1,90 @@
+# The reference adapter: a deliberately tiny engine adapter written against nothing but the
+# verification-core SPI (see ReferenceAdapter). It exists to prove the scenarios are consistent
+# with the SPI before any real engine is involved, and as a worked example of an adapter's
+# declaration. It is not a product adapter and is not listed in the user documentation.
+adapter: reference
+engine: In-memory reference engine (no engine at all)
+enforcement:
+  point: pre-submit-gate
+  note: >-
+    A job description is translated into the engine-neutral plan and verified before anything
+    runs; there is no engine to block inside.
+capabilities:
+  read.batch:
+    status: supported
+  read.streaming:
+    status: not-applicable
+    note: The reference engine has no such concept.
+  write.batch:
+    status: supported
+  write.streaming:
+    status: not-applicable
+    note: The reference engine has no such concept.
+  write.rowLevelDml:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  write.stateChange:
+    status: not-applicable
+    note: The reference engine has no such concept.
+  check.inputExistence:
+    status: supported
+  check.location:
+    status: supported
+  check.schema:
+    status: supported
+  check.nestedTypes:
+    status: supported
+  check.format:
+    status: supported
+  check.saveMode:
+    status: supported
+  check.catalogRegistration:
+    status: not-applicable
+    note: The reference engine has no such concept.
+  rules.dml:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  rules.planShape:
+    status: supported
+  rules.custom:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  analysis.staticDataQuality:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  analysis.roleConsistency:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  analysis.fingerprint:
+    status: supported
+  analysis.functionCatalog:
+    status: supported
+  analysis.sensitivityPropagation:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  lineage.columnLevel:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  lineage.boundaryResolution:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  policy.organizational:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  config.zeroCodeInstall:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  config.locationRefs:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  config.contractRegistry:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  reporting.notifications:
+    status: supported
+  reporting.dryRunInference:
+    status: unsupported
+    note: The reference adapter does not implement this; it only covers what the conformance scenarios exercise.
+  failClosed.unverifiableWrites:
+    status: supported
+    note: An operation the adapter has no translation for is rejected (UNVERIFIABLE_WRITE) through VerificationPipeline.rejectUnverifiableWrite.

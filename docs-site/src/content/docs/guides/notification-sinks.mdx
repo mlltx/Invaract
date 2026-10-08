@@ -83,9 +83,9 @@ copied from real runs; they are published as files next to the
 {
   "eventType": "CONTRACT_VALIDATION",
   "timestamp": 1791231567062,
-  "applicationId": "local-1791231561015",
+  "runId": "local-1791231561015",
   "unverifiableInputs": [],
-  "eventId": "6f4922abb565180fd4773a7d273c8a9e760a8b193fd97f99ee72c89957f837cb",
+  "eventId": "65d45e7710eb0238962658c196f52dd35589c32180674894aed174d778744cde",
   "fingerprints": null,
   "status": "FAILED",
   "metadata": {
@@ -116,7 +116,7 @@ deliberately breaks a contract):
 {
   "eventType": "CONTRACT_VALIDATION",
   "timestamp": 1791068923606,
-  "applicationId": "local-1791068917299",
+  "runId": "local-1791068917299",
   "unverifiableInputs": [],
   "eventId": "de1cb5da9ff70da2846108b7a6c2b921f5d72d7975c9cdfe82a50758ea5825cb",
   "fingerprints": null,
@@ -152,8 +152,8 @@ deliberately breaks a contract):
   "timestamp": 1791068443839,
   "rowCount": 10,
   "bytesWritten": 1324,
-  "applicationId": "local-1791068436169",
-  "eventId": "450619958edd30ec5232f4fc1e15c47fbc59dbe75ea6ee067e8077fd472298cc",
+  "runId": "local-1791068436169",
+  "eventId": "f1e047c3c0b970245117685b4b2f3997511b9c788f6d47fa20d35f2eb48c8db3",
   "operation": null,
   "partitionColumns": [],
   "schema": [
@@ -205,8 +205,8 @@ carry the same keys. See [Tag the draft, and link events back to the run](/guide
 there (an owning team, an upstream system) rides along on every event without a second
 metadata vocabulary to maintain.
 
-`applicationId` is the Spark application's own ID (`sparkContext.applicationId`) on
-both event types — useful for grouping events from the same job run when a sink
+`runId` is the engine's own identifier for the run (for Spark, the application's ID,
+`sparkContext.applicationId`) on both event types — useful for grouping events from the same job run when a sink
 aggregates events across many jobs.
 
 `fingerprints` on `ContractValidationEvent` is `null` unless you've opted into
@@ -481,7 +481,7 @@ Four ship in `spark-adapter` itself, all with no extra dependency:
 
   ```properties
   sink.enabled=true
-  sink.class=com.invaract.verification.notification.HadoopFsNotificationSink
+  sink.class=com.invaract.sparkadapter.notification.HadoopFsNotificationSink
   sink.property.path=s3a://my-bucket/invaract-events/
   sink.property.hadoop.fs.s3a.access.key=...
   sink.property.hadoop.fs.s3a.secret.key=...
@@ -533,6 +533,7 @@ an event it couldn't deliver. These properties (all optional) control that:
 | `sink.property.retry.backoffMultiplier` | `2.0` | Each wait is this many times the last. |
 | `sink.property.retry.maxBackoffMs` | `5000` | Upper limit on a single wait. |
 | `sink.property.deadLetter.path` | none | Where an event goes when it can't be delivered. |
+| `sink.property.deadLetter.class` | local file | The sink class that writes the dead letter. Required when the path has a scheme (`s3a://`, `hdfs://`, ...). |
 
 ```properties
 sink.enabled=true
@@ -541,12 +542,14 @@ sink.property.url=https://example.com/invaract-events
 sink.property.bearerTokenEnv=INVARACT_TOKEN
 sink.property.retry.maxAttempts=5
 sink.property.deadLetter.path=s3a://my-bucket/invaract-dead-letter/
+sink.property.deadLetter.class=com.invaract.sparkadapter.notification.HadoopFsNotificationSink
 ```
 
 **The dead letter.** A plain path is appended to as a local file, one event per line. A
-path with a scheme (`s3a://`, `hdfs://`, `gs://`, `file://`) goes through Hadoop's
-`FileSystem` instead, as one object per event, and `sink.property.deadLetter.hadoop.<key>`
-sets Hadoop configuration keys exactly as for
+path with a scheme (`s3a://`, `hdfs://`, `gs://`, `file://`) needs a sink that can write
+there: name `sink.property.deadLetter.class=com.invaract.sparkadapter.notification.HadoopFsNotificationSink`
+and it goes through Hadoop's `FileSystem`, as one object per event; then
+`sink.property.deadLetter.hadoop.<key>` sets Hadoop configuration keys exactly as for
 [`HadoopFsNotificationSink`](#built-in-sinks). Prefer the scheme form on a cluster: a local
 file on the driver's disk disappears with the driver.
 
@@ -581,7 +584,7 @@ event.
   afterward:
 
   ```json
-  {"eventType": "JOB_SUMMARY", "timestamp": 1735689600200, "totalWrites": 1, "checksPassed": 1, "checksFailed": 0, "totalViolations": 0, "durationMs": 9676, "metadata": {}, "applicationId": "local-1735689599000"}
+  {"eventType": "JOB_SUMMARY", "timestamp": 1735689600200, "totalWrites": 1, "checksPassed": 1, "checksFailed": 0, "totalViolations": 0, "durationMs": 9676, "metadata": {}, "runId": "local-1735689599000"}
   ```
 
   A single job (like `DemoJobHarness`) calls `publishSummary()` once, right after its

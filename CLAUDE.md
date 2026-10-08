@@ -18,11 +18,9 @@ surfaced (opt-in, via `VerificationOptions.computeFingerprint`) through
 `spark-adapter`'s existing validation message and notification-publishing
 channels. It now has its own MiMa/`api-compatibility` check and its own
 whole-module + PR-scoped incremental mutation-testing CI jobs, the same
-guarantees `contract`/`ir`/`spark-adapter` have — but it is still not
-wired into `release.yml`'s Maven Central publish, which covers only
-`contract`/`ir`/`spark-adapter` today (see `fingerprint/build.sbt`'s own
-"FOLLOW-UP" comment) — a real, narrower gap to close, not a signal it's
-harness code. This is what a real user of Invaract would depend on.
+guarantees `contract`/`ir`/`spark-adapter` have, and `release.yml` publishes it to
+Maven Central with the others (so do `verification-core` and `adapter-testkit`; see
+docs/RELEASING.md). This is what a real user of Invaract would depend on.
 
 **`plugin/`, `runner/`, `demo/`, and `web/` are an example integration and
 test harness, not the product.** `plugin/` is a small illustrative Spark
@@ -72,7 +70,9 @@ don't present it as something external consumers would bind to.
   checkers, rule/data-quality/role verifiers, the result model, notification
   sinks, location resolution; no Spark dependency, so a second engine's
   adapter depends on this, not on `spark-adapter` — see
-  docs/MULTI_ENGINE_ADAPTERS.md)
+  docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
+  scenarios every adapter's tests run — test-scope infrastructure, not part of any
+  runtime jar)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -85,7 +85,7 @@ don't present it as something external consumers would bind to.
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
   required by Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (7 independent modules `./dev/build` builds, plus
+- **Build System**: sbt (8 independent modules `./dev/build` builds, plus
   the standalone opt-in `notification-kafka` — no aggregating root
   `build.sbt` — see `dev/build`'s comments for the cross-module dependency
   graph)
@@ -133,9 +133,8 @@ bar this section describes below. It now has the same automatic backing
 `ir`/`spark-adapter` do: `.github/workflows/test.yml`'s
 `mutation-testing-fingerprint` job runs both a whole-module Stryker4s pass
 and its own PR-scoped incremental check, and `api-compatibility` covers it
-too. The one still-open, disclosed gap for this module is narrower —
-Maven Central publishing (see the "What's the product" section above) —
-not mutation testing or API compatibility.
+too. Nothing is left open for this module: mutation testing, API compatibility and
+Maven Central publishing are all in place.
 
 So: when a feature adds or changes code in `ir/src/main/scala/...`,
 `spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,
@@ -258,9 +257,12 @@ There is no Maven Central release yet to compare against, so each
 module's `mimaPreviousArtifacts` (in its `build.sbt`) points at its own
 `com.invaract %% <module> % <previous version>` coordinate, and CI's
 `api-compatibility` job (`.github/workflows/test.yml`) publishes the PR's
-base branch to the runner's local Ivy cache under that exact coordinate
-before running `sbt mimaReportBinaryIssues` against the PR's head — "did
-this PR, as a whole, break compatibility with what existed before it."
+base branch into its own isolated Ivy home (`-Dsbt.ivy.home`), separate from
+the PR head's, then runs `sbt mimaReportBinaryIssues` against the PR's head
+with `mimaPreviousClassfiles` pointing at the base ref's jar — "did
+this PR, as a whole, break compatibility with what existed before it." The
+two builds never share a coordinate, so a version bump is needed only when
+the version should change, not to keep CI's two publishes apart.
 The base is the PR's actual base commit
 (`github.event.pull_request.base.sha`), a fixed anchor for the PR's
 lifetime, deliberately **not** the previous push's HEAD — a sliding
@@ -391,6 +393,15 @@ organizational policy for free. A new neutral setting goes in `InvaractConf` and
 check, rule or analysis means a new `Capability`, which forces every adapter to take a
 position; regenerate the docs-site matrix with `./dev/capabilities` (a drift test in
 `verification-core` fails otherwise). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
+
+**Every adapter is checked against its own declaration** by the conformance kit
+(`adapter-testkit`): `AdapterConformanceSpec` runs the engine-neutral scenarios as real jobs
+and each must come out as the adapter's declaration promises (a capability declared
+unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
+is canceled with its note). A new engine-neutral check means a new scenario in
+`Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
+could check by its nature, the second for what the kit cannot check yet) — the kit's own
+tests fail if a capability is in neither. The kit is itself gated by MiMa and coverage in CI (not mutation testing). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
@@ -529,6 +540,15 @@ would be.
 │   │                               # listed under spark-adapter/ below that are engine-neutral
 │   │                               # live here (the tree below predates the split).
 │   └── src/main/scala/com/invaract/verification/
+│
+├── adapter-testkit/               # Conformance kit: engine-neutral scenarios + the ScalaTest
+│   │                               # trait an adapter's tests mix in (spark-adapter's are the
+│   │                               # first); test-scope only, never bundled
+│   └── src/main/scala/com/invaract/testkit/
+│       ├── Scenario.scala, Scenarios.scala    # the neutral job description + the catalogue
+│       ├── Conformance.scala                  # judges an adapter against its own declaration
+│       ├── ReferenceAdapter.scala             # a complete adapter on the SPI, no engine
+│       └── AdapterConformanceSpec.scala       # one test per scenario
 │
 ├── spark-adapter/                 # Verification engine: Spark integration
 │   ├── src/main/scala/com/invaract/sparkadapter/
@@ -788,9 +808,9 @@ If `./dev/test` fails:
 
 - `plugin/target/scala-2.12/invaract-spark-plugin-0.2.0.jar`
 - `contract/target/scala-2.12/invaract-contract-0.13.0.jar`
-- `ir/target/scala-2.12/invaract-ir-0.5.0.jar`
-- `fingerprint/target/scala-2.12/invaract-fingerprint-0.3.0.jar`
-- `verification-core/target/scala-2.12/invaract-verification-core-0.2.0.jar` —
+- `ir/target/scala-2.12/invaract-ir-0.6.0.jar`
+- `fingerprint/target/scala-2.12/invaract-fingerprint-0.4.0.jar`
+- `verification-core/target/scala-2.12/invaract-verification-core-0.4.0.jar` —
   the engine-neutral verification code; `spark-adapter`'s fat jar bundles it
   (same `sbt-assembly` dependency bundling as `fingerprint`), so a consumer
   installing only the spark-adapter jar needs nothing extra
@@ -968,6 +988,8 @@ GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 - **`changes`**: decides whether the Spark/Delta/Iceberg version-matrix jobs
   run on a PR — only when `spark-adapter/`, `verification-core/` or
   `.github/workflows/test.yml` changed; pushes always run them
+- **`sbom`**: generates the CycloneDX SBOMs on pushes only; a PR has no use for the artifact and
+  the job rebuilds every module
 - **`summary`**: gates on all of the above
 
 Exit code determines PR check status: ✓ for pass, ✗ for fail.

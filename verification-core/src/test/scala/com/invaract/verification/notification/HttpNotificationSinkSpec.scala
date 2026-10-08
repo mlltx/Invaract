@@ -437,18 +437,39 @@ class HttpNotificationSinkSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(lines(dead).size == 1)
   }
 
-  test("deadLetter.path with a scheme:// goes through Hadoop's FileSystem: one file per event") {
+  test("deadLetter.path with a scheme:// needs deadLetter.class, and says so") {
+    val e = intercept[IllegalArgumentException] {
+      new HttpNotificationSink().configure(Map("url" -> url, "deadLetter.path" -> "s3a://bucket/dead/"))
+    }
+    assert(e.getMessage.contains("deadLetter.class"))
+    assert(e.getMessage.contains("s3a://bucket/dead/"))
+  }
+
+  test("deadLetter.class names the dead-letter sink, and receives every deadLetter.* property with the prefix stripped") {
     resetFlaky()
     flakyAlways = Some(400)
-    val dir = java.nio.file.Files.createTempDirectory("invaract-http-dead-letter-hadoop")
+    HttpNotificationSinkSpec.DeadLetterProbe.reset()
     val sink = new HttpNotificationSink
-    sink.configure(Map("url" -> flakyUrl, "deadLetter.path" -> dir.toUri.toString) ++ fastRetry())
+    sink.configure(
+      Map(
+        "url" -> flakyUrl,
+        "deadLetter.path" -> "mem://dead/",
+        "deadLetter.class" -> classOf[HttpNotificationSinkSpec.DeadLetterProbe].getName,
+        "deadLetter.custom.key" -> "v"
+      ) ++ fastRetry()
+    )
     sink.publish(sampleEvent)
     sink.flush(5000L)
+    assert(HttpNotificationSinkSpec.DeadLetterProbe.configured.get("custom.key").contains("v"))
+    assert(HttpNotificationSinkSpec.DeadLetterProbe.configured.get("path").contains("mem://dead/"))
+    assert(HttpNotificationSinkSpec.DeadLetterProbe.published.size == 1)
+  }
 
-    val written = dir.toFile.listFiles().filter(f => !f.getName.startsWith(".") && !f.getName.endsWith(".crc"))
-    assert(written.length == 1, s"expected one dead-letter object, found ${dir.toFile.list().toList}")
-    assert(new String(java.nio.file.Files.readAllBytes(written.head.toPath), "UTF-8").contains("\"CONTRACT_VALIDATION\""))
+  test("deadLetter.class that is not a NotificationSink is rejected at setup") {
+    val e = intercept[IllegalArgumentException] {
+      new HttpNotificationSink().configure(Map("url" -> url, "deadLetter.path" -> "x", "deadLetter.class" -> "java.lang.String"))
+    }
+    assert(e.getMessage.contains("does not implement NotificationSink"))
   }
 
   test("a dead letter that cannot be written is logged, never thrown") {
@@ -519,5 +540,20 @@ class HttpNotificationSinkSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(HttpNotificationSink.failureOf(null, 429, "WRITE", "http://x").exists(_.retryable))
     val refused = HttpNotificationSink.failureOf(null, 404, "WRITE", "http://x").get
     assert(!refused.retryable && refused.cause == null && refused.message.contains("404"))
+  }
+}
+
+object HttpNotificationSinkSpec {
+
+  /** A dead-letter sink that records what it was configured with and what reached it. */
+  class DeadLetterProbe extends NotificationSink {
+    override def configure(properties: Map[String, String]): Unit = DeadLetterProbe.configured = properties
+    override def publish(event: NotificationEvent): Unit = DeadLetterProbe.published :+= event
+  }
+
+  object DeadLetterProbe {
+    @volatile var configured: Map[String, String] = Map.empty
+    @volatile var published: Vector[NotificationEvent] = Vector.empty
+    def reset(): Unit = { configured = Map.empty; published = Vector.empty }
   }
 }

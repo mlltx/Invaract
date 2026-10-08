@@ -85,6 +85,8 @@ capabilities:
     status: supported
     note: Opt-in. Disclosed when it crosses a lineage boundary it could not see through.
     docs: SEMANTIC_LINEAGE_FINGERPRINTING.md
+  analysis.functionCatalog:
+    status: supported
   analysis.sensitivityPropagation:
     status: supported
   lineage.columnLevel:

@@ -13,12 +13,12 @@ import scala.collection.mutable
 class DryRunNotificationSpec extends AnyFunSuite {
 
   private val job = JobInfo(
-    applicationId = Some("app-1"),
-    appName = Some("orders"),
+    runId = Some("app-1"),
+    name = Some("orders"),
     jobId = Some("nightly"),
-    sparkVersion = Some("3.5.1"),
-    master = Some("local[*]"),
-    deployMode = Some("client"),
+    engine = Some("spark"),
+    engineVersion = Some("3.5.1"),
+    engineDetails = Map("master" -> "local[*]", "deployMode" -> "client"),
     user = Some("svc"),
     startTimeMs = Some(1700L),
     attributes = Map("team" -> "data-eng")
@@ -36,18 +36,18 @@ class DryRunNotificationSpec extends AnyFunSuite {
   test("JobInfo.toMap carries every present field and omits absent ones; attributes is always there") {
     assert(
       job.toMap == Map(
-        "applicationId" -> "app-1",
-        "appName" -> "orders",
+        "runId" -> "app-1",
+        "name" -> "orders",
         "jobId" -> "nightly",
-        "sparkVersion" -> "3.5.1",
-        "master" -> "local[*]",
-        "deployMode" -> "client",
+        "engine" -> "spark",
+        "engineVersion" -> "3.5.1",
+        "engineDetails" -> Map("master" -> "local[*]", "deployMode" -> "client"),
         "user" -> "svc",
         "startTimeMs" -> 1700L,
         "attributes" -> Map("team" -> "data-eng")
       )
     )
-    assert(JobInfo().toMap == Map("attributes" -> Map.empty))
+    assert(JobInfo().toMap == Map("attributes" -> Map.empty)) // engineDetails is omitted when empty, like every other absent field
   }
 
   test("InferenceStatus names are the stable strings consumers will match on") {

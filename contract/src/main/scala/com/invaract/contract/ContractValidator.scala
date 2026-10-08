@@ -218,6 +218,15 @@ object ContractValidator {
       }
     }
 
+    dataset.saveMode.filterNot(SaveModes.isCanonical).foreach { mode =>
+      issues += ValidationIssue(
+        ValidationSeverity.Warning,
+        s"$path.saveMode",
+        s"saveMode '$mode' is not one of the canonical write modes (${SaveModes.All.toList.sorted.mkString(", ")}); " +
+          "it can only match an adapter that reports exactly this string, so the same contract may fail on another engine"
+      )
+    }
+
     if (dataset.schema.fields.isEmpty) {
       issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", "Schema must declare at least one field")
     }

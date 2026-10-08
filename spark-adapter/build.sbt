@@ -335,6 +335,9 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-hive" % sparkHiveVersion % "test",
   "org.apache.spark" %% "spark-avro" % sparkAvroVersion % "test",
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
+  // The adapter conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4): the engine-neutral
+  // scenarios SparkConformanceSpec runs through the real enforcement rule. Test scope only.
+  "com.invaract" %% "invaract-adapter-testkit" % "0.3.0" % "test",
   "org.scalatestplus" %% "scalacheck-1-17" % "3.2.18.0" % "test",
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
@@ -966,7 +969,7 @@ excludeDependencies ++= Seq(
 // exactly, the same invariant this module's mimaPreviousArtifacts
 // comments already track for the base-branch coordinate.
 libraryDependencies ++= Seq(
-  "com.invaract" %% "invaract-ir" % "0.5.0",
+  "com.invaract" %% "invaract-ir" % "0.6.0",
   "com.invaract" %% "invaract-contract" % "0.13.0",
   // Semantic lineage fingerprinting (docs/SEMANTIC_LINEAGE_FINGERPRINTING.md)
   // - surfaced through ContractEnforcementRule/ContractValidationEvent per
@@ -975,11 +978,11 @@ libraryDependencies ++= Seq(
   // though, unlike those two, this module isn't (yet) one of the three
   // published to Maven Central; keeping the dependency shape uniform now
   // avoids a churn-y switch later once it is.
-  "com.invaract" %% "invaract-fingerprint" % "0.3.0",
+  "com.invaract" %% "invaract-fingerprint" % "0.4.0",
   // The engine-neutral verification core (this module's own former
   // checkers/result model/notification/location code) - same real,
   // Maven-resolvable-dependency reasoning as the three above.
-  "com.invaract" %% "invaract-verification-core" % "0.2.0"
+  "com.invaract" %% "invaract-verification-core" % "0.4.0"
 )
 
 assembly / assemblyJarName := "invaract-spark-adapter-0.11.0.jar"

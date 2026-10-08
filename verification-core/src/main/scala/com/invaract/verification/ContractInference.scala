@@ -139,12 +139,12 @@ private[invaract] object ContractInference {
       None
   }
 
-  /** Delegates to `StructuralVerifier.normalizeSparkLocation` rather than
+  /** Delegates to `StructuralVerifier.normalizeLocation` rather than
     * stripping `"file:"` independently here — see that method's own doc
     * for why the two must share one definition, not two copies that could
     * silently drift apart.
     */
-  private def normalizeLocation(location: String): String = StructuralVerifier.normalizeSparkLocation(location)
+  private def normalizeLocation(location: String): String = StructuralVerifier.normalizeLocation(location)
 
   /** `required = true` for every field: unlike a hand-authored contract
     * (where "required" expresses intent the author holds independently of

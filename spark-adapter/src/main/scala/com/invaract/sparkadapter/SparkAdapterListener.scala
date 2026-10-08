@@ -149,7 +149,7 @@ class SparkAdapterListener(
             rowCount = metrics.get("numOutputRows").map(_.value),
             bytesWritten = metrics.get("numOutputBytes").map(_.value),
             fileCount = metrics.get("numFiles").map(_.value),
-            applicationId = Some(qe.sparkSession.sparkContext.applicationId),
+            runId = Some(qe.sparkSession.sparkContext.applicationId),
             deltaVersion = if (info.format.contains("delta")) SparkAdapterListener.deltaVersionOf(qe.sparkSession, info.location) else None,
             icebergSnapshotId = info.catalogTableRef.flatMap { case (catalog, identifier) =>
               SparkAdapterListener.icebergSnapshotIdOf(catalog, identifier)
