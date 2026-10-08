@@ -1,0 +1,689 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Multi-Engine Adapters | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-123/design/multi-engine-adapters/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-123/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-123/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.5"/><meta name="generator" content="Starlight v0.42.5"/><meta property="og:title" content="Multi-Engine Adapters"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-123/design/multi-engine-adapters/"/><meta property="og:locale" content="en"/><meta property="og:description" content="How Invaract moves from &quot;a verification engine with one Spark adapter&quot; to &quot;a verification engine any execution engine can plug into&quot; — BigQuery, Apache ..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="How Invaract moves from &quot;a verification engine with one Spark adapter&quot; to &quot;a verification engine any execution engine can plug into&quot; — BigQuery, Apache ..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-123/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-123/_astro/common.D_L-1Y3_.css"><style>@layer starlight.components{.card:where(.astro-oag6qnet){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-oag6qnet):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-oag6qnet):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-oag6qnet):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-oag6qnet):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-oag6qnet){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-oag6qnet) .icon:where(.astro-oag6qnet){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-oag6qnet) .body:where(.astro-oag6qnet){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-7qmvx3iy){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-7qmvx3iy)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-7qmvx3iy){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-7qmvx3iy){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-7qmvx3iy)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-123/_astro/page.Dwipeu-R.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-123/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-123/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-123/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-123/_astro/Search.astro_astro_type_script_index_0_lang.C6Mo47ZG.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="0vvc6vi" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-123/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#why-the-engine-independence-claim-was-not-yet-true" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Why the engine-independence claim was not yet true</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#target-shape" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Target shape</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stages" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stages</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-1--the-logical-type-model" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 1 — the logical type model</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2a--the-verification-core-module" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2a — the verification-core module</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2b--the-adapter-spi" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2b — the adapter SPI</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-3--capability-declaration" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 3 — capability declaration</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2c--neutral-package-names" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2c — neutral package names</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#conventions-every-adapter-follows" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Conventions every adapter follows</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-4--the-adapter-conformance-kit" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 4 — the adapter conformance kit</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-5--function-canonicalisation" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 5 — function canonicalisation</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-123/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#why-the-engine-independence-claim-was-not-yet-true" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Why the engine-independence claim was not yet true</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#target-shape" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Target shape</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stages" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stages</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-1--the-logical-type-model" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 1 — the logical type model</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2a--the-verification-core-module" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2a — the verification-core module</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2b--the-adapter-spi" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2b — the adapter SPI</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-3--capability-declaration" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 3 — capability declaration</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-2c--neutral-package-names" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 2c — neutral package names</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#conventions-every-adapter-follows" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Conventions every adapter follows</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-4--the-adapter-conformance-kit" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 4 — the adapter conformance kit</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#stage-5--function-canonicalisation" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Stage 5 — function canonicalisation</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-123/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Multi-Engine Adapters</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/MULTI_ENGINE_ADAPTERS.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>How Invaract moves from “a verification engine with one Spark adapter” to “a
+verification engine any execution engine can plug into” — BigQuery, Apache
+Beam, and whatever comes after — <strong>without</strong> large, undocumented capability
+gaps between the engines.</p>
+<p>This is the working plan and its status. It was written from a review of
+<code dir="auto">spark-adapter</code> (what leaks Spark past the IR, and why ARCHITECTURE.md’s ADR-001
+“adding an engine is additive” was not yet true), and each stage below lands as
+its own pull request, stacked on the previous one. Update the status table in the
+same PR as the work.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="why-the-engine-independence-claim-was-not-yet-true">Why the engine-independence claim was not yet true</h2><a class="sl-anchor-link" href="#why-the-engine-independence-claim-was-not-yet-true"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Why the engine-independence claim was not yet true”</span></a></div>
+<p><code dir="auto">contract</code>, <code dir="auto">ir</code> and <code dir="auto">fingerprint</code> have no Spark dependency, and <code dir="auto">ir.Plan</code>/<code dir="auto">ir.Expr</code>
+are a genuinely engine-neutral algebra. But <code dir="auto">spark-adapter</code> is not a thin adapter:
+about 7,100 of its 11,300 lines import Spark, and several files that <em>look</em> neutral
+depended on Spark types or Spark’s spelling of things. The review found eight leaks:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Leak</th><th>Effect on a second engine</th><th>Addressed in</th></tr></thead><tbody><tr><td>1</td><td>The verification core took Spark’s <code dir="auto">StructType</code>: <code dir="auto">StructuralVerifier</code>, <code dir="auto">InputChecker</code>, <code dir="auto">OutputChecker</code>, <code dir="auto">SchemaChecker</code>, <code dir="auto">ContractInference</code>. A contract’s <code dir="auto">type:</code> was compared against Spark’s <code dir="auto">DataType.typeName</code> and parsed with Spark’s <code dir="auto">DataType.fromDDL</code>.</td><td>BigQuery’s <code dir="auto">INT64</code>/<code dir="auto">NUMERIC</code>/<code dir="auto">REPEATED</code>, Beam’s schema <code dir="auto">FieldType</code> had nowhere to land.</td><td>Stage 1</td></tr><tr><td>2</td><td><code dir="auto">ContractEnforcementRule.verifyOrThrow</code> is the real adapter interface, written inline and interleaved with <code dir="auto">LogicalPlan</code>, <code dir="auto">SQLConf</code> and <code dir="auto">WriteCommandSupport</code>.</td><td>A second adapter would copy ~200 lines of orchestration.</td><td>Stage 2</td></tr><tr><td>3</td><td>Neutral code (<code dir="auto">Violation</code>, <code dir="auto">VerificationResult</code>, <code dir="auto">VerificationOptions</code>, the notification events, <code dir="auto">spark.invaract.*</code> keys, <code dir="auto">runId</code>) lives in <code dir="auto">com.invaract.sparkadapter</code>.</td><td>A BigQuery adapter would have to depend on <code dir="auto">spark-adapter</code>, whose Spark dependency is <code dir="auto">provided</code>.</td><td>Stage 2</td></tr><tr><td>4</td><td><code dir="auto">ir.Function</code> names are Spark’s <code dir="auto">prettyName</code>; <code dir="auto">fingerprint</code>’s <code dir="auto">NonDeterminism</code> lists <code dir="auto">spark_partition_id</code>, <code dir="auto">input_file_name</code>, …</td><td>BigQuery’s <code dir="auto">GENERATE_UUID()</code> would be classified deterministic — a silently wrong fingerprint. The same logic on two engines would fingerprint differently.</td><td>Stage 5</td></tr><tr><td>5</td><td><code dir="auto">LocationMatching</code> assumes file paths (<code dir="auto">file:</code>, <code dir="auto">\</code>, <code dir="auto">/</code>-boundary suffix).</td><td><code dir="auto">proj.ds.tbl</code>, <code dir="auto">proj:ds.tbl</code>, backticks, Beam IO targets don’t fit.</td><td>Stage 2</td></tr><tr><td>6</td><td>The IR has no <code dir="auto">Distinct</code>, set operations, <code dir="auto">UNNEST</code>/<code dir="auto">explode</code>, pivot, sample, window frames or lateral joins.</td><td>They surface only as <code dir="auto">UnknownPlan</code> diagnostics.</td><td>After Stage 5</td></tr><tr><td>7</td><td>Fail-closed is Spark-shaped (<code dir="auto">FailClosedCommands</code>, an allowlist of Spark <code dir="auto">Command</code> class names).</td><td>No engine-neutral way to say “this write is unverifiable”.</td><td>Stage 2</td></tr><tr><td>8</td><td>Capability gaps are tracked per Spark <em>connector</em>, in prose (<code dir="auto">docs/connectors/*.md</code>).</td><td>Nothing records “this adapter does not check catalogs / DML rules / lineage boundaries at all”.</td><td>Stages 3 and 4</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="target-shape">Target shape</h2><a class="sl-anchor-link" href="#target-shape"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Target shape”</span></a></div>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-123/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-123/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">contract/   ir/   fingerprint/         engine-neutral (as today)</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">verification-core/ (new, Stage 2)      checkers, rules, result model, notification,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                       </span></span><span style="--0:#d6deeb;--1:#403f53">location + registry resolution, org-policy</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                       </span></span><span style="--0:#d6deeb;--1:#403f53">enforcement, the adapter SPI</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">spark-adapter/                         Catalyst → IR translation, write recognition,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                                       </span></span><span style="--0:#d6deeb;--1:#403f53">the Spark extension and listener</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">bigquery-adapter/  beam-adapter/       later — only after the stages below</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">adapter-testkit/ (new, Stage 4)        engine-neutral conformance scenarios</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="contract/   ir/   fingerprint/         engine-neutral (as today)verification-core/ (new, Stage 2)      checkers, rules, result model, notification,                                       location + registry resolution, org-policy                                       enforcement, the adapter SPIspark-adapter/                         Catalyst → IR translation, write recognition,                                       the Spark extension and listenerbigquery-adapter/  beam-adapter/       later — only after the stages belowadapter-testkit/ (new, Stage 4)        engine-neutral conformance scenarios"><div></div></button></div></figure></div>
+<p>An adapter owes the core: a translation into <code dir="auto">ir.Plan</code>, a <code dir="auto">TypeMapper</code> into
+<code dir="auto">contract.LogicalType</code>, a location normalizer, a config source, and a
+<strong>declared capability set</strong> — including <em>where</em> it can enforce (blocking inside
+the engine, a pre-submit gate, or observe-only). Anything the contract declares
+that the adapter cannot check must be reported as not evaluated, never silently
+passed.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="stages">Stages</h2><a class="sl-anchor-link" href="#stages"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stages”</span></a></div>
+<p>Stage 1 is split deliberately: the schema type model first (the biggest leak, and
+independently reviewable), then the result-model/SPI extraction with the rest of the
+module move in Stage 2.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Stage</th><th>Item</th><th>Benefit</th><th>Status</th></tr></thead><tbody><tr><td>1</td><td>Engine-neutral logical type model: <code dir="auto">contract.LogicalType</code>/<code dir="auto">LogicalSchema</code>; the schema/input/output checkers and <code dir="auto">ContractInference</code> stop importing Spark types; Spark mapping isolated in <code dir="auto">SparkSchemas</code>, pinned to Spark’s own output by <code dir="auto">SparkSchemasSpec</code></td><td>Removes leak #1: an adapter for any engine supplies a <code dir="auto">LogicalSchema</code>; no existing verdict or message changes</td><td>Done (PR #102) — see below</td></tr><tr><td>2a</td><td>Extract the <code dir="auto">verification-core</code> module: the engine-neutral checkers, verifiers, result model, notification and location code move out of <code dir="auto">spark-adapter</code>; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write)</td><td>Removes leak #3 (and the module half of #5/#7): a second adapter depends on <code dir="auto">verification-core</code>, not <code dir="auto">spark-adapter</code>; no user-visible change at the time (the package rename is Stage 2c)</td><td>Done — see below</td></tr><tr><td>2b</td><td>Adapter SPI: <code dir="auto">VerificationPipeline</code> (the write / state-change / fail-closed branches of <code dir="auto">verifyOrThrow</code>) and <code dir="auto">VerificationSetup</code> + <code dir="auto">ConfigSource</code> (options, <code dir="auto">ref://</code> locations, org policy, read through a neutral config view)</td><td>Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every <code dir="auto">--conf</code>-style capability by spelling the neutral keys its own way</td><td>Done — see below (<code dir="auto">ContractSource</code> and the fail-closed wording are deferred, see “Not done in 2b”)</td></tr><tr><td>2c</td><td>Neutral package names: <code dir="auto">verification-core</code> is <code dir="auto">com.invaract.verification</code> (<code dir="auto">.notification</code>, <code dir="auto">.location</code>), <code dir="auto">notification-kafka</code> follows; no forwarding classes</td><td>Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released</td><td>In review</td></tr><tr><td>3</td><td>Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check</td><td>Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked</td><td>Done — see below</td></tr><tr><td>4</td><td><code dir="auto">adapter-testkit</code>: engine-neutral conformance scenarios, Spark as the first adapter</td><td>Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour</td><td>In review</td></tr><tr><td>5</td><td>Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism)</td><td>Removes leak #4: the same logic is classified the same on every engine, and <code dir="auto">GENERATE_UUID()</code> is not “deterministic”</td><td>In review</td></tr><tr><td>—</td><td>BigQuery / Beam adapters</td><td>The goal; deliberately last</td><td>Not started — needs a go-ahead after Stage 5</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-1--the-logical-type-model">Stage 1 — the logical type model</h2><a class="sl-anchor-link" href="#stage-1--the-logical-type-model"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 1 — the logical type model”</span></a></div>
+<p><strong>What changed</strong></p>
+<ul>
+<li><code dir="auto">contract.LogicalType</code> (a sealed ADT: scalars, <code dir="auto">DecimalType(p,s)</code>, <code dir="auto">ArrayType</code>, <code dir="auto">MapType</code>,
+<code dir="auto">StructType</code>, and <code dir="auto">OtherType</code> for a native type with no logical equivalent),
+<code dir="auto">LogicalField</code>, <code dir="auto">LogicalSchema</code>, and <code dir="auto">LogicalType.parse</code> — the contract’s own
+parser for the type grammar a contract has always used for nested types
+(<code dir="auto">array&#x3C;int></code>, <code dir="auto">map&#x3C;string,decimal(10,2)></code>, <code dir="auto">struct&#x3C;a:int,b:string></code>). It replaces
+<code dir="auto">DataType.fromDDL</code> in the checker.</li>
+<li><code dir="auto">SchemaChecker</code>, <code dir="auto">InputChecker</code>, <code dir="auto">OutputChecker</code>, <code dir="auto">StructuralVerifier</code> and
+<code dir="auto">ContractInference</code> take <code dir="auto">LogicalSchema</code> and no longer import anything from
+<code dir="auto">org.apache.spark</code>.</li>
+<li><code dir="auto">SparkSchemas</code> (new, in <code dir="auto">spark-adapter</code>) is the one place a Spark <code dir="auto">DataType</code>
+becomes a <code dir="auto">LogicalType</code>. A Spark type with no logical equivalent becomes
+<code dir="auto">OtherType</code> under Spark’s own spelling: it equals only itself, so a mismatch stays
+visible instead of being hidden by a guessed mapping.</li>
+<li><code dir="auto">ContractEnforcementRule</code> and <code dir="auto">DryRunReporter</code> convert at the Spark boundary.</li>
+</ul>
+<p><strong>What did not change</strong> — and how that was checked. No verdict, violation type,
+violation message or <code dir="auto">fieldType</code> written by dry-run mode changed. Rather than assert
+that, <code dir="auto">SparkSchemasSpec</code> pins both swaps against Spark itself: for every mapped type
+the logical <code dir="auto">typeName</code>/<code dir="auto">catalogString</code> equals Spark’s, and <code dir="auto">LogicalType.parse</code> reads 33
+declared nested types to exactly what <code dir="auto">DataType.fromDDL</code> reads (and rejects what Spark
+rejects). The existing <code dir="auto">SchemaCheckerSpec</code> and <code dir="auto">StructuralVerifierSpec</code> pass unmodified
+apart from converting their Spark schemas at the call.</p>
+<p><strong>Known limitations, deliberately kept</strong></p>
+<ul>
+<li>A bare declared <code dir="auto">decimal</code> does not match an actual <code dir="auto">decimal(10,2)</code> (a decimal’s
+<code dir="auto">typeName</code> carries its parameters, as it always did in Spark); declare <code dir="auto">decimal(10,2)</code>.
+Inside <code dir="auto">array&#x3C;...></code>/<code dir="auto">map&#x3C;...></code>/<code dir="auto">struct&#x3C;...></code> a bare <code dir="auto">decimal</code> is <code dir="auto">decimal(10,0)</code>, as in Spark.</li>
+<li>A declared nested type using a construct this grammar does not parse (e.g.
+<code dir="auto">array&#x3C;interval day to second></code>) is reported as a type mismatch, the same as an
+unparseable declaration was before.</li>
+<li><code dir="auto">WriteFieldInfo</code> in the notification events still derives its type string from
+Spark’s <code dir="auto">typeName</code> (same strings); routing it through <code dir="auto">LogicalType</code> belongs with the
+notification move in Stage 2.</li>
+<li>The IR’s own <code dir="auto">Literal.literalType</code>/<code dir="auto">Cast.targetType</code> remain plain strings.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-2a--the-verification-core-module">Stage 2a — the <code dir="auto">verification-core</code> module</h2><a class="sl-anchor-link" href="#stage-2a--the-verification-core-module"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 2a — the verification-core module”</span></a></div>
+<p><strong>What changed</strong></p>
+<ul>
+<li>New sbt module <code dir="auto">verification-core</code> (no Spark dependency; <code dir="auto">contract</code>, <code dir="auto">ir</code>, <code dir="auto">fingerprint</code>
+as dependencies; <code dir="auto">slf4j-api</code> and Hadoop’s client API <code dir="auto">provided</code>, as before). It now holds
+the structural checkers, the rule/data-quality/role verifiers, the result model
+(<code dir="auto">Violation</code>, <code dir="auto">VerificationResult</code>, <code dir="auto">ContractViolationException</code>), <code dir="auto">ContractInference</code>,
+and the whole <code dir="auto">notification/</code> and <code dir="auto">location/</code> packages — moved with <code dir="auto">git mv</code> so
+history follows.</li>
+<li><code dir="auto">spark-adapter</code> depends on it (0.10.0 → 0.11.0) and its assembly jar bundles it, exactly
+as it already bundles <code dir="auto">fingerprint</code>, so installing the one jar is unchanged.</li>
+<li>The Spark-free specs moved with the code and run in the new module without Spark
+(24 suites, 402 tests; coverage 91.54% statements / 89.88% branches; whole-module mutation
+score 89.18%); <code dir="auto">SchemaCheckerSpec</code> and <code dir="auto">InputOutputCheckerSpec</code> were rebuilt on
+<code dir="auto">LogicalSchema</code> (a tiny <code dir="auto">Cols</code> builder) so the checkers are tested in the module that owns
+them. <code dir="auto">spark-adapter</code> keeps 28 suites / 684 tests, all passing.</li>
+</ul>
+<p><strong>Three seams, because three things were genuinely Spark-specific</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Was</th><th>Now</th></tr></thead><tbody><tr><td><code dir="auto">InputChecker</code> read <code dir="auto">CheckpointRegistry.BoundarySourceTypes</code> (Spark node names)</td><td>The adapter passes the <code dir="auto">ir.UnknownPlan</code> source types it treats as a lineage boundary to <code dir="auto">StructuralVerifier.verify</code>; the default is empty (“this engine has none”), so a boundary-less engine can never report an input as merely “unverifiable”</td></tr><tr><td><code dir="auto">RuleVerifier</code> took <code dir="auto">RowMutationSupport.Kind</code></td><td>It takes the neutral <code dir="auto">MutationKind</code>; <code dir="auto">RowMutationSupport.Kind</code> is now an alias of it</td></tr><tr><td><code dir="auto">ContractInference.infer</code> took Spark’s <code dir="auto">WriteCommandInfo</code></td><td>It takes an engine-neutral <code dir="auto">InferredWrite(location, format, saveMode, outputSchema)</code></td></tr></tbody></table>
+<p><strong>Package names.</strong> Stage 2a moved the code between modules and kept the package, on the
+reasoning that deployed <code dir="auto">notify.properties</code> files name built-in sinks by fully-qualified class
+name (<code dir="auto">sink.class=com.invaract.sparkadapter.notification.FileNotificationSink</code>), as do custom
+rule types and plug-ins. That reasoning was superseded in Stage 2c: there are no deployed
+consumers, so the neutral names were adopted at once instead of carrying a forwarding layer.</p>
+<p><strong>MiMa.</strong> Moving public classes out of <code dir="auto">spark-adapter</code> is a deliberate break <em>of that
+artifact</em> (every moved class is a <code dir="auto">MissingClassProblem</code>), though nothing changes for a user
+of the assembled jar. It is declared in <code dir="auto">spark-adapter/build.sbt</code>’s <code dir="auto">mimaBinaryIssueFilters</code>
+with the reason, per CLAUDE.md’s API Compatibility Requirement, and <code dir="auto">verification-core</code> gets
+its own MiMa entry (nothing to compare against until it is released).</p>
+<p><strong>Not done in 2a, deliberately</strong></p>
+<ul>
+<li>Not yet published to Maven Central or wired into <code dir="auto">release.yml</code> (the same disclosed gap
+<code dir="auto">fingerprint</code> has) — <code dir="auto">spark-adapter</code>’s published POM depends on it, so this must land
+before the next Maven Central release.</li>
+<li><code dir="auto">registry/ContractSource</code> (reads a <code dir="auto">SparkSession</code>) and <code dir="auto">WriteFieldInfo</code>’s Spark type
+strings stay in <code dir="auto">spark-adapter</code>; both belong with 2b’s neutral config namespace.</li>
+<li>Test helpers <code dir="auto">TestNotificationSink</code>, <code dir="auto">EventSchema</code> and <code dir="auto">CustomRuleVerifierFixtures</code> are
+duplicated in both modules’ test sources (separate sbt builds cannot share test classes).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-2b--the-adapter-spi">Stage 2b — the adapter SPI</h2><a class="sl-anchor-link" href="#stage-2b--the-adapter-spi"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 2b — the adapter SPI”</span></a></div>
+<p>An adapter’s job is now exactly what is engine-specific: recognize an operation, translate it
+into <code dir="auto">ir.Plan</code>, map its schemas into <code dir="auto">LogicalSchema</code>, classify DML. Everything after that is the
+core’s.</p>
+<p><strong><code dir="auto">VerificationPipeline</code></strong> (<code dir="auto">verification-core</code>) is the body of what used to be
+<code dir="auto">ContractEnforcementRule.verifyOrThrow</code>, with the Spark parts removed. Three public entry points,
+one per thing an adapter can find:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Entry point</th><th>When an adapter calls it</th></tr></thead><tbody><tr><td><code dir="auto">verifyWrite(contract, write: => CheckedWrite, options, sink, runId)</code></td><td>a recognized write</td></tr><tr><td><code dir="auto">verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId)</code></td><td>a state-changing, non-write operation that commits a schema change (Spark: Iceberg <code dir="auto">CALL</code> procedures)</td></tr><tr><td><code dir="auto">rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId)</code></td><td>the fail-closed response to something that looks like a write but could not be translated</td></tr></tbody></table>
+<p><code dir="auto">CheckedWrite</code> is what an adapter hands over for a write: the translated plan, input/output
+<code dir="auto">LogicalSchema</code>s, case sensitivity, its DML classification (<code dir="auto">MutationClassification</code>), the
+lineage-boundary node types it uses, and any resolution caveats. <code dir="auto">write</code> is by-name on purpose:
+the pipeline validates the contract <em>first</em> and only then asks the adapter to build the write, so an
+adapter cannot get that order wrong (an invalid contract must never reach checks that assume a sound
+one, and building the write can fail on a plan the contract has no bearing on). The pipeline owns the
+verifier ordering, fingerprinting, event publishing and the explanation text, so two engines cannot
+drift apart on them.</p>
+<p><strong><code dir="auto">VerificationSetup</code> + <code dir="auto">ConfigSource</code></strong> are the settings-driven half, read once at session start:
+<code dir="auto">ref://</code> location resolution, the five <code dir="auto">VerificationOptions</code> flags overlaid from configuration, and
+organizational policy layering (reject a non-compliant contract, inject required rules, raise the
+option floor). They read configuration only through a <code dir="auto">ConfigSource</code> keyed by the neutral names in
+<code dir="auto">InvaractConf</code> (<code dir="auto">locationMap</code>, <code dir="auto">orgPolicy</code>, …). An adapter spells those its own way: Spark’s
+<code dir="auto">SparkConfigSource</code> is <code dir="auto">spark.invaract.&#x3C;name></code>, so every existing <code dir="auto">--conf</code> key is unchanged
+(<code dir="auto">SparkConfigSourceSpec</code> pins that), and another engine maps the same names onto its own options —
+which is how a new adapter satisfies CLAUDE.md’s External Attachability Requirement without
+re-implementing any of it.</p>
+<p><strong>Seams.</strong> <code dir="auto">MutationClassification</code> (<code dir="auto">Extracted</code>/<code dir="auto">Unverifiable</code>) joins <code dir="auto">MutationKind</code> in the core;
+<code dir="auto">RowMutationSupport.Classification</code> is an alias of it. <code dir="auto">ContractEnforcementRule</code> keeps thin,
+same-signature delegating methods (<code dir="auto">resolveContractLocations</code>, <code dir="auto">resolveVerificationOptions</code>,
+<code dir="auto">enforceOrgPolicy</code>, <code dir="auto">resolveOrgPolicyLayers</code>, <code dir="auto">explain</code>) so nothing that called them changes.</p>
+<p><strong>Tests.</strong> The pipeline and setup are tested in <code dir="auto">verification-core</code> with hand-built <code dir="auto">ir</code> plans and a
+map-backed <code dir="auto">ConfigSource</code> — no engine at all (<code dir="auto">VerificationPipelineSpec</code>, <code dir="auto">VerificationSetupSpec</code>,
+<code dir="auto">ConfigSourceSpec</code>) — which is the practical proof the SPI is engine-free. <code dir="auto">ToyEngineAdapterSpec</code> goes
+one step further: a complete toy adapter (its own job type, BigQuery-flavoured column types, translation
+into <code dir="auto">ir.Plan</code>, a type mapper and an env-style <code dir="auto">ConfigSource</code>) written against only the public SPI, giving
+the same verdicts as Spark for the same contract and letting a platform turn on
+<code dir="auto">rejectUndeclaredFields</code> through the toy engine’s own configuration with no change to its job; it is
+also the seed of the Stage 4 conformance kit. <code dir="auto">spark-adapter</code>’s existing suites exercise the same path
+end to end through a real <code dir="auto">SparkSession</code>; <code dir="auto">SparkConfigSourceSpec</code> pins every public <code dir="auto">spark.invaract.*</code>
+key to its neutral name. <code dir="auto">verification-core</code> is now 28 suites / 454 tests, 95.39% statement / 92.75%
+branch coverage; the three SPI files score 100% under mutation testing.</p>
+<p><strong>Not done in 2b, deliberately</strong></p>
+<ul>
+<li><em>Neutral package names.</em> Done in Stage 2c (below).</li>
+<li><em><code dir="auto">registry/ContractSource</code></em> (reads a <code dir="auto">SparkSession</code>) and <code dir="auto">InvaractSparkSessionExtension</code>’s own
+keys (<code dir="auto">contract</code>, <code dir="auto">dryRun</code>, <code dir="auto">notifyConfig</code>, <code dir="auto">jobId</code>, <code dir="auto">registryUrl</code>, …) stay in <code dir="auto">spark-adapter</code>:
+they are the Spark <em>attach</em> mechanism, and each adapter has its own.</li>
+<li><em>Fail-closed wording.</em> <code dir="auto">UnverifiableWrite</code>’s remediation text still names Spark’s
+<code dir="auto">FailClosedCommands</code>; <code dir="auto">rejectUnverifiableWrite</code> is engine-neutral, the message is not yet.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-3--capability-declaration">Stage 3 — capability declaration</h2><a class="sl-anchor-link" href="#stage-3--capability-declaration"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 3 — capability declaration”</span></a></div>
+<p>Leak #8 was that nothing recorded what an adapter does <em>not</em> check. Spark’s gaps were tracked
+per connector in prose; a second engine would have had no place to say “no catalogs, no DML rules,
+no lineage boundaries” at all, and a contract author would find out by a bad write getting through.</p>
+<p><strong>The vocabulary</strong> (<code dir="auto">Capability</code>, <code dir="auto">verification-core</code>) is a fixed list of capabilities (29 when this stage landed; 30 after Stage 5) in six
+groups — what an adapter <em>recognizes</em> (batch/streaming writes, DML, state changes), what it <em>checks</em>
+(location, format, save mode, catalog, schema, nested types, …), the <em>rules</em> it evaluates, the
+<em>analyses</em> it can run, <em>lineage</em>, and the <em>fingerprint</em>. Each carries an <code dir="auto">enforcesContract</code> flag:
+whether leaving it unsupported would let a contract requirement go unchecked (a missing catalog check
+does; a missing fingerprint does not).</p>
+<p><strong>The declaration</strong> is one YAML file per adapter, <code dir="auto">invaract-capabilities-&#x3C;adapter>.yaml</code>, shipped as
+a resource of that adapter (Spark’s: <code dir="auto">spark-adapter/src/main/resources/</code>). It names the adapter, its
+engine, its <em>enforcement point</em> (<code dir="auto">in-engine-blocking</code> / <code dir="auto">pre-submit-gate</code> / <code dir="auto">observe-only</code> — whether
+a bad write can actually be stopped, which differs between engines far more than any single check),
+and a status for every capability: <code dir="auto">supported</code>, <code dir="auto">partial</code>, <code dir="auto">unsupported</code> or <code dir="auto">not-applicable</code>, each
+with a <code dir="auto">note</code> where it is not plainly supported. <strong>An undeclared capability is a parse error</strong>, and
+so is an unknown one, so a new capability added to the vocabulary forces every adapter to take a
+position on it, and a gap cannot exist by omission.</p>
+<p><strong>Enforcement.</strong> <code dir="auto">CapabilityCheck</code> reads the contract (and the <code dir="auto">VerificationOptions</code>) and works out
+which capabilities it relies on. <code dir="auto">VerificationPipeline.verifyWrite</code> takes the adapter’s
+<code dir="auto">AdapterCapabilities</code> and, for each relied-on capability the adapter declares <code dir="auto">unsupported</code>, emits
+<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> — a fail-closed violation, so the write is rejected and the message
+names the capability and the adapter’s own reason. <code dir="auto">partial</code> never blocks on its own (it would turn
+every nested-type contract into a rejection); its note is what the generated page shows. Spark
+declares nothing unsupported, so no Spark verdict changes; the check exists for the adapters that will.</p>
+<p><strong>The matrix and its drift check.</strong> <code dir="auto">./dev/capabilities</code> runs <code dir="auto">CapabilityMatrix</code> over every
+<code dir="auto">invaract-capabilities-*.yaml</code> in the repo and regenerates
+<code dir="auto">docs-site/.../reference/engine-capabilities.md</code>. <code dir="auto">CapabilityMatrixSpec</code> fails when the checked-in page
+differs from what the declarations generate, so editing a declaration without regenerating (or editing
+the page by hand) fails the <code dir="auto">verification-core</code> tests — in CI, with no separate job.</p>
+<p><strong>Tests.</strong> <code dir="auto">CapabilitySpec</code> (parsing, every rejection path), <code dir="auto">CapabilityCheckSpec</code> (each relied-on
+shape, each side of every condition), <code dir="auto">CapabilityMatrixSpec</code> (rendering and drift),
+<code dir="auto">SparkCapabilitiesSpec</code> (Spark’s declaration loads, is complete, and a broken one fails closed), and a
+<code dir="auto">VerificationPipelineSpec</code> case for the violation ordering.</p>
+<p><strong>Not done in 3, deliberately.</strong> Spark’s <code dir="auto">docs/connectors/*.md</code> per-connector gaps stay prose — they are
+about <em>data sources</em>, not about the adapter’s own capabilities; the testkit (Stage 4) is what will
+check the declarations are <em>true</em>, since a declaration only says what an adapter claims.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-2c--neutral-package-names">Stage 2c — neutral package names</h2><a class="sl-anchor-link" href="#stage-2c--neutral-package-names"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 2c — neutral package names”</span></a></div>
+<p><code dir="auto">verification-core</code> was extracted in Stage 2a with its packages unchanged. With no consumers
+to protect, the rename was made at once instead of being deferred behind a forwarding layer:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Was</th><th>Now</th></tr></thead><tbody><tr><td><code dir="auto">com.invaract.sparkadapter.{Violation, VerificationPipeline, StructuralVerifier, ...}</code></td><td><code dir="auto">com.invaract.verification.*</code></td></tr><tr><td><code dir="auto">com.invaract.sparkadapter.notification.*</code> (sinks, events, config)</td><td><code dir="auto">com.invaract.verification.notification.*</code></td></tr><tr><td><code dir="auto">com.invaract.sparkadapter.location.*</code></td><td><code dir="auto">com.invaract.verification.location.*</code></td></tr><tr><td><code dir="auto">com.invaract.sparkadapter.notification.kafka.KafkaNotificationSink</code></td><td><code dir="auto">com.invaract.verification.notification.kafka.KafkaNotificationSink</code></td></tr></tbody></table>
+<p>What stays in <code dir="auto">com.invaract.sparkadapter</code> is what is Spark’s: the enforcement rule, the
+session extension, the listener, plan translation, dry-run reporting, <code dir="auto">SparkSchemas</code>,
+<code dir="auto">SparkConfigSource</code>, <code dir="auto">SparkCapabilities</code>, <code dir="auto">registry/</code>. Configuration that names a class by
+fully-qualified name must be updated — <code dir="auto">sink.class=</code> in notification properties, and any
+custom <code dir="auto">customRuleTypes</code> plug-in that imported the moved types. The <code dir="auto">spark.*</code> configuration
+keys and <code dir="auto">InvaractSparkSessionExtension</code>’s own class name are unchanged.</p>
+<p>Members the adapter needs from the core that were <code dir="auto">private[sparkadapter]</code> are
+<code dir="auto">private[invaract]</code> (the two modules now sit in different packages). <code dir="auto">spark-adapter</code>’s MiMa
+filters record the move; the one signature of this module’s own surface that changes is
+<code dir="auto">ContractEnforcementRule.forContract</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="conventions-every-adapter-follows">Conventions every adapter follows</h2><a class="sl-anchor-link" href="#conventions-every-adapter-follows"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Conventions every adapter follows”</span></a></div>
+<p>These are the rules that make one contract mean the same thing on every engine. They are not
+enforced by the type system, so they are written down here and, where a test can see them,
+checked by the conformance kit.</p>
+<p><strong>Locations are canonical <code dir="auto">/</code>-separated strings.</strong> The pipeline compares a contract’s declared
+location with the location the adapter reports using one rule (<code dir="auto">LocationMatching</code>): equal, or the
+declared one is a <code dir="auto">/</code>-boundary suffix of the reported one. An engine whose names are not paths
+converts them first: a BigQuery table <code dir="auto">project.dataset.table</code> is reported as
+<code dir="auto">project/dataset/table</code>, and a contract author writes <code dir="auto">dataset/table</code> (or the full form to pin
+one project). An absolute declaration (<code dir="auto">/data/orders</code>, <code dir="auto">gs://bucket/orders</code>) matches only itself;
+a relative one matches any location ending in it, so a contract that must distinguish tenants
+declares it absolute.</p>
+<p><strong>Write modes use the four canonical names.</strong> <code dir="auto">ir.Write.saveMode</code> is <code dir="auto">append</code>, <code dir="auto">overwrite</code>,
+<code dir="auto">ignore</code> or <code dir="auto">error</code> (<code dir="auto">com.invaract.contract.SaveModes</code>), or <code dir="auto">None</code> when the adapter cannot tell.
+An adapter maps its engine’s dispositions onto them; one with no equivalent leaves it <code dir="auto">None</code>
+rather than inventing a name, because a contract can only match a name every adapter spells the
+same way. A contract that declares another string still validates, with a warning.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Engine disposition</th><th>Canonical</th></tr></thead><tbody><tr><td>Spark <code dir="auto">SaveMode.Append</code> / <code dir="auto">Overwrite</code> / <code dir="auto">ErrorIfExists</code> / <code dir="auto">Ignore</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code> / <code dir="auto">ignore</code></td></tr><tr><td>BigQuery <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code></td></tr><tr><td>Beam <code dir="auto">BigQueryIO</code> <code dir="auto">WRITE_APPEND</code> / <code dir="auto">WRITE_TRUNCATE</code> / <code dir="auto">WRITE_EMPTY</code></td><td><code dir="auto">append</code> / <code dir="auto">overwrite</code> / <code dir="auto">error</code></td></tr><tr><td><code dir="auto">MERGE</code> / <code dir="auto">UPDATE</code> / <code dir="auto">DELETE</code> (row-level DML)</td><td><code dir="auto">None</code>: reported through <code dir="auto">rowMutation</code>, not as a write mode</td></tr></tbody></table>
+<p>The Spark row is what ships today. The BigQuery and Beam rows are the intended mapping for adapters
+that do not exist yet, written from the engines’ public documentation and not yet exercised by an
+adapter: confirm each against the engine’s current documentation when its adapter is written.</p>
+<p><strong>Types map into <code dir="auto">LogicalType</code>.</strong> An adapter converts its engine’s schema into <code dir="auto">LogicalSchema</code>;
+anything with no neutral equivalent becomes <code dir="auto">OtherType(typeName, catalogString)</code>, which compares
+by its catalog string and never matches a declared neutral type. The intended mappings (same caveat as the write-mode table):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Neutral type</th><th>BigQuery</th><th>Beam schema</th></tr></thead><tbody><tr><td><code dir="auto">string</code> / <code dir="auto">boolean</code> / <code dir="auto">long</code> / <code dir="auto">double</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOL</code> / <code dir="auto">INT64</code> / <code dir="auto">FLOAT64</code></td><td><code dir="auto">STRING</code> / <code dir="auto">BOOLEAN</code> / <code dir="auto">INT64</code> / <code dir="auto">DOUBLE</code></td></tr><tr><td><code dir="auto">decimal(p,s)</code></td><td><code dir="auto">NUMERIC</code> = <code dir="auto">decimal(38,9)</code>; <code dir="auto">BIGNUMERIC</code> is wider than <code dir="auto">decimal(38,_)</code>, so it is <code dir="auto">OtherType("BIGNUMERIC", ...)</code></td><td><code dir="auto">DECIMAL</code> (arbitrary precision: <code dir="auto">OtherType</code> unless a precision is declared)</td></tr><tr><td><code dir="auto">date</code> / <code dir="auto">timestamp</code> / <code dir="auto">timestamp_ntz</code></td><td><code dir="auto">DATE</code> / <code dir="auto">TIMESTAMP</code> / <code dir="auto">DATETIME</code></td><td><code dir="auto">DATETIME</code> and the date/time logical types: decide per type when the adapter is written, else <code dir="auto">OtherType</code></td></tr><tr><td><code dir="auto">binary</code></td><td><code dir="auto">BYTES</code></td><td><code dir="auto">BYTES</code></td></tr><tr><td><code dir="auto">array</code> / <code dir="auto">struct</code> / <code dir="auto">map</code></td><td><code dir="auto">ARRAY</code> / <code dir="auto">STRUCT</code> (BigQuery has no map: a repeated <code dir="auto">STRUCT&#x3C;key,value></code> stays an array)</td><td><code dir="auto">ARRAY</code> / <code dir="auto">ROW</code> / <code dir="auto">MAP</code></td></tr><tr><td>no neutral type</td><td><code dir="auto">JSON</code>, <code dir="auto">GEOGRAPHY</code>, <code dir="auto">INTERVAL</code>, <code dir="auto">TIME</code>, <code dir="auto">RANGE</code></td><td><code dir="auto">ITERABLE</code>, custom logical types</td></tr></tbody></table>
+<p>Each adapter documents its own table next to its capability declaration and adds a conformance
+scenario for any type whose mapping is not obvious.</p>
+<p><strong>Events are engine-neutral.</strong> A published event names no engine’s concepts: <code dir="auto">runId</code> is the
+engine’s own run identifier, and <code dir="auto">JobInfo</code> carries <code dir="auto">engine</code>, <code dir="auto">engineVersion</code> and a free-form
+<code dir="auto">engineDetails</code> map for whatever else the adapter wants to record. An adapter fills those in;
+it does not add engine-named fields to the event schema.</p>
+<p><strong>A sink that needs an engine’s storage library lives in that engine’s adapter.</strong> The core has
+no Hadoop dependency: <code dir="auto">HadoopFsNotificationSink</code> is in <code dir="auto">spark-adapter</code>, and a dead letter with a
+<code dir="auto">scheme://</code> path names its sink with <code dir="auto">deadLetter.class</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-4--the-adapter-conformance-kit">Stage 4 — the adapter conformance kit</h2><a class="sl-anchor-link" href="#stage-4--the-adapter-conformance-kit"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 4 — the adapter conformance kit”</span></a></div>
+<p>Stage 3 made an adapter state what it does; a statement nobody checks only moves the problem. The
+<code dir="auto">adapter-testkit</code> module is the check: one catalogue of engine-neutral scenarios that every adapter
+runs, judged against that adapter’s <em>own declaration</em>.</p>
+<p><strong>A scenario</strong> is a contract, a job described in no engine’s terms, and a verdict. The job
+(<code dir="auto">ScenarioJob</code>) is: read one or two inputs (two are inner-joined), optionally filter a column,
+project columns (a pass-through, a cast, or a never-null constant), write one output with a format and
+save mode. That is deliberately small - just enough to build every shape the 21 scenarios need on any
+engine - and every check the engine makes is about shape, not values, so inputs are empty datasets of
+the scenario’s schema. The scenarios cover location, schema (presence, type, nullability, undeclared
+columns), nested types, declared-input existence, format, save mode, a transformation-shape rule, an
+invalid contract, the PASSED/FAILED events published, non-determinism in the fingerprint (Stage 5) and
+fail-closed behaviour (below).</p>
+<p><strong>An adapter</strong> implements <code dir="auto">ConformanceAdapter</code>: its <code dir="auto">AdapterCapabilities</code>, and <code dir="auto">run(...)</code>, which
+turns the neutral job into a real job on its engine, runs it through the <em>real</em> enforcement path, and
+reports <code dir="auto">Passed</code> or <code dir="auto">Rejected(violation types)</code> plus the validation statuses it published. Spark’s
+<code dir="auto">SparkConformanceAdapter</code> builds a Spark job on a local session and runs it through
+<code dir="auto">ContractEnforcementRule.forContract</code>, the builder <code dir="auto">InvaractSparkSessionExtension</code> registers. The
+adapter mixes <code dir="auto">AdapterConformanceSpec</code> into a test, which registers one test per scenario.</p>
+<p><strong>What an adapter is held to</strong> follows from its declaration, not from the neutral verdict alone:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>The adapter declares…</th><th>The scenario’s expected result</th></tr></thead><tbody><tr><td>everything the scenario needs <code dir="auto">supported</code> / <code dir="auto">partial</code></td><td>the neutral verdict, exactly (the same violation types)</td></tr><tr><td>a capability the scenario’s contract relies on <code dir="auto">unsupported</code> (and it <code dir="auto">enforcesContract</code>)</td><td>a rejection including <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> - a quiet pass is a failure</td></tr><tr><td>a needed capability <code dir="auto">not-applicable</code>, or a needed operation unsupported</td><td>the scenario is <strong>canceled</strong> with the adapter’s own note, visible in the report</td></tr><tr><td><code dir="auto">reporting.notifications</code> supported</td><td>exactly one <code dir="auto">PASSED</code> (or <code dir="auto">FAILED</code>) validation event</td></tr></tbody></table>
+<p><strong>Fail-closed has its own job shape.</strong> A <code dir="auto">ScenarioJob</code> with <code dir="auto">untranslatableWrite</code> set is not a
+read-transform-write at all but a data-changing operation the adapter has no translation for; the
+adapter picks its engine’s representative (Spark: <code dir="auto">TRUNCATE TABLE</code> on a managed table) and must block
+it as <code dir="auto">UNVERIFIABLE_WRITE</code> rather than let it through unchecked. This is the property that makes
+“supported” safe to rely on, so it is verified, not attested.</p>
+<p>An exception out of <code dir="auto">run</code> is a divergence, not a verdict. A capability an adapter claims that no
+scenario is evidence for is listed as <em>unverified</em>, never counted as passing, and the report says which
+kind of unverified it is: <strong>attested</strong> (<code dir="auto">Scenarios.attested</code>) when no job could check it by its nature</p>
+<ul>
+<li>how an adapter attaches to a job, what it applies before a job exists, a mode of installing - so the
+adapter’s own tests carry it; or a <strong>gap</strong> (<code dir="auto">Scenarios.gaps</code>) when a job could check it but the kit
+cannot yet (streaming, row-level DML, catalogs, the opt-in analyses, lineage). The kit’s own tests fail
+if a capability is in neither list or in both.</li>
+</ul>
+<p><strong>The kit is tested against itself.</strong> <code dir="auto">ReferenceAdapter</code> is a complete adapter built on nothing but
+the SPI (no engine; about forty lines of translation), and it passes every scenario - so the
+scenarios are consistent with the SPI before any real engine is involved. Then deliberately dishonest
+adapters must be caught: one that claims <code dir="auto">check.format</code> but never checks it fails exactly the format
+scenario; one that lets everything through fails every scenario expecting a rejection; one that
+blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
+none fails all of them; one that throws is a divergence. Spark passed all 18 on the first run (20 after Stage 5, 21 with fail-closed).</p>
+<p><strong>Adding an adapter</strong> is therefore: write its capability declaration, implement <code dir="auto">ConformanceAdapter</code>,
+mix in <code dir="auto">AdapterConformanceSpec</code>, and see which scenarios fail or are canceled. Where Spark’s own
+behaviour and the neutral expectation disagree, the scenario or the adapter is wrong - there is no
+third place for the difference to hide.</p>
+<p><strong>Not done in 4, deliberately.</strong> The scenario language has no streaming, row-level DML, catalog or
+checkpoint shapes yet (see <code dir="auto">Scenarios.notCovered</code>); each grows the neutral job description and is its own
+step. The kit is not mutation-tested (it is test infrastructure, like <code dir="auto">plugin</code>/<code dir="auto">runner</code>; its
+<code dir="auto">ConformanceKitSpec</code> is the equivalent proof that it fails what it should), but it is held to the
+other two gates: MiMa (it is what a third-party adapter compiles its tests against) and line/branch
+coverage. It is not published anywhere but the local Ivy cache. Row-level DML stays a gap because a neutral
+<code dir="auto">MERGE</code>/<code dir="auto">UPDATE</code>/<code dir="auto">DELETE</code> job needs a table format that supports it (Delta or Iceberg on Spark),
+which a plain local session does not have.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="stage-5--function-canonicalisation">Stage 5 — function canonicalisation</h2><a class="sl-anchor-link" href="#stage-5--function-canonicalisation"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Stage 5 — function canonicalisation”</span></a></div>
+<p>Leak #4: an IR <code dir="auto">Function</code> carried whatever name its engine’s translator wrote - Spark’s <code dir="auto">prettyName</code></p>
+<ul>
+<li>and <code dir="auto">fingerprint</code>’s non-determinism classifier was a hand-kept list of <em>Spark</em> names
+(<code dir="auto">spark_partition_id</code>, <code dir="auto">input_file_name</code>, …). On BigQuery <code dir="auto">GENERATE_UUID()</code> would have been
+classified deterministic: a silently wrong fingerprint annotation, and the same logic on two engines
+would have been described differently.</li>
+</ul>
+<p><strong><code dir="auto">ir.FunctionCatalog</code></strong> is the one engine-independent place that says what a function <em>is</em>: twelve
+canonical names (<code dir="auto">UUID</code>, <code dir="auto">RAND</code>, <code dir="auto">RANDN</code>, <code dir="auto">CURRENT_TIMESTAMP</code>, <code dir="auto">CURRENT_DATE</code>, <code dir="auto">UNIX_TIMESTAMP</code>,
+<code dir="auto">ROW_ID</code>, <code dir="auto">SOURCE_FILE_NAME</code>, <code dir="auto">SOURCE_BLOCK_START</code>/<code dir="auto">_LENGTH</code>, <code dir="auto">PARTITION_ID</code>, <code dir="auto">SHUFFLE</code>) with two
+properties: non-deterministic, and seed-bearing (a call carries an analyzer-injected seed the
+fingerprint must leave out). A function the catalog does not list is not flagged - it lists what is
+<em>known</em> - so keeping an engine’s table complete is the adapter’s job, and is checked rather than
+trusted (below).</p>
+<p><strong><code dir="auto">ir.FunctionAliases</code></strong> is an engine’s mapping from its own spellings onto the catalog. An adapter
+applies it where it writes a <code dir="auto">Function</code> into the IR (Spark: <code dir="auto">SparkPlanAdapter</code>, through
+<code dir="auto">SparkFunctionAliases</code>: <code dir="auto">random</code> -> <code dir="auto">RAND</code>, <code dir="auto">now</code> -> <code dir="auto">CURRENT_TIMESTAMP</code>, <code dir="auto">curdate</code> ->
+<code dir="auto">CURRENT_DATE</code>, <code dir="auto">monotonically_increasing_id</code> -> <code dir="auto">ROW_ID</code>, and so on). A name with no alias passes
+through upper-cased; an alias whose target is not a catalog name is rejected at construction, since
+a typo there would leave a non-deterministic function unflagged. <code dir="auto">fingerprint</code> now asks the catalog
+(<code dir="auto">NonDeterminism</code>, and <code dir="auto">Canonicalizer</code>’s seed exclusion) and no longer lists names itself.</p>
+<p><strong>Checked, not trusted.</strong> <code dir="auto">SparkFunctionAliasesSpec</code> sweeps Spark’s own function registry: for every
+function that can be called with no arguments, anything Catalyst reports non-deterministic must come
+out of translation flagged. The first run found two functions the hand-kept list had missed
+(<code dir="auto">input_file_block_start</code>, <code dir="auto">input_file_block_length</code>); they are catalog entries now. The sweep is
+one-directional on purpose: Spark treats the clock functions as deterministic within a query, but
+they differ between runs, which is what the catalog records.</p>
+<p><strong>A new capability and two scenarios.</strong> <code dir="auto">analysis.functionCatalog</code> joins the vocabulary (so every
+adapter had to take a position; Spark and the reference adapter declare it supported), and the
+conformance kit gains two scenarios: a job of deterministic columns reports nothing non-deterministic,
+and a job with an engine-generated unique id (<code dir="auto">ColumnSource.UniqueId</code> - Spark’s <code dir="auto">uuid()</code>, the reference
+adapter’s <code dir="auto">UUID</code>, what BigQuery would spell <code dir="auto">GENERATE_UUID()</code>) reports exactly that column. A kit test
+shows an adapter whose names never reach the catalog is caught. <code dir="auto">analysis.fingerprint</code> moves from
+“claimed but unverified” to covered.</p>
+<p><strong>Versions.</strong> <code dir="auto">ir</code> 0.5.0 -> 0.6.0 and <code dir="auto">fingerprint</code> 0.3.0 -> 0.4.0 (and <code dir="auto">verification-core</code>,
+<code dir="auto">adapter-testkit</code>, whose POMs pin them) for the Ivy-coordinate reason described in each <code dir="auto">build.sbt</code>.
+<code dir="auto">FingerprintHasher.CurrentVersion</code> went 2 -> 3: an aliased function now hashes under its canonical
+name, so fingerprints of jobs calling <code dir="auto">random()</code> or <code dir="auto">now()</code> differ from before.</p>
+<p><strong>Not done in 5, deliberately.</strong> No BigQuery or Beam alias table exists - the tests use a BigQuery-shaped
+one as an example of what such an adapter declares. Functions that depend on their arguments to be
+non-deterministic (<code dir="auto">unix_timestamp(x)</code> is not; <code dir="auto">unix_timestamp()</code> is) are classified by name alone, as
+before. The catalog says nothing yet about other properties an engine’s functions have (null
+handling, monotonicity); each would be another field on <code dir="auto">CanonicalFunction</code>.</p></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/MULTI_ENGINE_ADAPTERS.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
