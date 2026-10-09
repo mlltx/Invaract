@@ -85,10 +85,11 @@ don't present it as something external consumers would bind to.
 - **Java Version**: 21 (sbt 1.9.8 for `contract`/`plugin`/`runner`/
   `notification-kafka`; sbt 1.11.7 for `ir`/`spark-adapter`/`fingerprint`,
   required by Stryker4s — see "Mutation Testing Requirement")
-- **Build System**: sbt (8 independent modules `./dev/build` builds, plus
-  the standalone opt-in `notification-kafka` — no aggregating root
-  `build.sbt` — see `dev/build`'s comments for the cross-module dependency
-  graph)
+- **Build System**: sbt, one independent build per module — no aggregating
+  root `build.sbt`. `modules.json` is the list of modules (and which of them
+  `./dev/build` builds, which are published, which are mutation-tested);
+  `dev/build`'s comments give the cross-module dependency graph. The opt-in
+  modules (`notification-kafka`, `registry-client`) are not built by `./dev/build`.
 - **Test Execution**: Local Spark master (`local[*]`)
 - **Results Viewer**: Next.js web UI, mobile-responsive
 
@@ -115,7 +116,8 @@ opposed to a harness run merely completing.
 
 ## Mutation Testing Requirement
 
-`ir` and `spark-adapter` are mutation-tested with Stryker4s (see
+Every module `modules.json` marks `mutation: true` (`ir`, `fingerprint`, `verification-core`,
+`adapter-testkit`, `spark-adapter`, and each future adapter) is mutation-tested with Stryker4s (see
 docs/TRANSFORMATION_IR.md and docs/SPARK_ADAPTER.md's "Mutation testing"
 sections). CI blocks on each module's *whole-module* score staying above
 its `break` threshold (see `strykerThresholdsBreak` in each module's
@@ -136,8 +138,8 @@ and its own PR-scoped incremental check, and `api-compatibility` covers it
 too. Nothing is left open for this module: mutation testing, API compatibility and
 Maven Central publishing are all in place.
 
-So: when a feature adds or changes code in `ir/src/main/scala/...`,
-`spark-adapter/src/main/scala/...`, or `fingerprint/src/main/scala/...`,
+So: when a feature adds or changes code in the `src/main/scala/...` of any of those modules
+(`ir`, `fingerprint`, `verification-core`, `adapter-testkit`, `spark-adapter`, an adapter),
 passing tests are **not** enough to call it done. Before considering such
 a feature complete, you MUST:
 
@@ -196,9 +198,12 @@ that otherwise looks unrelated to it.
 
 This bar — and every other regression-testing guardrail in this repo
 (property-based fuzzing, mutation testing, API-compatibility checking, the
-Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — is
-scoped to `contract`/`ir`/`spark-adapter`/`fingerprint`. It does not apply
-to `plugin`/`runner`, which are example/test code, not the engine.
+Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — applies to the
+engine modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
+every adapter (`spark-adapter` today). `modules.json` is the authority: a module that is
+`published` is in the API-compatibility and coverage loops, and one with `mutation: true` has
+a `mutation-testing-<name>` job. The bar does not apply to `plugin`/`runner`, which are
+example/test code, not the engine.
 
 ## Coverage Gating Requirement
 
@@ -228,8 +233,8 @@ version genuinely published for `scalac-scoverage-plugin_2.12.18` (check
 `https://repo1.maven.org/maven2/org/scoverage/scalac-scoverage-plugin_2.12.18/maven-metadata.xml`)
 rather than assuming the pinned one is special.
 
-When a feature adds or changes code in one of these four modules and
-lowers that module's own real coverage below its pinned threshold, you MUST
+When a feature adds or changes code in one of the coverage-gated modules (every
+`published` module in `modules.json`) and lowers that module's own real coverage below its pinned threshold, you MUST
 either add tests bringing coverage back above it, or — only if the
 uncovered code is genuinely unreachable in tests for a documented reason
 (e.g. a defensive branch no realistic input can trigger) — lower the
@@ -642,7 +647,7 @@ would be.
 ├── modules.json                  # The one list of the repository's sbt modules (checked by check_modules.py)
 ├── adapter-scaffold/             # Templates dev/new-adapter turns into a new engine adapter module
 ├── dev/                          # Development scripts
-│   ├── build                    # Builds all 5 modules in dependency order
+│   ├── build                    # Builds every `built` module in modules.json, in dependency order
 │   ├── test                     # End-to-end harness run (7-step verification)
 │   ├── regression                # Docker-based pass/fail enforcement proof
 │   └── report                   # Launch web UI
@@ -742,7 +747,8 @@ Run the comprehensive test harness:
 
 This single command:
 
-1. ✓ Builds all 5 modules (`contract`, `ir`, `plugin` concurrently, then
+1. ✓ Builds every module `modules.json` marks built (`contract`, `ir`, `plugin`
+   concurrently, then `fingerprint`, `verification-core`, `adapter-testkit`,
    `spark-adapter`, then `runner`) via `./dev/build`
 2. ✓ Verifies the plugin JAR
 3. ✓ Verifies the Spark environment
@@ -980,7 +986,7 @@ To modify it:
 GitHub Actions workflow (`.github/workflows/test.yml`) runs on every push/PR:
 
 - **`test`**: OS × Java matrix (ubuntu/macos/windows × 11/17/21, with
-  exclusions) — builds all 5 modules and runs `./dev/regression` (not
+  exclusions) — builds every built module and runs `./dev/regression` (not
   `./dev/test`, which stays a local/interactive script no CI job invokes —
   see `dev/lib.sh`'s own doc)
 - **`docker-regression`**: runs `./dev/regression` a second time, inside
