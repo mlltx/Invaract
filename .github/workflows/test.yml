@@ -1566,10 +1566,9 @@ jobs:
           # last command in its pipeline), which is always 0 - masking a
           # real `sbt makeBom` failure and letting this step pass silently.
           set -o pipefail
-          # See dependency-graph.yml for why this list is also spelled out
-          # there - kept in sync by hand, not derived from a shared source.
+          # Every module in modules.json; check_modules.py fails when this list drifts from it.
           pids=()
-          for m in contract ir fingerprint verification-core plugin spark-adapter runner notification-kafka; do
+          for m in contract ir fingerprint verification-core adapter-testkit plugin spark-adapter runner notification-kafka registry-client; do
             (cd "$m" && sbt makeBom 2>&1 | sed "s/^/[$m] /") &
             pids+=($!)
           done
@@ -1598,10 +1597,13 @@ jobs:
             contract/target/*.bom.json
             ir/target/*.bom.json
             fingerprint/target/*.bom.json
+            verification-core/target/*.bom.json
+            adapter-testkit/target/*.bom.json
             plugin/target/*.bom.json
             spark-adapter/target/*.bom.json
             runner/target/*.bom.json
             notification-kafka/target/*.bom.json
+            registry-client/target/*.bom.json
             web/sbom.json
           if-no-files-found: error
 
@@ -1644,15 +1646,35 @@ jobs:
         run: cd notification-kafka && sbt test
         shell: bash
 
+  registry-client:
+    name: Build and test registry-client
+    runs-on: ubuntu-latest
+    # registry-client (docs/CONTRACT_REGISTRY.md) is opt-in and not built by dev/build, so nothing else
+    # compiles it: it pinned a contract version that no longer existed, and could not build at all, without
+    # any check noticing. A single Linux leg is enough (no Spark, no platform-specific code).
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21 and sbt
+        uses: ./.github/actions/setup-jdk-sbt
+
+      - name: Publish contract locally (registry-client's libraryDependency)
+        uses: ./.github/actions/publish-engine-modules
+
+      - name: Test registry-client
+        run: cd registry-client && sbt test
+        shell: bash
+
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka]
+    needs: [test, changes, docker-regression, mutation-testing-ir, mutation-testing-fingerprint, mutation-testing-verification-core, mutation-testing-adapter-testkit, mutation-testing-spark-adapter, mutation-testing-spark-adapter-incremental, mutation-shard-drift-check, spark-version-matrix, delta-version-matrix, iceberg-version-matrix, version-matrix-drift-check, docs-drift-check, workflow-scripts, adapter-scaffold-check, api-compatibility, coverage-gating, sbom, notification-kafka, registry-client]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.changes.result }}" == "failure" ] || [ "${{ needs.docker-regression.result }}" == "failure" ] || [ "${{ needs.mutation-testing-ir.result }}" == "failure" ] || [ "${{ needs.mutation-testing-fingerprint.result }}" == "failure" ] || [ "${{ needs.mutation-testing-verification-core.result }}" == "failure" ] || [ "${{ needs.mutation-testing-adapter-testkit.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter.result }}" == "failure" ] || [ "${{ needs.mutation-testing-spark-adapter-incremental.result }}" == "failure" ] || [ "${{ needs.mutation-shard-drift-check.result }}" == "failure" ] || [ "${{ needs.spark-version-matrix.result }}" == "failure" ] || [ "${{ needs.delta-version-matrix.result }}" == "failure" ] || [ "${{ needs.iceberg-version-matrix.result }}" == "failure" ] || [ "${{ needs.version-matrix-drift-check.result }}" == "failure" ] || [ "${{ needs.docs-drift-check.result }}" == "failure" ] || [ "${{ needs.workflow-scripts.result }}" == "failure" ] || [ "${{ needs.adapter-scaffold-check.result }}" == "failure" ] || [ "${{ needs.api-compatibility.result }}" == "failure" ] || [ "${{ needs.coverage-gating.result }}" == "failure" ] || [ "${{ needs.sbom.result }}" == "failure" ] || [ "${{ needs.notification-kafka.result }}" == "failure" ] || [ "${{ needs.registry-client.result }}" == "failure" ]; then
             echo "❌ Tests failed"
             exit 1
           else
