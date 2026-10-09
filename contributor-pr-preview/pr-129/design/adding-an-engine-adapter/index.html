@@ -1,0 +1,396 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Adding an Engine Adapter | Invaract (Contributor Docs)</title><link rel="canonical" href="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-129/design/adding-an-engine-adapter/"/><link rel="sitemap" href="/Invaract/contributor-pr-preview/pr-129/sitemap-index.xml"/><link rel="shortcut icon" href="/Invaract/contributor-pr-preview/pr-129/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.5"/><meta name="generator" content="Starlight v0.42.5"/><meta property="og:title" content="Adding an Engine Adapter"/><meta property="og:type" content="article"/><meta property="og:url" content="https://mlltx.github.io/Invaract/contributor-pr-preview/pr-129/design/adding-an-engine-adapter/"/><meta property="og:locale" content="en"/><meta property="og:description" content="This is the process for giving Invaract a new engine: Apache Beam, BigQuery, or anything else whose jobs write data. It is for a new engine. A new data ..."/><meta property="og:site_name" content="Invaract (Contributor Docs)"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="This is the process for giving Invaract a new engine: Apache Beam, BigQuery, or anything else whose jobs write data. It is for a new engine. A new data ..."/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-129/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-129/_astro/common.D_L-1Y3_.css"><style>@layer starlight.components{.card:where(.astro-oag6qnet){--sl-card-border:var(--sl-color-purple);--sl-card-bg:var(--sl-color-purple-low);border:1px solid var(--sl-color-gray-5);background-color:var(--sl-color-black);flex-direction:column;gap:clamp(.5rem,.125rem + 1vw,1rem);padding:clamp(1rem,.125rem + 3vw,2.5rem)}.card:where(.astro-oag6qnet):nth-child(4n+1){--sl-card-border:var(--sl-color-orange);--sl-card-bg:var(--sl-color-orange-low)}.card:where(.astro-oag6qnet):nth-child(4n+3){--sl-card-border:var(--sl-color-green);--sl-card-bg:var(--sl-color-green-low)}.card:where(.astro-oag6qnet):nth-child(4n+4){--sl-card-border:var(--sl-color-red);--sl-card-bg:var(--sl-color-red-low)}.card:where(.astro-oag6qnet):nth-child(4n+5){--sl-card-border:var(--sl-color-blue);--sl-card-bg:var(--sl-color-blue-low)}.title:where(.astro-oag6qnet){font-weight:600;font-size:var(--sl-text-h4);color:var(--sl-color-white);line-height:var(--sl-line-height-headings);align-items:center;gap:1rem}.card:where(.astro-oag6qnet) .icon:where(.astro-oag6qnet){border:1px solid var(--sl-card-border);background-color:var(--sl-card-bg);border-radius:.25rem;flex-shrink:0;padding:.2em}.card:where(.astro-oag6qnet) .body:where(.astro-oag6qnet){font-size:clamp(var(--sl-text-sm), calc(.5rem + 1vw), var(--sl-text-body));margin:0}.card-grid:where(.astro-7qmvx3iy){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-7qmvx3iy)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-7qmvx3iy){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-7qmvx3iy){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-7qmvx3iy)>:nth-child(2n){transform:translateY(var(--stagger-height))}}}
+@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><script type="module" src="/Invaract/contributor-pr-preview/pr-129/_astro/page.Dwipeu-R.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><a href="/Invaract/contributor-pr-preview/pr-129/" class="site-title sl-flex astro-6rvad3va"><img class="light:sl-hidden print:hidden astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-129/_astro/invaract-mark-dark.CfNniTgz.svg" width="64" height="64"><img class="dark:sl-hidden print:block astro-6rvad3va" alt="Invaract" src="/Invaract/contributor-pr-preview/pr-129/_astro/invaract-mark-light.CEuTWweK.svg" width="64" height="64"><span class="astro-6rvad3va" translate="no">Invaract (Contributor Docs)</span></a></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/Invaract/contributor-pr-preview/pr-129/_astro/Search.astro_astro_type_script_index_0_lang.Bcd4dGJf.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="1owjeac" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/project/roadmap/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Roadmap</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/project/architecture/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Architecture</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Design Docs</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/design/contract-model/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Contract Model</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/design/transformation-ir/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Transformation IR</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/design/spark-adapter/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Spark Adapter</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/design/semantic-lineage-fingerprinting/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Semantic Lineage Fingerprinting</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/design/adding-a-spark-connector/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Adding a Spark Connector</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Connectors</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/delta/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Delta Lake</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/iceberg/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Iceberg</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/hive/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Hive</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/parquet/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Parquet</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/avro/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Avro</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/csv/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CSV</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/connectors/clickhouse/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">ClickHouse</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Process</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/process/versioning/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Versioning</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/process/compatibility/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Compatibility</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/process/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/process/governance/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Governance</span></a></li><li class="astro-rmhv4bp6"><a href="/Invaract/contributor-pr-preview/pr-129/process/cve-remediation/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">CVE Remediation</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/mlltx/Invaract" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-rule-that-decides-everything" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The rule that decides everything</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#before-you-start" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Before you start</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-1-investigate-the-engine" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 1: Investigate the engine</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-2-generate-the-module-and-register-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 2: Generate the module and register it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-3-write-the-declaration-honestly" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 3: Write the declaration honestly</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-4-implement-the-adapter" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 4: Implement the adapter</span></a><ul class="isMobile astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#spelling-the-configuration-keys" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Spelling the configuration keys</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#loading-a-class-named-in-configuration" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Loading a class named in configuration</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-5-run-the-kit-one-capability-at-a-time" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 5: Run the kit, one capability at a time</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-6-attest-what-no-job-can-show" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 6: Attest what no job can show</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-7-the-two-ledgers" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 7: The two ledgers</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-8-the-repositorys-gates" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 8: The repository’s gates</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#definition-of-done" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Definition of done</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#decisions-deferred-on-purpose" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Decisions deferred on purpose</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-this-guide-does-not-cover-yet" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What this guide does not cover yet</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-129/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-rule-that-decides-everything" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The rule that decides everything</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#before-you-start" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Before you start</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-1-investigate-the-engine" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 1: Investigate the engine</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-2-generate-the-module-and-register-it" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 2: Generate the module and register it</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-3-write-the-declaration-honestly" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 3: Write the declaration honestly</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-4-implement-the-adapter" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 4: Implement the adapter</span></a><ul class="astro-jugkfwgx" style="--depth: 1;"><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#spelling-the-configuration-keys" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Spelling the configuration keys</span></a></li><li style="--depth: 1;" class="astro-jugkfwgx"><a href="#loading-a-class-named-in-configuration" style="--depth: 1;" class="astro-jugkfwgx"><span style="--depth: 1;" class="astro-jugkfwgx">Loading a class named in configuration</span></a></li></ul></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-5-run-the-kit-one-capability-at-a-time" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 5: Run the kit, one capability at a time</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-6-attest-what-no-job-can-show" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 6: Attest what no job can show</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-7-the-two-ledgers" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 7: The two ledgers</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#step-8-the-repositorys-gates" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Step 8: The repository’s gates</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#definition-of-done" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Definition of done</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#decisions-deferred-on-purpose" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Decisions deferred on purpose</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-this-guide-does-not-cover-yet" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What this guide does not cover yet</span></a></li></ul></nav></starlight-toc><script type="module" src="/Invaract/contributor-pr-preview/pr-129/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Adding an Engine Adapter</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><!-- GENERATED FILE — do not edit. Source: docs/ADDING_AN_ENGINE_ADAPTER.md. Regenerate with
+     `npm run sync` in contributor-docs/, or just run the build/dev
+     scripts, which do it automatically. -->
+<p>This is the process for giving Invaract a new engine: Apache Beam, BigQuery, or anything else whose jobs write
+data. It is for a <em>new engine</em>. A new data source on an engine that already has an adapter is
+<code dir="auto">docs/ADDING_A_SPARK_CONNECTOR.md</code>.</p>
+<p>It exists so the second and third adapter do not repeat the discoveries of the first. Everything an adapter
+claims is held to a check that can fail, and everything it does not do is said, with a reason, in a file the
+build reads. The process below is that discipline made into steps, each with a way to know it is finished.</p>
+<p>Three artifacts carry it; read their docs before starting:</p>
+<ul>
+<li><code dir="auto">docs/MULTI_ENGINE_ADAPTERS.md</code>: what an adapter is (the SPI), the conventions every adapter follows
+(locations, formats, save modes, types), and the conformance kit.</li>
+<li><code dir="auto">docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md</code>: a worked investigation of two engines, including what could not be
+checked. Your investigation should read like it.</li>
+<li><code dir="auto">modules.json</code> and <code dir="auto">dev/new-adapter</code>: the module registry and the generator below.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-rule-that-decides-everything">The rule that decides everything</h2><a class="sl-anchor-link" href="#the-rule-that-decides-everything"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “The rule that decides everything”</span></a></div>
+<p><strong>An adapter may claim a capability only as far as something checks it.</strong> A capability a job can show is claimed
+by passing the kit’s scenario for it, run on the real engine through the real enforcement path. A capability no
+job can show (how the adapter attaches to a job, what it applies before one exists) names the test that
+demonstrates it (<code dir="auto">AttestedClaimsSpec</code>). Everything else is <code dir="auto">unsupported</code> or <code dir="auto">not-applicable</code>, with a note, and a
+contract that relies on it is then rejected as <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> rather than passed unchecked.</p>
+<p>Two consequences. An adapter that does little is a correct adapter, as long as it says so. And “it compiles and the
+happy path works” is never the finish line; the kit’s report is.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="before-you-start">Before you start</h2><a class="sl-anchor-link" href="#before-you-start"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Before you start”</span></a></div>
+<ul>
+<li>A go-ahead from the maintainer to start the adapter. No engine adapter starts on its own initiative.</li>
+<li><code dir="auto">./dev/build</code> has run (it publishes <code dir="auto">contract</code>, <code dir="auto">ir</code>, <code dir="auto">fingerprint</code>, <code dir="auto">verification-core</code> and <code dir="auto">adapter-testkit</code> to
+the local Ivy repository, which the new module resolves).</li>
+<li>A friction log: a section of the adapter’s write-up (<code dir="auto">docs/&#x3C;ENGINE>_ADAPTER.md</code>, “Friction log”, generated by
+step 2) that you append to as you go. Record every undocumented decision, every surprise, every place you guessed. It is the input to improving this guide
+and the add-an-adapter skill, and it is how the next adapter gets cheaper.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-1-investigate-the-engine">Step 1: Investigate the engine</h2><a class="sl-anchor-link" href="#step-1-investigate-the-engine"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 1: Investigate the engine”</span></a></div>
+<p>Answer these in writing before any code, with evidence for each: a link to the engine’s own source or a command
+you ran, never memory. Mark anything you could not check <strong>unverified</strong> and list it at the end; the first thing
+the adapter’s tests should do is settle those.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Question</th><th>Why it matters</th><th>Feeds</th></tr></thead><tbody><tr><td>1</td><td><strong>Where can this engine be gated?</strong> Inside the engine, blocking (a hook that can abort a write: Spark’s check rule); before submission (a graph or statement is available and a wrapper can refuse to submit it); or only observed afterwards?</td><td>It is the adapter’s <code dir="auto">enforcement.point</code>, and it bounds every claim below</td><td>capability declaration</td></tr><tr><td>2</td><td><strong>What is knowable at that point?</strong> The reads and writes; the output schema and nullability; the plan (filters, joins, groupings, function calls); parameters (disposition, format)</td><td>Anything not knowable cannot be checked: declare it unsupported, do not approximate</td><td>which capabilities can ever be <code dir="auto">supported</code></td></tr><tr><td>3</td><td><strong>How could a platform attach this to a job it does not own?</strong> The engine’s own configuration surface (flags, options, environment, runner selection)</td><td>The External Attachability Requirement in <code dir="auto">CLAUDE.md</code>; <code dir="auto">config.zeroCodeInstall</code> is <code dir="auto">unsupported</code> if there is no answer</td><td><code dir="auto">ConfigSource</code> spelling</td></tr><tr><td>4</td><td><strong>How are datasets named?</strong> Paths, qualified names (<code dir="auto">project.dataset.table</code>), URIs</td><td>Locations are canonical <code dir="auto">/</code>-separated strings; an engine whose names are not paths converts with <code dir="auto">LocationMatching.fromParts</code></td><td>location checks</td></tr><tr><td>5</td><td><strong>What are its formats and catalog technologies?</strong></td><td>Use the canonical names (<code dir="auto">Formats</code>, <code dir="auto">CatalogTechnologies</code>) where they exist; never respell one</td><td>format and catalog checks</td></tr><tr><td>6</td><td><strong>What are its write dispositions, and their defaults?</strong> Defaults that differ by operation are the usual trap</td><td>Map onto <code dir="auto">append</code>/<code dir="auto">overwrite</code>/<code dir="auto">ignore</code>/<code dir="auto">error</code> or <code dir="auto">None</code>; an approximate mapping is stated in the capability note</td><td>save-mode check</td></tr><tr><td>7</td><td><strong>How do its types map to <code dir="auto">LogicalType</code>?</strong> Every type, including the ones with no neutral equivalent (<code dir="auto">OtherType</code>) and the precision rules</td><td>A wrong mapping is a silent false pass or a false rejection</td><td>schema checks</td></tr><tr><td>8</td><td><strong>What does nullability mean?</strong> Per field, per format, per table kind</td><td>The kit’s nullability scenarios assume a column the job can leave null is nullable</td><td>schema checks</td></tr><tr><td>9</td><td><strong>What are the names of its functions?</strong> Especially the non-deterministic ones (<code dir="auto">uuid</code>, <code dir="auto">rand</code>, the clock)</td><td>Aliases onto the canonical function catalog, so non-determinism is classified identically on every engine</td><td>fingerprint</td></tr><tr><td>10</td><td><strong>What changes data without being a plain write?</strong> Truncate, row-level DML, snapshot rollback, scripts</td><td>The fail-closed representative (<code dir="auto">failClosed.unverifiableWrites</code>) and the DML job shape</td><td>fail-closed, DML</td></tr><tr><td>11</td><td><strong>Does it stream? Does it have a checkpoint or cache?</strong></td><td><code dir="auto">read.streaming</code>, <code dir="auto">write.streaming</code>, <code dir="auto">lineage.boundaryResolution</code></td><td>those capabilities</td></tr><tr><td>12</td><td><strong>What runs in CI with no secrets?</strong> A real in-process runner, an emulator, recorded fixtures, or only a credentialed job</td><td>The conformance kit judges the real engine; if CI cannot run it, say which of fixtures or a periodic credentialed job backs each “verified”</td><td>CI evidence</td></tr></tbody></table>
+<p>The output is a short design document (<code dir="auto">docs/&#x3C;ENGINE>_ADAPTER.md</code>), the engine’s counterpart of
+<code dir="auto">docs/SPARK_ADAPTER.md</code>. Step 2 generates it with these twelve questions as a table to fill in, and registers it in
+<code dir="auto">contributor-docs/scripts/sync-docs.mjs</code>. It also holds a draft capability table: for each capability, a proposed
+status and the evidence.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-2-generate-the-module-and-register-it">Step 2: Generate the module and register it</h2><a class="sl-anchor-link" href="#step-2-generate-the-module-and-register-it"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 2: Generate the module and register it”</span></a></div>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/contributor-pr-preview/pr-129/_astro/ec.w36nc.css"><script type="module" src="/Invaract/contributor-pr-preview/pr-129/_astro/ec.0vx5m.js"></script><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">dev/new-adapter</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">&#x3C;engine></span><span style="--0:#D6DEEB;--1:#403F53"> [--display </span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">BigQuery</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#3B61B0">]</span><span style="--0:#D6DEEB;--1:#403F53">    </span><span style="--0:#919F9F;--1:#5F636F"># creates &#x3C;engine>-adapter/ and docs/&#x3C;ENGINE>_ADAPTER.md, adds both to modules.json</span></div></div><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">python3</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">.github/scripts/check_modules.py</span><span style="--0:#D6DEEB;--1:#403F53">            </span><span style="--0:#919F9F;--1:#5F636F"># names every other file that must list the new module</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="dev/new-adapter <engine> [--display &#x22;BigQuery&#x22;]    # creates <engine>-adapter/ and docs/<ENGINE>_ADAPTER.md, adds both to modules.jsonpython3 .github/scripts/check_modules.py            # names every other file that must list the new module"><div></div></button></div></figure></div>
+<p>The skeleton compiles and passes as generated: every capability is <code dir="auto">unsupported</code>, so every conformance scenario is
+canceled, and <code dir="auto">ConformanceAdapter.run</code> is a stub that throws until you write it. CI builds a fresh skeleton on every
+run (<code dir="auto">adapter-scaffold-check</code>), so it cannot rot.</p>
+<p><code dir="auto">check_modules.py</code> is the to-do list. It fails until each of these agrees with <code dir="auto">modules.json</code>; it prints the file
+and line, and what is missing:</p>
+<ul>
+<li><code dir="auto">.github/workflows/test.yml</code>: the <code dir="auto">for module in</code> loops (API compatibility, coverage), the engine-change filter,
+a <code dir="auto">mutation-testing-&#x3C;engine>-adapter</code> job and its place in <code dir="auto">summary</code>’s <code dir="auto">needs</code>;</li>
+<li><code dir="auto">.github/workflows/release.yml</code> (a <code dir="auto">Publish</code> step, in dependency order) and <code dir="auto">release-dry-run.yml</code>;</li>
+<li><code dir="auto">dev/build</code> (build order), <code dir="auto">.claude/hooks/session-start.sh</code> (warm-up), <code dir="auto">dependency-graph.yml</code>;</li>
+<li>the adapter’s own parts: its capability declaration, a test that extends <code dir="auto">AdapterConformanceSpec</code>, one that
+extends <code dir="auto">AttestedClaimsSpec</code>, a test dependency on the kit’s current version;</li>
+<li>the adapter’s write-up: <code dir="auto">docs/&#x3C;ENGINE>_ADAPTER.md</code> exists, is rendered by the contributor docs, keeps its section
+headings and has a ledger row for every capability in the declaration. While the module’s <code dir="auto">status</code> in
+<code dir="auto">modules.json</code> is <code dir="auto">in-progress</code>, <code dir="auto">TODO</code> and ❓ are allowed; changing it to <code dir="auto">complete</code> makes the check fail until
+neither remains.</li>
+</ul>
+<p>Also, because the check cannot see them: the mutation-shard list if the adapter is large enough to shard
+(<code dir="auto">mutation-shard-drift-check</code> will say), <code dir="auto">docs/RELEASING.md</code>, and the engine-neutral docs that count adapters.
+Run the check again until it is clean.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-3-write-the-declaration-honestly">Step 3: Write the declaration honestly</h2><a class="sl-anchor-link" href="#step-3-write-the-declaration-honestly"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 3: Write the declaration honestly”</span></a></div>
+<p>Start from the generated file (everything <code dir="auto">unsupported</code>). Move a capability only when its row in step 1 has
+evidence and the scenario for it passes (step 5). Rules of thumb:</p>
+<ul>
+<li><code dir="auto">partial</code> needs a note that says <em>which shapes are not covered</em>, not a general disclaimer.</li>
+<li><code dir="auto">not-applicable</code> is for a concept the engine does not have (a batch-only engine has no streaming), not for
+something you have not got to.</li>
+<li><code dir="auto">enforcement.point</code> is the answer to question 1, with the bypass stated if there is one.</li>
+<li>Do not claim <code dir="auto">config.zeroCodeInstall</code> unless question 3 has an answer a platform team could use.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-4-implement-the-adapter">Step 4: Implement the adapter</h2><a class="sl-anchor-link" href="#step-4-implement-the-adapter"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 4: Implement the adapter”</span></a></div>
+<p>An adapter owns exactly this, and nothing the pipeline already does:</p>
+<ol>
+<li><strong>Recognise</strong> an operation on the engine’s own hook (question 1).</li>
+<li><strong>Translate</strong> it to <code dir="auto">ir.Plan</code> (<code dir="auto">Read</code>, <code dir="auto">Write</code>, <code dir="auto">Project</code>, <code dir="auto">Filter</code>, <code dir="auto">Join</code>, …), with <code dir="auto">UnknownPlan</code> for anything it
+cannot translate, so nothing is silently dropped.</li>
+<li><strong>Map schemas</strong> to <code dir="auto">LogicalSchema</code> (question 7), and input schemas for each read.</li>
+<li><strong>Hand over</strong> a <code dir="auto">CheckedWrite</code> to <code dir="auto">VerificationPipeline.verifyWrite</code> (or <code dir="auto">verifyStateChange</code>,
+<code dir="auto">rejectUnverifiableWrite</code>). Do not re-implement validation, verifier order, fingerprinting, events or the
+rejection text.</li>
+<li><strong>Read configuration</strong> through <code dir="auto">ConfigSource</code> and <code dir="auto">VerificationSetup</code>, spelling the neutral keys the engine’s way
+(see “Spelling the configuration keys” below).</li>
+<li><strong>Declare</strong> what it does (step 3) and <strong>fail closed</strong> on what it cannot translate.</li>
+</ol>
+<p><code dir="auto">adapter-testkit</code>’s <code dir="auto">ReferenceAdapter</code> is the shortest complete example (about forty lines, no engine).
+<code dir="auto">SparkConformanceAdapter</code> is the real one.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="spelling-the-configuration-keys">Spelling the configuration keys</h3><a class="sl-anchor-link" href="#spelling-the-configuration-keys"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Spelling the configuration keys”</span></a></div>
+<p>The neutral names are <code dir="auto">InvaractConf</code>’s (<code dir="auto">locationMap</code>, <code dir="auto">rejectUndeclaredInputs</code>, <code dir="auto">rejectUndeclaredFields</code>,
+<code dir="auto">computeFingerprint</code>, <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code>, <code dir="auto">orgPolicy</code>, <code dir="auto">orgPolicyOverlays</code>). An adapter supplies a
+<code dir="auto">ConfigSource</code> that spells them in the engine’s own configuration surface and never invents a second name for a
+neutral setting. Spark’s is <code dir="auto">spark.invaract.&#x3C;name></code>; an adapter for an engine with a different surface follows the same
+convention, once, in one place:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Engine</th><th>Configuration surface the settings go through</th><th>Spelling of <code dir="auto">locationMap</code></th></tr></thead><tbody><tr><td>Spark</td><td><code dir="auto">spark-submit --conf</code> (the session’s conf)</td><td><code dir="auto">spark.invaract.locationMap</code></td></tr><tr><td>Beam</td><td>pipeline options, reached through the wrapper runner named by <code dir="auto">--runner</code> (<code dir="auto">docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md</code>, unverified for a <code dir="auto">PipelineOptionsRegistrar</code>)</td><td>decided and recorded by the Beam adapter</td></tr><tr><td>BigQuery</td><td>none established: the research found only observation, no zero-code attach</td><td>decided by the BigQuery adapter, or <code dir="auto">config.zeroCodeInstall</code> stays unsupported</td></tr></tbody></table>
+<p>Only the Spark row is a decided spelling. The adapter that adds a row chooses the spelling from the engine’s own
+conventions, confirms it against the engine, and records it here and in its write-up. A setting that exists only as a
+method call a job’s author must add fails the External Attachability Requirement: say so in the declaration
+(<code dir="auto">config.zeroCodeInstall</code>) instead of claiming it.</p>
+<div class="sl-heading-wrapper level-h3"><h3 id="loading-a-class-named-in-configuration">Loading a class named in configuration</h3><a class="sl-anchor-link" href="#loading-a-class-named-in-configuration"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Loading a class named in configuration”</span></a></div>
+<p>Several settings name a class (a notification sink, a registry client, a location resolver). Anyone who can set a
+configuration value can then choose what the job loads, so the loading is a security boundary, not a convenience:</p>
+<ul>
+<li>load it with <code dir="auto">com.invaract.contract.ReflectivePluginResolver.instantiate[T]</code>, which loads without initialising the
+class, checks that it is the expected type, and only then constructs it;</li>
+<li>never call <code dir="auto">Class.forName(name).newInstance()</code> (or <code dir="auto">getDeclaredConstructor().newInstance()</code>) on a configured name;</li>
+<li>fail at setup time on a bad name, with a message that names the configuration key;</li>
+<li>do not widen what a name may refer to: if the adapter needs a new plug-in type, give it its own interface and check
+against that.</li>
+</ul>
+<p>Known exception, to be removed rather than copied: <code dir="auto">spark-adapter</code>’s <code dir="auto">registry.ContractSource</code> loads the registry client
+by name with plain <code dir="auto">Class.forName</code>, because the client has no shared interface (the dependency is deliberately
+absent). Do not follow it in a new adapter.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-5-run-the-kit-one-capability-at-a-time">Step 5: Run the kit, one capability at a time</h2><a class="sl-anchor-link" href="#step-5-run-the-kit-one-capability-at-a-time"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 5: Run the kit, one capability at a time”</span></a></div>
+<p><code dir="auto">&#x3C;Engine>ConformanceAdapter.run</code> builds the neutral <code dir="auto">ScenarioJob</code> as a real job on the engine and runs it through
+the adapter’s real enforcement; it finishes with <code dir="auto">sink.passed</code> or <code dir="auto">sink.rejected(types)</code>. Then, in this order,
+declare a capability <code dir="auto">supported</code>, run <code dir="auto">&#x3C;Engine>ConformanceSpec</code>, and fix what diverges:</p>
+<ol>
+<li>Operations and structure: <code dir="auto">read.batch</code>, <code dir="auto">write.batch</code>, <code dir="auto">check.location</code>, <code dir="auto">check.schema</code>, <code dir="auto">check.inputExistence</code>.</li>
+<li>Formats, save modes, catalog, nested types, nullability.</li>
+<li>Fail-closed (<code dir="auto">failClosed.unverifiableWrites</code>) and the DML job shape.</li>
+<li>Rules and the analyses (<code dir="auto">translation</code> exposes the plan for lineage and sensitivity).</li>
+<li>Streaming and boundaries, if the engine has them.</li>
+</ol>
+<p>The report has three verdicts: <em>conforms</em>, <em>skipped</em> (a scenario the declaration says does not apply, with the
+adapter’s own reason), and <em>diverges</em> (the adapter did something its declaration does not allow). A divergence is a
+bug in the adapter or an overclaim in the declaration; never a reason to edit a scenario. If a scenario is wrong,
+that is a kit change with its own PR and a <code dir="auto">BrokenAdapterSpec</code> variant.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-6-attest-what-no-job-can-show">Step 6: Attest what no job can show</h2><a class="sl-anchor-link" href="#step-6-attest-what-no-job-can-show"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 6: Attest what no job can show”</span></a></div>
+<p>For each of the seven attested capabilities the adapter claims, name the test that demonstrates it in
+<code dir="auto">&#x3C;Engine>AttestedClaimsSpec</code>. <code dir="auto">AttestedClaims.requirements</code> says what each must show. Write the test; the kit only
+checks that it exists.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-7-the-two-ledgers">Step 7: The two ledgers</h2><a class="sl-anchor-link" href="#step-7-the-two-ledgers"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 7: The two ledgers”</span></a></div>
+<p>The investigation ends with two tables, kept in <code dir="auto">docs/&#x3C;ENGINE>_ADAPTER.md</code> (generated in step 2), as for a Spark connector:</p>
+<ul>
+<li><strong>Operation surface</strong>: every shape of read, write and state change the engine has, each ✅ covered (a permanent
+test), 🚫 fails closed (a test that proves the rejection), or ❓ not investigated.</li>
+<li><strong>Capability surface</strong>: each of the 30 capabilities, its declared status, and what backs it (a scenario id, an
+attestation, or the note that says why not).</li>
+</ul>
+<p>A ❓ is an open item, not a finished one. The adapter is not “complete” while one remains, and the docs must not call
+it complete.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="step-8-the-repositorys-gates">Step 8: The repository’s gates</h2><a class="sl-anchor-link" href="#step-8-the-repositorys-gates"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 8: The repository’s gates”</span></a></div>
+<p>Everything <code dir="auto">CLAUDE.md</code> asks of an engine module applies to the new one:</p>
+<ul>
+<li>tests, with real-engine tests preferred over mocks (ADR-005);</li>
+<li>coverage: measure, then pin <code dir="auto">coverageMinimumStmtTotal</code>/<code dir="auto">Branch</code> a few points under;</li>
+<li>scoped mutation testing: at least 70% on the files you wrote, written to be mutation-resistant the first time;</li>
+<li>API compatibility: after the first release, <code dir="auto">mimaPreviousArtifacts</code> names it; before, it is empty;</li>
+<li><code dir="auto">./dev/capabilities</code> to regenerate the engine-capabilities page, and the user documentation (<code dir="auto">docs-site</code>) for
+anything a user of the engine would need: how to install it, what it verifies, what it does not;</li>
+<li>the External Attachability Requirement: every capability a job can turn on is reachable through the engine’s own
+configuration surface, or the declaration says it is not;</li>
+<li><code dir="auto">./dev/test</code> and <code dir="auto">./dev/regression</code> where the change touches enforcement of the Spark harness. (A new adapter does
+not run the Spark demo; its own conformance run is its real-engine proof.)</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="definition-of-done">Definition of done</h2><a class="sl-anchor-link" href="#definition-of-done"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Definition of done”</span></a></div>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled> The investigation (step 1) is written, with evidence, and its unverified items are settled or listed.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">check_modules.py</code> is clean.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">&#x3C;Engine>ConformanceSpec</code> has no divergence; every scenario is conforms or skipped with the declaration’s reason.</li>
+<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">&#x3C;Engine>AttestedClaimsSpec</code> is green; every claimed attested capability names a test.</li>
+<li class="task-list-item"><input type="checkbox" disabled> The declaration is honest: nothing <code dir="auto">supported</code> without a passing scenario or an attestation.</li>
+<li class="task-list-item"><input type="checkbox" disabled> Both ledgers exist, with no ❓ presented as done.</li>
+<li class="task-list-item"><input type="checkbox" disabled> Coverage is pinned from a measurement; mutation is at least 70% on the new files; <code dir="auto">./dev/capabilities</code> is regenerated.</li>
+<li class="task-list-item"><input type="checkbox" disabled> The user documentation covers installing and using the adapter and what it does not verify.</li>
+<li class="task-list-item"><input type="checkbox" disabled> The friction log is complete, and any step of this guide that was wrong or missing is fixed in this PR.</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="decisions-deferred-on-purpose">Decisions deferred on purpose</h2><a class="sl-anchor-link" href="#decisions-deferred-on-purpose"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Decisions deferred on purpose”</span></a></div>
+<p>These were weighed before the first new adapter and left alone because changing them later costs the same as changing
+them now, or because there is nothing yet to change them for. Each says when to revisit.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Deferred</th><th>Why it is safe to wait</th><th>Revisit when</th></tr></thead><tbody><tr><td>Versioning the capability vocabulary (a <code dir="auto">since</code> on each capability; an undeclared newer one reads as unsupported)</td><td>Every adapter lives in this repository and the drift test forces a position on a new capability</td><td>An adapter is released or maintained outside this repository</td></tr><tr><td>Widening the visibility of the adapter SPI</td><td>Keeping it narrow is reversible, widening is not</td><td>An adapter outside the repository needs a type that is hidden</td></tr><tr><td>A catalogue-version stamp in the kit</td><td>The kit and its adapters are built from the same commit</td><td>Adapters pin a released kit</td></tr><tr><td>Removing the stale MiMa fallback baselines</td><td>They compare against a version that exists, so they are harmless</td><td>The next release of each published module</td></tr><tr><td>An engine identity (<code dir="auto">engine</code>, <code dir="auto">job</code>) on the notification events</td><td>Additive under schema v1, and only the second adapter makes it necessary</td><td>The first non-Spark adapter publishes events (add it with that adapter, not before)</td></tr></tbody></table>
+<div class="sl-heading-wrapper level-h2"><h2 id="what-this-guide-does-not-cover-yet">What this guide does not cover yet</h2><a class="sl-anchor-link" href="#what-this-guide-does-not-cover-yet"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What this guide does not cover yet”</span></a></div>
+<p>It has been written from one real adapter (Spark) and the reference adapter, and checked against research on two
+more. The first adapter built from it will find what it gets wrong; the friction log is how that comes back here.
+The add-an-adapter skill should be written from that log, not before it.</p></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs/ADDING_AN_ENGINE_ADAPTER.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"></div></footer></div></div></main></div></div></div></div></body></html>
