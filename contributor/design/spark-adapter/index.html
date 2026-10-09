@@ -2186,6 +2186,10 @@ real <code dir="auto">FileNotificationSink</code>.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="contract-resolution-registry">Contract resolution: <code dir="auto">registry://</code></h2><a class="sl-anchor-link" href="#contract-resolution-registry"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Contract resolution: registry://”</span></a></div>
 <p><code dir="auto">com.invaract.sparkadapter.registry</code>
 (<code dir="auto">spark-adapter/src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala</code>)
+is Spark’s face of <code dir="auto">com.invaract.verification.ContractReference</code>
+(verification-core, which holds the engine-neutral parsing, client loading
+and fetch; this object supplies Spark’s spelling of <code dir="auto">registryUrl</code> and
+<code dir="auto">registryClientClass</code> and keeps its names and signatures). It
 answers the same shape of question “Location resolution” above answers
 for a <code dir="auto">Dataset.location</code>, but for <code dir="auto">spark.invaract.contract</code>’s own value:
 instead of naming a file path, it can name a contract living in a
@@ -2216,8 +2220,11 @@ config, public no-arg constructor, loaded once” mechanism
 <code dir="auto">NotificationSink</code> — the one difference is there is no shared trait to
 cast to here (that would itself be a compile-time dependency), so the
 two methods actually needed (<code dir="auto">configure</code>, <code dir="auto">get</code>/<code dir="auto">getLatest</code>) are
-invoked via plain <code dir="auto">java.lang.reflect.Method.invoke</code> instead of a
-virtual call. Their return type, <code dir="auto">com.invaract.contract.Contract</code>, is a
+found and invoked via plain <code dir="auto">java.lang.reflect.Method</code> instead of a
+virtual call. The class is loaded without being initialised and is
+constructed only after it is shown to have those methods (and a
+<code dir="auto">Contract</code> return type), so naming an unrelated class on the classpath
+runs none of its code. Their return type, <code dir="auto">com.invaract.contract.Contract</code>, is a
 safe direct cast either way, since <code dir="auto">contract</code> is already a real
 dependency of both this module and <code dir="auto">registry-client</code>.</li>
 <li>A job that never sets <code dir="auto">spark.invaract.registryUrl</code> or uses a

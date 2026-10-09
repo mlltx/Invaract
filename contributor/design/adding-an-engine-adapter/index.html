@@ -240,15 +240,18 @@ cannot translate, so nothing is silently dropped.</li>
 <li><strong>Hand over</strong> a <code dir="auto">CheckedWrite</code> to <code dir="auto">VerificationPipeline.verifyWrite</code> (or <code dir="auto">verifyStateChange</code>,
 <code dir="auto">rejectUnverifiableWrite</code>). Do not re-implement validation, verifier order, fingerprinting, events or the
 rejection text.</li>
-<li><strong>Read configuration</strong> through <code dir="auto">ConfigSource</code> and <code dir="auto">VerificationSetup</code>, spelling the neutral keys the engine’s way
-(see “Spelling the configuration keys” below).</li>
+<li><strong>Read configuration</strong> through <code dir="auto">ConfigSource</code>, <code dir="auto">VerificationSetup</code> and <code dir="auto">AttachSetup</code>, spelling the neutral keys
+the engine’s way (see “Spelling the configuration keys” below). <code dir="auto">AttachSetup.select</code> decides dry-run or
+enforcement, resolves the contract (a path or a <code dir="auto">registry://</code> reference) and builds the sink; the adapter
+installs the result with its engine’s hook.</li>
 <li><strong>Declare</strong> what it does (step 3) and <strong>fail closed</strong> on what it cannot translate.</li>
 </ol>
 <p><code dir="auto">adapter-testkit</code>’s <code dir="auto">ReferenceAdapter</code> is the shortest complete example (about forty lines, no engine).
 <code dir="auto">SparkConformanceAdapter</code> is the real one.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="spelling-the-configuration-keys">Spelling the configuration keys</h3><a class="sl-anchor-link" href="#spelling-the-configuration-keys"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Spelling the configuration keys”</span></a></div>
 <p>The neutral names are <code dir="auto">InvaractConf</code>’s (<code dir="auto">locationMap</code>, <code dir="auto">rejectUndeclaredInputs</code>, <code dir="auto">rejectUndeclaredFields</code>,
-<code dir="auto">computeFingerprint</code>, <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code>, <code dir="auto">orgPolicy</code>, <code dir="auto">orgPolicyOverlays</code>). An adapter supplies a
+<code dir="auto">computeFingerprint</code>, <code dir="auto">staticDataQuality</code>, <code dir="auto">roleConsistency</code>, <code dir="auto">orgPolicy</code>, <code dir="auto">orgPolicyOverlays</code>, and for attaching
+<code dir="auto">contract</code>, <code dir="auto">dryRun</code>, <code dir="auto">notifyConfig</code>, <code dir="auto">registryUrl</code>, <code dir="auto">registryClientClass</code>). An adapter supplies a
 <code dir="auto">ConfigSource</code> that spells them in the engine’s own configuration surface and never invents a second name for a
 neutral setting. Spark’s is <code dir="auto">spark.invaract.&#x3C;name></code>; an adapter for an engine with a different surface follows the same
 convention, once, in one place:</p>
@@ -293,9 +296,9 @@ class, checks that it is the expected type, and only then constructs it;</li>
 <li>do not widen what a name may refer to: if the adapter needs a new plug-in type, give it its own interface and check
 against that.</li>
 </ul>
-<p>Known exception, to be removed rather than copied: <code dir="auto">spark-adapter</code>’s <code dir="auto">registry.ContractSource</code> loads the registry client
-by name with plain <code dir="auto">Class.forName</code>, because the client has no shared interface (the dependency is deliberately
-absent). Do not follow it in a new adapter.</p>
+<p>The one place with no shared interface to check against is the registry client, which <code dir="auto">ContractReference</code>
+(verification-core) loads: it loads without initialising and constructs only after finding the methods it needs.
+An adapter gets that by calling <code dir="auto">ContractReference</code>/<code dir="auto">AttachSetup</code>, and has no reason to load a client itself.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="step-5-run-the-kit-one-capability-at-a-time">Step 5: Run the kit, one capability at a time</h2><a class="sl-anchor-link" href="#step-5-run-the-kit-one-capability-at-a-time"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Step 5: Run the kit, one capability at a time”</span></a></div>
 <p><code dir="auto">&#x3C;Engine>ConformanceAdapter.run</code> builds the neutral <code dir="auto">ScenarioJob</code> as a real job on the engine and runs it through
 the adapter’s real enforcement; it finishes with <code dir="auto">sink.passed</code> or <code dir="auto">sink.rejected(types)</code>. Then, in this order,
