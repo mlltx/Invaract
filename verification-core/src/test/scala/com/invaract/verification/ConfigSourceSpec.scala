@@ -27,6 +27,13 @@ class ConfigSourceSpec extends AnyFunSuite {
     assert(source.describe(InvaractConf.OrgPolicyOverlays) == "spark.invaract.orgPolicyOverlays")
   }
 
+  test("the attach settings are spelled as the existing spark.invaract.* keys are") {
+    assert(
+      List(InvaractConf.Contract, InvaractConf.DryRun, InvaractConf.NotifyConfig, InvaractConf.RegistryUrl, InvaractConf.RegistryClientClass) ==
+        List("contract", "dryRun", "notifyConfig", "registryUrl", "registryClientClass")
+    )
+  }
+
   test("the neutral names are the suffixes every existing spark.invaract.* key is spelled with") {
     assert(
       List(

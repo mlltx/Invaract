@@ -60,4 +60,16 @@ object InvaractConf {
   val RoleConsistency = "roleConsistency"
   val OrgPolicy = "orgPolicy"
   val OrgPolicyOverlays = "orgPolicyOverlays"
+
+  // What `AttachSetup` reads to decide what a job is attached to, and how.
+  /** The contract to enforce: a file path, or a `registry://<id>@<version>` reference (`ContractReference`). */
+  val Contract = "contract"
+  /** `"true"` runs dry-run mode, which needs no contract at all. */
+  val DryRun = "dryRun"
+  /** Path to a notification-sink `.properties` file. */
+  val NotifyConfig = "notifyConfig"
+  /** Base URL of the contract registry a `registry://` reference is fetched from. */
+  val RegistryUrl = "registryUrl"
+  /** Class name of the registry client to load, overriding the default. */
+  val RegistryClientClass = "registryClientClass"
 }

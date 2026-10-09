@@ -2148,6 +2148,10 @@ real `FileNotificationSink`.
 
 `com.invaract.sparkadapter.registry`
 (`spark-adapter/src/main/scala/com/invaract/sparkadapter/registry/ContractSource.scala`)
+is Spark's face of `com.invaract.verification.ContractReference`
+(verification-core, which holds the engine-neutral parsing, client loading
+and fetch; this object supplies Spark's spelling of `registryUrl` and
+`registryClientClass` and keeps its names and signatures). It
 answers the same shape of question "Location resolution" above answers
 for a `Dataset.location`, but for `spark.invaract.contract`'s own value:
 instead of naming a file path, it can name a contract living in a
@@ -2178,8 +2182,11 @@ repo — this module never depends on it directly).
   `NotificationSink` — the one difference is there is no shared trait to
   cast to here (that would itself be a compile-time dependency), so the
   two methods actually needed (`configure`, `get`/`getLatest`) are
-  invoked via plain `java.lang.reflect.Method.invoke` instead of a
-  virtual call. Their return type, `com.invaract.contract.Contract`, is a
+  found and invoked via plain `java.lang.reflect.Method` instead of a
+  virtual call. The class is loaded without being initialised and is
+  constructed only after it is shown to have those methods (and a
+  `Contract` return type), so naming an unrelated class on the classpath
+  runs none of its code. Their return type, `com.invaract.contract.Contract`, is a
   safe direct cast either way, since `contract` is already a real
   dependency of both this module and `registry-client`.
 - A job that never sets `spark.invaract.registryUrl` or uses a

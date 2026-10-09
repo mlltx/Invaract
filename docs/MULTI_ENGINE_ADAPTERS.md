@@ -59,7 +59,7 @@ module move in Stage 2.
 |---|---|---|---|
 | 1 | Engine-neutral logical type model: `contract.LogicalType`/`LogicalSchema`; the schema/input/output checkers and `ContractInference` stop importing Spark types; Spark mapping isolated in `SparkSchemas`, pinned to Spark's own output by `SparkSchemasSpec` | Removes leak #1: an adapter for any engine supplies a `LogicalSchema`; no existing verdict or message changes | Done (PR #102) — see below |
 | 2a | Extract the `verification-core` module: the engine-neutral checkers, verifiers, result model, notification and location code move out of `spark-adapter`; seams for the three Spark couplings (lineage-boundary types, DML kind, inferred write) | Removes leak #3 (and the module half of #5/#7): a second adapter depends on `verification-core`, not `spark-adapter`; no user-visible change at the time (the package rename is Stage 2c) | Done — see below |
-| 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (`ContractSource` and the fail-closed wording are deferred, see "Not done in 2b") |
+| 2b | Adapter SPI: `VerificationPipeline` (the write / state-change / fail-closed branches of `verifyOrThrow`) and `VerificationSetup` + `ConfigSource` (options, `ref://` locations, org policy, read through a neutral config view) | Removes leak #2: a second adapter calls three entry points instead of copying ~200 lines of orchestration, and gets every `--conf`-style capability by spelling the neutral keys its own way | Done — see below (the fail-closed wording is deferred, see "Not done in 2b"; `ContractSource` and the attach decisions moved later, see "Attaching to a job") |
 | 2c | Neutral package names: `verification-core` is `com.invaract.verification` (`.notification`, `.location`), `notification-kafka` follows; no forwarding classes | Removes the last Spark-flavoured name from the engine-neutral surface; breaking, taken before anything is released | In review |
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour | In review |
@@ -150,6 +150,7 @@ its own MiMa entry (nothing to compare against until it is released).
   depends on it, so a release without it would not resolve).
 - `registry/ContractSource` (reads a `SparkSession`) and `WriteFieldInfo`'s Spark type
   strings stay in `spark-adapter`; both belong with 2b's neutral config namespace.
+  (`ContractSource` has since moved: see "Attaching to a job".)
 - Test helpers `TestNotificationSink`, `EventSchema` and `CustomRuleVerifierFixtures` are
   duplicated in both modules' test sources (separate sbt builds cannot share test classes).
 
@@ -208,11 +209,33 @@ branch coverage; the three SPI files score 100% under mutation testing.
 **Not done in 2b, deliberately**
 
 - *Neutral package names.* Done in Stage 2c (below).
-- *`registry/ContractSource`* (reads a `SparkSession`) and `InvaractSparkSessionExtension`'s own
-  keys (`contract`, `dryRun`, `notifyConfig`, `jobId`, `registryUrl`, ...) stay in `spark-adapter`:
-  they are the Spark *attach* mechanism, and each adapter has its own.
+- *`registry/ContractSource`* and the attach decisions (`contract`, `dryRun`, `notifyConfig`,
+  `registryUrl`, `registryClientClass`). Done in the pre-adapter review: `ContractReference` and
+  `AttachSetup` in `verification-core` (below, "Attaching to a job"). What stays in `spark-adapter` is
+  installing the result: the check rule, the listener, the dry-run reporter and `jobId`/metadata keys.
 - *Fail-closed wording.* `UnverifiableWrite`'s remediation text still names Spark's
   `FailClosedCommands`; `rejectUnverifiableWrite` is engine-neutral, the message is not yet.
+
+### Attaching to a job
+
+Attaching to a job whose source a platform does not own has the same few decisions in every engine, and
+they depend only on configuration, so they are made once in `verification-core` instead of once per adapter:
+
+- `ContractReference`: the `contract` setting is a file path or a `registry://<id>@<version>` reference;
+  `resolve(raw, config)` parses the file or fetches from the registry named by `registryUrl`
+  (`registryClientClass` overrides the client). The registry client is found by class name with no
+  compile-time dependency, and it is loaded without being initialised and constructed only after it is
+  shown to have the methods the call needs, so naming an unrelated class runs none of its code.
+- `AttachSetup.select(config)`: returns an `AttachPlan`, `Enforce(contract, sink)` or `DryRun(sink)`.
+  `dryRun=true` ignores `contract` and tolerates a sink that cannot be set up (one WARN, no sink, the job is
+  unaffected); enforcement requires `contract` and fails at start-up on a sink it cannot set up.
+
+An adapter supplies a `ConfigSource` spelling `contract`, `dryRun`, `notifyConfig`, `registryUrl` and
+`registryClientClass` its own way, calls `select`, then acts on the plan with its engine's hook. Spark's
+`InvaractSparkSessionExtension.checkRuleFor` is exactly that (installing a check rule, a listener, or the
+dry-run reporter); `registry.ContractSource` keeps its names and signatures as Spark's face of
+`ContractReference`. The location map, option overlay and organizational policy are still
+`VerificationSetup`'s, applied to the contract a plan carries.
 
 ## Stage 3 — capability declaration
 
