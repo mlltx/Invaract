@@ -113,8 +113,10 @@ An adapter owns exactly this, and nothing the pipeline already does:
 4. **Hand over** a `CheckedWrite` to `VerificationPipeline.verifyWrite` (or `verifyStateChange`,
    `rejectUnverifiableWrite`). Do not re-implement validation, verifier order, fingerprinting, events or the
    rejection text.
-5. **Read configuration** through `ConfigSource` and `VerificationSetup`, spelling the neutral keys the engine's way
-   (see "Spelling the configuration keys" below).
+5. **Read configuration** through `ConfigSource`, `VerificationSetup` and `AttachSetup`, spelling the neutral keys
+   the engine's way (see "Spelling the configuration keys" below). `AttachSetup.select` decides dry-run or
+   enforcement, resolves the contract (a path or a `registry://` reference) and builds the sink; the adapter
+   installs the result with its engine's hook.
 6. **Declare** what it does (step 3) and **fail closed** on what it cannot translate.
 
 `adapter-testkit`'s `ReferenceAdapter` is the shortest complete example (about forty lines, no engine).
@@ -123,7 +125,8 @@ An adapter owns exactly this, and nothing the pipeline already does:
 ### Spelling the configuration keys
 
 The neutral names are `InvaractConf`'s (`locationMap`, `rejectUndeclaredInputs`, `rejectUndeclaredFields`,
-`computeFingerprint`, `staticDataQuality`, `roleConsistency`, `orgPolicy`, `orgPolicyOverlays`). An adapter supplies a
+`computeFingerprint`, `staticDataQuality`, `roleConsistency`, `orgPolicy`, `orgPolicyOverlays`, and for attaching
+`contract`, `dryRun`, `notifyConfig`, `registryUrl`, `registryClientClass`). An adapter supplies a
 `ConfigSource` that spells them in the engine's own configuration surface and never invents a second name for a
 neutral setting. Spark's is `spark.invaract.<name>`; an adapter for an engine with a different surface follows the same
 convention, once, in one place:
@@ -151,9 +154,9 @@ configuration value can then choose what the job loads, so the loading is a secu
 - do not widen what a name may refer to: if the adapter needs a new plug-in type, give it its own interface and check
   against that.
 
-Known exception, to be removed rather than copied: `spark-adapter`'s `registry.ContractSource` loads the registry client
-by name with plain `Class.forName`, because the client has no shared interface (the dependency is deliberately
-absent). Do not follow it in a new adapter.
+The one place with no shared interface to check against is the registry client, which `ContractReference`
+(verification-core) loads: it loads without initialising and constructs only after finding the methods it needs.
+An adapter gets that by calling `ContractReference`/`AttachSetup`, and has no reason to load a client itself.
 
 ## Step 5: Run the kit, one capability at a time
 

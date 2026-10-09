@@ -389,8 +389,10 @@ names in `InvaractConf` (`locationMap`, `orgPolicy`, `rejectUndeclaredFields`, .
 an adapter satisfies this requirement by supplying a `ConfigSource` that spells those
 names its own way (Spark's is `SparkConfigSource`: `spark.invaract.<name>`) and calling
 `VerificationSetup`, which gives it location resolution, option overlay and
-organizational policy for free. A new neutral setting goes in `InvaractConf` and
-`VerificationSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
+organizational policy for free; `AttachSetup.select` (also `verification-core`) decides dry-run or
+enforcement, resolves the contract (a path or a `registry://` reference, `ContractReference`) and builds the
+notification sink, so an adapter only installs the plan it gets back. A new neutral setting goes in
+`InvaractConf` and `VerificationSetup`/`AttachSetup`, not in an adapter. See docs/MULTI_ENGINE_ADAPTERS.md, Stage 2b.
 
 **Every adapter declares what it can and cannot verify**, in
 `invaract-capabilities-<adapter>.yaml` (a status for every `Capability` in
