@@ -55,6 +55,11 @@ def capability_ids(repo):
     return re.findall(r"^  ([a-zA-Z.]+):\s*$", body, re.M)
 
 
+def capability_rows(repo):
+    """The capability ledger's rows: every capability, declared unsupported until the investigation says otherwise."""
+    return "\n".join(f"| `{cap}` | unsupported | TODO |" for cap in capability_ids(repo))
+
+
 def capabilities_block(repo, engine_display):
     return "\n".join(
         f"  {cap}:\n    status: unsupported\n    note: Not yet investigated for {engine_display}." for cap in capability_ids(repo)
@@ -72,6 +77,7 @@ def substitutions(repo, engine, display):
         "@@KIT_VERSION@@": version_of(repo, "adapter-testkit"),
         "@@PUBLISHING@@": publishing_block(repo),
         "@@CAPABILITIES@@": capabilities_block(repo, display),
+        "@@CAPABILITY_ROWS@@": capability_rows(repo),
     }
 
 
@@ -83,6 +89,31 @@ def render(text, subs):
     if left:
         raise SystemExit(f"unreplaced placeholder(s) in a template: {sorted(set(left))}")
     return text
+
+
+def doc_path(engine):
+    """Where the adapter's design write-up lives: docs/<ENGINE>_ADAPTER.md, as docs/SPARK_ADAPTER.md does."""
+    return os.path.join("docs", f"{engine.upper()}_ADAPTER.md")
+
+
+def register_doc(repo, engine, display):
+    """Adds the write-up to the contributor-docs sync, after the last design doc, so the site renders it."""
+    path = os.path.join(repo, "contributor-docs", "scripts", "sync-docs.mjs")
+    text = read(path)
+    anchor = "  {\n    src: 'docs/connectors/delta.md',"
+    if anchor not in text:
+        raise SystemExit("contributor-docs/scripts/sync-docs.mjs no longer has the expected anchor; register the design doc by hand")
+    orders = [int(o) for o in re.findall(r"section: 'Design Docs',\n    label: '[^']*',\n    order: (\d+),", text)]
+    entry = (
+        "  {\n"
+        f"    src: 'docs/{engine.upper()}_ADAPTER.md',\n"
+        f"    slug: 'design/{engine}-adapter',\n"
+        "    section: 'Design Docs',\n"
+        f"    label: '{display} Adapter',\n"
+        f"    order: {max(orders) + 1},\n"
+        "  },\n"
+    )
+    write(path, text.replace(anchor, entry + anchor, 1))
 
 
 def generate(repo, engine, display, out):
@@ -106,6 +137,7 @@ def generate(repo, engine, display, out):
     write(os.path.join(test, f"{display}ConformanceAdapter.scala"), template("ConformanceAdapter.scala.tmpl"))
     write(os.path.join(test, f"{display}ConformanceSpec.scala"), template("ConformanceSpec.scala.tmpl"))
     write(os.path.join(test, f"{display}AttestedClaimsSpec.scala"), template("AttestedClaimsSpec.scala.tmpl"))
+    write(os.path.join(out, doc_path(engine)), template("ENGINE_ADAPTER.md.tmpl"))
     # sbt plugins and the sbt version are the kit's, copied as they are
     kit_project = os.path.join(repo, "adapter-testkit", "project")
     for f in ("build.properties", "coverage.sbt", "mima.sbt", "pgp.sbt", "sonatype.sbt", "stryker4s.sbt"):
@@ -113,13 +145,16 @@ def generate(repo, engine, display, out):
     return name
 
 
-def register(repo, engine):
+def register(repo, engine, display):
     path = os.path.join(repo, "modules.json")
     data = json.loads(read(path))
     name = f"{engine}-adapter"
     if any(m["name"] == name for m in data["modules"]):
         raise SystemExit(f"{name} is already in modules.json")
-    entry = {"name": name, "role": "adapter", "published": True, "mutation": True, "capabilities": f"invaract-capabilities-{engine}.yaml"}
+    entry = {
+        "name": name, "role": "adapter", "published": True, "mutation": True, "capabilities": f"invaract-capabilities-{engine}.yaml",
+        "doc": doc_path(engine).replace(os.sep, "/"), "docStandard": True, "status": "in-progress",
+    }
     modules = data["modules"]
     last_published = max(i for i, m in enumerate(modules) if m.get("published"))
     modules.insert(last_published + 1, entry)
@@ -128,6 +163,7 @@ def register(repo, engine):
     lines += [f"    {r}{',' if i < len(rendered) - 1 else ''}" for i, r in enumerate(rendered)]
     lines += ["  ]", "}"]
     write(path, "\n".join(lines) + "\n")
+    register_doc(repo, engine, display)
 
 
 def main(argv):
@@ -145,7 +181,7 @@ def main(argv):
     out = os.path.abspath(args.out) if args.out else REPO
     name = generate(REPO, args.engine, display, out)
     if not args.out and not args.no_register:
-        register(REPO, args.engine)
+        register(REPO, args.engine, display)
     print(f"Generated {os.path.join(out, name)}")
     if not args.out and not args.no_register:
         print("Registered in modules.json. Now run: python3 .github/scripts/check_modules.py")

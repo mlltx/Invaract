@@ -96,6 +96,34 @@ class Generated(unittest.TestCase):
         self.assertIn("sonatypePublishToBundle", sbt)
         self.assertNotIn("invaract-adapter-testkit\"\n", sbt.split("libraryDependencies")[0])
 
+    def doc(self):
+        with open(os.path.join(self.out, "docs", "DEMO_ADAPTER.md")) as f:
+            return f.read()
+
+    def test_the_write_up_is_generated_with_every_capability_in_its_ledger(self):
+        doc = self.doc()
+        self.assertTrue(doc.startswith("# Demo Adapter\n"))
+        for heading in c.DOC_HEADINGS:
+            self.assertIn(heading, doc)
+        for cap in na.capability_ids(REPO):
+            self.assertIn(f"| `{cap}` | unsupported | TODO |", doc)
+        self.assertEqual(len([l for l in doc.splitlines() if re.match(r"\| \d+ \|", l)]), 12, "the twelve investigation questions")
+
+    def test_the_generated_write_up_passes_the_check_while_in_progress_and_fails_it_once_complete(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        os.makedirs(os.path.join(root, "docs"))
+        shutil.copy(os.path.join(self.out, "docs", "DEMO_ADAPTER.md"), os.path.join(root, "docs"))
+        shutil.copytree(self.module, os.path.join(root, self.name))
+        module = {"name": self.name, "role": "adapter", "capabilities": "invaract-capabilities-demo.yaml",
+                  "doc": "docs/DEMO_ADAPTER.md", "docStandard": True, "status": "in-progress"}
+        sync = "src: 'docs/DEMO_ADAPTER.md',"
+        self.assertEqual(c.check_adapter_doc(root, module, sync), [])
+        found = c.check_adapter_doc(root, dict(module, status="complete"), sync)
+        self.assertEqual(len(found), 2, "both the TODO and the not-investigated mark")
+        self.assertIn("still has 'TODO'", found[0])
+        self.assertIn("still has '\u2753'", found[1])
+
     def test_generating_over_an_existing_module_is_refused(self):
         with self.assertRaises(SystemExit):
             na.generate(REPO, "demo", "Demo", self.out)
@@ -106,13 +134,15 @@ class Registration(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root)
         shutil.copy(os.path.join(REPO, "modules.json"), self.root)
+        os.makedirs(os.path.join(self.root, "contributor-docs", "scripts"))
+        shutil.copy(os.path.join(REPO, "contributor-docs", "scripts", "sync-docs.mjs"), os.path.join(self.root, "contributor-docs", "scripts"))
 
     def modules(self):
         with open(os.path.join(self.root, "modules.json")) as f:
             return json.load(f)["modules"]
 
     def test_a_new_adapter_is_registered_after_the_last_published_module(self):
-        na.register(self.root, "demo")
+        na.register(self.root, "demo", "Demo")
         modules = self.modules()
         names = [m["name"] for m in modules]
         self.assertEqual(names[names.index("spark-adapter") + 1], "demo-adapter")
@@ -121,13 +151,26 @@ class Registration(unittest.TestCase):
         self.assertTrue(entry["published"] and entry["mutation"])
         self.assertEqual(entry["capabilities"], "invaract-capabilities-demo.yaml")
 
+    def test_registration_records_the_write_up_and_renders_it_in_the_contributor_docs(self):
+        na.register(self.root, "demo", "Demo")
+        entry = [m for m in self.modules() if m["name"] == "demo-adapter"][0]
+        self.assertEqual(entry["doc"], "docs/DEMO_ADAPTER.md")
+        self.assertTrue(entry["docStandard"])
+        self.assertEqual(entry["status"], "in-progress")
+        with open(os.path.join(self.root, "contributor-docs", "scripts", "sync-docs.mjs")) as f:
+            sync = f.read()
+        self.assertIn("src: 'docs/DEMO_ADAPTER.md',\n    slug: 'design/demo-adapter',\n    section: 'Design Docs',\n    label: 'Demo Adapter',", sync)
+        # after the guide (order 8), before the Connectors section
+        self.assertIn("order: 9,", sync.split("src: 'docs/DEMO_ADAPTER.md'", 1)[1].split("},", 1)[0])
+        self.assertLess(sync.index("DEMO_ADAPTER.md"), sync.index("docs/connectors/delta.md"))
+
     def test_registering_twice_is_refused(self):
-        na.register(self.root, "demo")
+        na.register(self.root, "demo", "Demo")
         with self.assertRaises(SystemExit):
-            na.register(self.root, "demo")
+            na.register(self.root, "demo", "Demo")
 
     def test_the_rewritten_registry_keeps_its_comment_and_stays_valid_json(self):
-        na.register(self.root, "demo")
+        na.register(self.root, "demo", "Demo")
         with open(os.path.join(self.root, "modules.json")) as f:
             data = json.load(f)
         self.assertIn("_comment", data)
