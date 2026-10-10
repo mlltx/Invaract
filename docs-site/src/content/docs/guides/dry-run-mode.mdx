@@ -384,7 +384,7 @@ Two kinds of metadata, kept apart on purpose:
 | Conf prefix | Describes | Where it lands |
 | --- | --- | --- |
 | `spark.invaract.contract.metadata.<key>=<value>` | The **contract**: owner, team, source system, a ticket. | The draft's `extensions:` block, and every event's `metadata`. |
-| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, and nowhere else. |
+| `spark.invaract.job.metadata.<key>=<value>` | One **run** of the job: an orchestrator run id, a DAG, a trigger. | `job.attributes` on every event, dry-run and enforcement alike, and nowhere else. |
 
 The run-level facts stay out of the contract because a contract outlives the run: a run id
 in a promoted contract would be stale the next night. The contract-level ones ride in the
@@ -471,7 +471,8 @@ through the answer like this.
    portable, and add the rules dry-run can't infer, as in
    [Write a Contract](/guides/writing-a-contract/).
 6. **Switch to enforcement**: replace `spark.invaract.dryRun=true` with
-   `spark.invaract.contract=<your reviewed contract>`. The strict toggles
+   `spark.invaract.contract=<your reviewed contract>`. The enforcement events carry the same
+   `job` (`engine`, `jobId`, `attributes`), so the job's dry run and its enforced runs can be followed together. The strict toggles
    (`rejectUndeclaredInputs`, `rejectUndeclaredFields`) are off by default; turn them on later,
    once the job has run clean.
 

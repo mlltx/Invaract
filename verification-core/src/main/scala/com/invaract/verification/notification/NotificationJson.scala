@@ -63,7 +63,8 @@ object NotificationJson {
         "fingerprints" -> e.fingerprints.map(_.toMap),
         "dataQuality" -> e.dataQuality.map(_.toMap),
         "roleConformance" -> e.roleConformance.map(_.toMap),
-        "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap)
+        "unverifiableInputs" -> e.unverifiableInputs.map(_.toMap),
+        "job" -> e.job.map(_.toMap)
       )
     case e: WriteEvent =>
       Map(
@@ -85,7 +86,8 @@ object NotificationJson {
         "operation" -> e.operation,
         "catalog" -> e.catalog.map(_.toMap),
         "partitionColumns" -> e.partitionColumns,
-        "datasetType" -> e.datasetType.map(_.name)
+        "datasetType" -> e.datasetType.map(_.name),
+        "job" -> e.job.map(_.toMap)
       )
     case e: JobSummaryEvent =>
       Map(
@@ -97,7 +99,8 @@ object NotificationJson {
         "totalViolations" -> e.totalViolations,
         "durationMs" -> e.durationMs,
         "metadata" -> e.metadata,
-        "runId" -> e.runId
+        "runId" -> e.runId,
+        "job" -> e.job.map(_.toMap)
       )
     case e: ContractInferenceEvent =>
       Map(

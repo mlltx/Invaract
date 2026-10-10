@@ -90,6 +90,22 @@ class BrokenAdapterSpec extends AnyFunSuite {
         case p: ScenarioOutcome.Passed   => p.copy(statuses = Nil)
       }),
       allIds
+    ),
+    Mistake(
+      "publishes events that do not say which engine produced them",
+      new Variant(rewriteOutcome = (_, o) => o match {
+        case r: ScenarioOutcome.Rejected => r.copy(eventEngines = r.eventEngines.map(_ => None))
+        case p: ScenarioOutcome.Passed   => p.copy(eventEngines = p.eventEngines.map(_ => None))
+      }),
+      allIds
+    ),
+    Mistake(
+      "publishes events naming another engine",
+      new Variant(rewriteOutcome = (_, o) => o match {
+        case r: ScenarioOutcome.Rejected => r.copy(eventEngines = r.eventEngines.map(_ => Some("some-other-engine")))
+        case p: ScenarioOutcome.Passed   => p.copy(eventEngines = p.eventEngines.map(_ => Some("some-other-engine")))
+      }),
+      allIds
     )
   )
 

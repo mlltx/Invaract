@@ -316,6 +316,8 @@ class ContractEnforcementRuleOrgPolicySpec extends AnyFunSuite with BeforeAndAft
     assert(event.status == "FAILED")
     assert(event.violations.exists(_.violationType == ViolationType.OrgPolicyViolation))
     assert(event.runId.isDefined, "the sink overload always threads a real runId through")
+    assert(event.job.flatMap(_.engine).contains("spark"), "and the engine and job, on the org-policy rejection too")
+    assert(event.job.flatMap(_.runId) == event.runId)
   }
 
   // -- injection: reuses RuleVerifier/VerificationOptions, no new evaluator ---

@@ -1,9 +1,25 @@
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791068443057,
-  "runId": "local-1791068436169",
+  "timestamp": 1791616869177,
   "unverifiableInputs": [],
-  "eventId": "524ceab0cb1ea891224ee9f502c0823e09aefa7cebae51243e749e13101c1ee4",
+  "job": {
+    "engineDetails": {
+      "master": "local[*]",
+      "deployMode": "client"
+    },
+    "name": "InvaractDemoJobHarness",
+    "startTimeMs": 1791616859629,
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "engineVersion": "3.5.7",
+    "runId": "local-1791616860604",
+    "user": "root",
+    "engine": "spark"
+  },
+  "eventId": "2f7d167bf3c686181e4f51e12f393b45933e631a2f403396bd940a7a3b20c480",
   "fingerprints": null,
   "status": "PASSED",
   "metadata": {
@@ -13,6 +29,7 @@
   "violations": [],
   "schemaVersion": 1,
   "roleConformance": [],
+  "runId": "local-1791616860604",
   "dataQuality": [],
   "contract": "invaract_demo_output@1.0.0"
 }

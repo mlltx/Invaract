@@ -6,7 +6,7 @@ package com.invaract.sparkadapter
 
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline, VerificationResult, VerificationSetup}
 import com.invaract.contract.{Contract, LogicalSchema, OrgPolicy}
-import com.invaract.verification.notification.{InferenceStatus, NotificationSink}
+import com.invaract.verification.notification.{InferenceStatus, JobInfo, NotificationSink}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
@@ -119,10 +119,12 @@ object ContractEnforcementRule {
       val resolvedContract = resolveContractLocations(contract, session)
       val resolvedOptions = resolveVerificationOptions(options, session)
       val applicationId = Some(session.sparkContext.applicationId)
-      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId)
+      // Which engine and job these events come from - the same identity dry-run mode reports (DryRunReporter.jobInfoOf).
+      val job = Some(DryRunReporter.jobInfoOf(session))
+      val (governedContract, governedOptions) = enforceOrgPolicy(resolvedContract, resolvedOptions, session, Some(sink), applicationId, job)
       val checkpointRegistry = new CheckpointRegistry
       (plan: LogicalPlan) =>
-        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry))
+        verifyOrThrow(governedContract, plan, governedOptions, Some(sink), applicationId, checkpointRegistry = Some(checkpointRegistry), job = job)
     }
 
   /** Spark configuration key naming an `id=location` `.properties` file
@@ -300,9 +302,10 @@ object ContractEnforcementRule {
       options: VerificationOptions,
       session: SparkSession,
       sink: Option[NotificationSink],
-      applicationId: Option[String]
+      applicationId: Option[String],
+      job: Option[JobInfo] = None
   ): (Contract, VerificationOptions) =
-    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId)
+    VerificationSetup.enforceOrgPolicy(contract, options, SparkConfigSource(session), sink, applicationId, job)
 
   /** Builds a Spark check rule for "dry-run mode" (ROADMAP.md): installed
     * the same way as `forContract` — via
@@ -441,7 +444,8 @@ object ContractEnforcementRule {
       sink: Option[NotificationSink] = None,
       applicationId: Option[String] = None,
       checkpointRegistry: Option[CheckpointRegistry] = None,
-      capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared
+      capabilities: Option[AdapterCapabilities] = SparkCapabilities.declared,
+      job: Option[JobInfo] = None
   ): Unit = {
     // Every analyzed plan is offered to the registry - not just writes: a
     // plan that is later checkpointed is a plain query Dataset, seen here
@@ -467,7 +471,7 @@ object ContractEnforcementRule {
         // plain read/transformation the moment an invalid contract was merely
         // *active*. `checkedWrite` is passed by-name: the pipeline validates the
         // contract first and only then asks for the write.
-        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities)
+        VerificationPipeline.verifyWrite(contract, checkedWrite(plan, translated), options, sink, applicationId, capabilities, job)
       case _ =>
         // Checked before the fail-closed Command catch-all below: a recognized
         // state-changing CALL (nine procedures - see StateChangingCallSupport)
@@ -485,10 +489,11 @@ object ContractEnforcementRule {
               SQLConf.get.caseSensitiveAnalysis,
               options,
               sink,
-              applicationId
+              applicationId,
+              job
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId)
+            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId, job)
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }

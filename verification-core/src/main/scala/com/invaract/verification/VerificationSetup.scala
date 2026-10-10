@@ -6,7 +6,7 @@ package com.invaract.verification
 import com.invaract.contract.{Contract, OrgPolicy, OrgPolicyEvaluator, OrgPolicyParseException, OrgPolicyParser, OrgPolicyValidator, PolicyViolation}
 import com.invaract.ir
 import com.invaract.verification.location.{ContractLocationResolution, LocationResolver, NoOpLocationResolver, StaticMapLocationResolver}
-import com.invaract.verification.notification.NotificationSink
+import com.invaract.verification.notification.{JobInfo, NotificationSink}
 
 /** Everything an engine adapter does once, at session/job start, to turn
   * configuration into the contract and `VerificationOptions` it will enforce -
@@ -103,7 +103,8 @@ object VerificationSetup {
       options: VerificationOptions,
       config: ConfigSource,
       sink: Option[NotificationSink],
-      runId: Option[String]
+      runId: Option[String],
+      job: Option[JobInfo] = None
   ): (Contract, VerificationOptions) =
     resolveOrgPolicyLayers(config) match {
       case Nil => (contract, options)
@@ -122,7 +123,7 @@ object VerificationSetup {
         if (evaluation.hasBlockingViolations) {
           val violations = evaluation.enforceViolations.map(toViolation(governedContract, _))
           val result = VerificationResult.of(s"${governedContract.id}@${governedContract.version}", violations)
-          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId, job)
           // No parenthesized fragment here: PlanPrinter renders UnknownPlan as
           // "UnknownPlan(<description>)" verbatim - wrapping the description in
           // its own parens too produced a confusing doubled "((...))".
@@ -139,7 +140,7 @@ object VerificationSetup {
             s"${governedContract.id}@${governedContract.version}",
             evaluation.warnViolations.map(toViolation(governedContract, _))
           )
-          VerificationPipeline.publishValidation(governedContract, result, sink, runId)
+          VerificationPipeline.publishValidation(governedContract, result, sink, runId, job)
         }
 
         (governedContract, governedOptions)

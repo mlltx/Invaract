@@ -4173,4 +4173,80 @@ class ContractEnforcementRuleSpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
   }
+
+  // --- job: the events name the engine and the job that produced them ------------------------
+
+  /** A write plan Spark really analyzed, to hand to a rule built by `forContract` (see the 3-arg test above). */
+  private def capturedWritePlan(outputName: String): LogicalPlan = {
+    val outputPath = scratchDir.resolve(outputName).toString
+    withContract(passingContractYaml.replace("OUTPUT_PATH", outputPath)) {
+      spark.range(5).withColumn("doubled", col("id") * 2).write.mode("overwrite").parquet(outputPath)
+    }
+    capturedPlans.reverseIterator.find(WriteCommandSupport.combined.isDefinedAt).getOrElse(fail("no analyzed write plan was captured"))
+  }
+
+  private def validationEventsOf(sink: TestNotificationSink): List[ContractValidationEvent] =
+    sink.events.collect { case e: ContractValidationEvent => e }
+
+  test("job: forContract(..., sink) publishes events naming the engine, its version, the run and the configured job") {
+    val plan = capturedWritePlan("job_pass.parquet")
+    val outputPath = scratchDir.resolve("job_pass.parquet").toString
+    val sink = new TestNotificationSink
+    spark.conf.set(DryRunReporter.JobIdConfKey, "orders_nightly")
+    spark.conf.set(DryRunReporter.JobMetadataConfPrefix + "team", "data-eng")
+    try {
+      val rule = ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", outputPath)), VerificationOptions(), sink)
+      rule(spark)(plan)
+    } finally {
+      spark.conf.unset(DryRunReporter.JobIdConfKey)
+      spark.conf.unset(DryRunReporter.JobMetadataConfPrefix + "team")
+    }
+    val event = validationEventsOf(sink).last
+    val job = event.job.getOrElse(fail("the event carries no job"))
+    assert(event.status == "PASSED")
+    assert(job.engine.contains("spark"))
+    assert(job.engineVersion.contains(spark.sparkContext.version))
+    assert(job.jobId.contains("orders_nightly"))
+    assert(job.runId.contains(spark.sparkContext.applicationId))
+    assert(job.attributes == Map("team" -> "data-eng"))
+    assert(event.runId == job.runId)
+  }
+
+  test("job: a rejected write's FAILED event names the job as well") {
+    val plan = capturedWritePlan("job_fail.parquet")
+    val outputPath = scratchDir.resolve("job_fail.parquet").toString
+    val sink = new TestNotificationSink
+    val rule = ContractEnforcementRule.forContract(
+      parseContract(passingContractYaml.replace("OUTPUT_PATH", outputPath).replace("doubled", "not_produced")), VerificationOptions(), sink
+    )
+    intercept[ContractViolationException](rule(spark)(plan))
+    val event = validationEventsOf(sink).last
+    assert(event.status == "FAILED")
+    assert(event.job.flatMap(_.engine).contains("spark"))
+  }
+
+  test("job: verifyOrThrow passes the job to the event of a write it fails closed on") {
+    val sink = new TestNotificationSink
+    val job = com.invaract.verification.notification.JobInfo(engine = Some("spark"), jobId = Some("closed"))
+    val contract = parseContract(passingContractYaml.replace("OUTPUT_PATH", scratchDir.resolve("job_closed.parquet").toString))
+    intercept[ContractViolationException] {
+      ContractEnforcementRule.verifyOrThrow(contract, ContractEnforcementRuleSpec.UnmodelledCommand(), VerificationOptions(), Some(sink), None, job = Some(job))
+    }
+    assert(validationEventsOf(sink).map(e => e.status -> e.job) == List("FAILED" -> Some(job)))
+    assert(validationEventsOf(sink).head.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+  }
+
+  test("job: with no sink there is nothing to name a job in, and forContract still enforces") {
+    val plan = capturedWritePlan("job_nosink.parquet")
+    val outputPath = scratchDir.resolve("job_nosink.parquet").toString
+    ContractEnforcementRule.forContract(parseContract(passingContractYaml.replace("OUTPUT_PATH", outputPath)))(spark)(plan) // must not throw
+  }
+}
+
+object ContractEnforcementRuleSpec {
+
+  /** A Catalyst command Invaract has no translation for and does not know to be safe. */
+  final case class UnmodelledCommand() extends org.apache.spark.sql.catalyst.plans.logical.LeafCommand {
+    override def output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute] = Nil
+  }
 }

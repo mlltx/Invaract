@@ -166,9 +166,11 @@ one per thing an adapter can find:
 
 | Entry point | When an adapter calls it |
 |---|---|
-| `verifyWrite(contract, write: => CheckedWrite, options, sink, runId)` | a recognized write |
-| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
-| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId)` | the fail-closed response to something that looks like a write but could not be translated |
+| `verifyWrite(contract, write: => CheckedWrite, options, sink, runId, capabilities, job)` | a recognized write |
+| `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId, job)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
+| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId, job)` | the fail-closed response to something that looks like a write but could not be translated |
+
+`job` is the adapter's `JobInfo` (below): pass it on every call and it rides on every event the call publishes.
 
 `CheckedWrite` is what an adapter hands over for a write: the translated plan, input/output
 `LogicalSchema`s, case sensitivity, its DML classification (`MutationClassification`), the
@@ -383,6 +385,18 @@ obvious.
 engine's own run identifier, and `JobInfo` carries `engine`, `engineVersion` and a free-form
 `engineDetails` map for whatever else the adapter wants to record. An adapter fills those in;
 it does not add engine-named fields to the event schema.
+
+**Every event names its engine and job.** `ContractValidationEvent`, `WriteEvent` and `JobSummaryEvent` carry
+`job: Option[JobInfo]` (the dry-run events always had a `job`): which engine produced the event
+(`engine`, `engineVersion`), the job's stable identity across runs (`jobId`), the run (`runId`) and whatever the
+platform attached through the engine's own configuration (`attributes`). That is what lets a consumer receiving
+events from more than one engine tell them apart, and group one job's events across runs. An adapter that
+publishes events passes its `JobInfo` to the pipeline (the `job` parameter above) and to any `WriteEvent` it
+builds itself. The conformance kit holds it to that: an adapter that declares `reporting.notifications` must
+publish validation events whose `job.engine` is its own name (the `adapter:` in its capability declaration),
+and `BrokenAdapterSpec` proves the kit fails an adapter that names none or another engine. Spark's `JobInfo` is
+`DryRunReporter.jobInfoOf(session)`: `engine = "spark"`, `jobId` from `spark.invaract.jobId`, and
+`attributes` from `spark.invaract.job.metadata.<key>`.
 
 **A sink that needs an engine's storage library lives in that engine's adapter.** The core has
 no Hadoop dependency: `HadoopFsNotificationSink` is in `spark-adapter`, and a dead letter with a

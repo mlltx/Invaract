@@ -6,7 +6,7 @@ package com.invaract.verification
 import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
 import com.invaract.contract.LogicalType.{IntegerType, LongType}
 import com.invaract.ir.{ColumnRef, ColumnReference, DatasetRef, DeleteScope, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, RowMutation, UnknownPlan, Write}
-import com.invaract.verification.notification.{ContractValidationEvent, TestNotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, TestNotificationSink}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -434,5 +434,67 @@ class VerificationPipelineSpec extends AnyFunSuite {
     VerificationPipeline.publishValidation(withMeta, VerificationResult.of("pipe@1.0.0", Nil), Some(sink), None)
     assert(validationEvents(sink).head.metadata == Map("team" -> "payments"))
     VerificationPipeline.publishValidation(withMeta, VerificationResult.of("pipe@1.0.0", Nil), None, None)
+  }
+
+  // --- job: which engine and job produced the events ----------------------------------------------
+
+  private val job = JobInfo(runId = Some("run-9"), jobId = Some("orders_nightly"), engine = Some("toy"), engineVersion = Some("1.2"))
+
+  test("job: a passing write's event names the engine and job, and carries no job when none was given") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(sink), job = Some(job))
+    assert(validationEvents(sink).map(_.job) == List(Some(job)))
+    val bare = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(bare))
+    assert(validationEvents(bare).map(_.job) == List(None))
+  }
+
+  test("job: a rejected write's FAILED event names the job too") {
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(contract, checked(output = Cols().add("id", LongType, nullable = false)), VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(e => e.status -> e.job) == List("FAILED" -> Some(job)))
+  }
+
+  test("job: the run id is taken from the job when no run id is given, and an explicit run id wins") {
+    val fromJob = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(fromJob), job = Some(job))
+    assert(validationEvents(fromJob).head.runId.contains("run-9"))
+    val explicit = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(explicit), runId = Some("explicit"), job = Some(job))
+    assert(validationEvents(explicit).head.runId.contains("explicit"))
+    val noRun = new TestNotificationSink
+    VerificationPipeline.verifyWrite(contract, checked(), VerificationOptions(), Some(noRun), job = Some(job.copy(runId = None)))
+    assert(validationEvents(noRun).head.runId.isEmpty)
+  }
+
+  test("job: a state change's event names the job, on a pass and a rejection") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.verifyStateChange(contract, "CALL x(...)", "out/report", goodOutput, caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyStateChange(contract, "CALL x(...)", "out/report", Cols(), caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(e => e.status -> e.job) == List("PASSED" -> Some(job), "FAILED" -> Some(job)))
+  }
+
+  test("job: an unverifiable write's FAILED event names the job") {
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.rejectUnverifiableWrite(contract, "MergeIntoCommand", UnknownPlan("a merge"), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(_.job) == List(Some(job)))
+  }
+
+  test("job: an invalid contract's rejection names the job, on the write path and the state-change path") {
+    val invalid = ContractParser.parse("id: bad\nversion: \"1.0.0\"\n")
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyWrite(invalid, checked(), VerificationOptions(), Some(sink), job = Some(job))
+    }
+    intercept[ContractViolationException] {
+      VerificationPipeline.verifyStateChange(invalid, "CALL x(...)", "out/report", goodOutput, caseSensitive = false, VerificationOptions(), Some(sink), job = Some(job))
+    }
+    assert(validationEvents(sink).map(_.job) == List(Some(job), Some(job)))
   }
 }

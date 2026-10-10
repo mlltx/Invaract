@@ -82,28 +82,36 @@ copied from real runs; they are published as files next to the
 ```json
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791231567062,
-  "runId": "local-1791231561015",
+  "timestamp": 1791616869177,
   "unverifiableInputs": [],
-  "eventId": "65d45e7710eb0238962658c196f52dd35589c32180674894aed174d778744cde",
+  "job": {
+    "engineDetails": {
+      "master": "local[*]",
+      "deployMode": "client"
+    },
+    "name": "InvaractDemoJobHarness",
+    "startTimeMs": 1791616859629,
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "engineVersion": "3.5.7",
+    "runId": "local-1791616860604",
+    "user": "root",
+    "engine": "spark"
+  },
+  "eventId": "2f7d167bf3c686181e4f51e12f393b45933e631a2f403396bd940a7a3b20c480",
   "fingerprints": null,
-  "status": "FAILED",
+  "status": "PASSED",
   "metadata": {
-    "description": "{purpose=A deliberately-broken variant of demo/contracts/invaract_output.yaml, kept for reference/demonstration of ContractEnforcementRule's abort behavior (see ROADMAP.md Phase 5 / docs/SPARK_ADAPTER.md). Not wired into ./dev/test — the real demo pipeline is expected to pass its real contract, not this one. Declares a 'customer_name' output field the real InvaractPlugin pipeline never produces, so verification fails deterministically.\n}",
+    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
     "owner": "invaract-demo"
   },
-  "violations": [
-    {
-      "type": "MISSING_OUTPUT_FIELD",
-      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
-      "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
-      "column": "customer_name",
-      "location": "file:/workspace/demo/output/result_broken_example.parquet",
-      "expected": "string"
-    }
-  ],
+  "violations": [],
   "schemaVersion": 1,
   "roleConformance": [],
+  "runId": "local-1791616860604",
   "dataQuality": [],
   "contract": "invaract_demo_output@1.0.0"
 }
@@ -115,10 +123,26 @@ deliberately breaks a contract):
 ```json
 {
   "eventType": "CONTRACT_VALIDATION",
-  "timestamp": 1791068923606,
-  "runId": "local-1791068917299",
+  "timestamp": 1791616898958,
   "unverifiableInputs": [],
-  "eventId": "de1cb5da9ff70da2846108b7a6c2b921f5d72d7975c9cdfe82a50758ea5825cb",
+  "job": {
+    "engineDetails": {
+      "master": "local[*]",
+      "deployMode": "client"
+    },
+    "name": "InvaractDemoJobHarness",
+    "startTimeMs": 1791616888688,
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "engineVersion": "3.5.7",
+    "runId": "local-1791616889809",
+    "user": "root",
+    "engine": "spark"
+  },
+  "eventId": "6d80cb9064e5dc24371a60320a2f5d1a8eca27b874df00a4994517f084df11e0",
   "fingerprints": null,
   "status": "FAILED",
   "metadata": {
@@ -127,14 +151,17 @@ deliberately breaks a contract):
   },
   "violations": [
     {
-      "type": "MISSING_OUTPUT_FIELD",
-      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "location": "file:/home/user/Invaract/demo/output/result_broken_example.parquet",
+      "expected": "string",
       "remediation": "Add a 'customer_name' column (type 'string') to the output, or mark it optional in the contract if it isn't always produced.",
-      "column": "customer_name"
+      "message": "required field 'customer_name' is absent from the actual OUTPUT schema",
+      "column": "customer_name",
+      "type": "MISSING_OUTPUT_FIELD"
     }
   ],
   "schemaVersion": 1,
   "roleConformance": [],
+  "runId": "local-1791616889809",
   "dataQuality": [],
   "contract": "invaract_demo_output@1.0.0"
 }
@@ -149,11 +176,27 @@ deliberately breaks a contract):
   "eventType": "WRITE",
   "catalog": null,
   "location": "file:/home/user/Invaract/demo/output/result.parquet",
-  "timestamp": 1791068443839,
+  "timestamp": 1791616870381,
   "rowCount": 10,
   "bytesWritten": 1324,
-  "runId": "local-1791068436169",
-  "eventId": "f1e047c3c0b970245117685b4b2f3997511b9c788f6d47fa20d35f2eb48c8db3",
+  "job": {
+    "engineDetails": {
+      "master": "local[*]",
+      "deployMode": "client"
+    },
+    "name": "InvaractDemoJobHarness",
+    "startTimeMs": 1791616859629,
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "engineVersion": "3.5.7",
+    "runId": "local-1791616860604",
+    "user": "root",
+    "engine": "spark"
+  },
+  "eventId": "f2ff702406da2560f0c5f62eac759e12cc799eeac36c0b31c108bdb5f5e9d469",
   "operation": null,
   "partitionColumns": [],
   "schema": [
@@ -179,7 +222,7 @@ deliberately breaks a contract):
     }
   ],
   "fileCount": 1,
-  "durationMs": 769,
+  "durationMs": 1183,
   "deltaVersion": null,
   "metadata": {
     "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
@@ -187,6 +230,7 @@ deliberately breaks a contract):
   },
   "saveMode": "overwrite",
   "schemaVersion": 1,
+  "runId": "local-1791616860604",
   "contract": "invaract_demo_output@1.0.0",
   "datasetType": null
 }
@@ -208,6 +252,16 @@ metadata vocabulary to maintain.
 `runId` is the engine's own identifier for the run (for Spark, the application's ID,
 `sparkContext.applicationId`) on both event types — useful for grouping events from the same job run when a sink
 aggregates events across many jobs.
+
+`job` says which engine and which job produced the event, so a sink that receives events from
+many jobs (or, one day, from more than one engine) can tell them apart and group one job's
+events across runs. It is the same object the [dry-run events](/guides/dry-run-mode/#whats-in-an-event)
+carry: `engine` (`"spark"`) and `engineVersion`; `jobId`, the job's stable identity across runs,
+from `spark.invaract.jobId` (absent if you didn't set it — set it, because Spark's own app name
+is often different on every run under a scheduler); `runId`, `name` and `user`; `engineDetails`
+(for Spark, `master` and `deployMode`); and `attributes`, one entry for every
+`spark.invaract.job.metadata.<key>=<value>` you set, with the prefix stripped. Nothing else from your
+Spark configuration is sent. On a `JobSummaryEvent` it is the job of the events being summarized.
 
 `fingerprints` on `ContractValidationEvent` is `null` unless you've opted into
 [semantic lineage fingerprinting](/guides/fingerprinting-transformations/) — a separate,
@@ -584,7 +638,7 @@ event.
   afterward:
 
   ```json
-  {"eventType": "JOB_SUMMARY", "timestamp": 1735689600200, "totalWrites": 1, "checksPassed": 1, "checksFailed": 0, "totalViolations": 0, "durationMs": 9676, "metadata": {}, "runId": "local-1735689599000"}
+  {"checksFailed": 0, "eventType": "JOB_SUMMARY", "timestamp": 1791616871013, "totalViolations": 0, "job": {"engineDetails": {"master": "local[*]", "deployMode": "client"}, "name": "InvaractDemoJobHarness", "startTimeMs": 1791616859629, "attributes": {"team": "orders", "dag": "orders_daily"}, "jobId": "orders_nightly", "engineVersion": "3.5.7", "runId": "local-1791616860604", "user": "root", "engine": "spark"}, "eventId": "76663fb3c9180185675677c6cdd78b024516f6678f21494338187ae5a5f4a311", "totalWrites": 1, "durationMs": 11415, "metadata": {"description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}", "owner": "invaract-demo"}, "schemaVersion": 1, "checksPassed": 1, "runId": "local-1791616860604"}
   ```
 
   A single job (like `DemoJobHarness`) calls `publishSummary()` once, right after its

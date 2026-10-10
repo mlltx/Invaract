@@ -5,7 +5,7 @@ package com.invaract.verification
 
 import com.invaract.contract.{Contract, ContractParser, ContractRule, OrgPolicyParseException}
 import com.invaract.verification.location.LocationResolutionException
-import com.invaract.verification.notification.{ContractValidationEvent, TestNotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, TestNotificationSink}
 
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
@@ -165,6 +165,7 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(ex.getMessage.contains("rejected by organizational policy before any plan was analyzed"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
     assert(validationEvents(sink).head.runId.contains("app-3"))
+    assert(validationEvents(sink).head.job.isEmpty, "no job was supplied")
   }
 
   test("enforceOrgPolicy: a policy the contract satisfies blocks nothing and publishes nothing") {
@@ -258,5 +259,24 @@ class VerificationSetupSpec extends AnyFunSuite with BeforeAndAfterAll {
   test("splitCommaSeparated trims and drops blanks") {
     assert(VerificationSetup.splitCommaSeparated(" a, b ,, c ,") == List("a", "b", "c"))
     assert(VerificationSetup.splitCommaSeparated("").isEmpty)
+  }
+
+  test("enforceOrgPolicy: the rejection event names the job it was given") {
+    val policy = file("enforce-job.yaml", catalogRequired)
+    val job = JobInfo(runId = Some("run-1"), jobId = Some("orders_nightly"), engine = Some("toy"))
+    val sink = new TestNotificationSink
+    intercept[ContractViolationException] {
+      VerificationSetup.enforceOrgPolicy(plainContract, VerificationOptions(), config(InvaractConf.OrgPolicy -> policy), Some(sink), None, Some(job))
+    }
+    assert(validationEvents(sink).map(_.job) == List(Some(job)))
+    assert(validationEvents(sink).head.runId.contains("run-1"), "the run id comes from the job when none is given")
+  }
+
+  test("enforceOrgPolicy: a Warn-only policy's informational event names the job too") {
+    val policy = file("warn-job.yaml", catalogRequired + "    mode: warn\n")
+    val job = JobInfo(engine = Some("toy"))
+    val sink = new TestNotificationSink
+    VerificationSetup.enforceOrgPolicy(plainContract, VerificationOptions(), config(InvaractConf.OrgPolicy -> policy), Some(sink), None, Some(job))
+    assert(validationEvents(sink).map(e => e.status -> e.job) == List("PASSED" -> Some(job)))
   }
 }

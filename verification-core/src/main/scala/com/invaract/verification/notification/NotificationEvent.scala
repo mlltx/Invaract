@@ -96,6 +96,14 @@ sealed trait NotificationEvent {
   * behind a lineage boundary" section for why a bare `.cache()`/`.persist()`
   * alone doesn't reach here) — on both a passing and a failing check alike,
   * the same as `dataQuality`/`roleConformance` above.
+  *
+  * `job` says which engine and which job produced the event (`JobInfo`: engine
+  * and version, the job's stable `jobId`, the run, the platform's attributes) -
+  * the same shape `ContractInferenceEvent` and `DryRunSummaryEvent` already carry,
+  * so a consumer receiving events from more than one engine can tell them apart
+  * and group one job's events across runs. Supplied by the adapter; `None` only
+  * when an adapter supplies none (the conformance kit requires every adapter that
+  * publishes events to name its engine).
   */
 case class ContractValidationEvent(
   contract: String,
@@ -107,7 +115,8 @@ case class ContractValidationEvent(
   fingerprints: Option[TransformationFingerprint] = None,
   dataQuality: List[DataQualityCheckResult] = Nil,
   roleConformance: List[RoleConformanceCheckResult] = Nil,
-  unverifiableInputs: List[UnverifiableInput] = Nil
+  unverifiableInputs: List[UnverifiableInput] = Nil,
+  job: Option[JobInfo] = None
 ) extends NotificationEvent {
   val eventType: String = "CONTRACT_VALIDATION"
 }
@@ -259,6 +268,9 @@ object CatalogInfo {
   * always-on lookup of what a completed write's own *output* was declared
   * as, needing no `VerificationOptions` flag since it consults only the
   * contract's static declarations, not a runtime plan-analysis check.
+  *
+  * `job` says which engine and which job wrote it - see
+  * `ContractValidationEvent.job`.
   */
 case class WriteEvent(
   contract: Option[String],
@@ -278,7 +290,8 @@ case class WriteEvent(
   operation: Option[String] = None,
   catalog: Option[CatalogInfo] = None,
   partitionColumns: List[String] = Nil,
-  datasetType: Option[DatasetType] = None
+  datasetType: Option[DatasetType] = None,
+  job: Option[JobInfo] = None
 ) extends NotificationEvent {
   val eventType: String = "WRITE"
 }
@@ -297,6 +310,9 @@ case class WriteEvent(
   * don't cover well: a job with many writes produces many events, useful
   * for a stream processor but noisy for a human — one `JobSummaryEvent`
   * gives a single Slack message or email per run instead.
+  *
+  * `job` is the most recent `job` any event it summarizes carried, the same way
+  * `runId` and `metadata` are - see `ContractValidationEvent.job`.
   */
 case class JobSummaryEvent(
   totalWrites: Long,
@@ -306,12 +322,13 @@ case class JobSummaryEvent(
   durationMs: Long,
   timestamp: Long,
   metadata: Map[String, Any],
-  runId: Option[String] = None
+  runId: Option[String] = None,
+  job: Option[JobInfo] = None
 ) extends NotificationEvent {
   val eventType: String = "JOB_SUMMARY"
 }
 
-/** Where a dry-run event came from - enough to tell one job's runs apart
+/** Where an event came from - enough to tell one job's runs apart
   * from another's, and to group one job's events together across runs.
   * Engine-neutral: nothing here names an engine, so the same event shape
   * serves any adapter.

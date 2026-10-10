@@ -122,6 +122,9 @@ sealed trait ScenarioOutcome {
 
   /** The declared inputs the adapter could not confirm were read, because a lineage boundary hid them. */
   def unverifiableInputs: Set[String]
+
+  /** For each validation event the adapter published, the engine it named in `job.engine` (`None` when it named none). */
+  def eventEngines: List[Option[String]]
 }
 
 object ScenarioOutcome {
@@ -132,7 +135,8 @@ object ScenarioOutcome {
       nonDeterministicColumns: Set[String] = Set.empty,
       dataQuality: Set[(String, String)] = Set.empty,
       roles: Map[String, String] = Map.empty,
-      unverifiableInputs: Set[String] = Set.empty
+      unverifiableInputs: Set[String] = Set.empty,
+      eventEngines: List[Option[String]] = Nil
   ) extends ScenarioOutcome
 
   /** The write was blocked; `violationTypes` are the distinct `ViolationType`s reported. */
@@ -142,7 +146,8 @@ object ScenarioOutcome {
       nonDeterministicColumns: Set[String] = Set.empty,
       dataQuality: Set[(String, String)] = Set.empty,
       roles: Map[String, String] = Map.empty,
-      unverifiableInputs: Set[String] = Set.empty
+      unverifiableInputs: Set[String] = Set.empty,
+      eventEngines: List[Option[String]] = Nil
   ) extends ScenarioOutcome
 }
 

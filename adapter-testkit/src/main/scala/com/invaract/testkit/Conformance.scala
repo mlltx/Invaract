@@ -112,6 +112,12 @@ object Conformance {
             s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish exactly " +
               s"${wanted.mkString("[", ", ", "]")} validation event(s); it published ${outcome.statuses.mkString("[", ", ", "]")}"
           )
+        } else if (reports && outcome.eventEngines.exists(_ != Some(capabilities.adapter))) {
+          ScenarioVerdict.Diverges(
+            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id}, so its validation events must name " +
+              s"its engine '${capabilities.adapter}' in job.engine (a consumer receiving events from more than one engine tells them apart by it); " +
+              s"they named ${outcome.eventEngines.map(_.getOrElse("nothing")).mkString("[", ", ", "]")}"
+          )
         } else
           expectNonDeterministic match {
             case Some(columns) if expected == Expected.Pass && outcome.nonDeterministicColumns != columns =>
