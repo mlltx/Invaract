@@ -110,6 +110,11 @@ class SparkAdapterListenerSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(event.fileCount.exists(_ > 0L), s"expected a positive file count, got ${event.fileCount}")
     assert(event.durationMs >= 0L)
     assert(event.runId.contains(spark.sparkContext.applicationId))
+    // Which engine and job wrote it, the same identity the validation events carry.
+    val job = event.job.getOrElse(fail("the WriteEvent carries no job"))
+    assert(job.engine.contains("spark"))
+    assert(job.engineVersion.contains(spark.sparkContext.version))
+    assert(job.runId.contains(spark.sparkContext.applicationId))
     // Neither connector-specific field applies to a plain Parquet write.
     assert(event.deltaVersion.isEmpty, s"expected no deltaVersion for a Parquet write, got ${event.deltaVersion}")
     assert(event.icebergSnapshotId.isEmpty, s"expected no icebergSnapshotId for a Parquet write, got ${event.icebergSnapshotId}")

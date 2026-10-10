@@ -7,7 +7,7 @@ import com.invaract.contract.{Contract, ContractValidator, LogicalSchema}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.ir
 import com.invaract.ir.PlanPrinter
-import com.invaract.verification.notification.{ContractValidationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractValidationEvent, JobInfo, NotificationSink}
 
 import org.slf4j.LoggerFactory
 
@@ -77,6 +77,10 @@ object VerificationPipeline {
     * adapter declares `Unsupported` is rejected with `UNSUPPORTED_CONTRACT_FEATURE`
     * rather than passing a requirement nothing verified (see `CapabilityCheck`);
     * `None` skips the check.
+    *
+    * `job` identifies the engine and job (see `JobInfo`) and rides on every event this publishes -
+    * the validation event for a pass or a rejection alike. An adapter that publishes events supplies it;
+    * `runId` remains for an adapter that knows only a run id, and is taken from `job` when not given.
     */
   def verifyWrite(
       contract: Contract,
@@ -84,9 +88,10 @@ object VerificationPipeline {
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
       runId: Option[String] = None,
-      capabilities: Option[AdapterCapabilities] = None
+      capabilities: Option[AdapterCapabilities] = None,
+      job: Option[JobInfo] = None
   ): Unit = {
-    requireValidContract(contract, sink, runId)
+    requireValidContract(contract, sink, runId, job)
     val capabilityViolations = capabilities.toList.flatMap(CapabilityCheck.violations(contract, options, _))
     val checked = write
 
@@ -167,7 +172,7 @@ object VerificationPipeline {
       roleConformanceResults,
       structuralResult.unverifiableInputs
     )
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     if (!result.passed) {
       throw new ContractViolationException(result, explain(contract, checked.plan, result))
     }
@@ -212,12 +217,13 @@ object VerificationPipeline {
       caseSensitive: Boolean,
       options: VerificationOptions,
       sink: Option[NotificationSink] = None,
-      runId: Option[String] = None
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
   ): Unit = {
     // Same reasoning as verifyWrite: verifyStateChange assumes a structurally sound contract too.
-    requireValidContract(contract, sink, runId)
+    requireValidContract(contract, sink, runId, job)
     val result = StructuralVerifier.verifyStateChange(contract, location, resultingSchema, options, caseSensitive)
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     if (!result.passed) {
       // No ir.Plan translation exists for a state change (there's no query to
       // translate): a plain description stands in for the rendered plan tree.
@@ -240,11 +246,12 @@ object VerificationPipeline {
       operation: String,
       translatedPlan: ir.Plan,
       sink: Option[NotificationSink] = None,
-      runId: Option[String] = None
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
   ): Nothing = {
     val violation = Violations.unverifiableWrite(operation, s"${contract.id}@${contract.version}")
     val result = VerificationResult.of(s"${contract.id}@${contract.version}", List(violation))
-    publishValidation(contract, result, sink, runId)
+    publishValidation(contract, result, sink, runId, job)
     throw new ContractViolationException(result, explain(contract, translatedPlan, result))
   }
 
@@ -253,7 +260,12 @@ object VerificationPipeline {
     * type whose class cannot be resolved - the check every other rejection in
     * this object assumes has already passed.
     */
-  private[invaract] def requireValidContract(contract: Contract, sink: Option[NotificationSink], runId: Option[String]): Unit = {
+  private[invaract] def requireValidContract(
+      contract: Contract,
+      sink: Option[NotificationSink],
+      runId: Option[String],
+      job: Option[JobInfo] = None
+  ): Unit = {
     val validation = ContractValidator.validate(contract)
     // ContractValidator only checks customRuleTypes's shape (empty key/class
     // name, collision with a built-in RuleType) - it lives in `contract`, which
@@ -273,7 +285,7 @@ object VerificationPipeline {
         Violations.unresolvableCustomRuleType(contractRef, ruleType, className, message)
       }
       val result = VerificationResult.of(contractRef, validatorViolations ++ customRuleTypeViolations)
-      publishValidation(contract, result, sink, runId)
+      publishValidation(contract, result, sink, runId, job)
       // Reads as a plain sentence rather than a parenthesized fragment:
       // PlanPrinter already wraps an UnknownPlan as "UnknownPlan(<description>)",
       // so an inner "(...)" too would render as a confusing doubled "((...))".
@@ -288,7 +300,8 @@ object VerificationPipeline {
       contract: Contract,
       result: VerificationResult,
       sink: Option[NotificationSink],
-      runId: Option[String]
+      runId: Option[String],
+      job: Option[JobInfo] = None
   ): Unit =
     sink.foreach { s =>
       s.publish(
@@ -298,11 +311,13 @@ object VerificationPipeline {
           violations = result.violations,
           timestamp = System.currentTimeMillis(),
           metadata = contract.extensions,
-          runId = runId,
+          // an adapter that knows the job but not a separate run id still reports the run
+          runId = runId.orElse(job.flatMap(_.runId)),
           fingerprints = result.fingerprints,
           dataQuality = result.dataQuality,
           roleConformance = result.roleConformance,
-          unverifiableInputs = result.unverifiableInputs
+          unverifiableInputs = result.unverifiableInputs,
+          job = job
         )
       )
     }

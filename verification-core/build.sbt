@@ -129,7 +129,29 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.InputChecker.check"),
   // CapabilityMatrix.main wrote a page without the conformance suite's coverage, which the drift test rejects; the
   // generator is adapter-testkit's CapabilityMatrixPage (./dev/capabilities). Nothing outside this repository runs it.
-  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CapabilityMatrix.main")
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CapabilityMatrix.main"),
+  // Deliberate break, engine identity on the events: ContractValidationEvent, WriteEvent and JobSummaryEvent gained
+  // `job: Option[JobInfo]` (the dry-run events always had one), so a consumer receiving events from more than one
+  // engine can tell them apart (docs/MULTI_ENGINE_ADAPTERS.md, "Every event names its engine and job"). A new case
+  // class field changes `apply`/`copy`/the constructor. VerificationPipeline's three entry points and
+  // VerificationSetup.enforceOrgPolicy gained a trailing `job` parameter so an adapter can pass it. No consumers exist
+  // outside this repository; these are the exact lines MiMa's own output suggests.
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.rejectUnverifiableWrite"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.verifyStateChange"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationPipeline.verifyWrite"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.VerificationSetup.enforceOrgPolicy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractValidationEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractValidationEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.ContractValidationEvent.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobSummaryEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobSummaryEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.JobSummaryEvent.this"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.apply"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.copy"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.notification.WriteEvent.this"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.ContractValidationEvent$"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.JobSummaryEvent$"),
+  ProblemFilters.exclude[MissingTypesProblem]("com.invaract.verification.notification.WriteEvent$")
 )
 
 libraryDependencies ++= Seq(

@@ -39,11 +39,14 @@ final class RecordingSink extends NotificationSink {
   def unverifiableInputs: Set[String] =
     validations.lastOption.map(_.unverifiableInputs.map(_.inputName).toSet).getOrElse(Set.empty)
 
+  /** The engine each validation event named in `job.engine`, in order (`None` for an event that named none). */
+  def eventEngines: List[Option[String]] = validations.map(_.job.flatMap(_.engine))
+
   /** The outcome of a write the engine allowed. */
   def passed: ScenarioOutcome.Passed =
-    ScenarioOutcome.Passed(statuses, nonDeterministicOutputs, dataQuality, roles, unverifiableInputs)
+    ScenarioOutcome.Passed(statuses, nonDeterministicOutputs, dataQuality, roles, unverifiableInputs, eventEngines)
 
   /** The outcome of a write the engine blocked with these violation types. */
   def rejected(violationTypes: Set[String]): ScenarioOutcome.Rejected =
-    ScenarioOutcome.Rejected(violationTypes, statuses, nonDeterministicOutputs, dataQuality, roles, unverifiableInputs)
+    ScenarioOutcome.Rejected(violationTypes, statuses, nonDeterministicOutputs, dataQuality, roles, unverifiableInputs, eventEngines)
 }

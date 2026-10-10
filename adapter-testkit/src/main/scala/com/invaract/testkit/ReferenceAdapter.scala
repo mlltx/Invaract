@@ -6,6 +6,7 @@ package com.invaract.testkit
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.{CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.notification.JobInfo
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
   * engine-neutral plan and handing it to `VerificationPipeline`, with no engine at all.
@@ -28,14 +29,19 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
           contract,
           "ReferenceTruncate",
           com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
-          Some(sink)
+          Some(sink),
+          None,
+          Some(jobInfo)
         )
-      VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities))
+      VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities), Some(jobInfo))
       sink.passed
     } catch {
       case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
     }
   }
+
+  /** Which engine and job the adapter's events name - an adapter that publishes events always says which engine it is. */
+  protected def jobInfo: JobInfo = JobInfo(engine = Some(capabilities.adapter))
 
   /** What the reference adapter hands the pipeline for `job` - the whole of an adapter's engine-specific work:
     * the translated plan, the schemas mapped to `LogicalSchema`, and the row-level classification. The conformance

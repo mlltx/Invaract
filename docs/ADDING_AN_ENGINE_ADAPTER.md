@@ -111,8 +111,10 @@ An adapter owns exactly this, and nothing the pipeline already does:
    cannot translate, so nothing is silently dropped.
 3. **Map schemas** to `LogicalSchema` (question 7), and input schemas for each read.
 4. **Hand over** a `CheckedWrite` to `VerificationPipeline.verifyWrite` (or `verifyStateChange`,
-   `rejectUnverifiableWrite`). Do not re-implement validation, verifier order, fingerprinting, events or the
-   rejection text.
+   `rejectUnverifiableWrite`), passing a `JobInfo` that names the engine (`engine`, `engineVersion`) and, if the
+   engine has one, the job's stable id and the platform's attributes. Do not re-implement validation, verifier
+   order, fingerprinting, events or the rejection text. The kit fails an adapter whose events do not name its
+   engine.
 5. **Read configuration** through `ConfigSource`, `VerificationSetup` and `AttachSetup`, spelling the neutral keys
    the engine's way (see "Spelling the configuration keys" below). `AttachSetup.select` decides dry-run or
    enforcement, resolves the contract (a path or a `registry://` reference) and builds the sink; the adapter
@@ -231,7 +233,6 @@ them now, or because there is nothing yet to change them for. Each says when to 
 | Widening the visibility of the adapter SPI | Keeping it narrow is reversible, widening is not | An adapter outside the repository needs a type that is hidden |
 | A catalogue-version stamp in the kit | The kit and its adapters are built from the same commit | Adapters pin a released kit |
 | Removing the stale MiMa fallback baselines | They compare against a version that exists, so they are harmless | The next release of each published module |
-| An engine identity (`engine`, `job`) on the notification events | Additive under schema v1, and only the second adapter makes it necessary | The first non-Spark adapter publishes events (add it with that adapter, not before) |
 
 ## What this guide does not cover yet
 

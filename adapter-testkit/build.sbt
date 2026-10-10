@@ -124,6 +124,10 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.dataQuality"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.roles"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.unverifiableInputs"),
+  // Engine identity on the events: ScenarioOutcome gained `eventEngines` (which engine each validation event named), so the
+  // kit can fail an adapter whose events do not name its own. ScenarioOutcome is sealed to Passed and Rejected, whose
+  // constructors are covered by the Passed/Rejected lines below. Same reason as above: no consumer outside this repository.
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.eventEngines"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.apply"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.copy"),
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome#Passed.this"),

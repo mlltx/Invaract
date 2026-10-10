@@ -29,6 +29,8 @@ class @@Engine@@ConformanceAdapter extends ConformanceAdapter {
     val sink = new RecordingSink
     // TODO: build the job on @@Engine@@, enforce `contract` with `options` and `sink` through the engine's own hook,
     // run it, and answer `sink.passed` or, when the engine's enforcement rejects it, `sink.rejected(types)`.
+    // The enforcement must publish its events with a JobInfo whose `engine` is "@@engine@@" (the `adapter:` in the
+    // capability declaration): the kit fails an adapter whose validation events do not name its engine.
     // See ReferenceAdapter (adapter-testkit) for the translation, schemas and rejection handling an adapter owns.
     throw new NotImplementedError("@@Engine@@ConformanceAdapter.run is not implemented")
   }

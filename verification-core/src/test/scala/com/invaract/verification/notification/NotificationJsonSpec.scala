@@ -366,4 +366,39 @@ class NotificationJsonSpec extends AnyFunSuite {
     assert(icebergJson.contains("\"icebergSnapshotId\": 123456789"))
     assert(icebergJson.contains("\"deltaVersion\": null"))
   }
+
+  // --- job: which engine and which job produced an enforcement-mode event ---
+
+  private val sparkJob = JobInfo(
+    runId = Some("app-1"), name = Some("orders"), jobId = Some("orders_nightly"), engine = Some("spark"), engineVersion = Some("3.5.7"),
+    attributes = Map("team" -> "data-eng")
+  )
+
+  test("toJson renders job as null when an event carries none, and as the JobInfo object when it does - on all three enforcement events") {
+    val validation = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 1L, Map.empty)
+    val write = WriteEvent(None, "file:/tmp/out", None, None, Nil, 1L, Map.empty)
+    val summary = JobSummaryEvent(0L, 0L, 0L, 0L, 0L, 0L, Map.empty)
+    List[NotificationEvent](validation, write, summary).foreach { e =>
+      val json = NotificationJson.toJson(e)
+      assert(json.contains("\"job\": null"), e.eventType)
+      EventSchema.assertValid(json)
+    }
+    val withJob = List[NotificationEvent](validation.copy(job = Some(sparkJob)), write.copy(job = Some(sparkJob)), summary.copy(job = Some(sparkJob)))
+    withJob.foreach { e =>
+      val json = NotificationJson.toJson(e)
+      assert(json.contains("\"engine\": \"spark\""), e.eventType)
+      assert(json.contains("\"engineVersion\": \"3.5.7\""), e.eventType)
+      assert(json.contains("\"jobId\": \"orders_nightly\""), e.eventType)
+      assert(json.contains("\"attributes\": {\"team\": \"data-eng\"}"), e.eventType)
+      assert(!json.contains("\"job\": null"), e.eventType)
+      EventSchema.assertValid(json)
+    }
+  }
+
+  test("job changes an event's id: the same check by two jobs is two different events") {
+    val a = ContractValidationEvent("demo@1.0.0", "PASSED", Nil, 1L, Map.empty, job = Some(sparkJob))
+    val b = a.copy(job = Some(sparkJob.copy(jobId = Some("another_job"))))
+    assert(NotificationJson.eventIdOf(a) != NotificationJson.eventIdOf(b))
+    assert(NotificationJson.eventIdOf(a) != NotificationJson.eventIdOf(a.copy(job = None)))
+  }
 }

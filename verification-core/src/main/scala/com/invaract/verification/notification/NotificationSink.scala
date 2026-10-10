@@ -477,7 +477,7 @@ private[notification] object HttpNotificationSink {
   * `ContractEnforcementRule.forContract` and `new SparkAdapterListener` -
   * two separate instances would each only see half the job's events.
   *
-  * `runId`/`metadata` on the published summary come from whichever
+  * `runId`/`job`/`metadata` on the published summary come from whichever
   * event most recently supplied a non-empty value - `orElse`/plain
   * reassignment, not `getOrElse`, so an event that happens not to carry an
   * `runId` (there is no such real code path today, but nothing
@@ -490,6 +490,7 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
   private val violationsTotal = new java.util.concurrent.atomic.AtomicLong(0L)
   private val periodStart = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
   @volatile private var lastApplicationId: Option[String] = None
+  @volatile private var lastJob: Option[JobInfo] = None
   @volatile private var lastMetadata: Map[String, Any] = Map.empty
 
   override def configure(properties: Map[String, String]): Unit = delegate.configure(properties)
@@ -501,11 +502,13 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
       case e: WriteEvent =>
         writesPublished.incrementAndGet()
         lastApplicationId = e.runId.orElse(lastApplicationId)
+        lastJob = e.job.orElse(lastJob)
         lastMetadata = e.metadata
       case e: ContractValidationEvent =>
         if (e.status == "PASSED") checksPassed.incrementAndGet() else checksFailed.incrementAndGet()
         violationsTotal.addAndGet(e.violations.size.toLong)
         lastApplicationId = e.runId.orElse(lastApplicationId)
+        lastJob = e.job.orElse(lastJob)
         lastMetadata = e.metadata
       // a summary isn't itself summarized; dry-run events are not write/check traffic
       case _: JobSummaryEvent | _: ContractInferenceEvent | _: DryRunSummaryEvent => ()
@@ -529,7 +532,8 @@ class SummarizingNotificationSink(delegate: NotificationSink) extends Notificati
         durationMs = now - periodStart.getAndSet(now),
         timestamp = now,
         metadata = lastMetadata,
-        runId = lastApplicationId
+        runId = lastApplicationId,
+        job = lastJob
       )
     )
   }
