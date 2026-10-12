@@ -31,6 +31,8 @@ class @@Engine@@ConformanceAdapter extends ConformanceAdapter {
     // run it, and answer `sink.passed` or, when the engine's enforcement rejects it, `sink.rejected(types)`.
     // The kit runs each scenario on a thread of its own, under a time limit (AdapterConformanceSpec.scenarioTimeLimit):
     // bind anything the engine ties to a thread (a session, a client) here, to the thread that runs this.
+    // If the engine's environment is missing (a service that is down, credentials the machine lacks), throw
+    // EnvironmentUnavailable("why"): the scenario is then reported unavailable, not a divergence. Nothing else.
     // The enforcement must publish its events with a JobInfo whose `engine` is "@@engine@@" (the `adapter:` in the
     // capability declaration): the kit fails an adapter whose validation events do not name its engine.
     // See ReferenceAdapter (adapter-testkit) for the translation, schemas and rejection handling an adapter owns.

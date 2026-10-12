@@ -21,7 +21,25 @@ object ScenarioVerdict {
 
   /** The adapter did something its declaration does not allow - the thing the kit exists to find. */
   final case class Diverges(reason: String) extends ScenarioVerdict
+
+  /** The scenario could not be tried because the engine's environment was not there (an emulator that would not
+    * start, a service that did not answer, credentials the machine lacks): the adapter threw
+    * [[EnvironmentUnavailable]]. Neither a pass nor a divergence - nothing was learned about the adapter - so it is
+    * reported on its own, never counted as conforming.
+    */
+  final case class Unavailable(reason: String) extends ScenarioVerdict
 }
+
+/** Thrown by a [[ConformanceAdapter]] when the engine's environment is missing, as opposed to the adapter being
+  * wrong. An engine that needs a service (a cloud project, an emulator, a runner) fails for reasons that say nothing
+  * about the adapter, and a kit that reports those as divergences trains its users to ignore divergences. The kit
+  * reports the scenario `Unavailable` instead, and `AdapterConformanceSpec` cancels it visibly - or fails it, where
+  * the environment is supposed to be there (`strictEnvironment`).
+  *
+  * Throw it only for the environment: an adapter that cannot translate a job, or an engine that rejects one, is
+  * the adapter's to answer for.
+  */
+final class EnvironmentUnavailable(val reason: String, cause: Throwable = null) extends RuntimeException(reason, cause)
 
 final case class ScenarioResult(scenario: Scenario, verdict: ScenarioVerdict)
 
@@ -32,6 +50,9 @@ final case class ConformanceReport(adapter: String, results: List[ScenarioResult
   def failures: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Diverges])
   def skipped: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Skipped])
   def conforming: List[ScenarioResult] = results.filter(_.verdict == ScenarioVerdict.Conforms)
+
+  /** Scenarios the engine's environment could not run (`EnvironmentUnavailable`): not a pass, not a divergence. */
+  def unavailable: List[ScenarioResult] = results.filter(_.verdict.isInstanceOf[ScenarioVerdict.Unavailable])
 
   /** The unverified claims no job could check by their nature (`Scenarios.attested`): the adapter's own tests carry them. */
   def attestedClaims: List[Capability] = unverifiedClaims.filter(Scenarios.attested.contains)
@@ -193,7 +214,10 @@ object Conformance {
             case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
             case other                    => other
           }
-        catch { case e: Exception => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}") }
+        catch {
+          case e: EnvironmentUnavailable => ScenarioVerdict.Unavailable(e.reason)
+          case e: Exception              => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}")
+        }
     }
 
   /** `evaluateOne`, but a scenario that does not finish within `limit` is a divergence naming the scenario instead of a

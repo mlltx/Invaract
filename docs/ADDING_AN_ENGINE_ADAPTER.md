@@ -172,10 +172,19 @@ declare a capability `supported`, run `<Engine>ConformanceSpec`, and fix what di
 4. Rules and the analyses (`translation` exposes the plan for lineage and sensitivity).
 5. Streaming and boundaries, if the engine has them.
 
-The report has three verdicts: *conforms*, *skipped* (a scenario the declaration says does not apply, with the
-adapter's own reason), and *diverges* (the adapter did something its declaration does not allow). A divergence is a
-bug in the adapter or an overclaim in the declaration; never a reason to edit a scenario. If a scenario is wrong,
-that is a kit change with its own PR and a `BrokenAdapterSpec` variant.
+The report has four verdicts: *conforms*, *skipped* (a scenario the declaration says does not apply, with the
+adapter's own reason), *diverges* (the adapter did something its declaration does not allow) and *unavailable* (the
+engine's environment was not there). A divergence is a bug in the adapter or an overclaim in the declaration; never a
+reason to edit a scenario. If a scenario is wrong, that is a kit change with its own PR and a `BrokenAdapterSpec`
+variant.
+
+**An engine that needs a service says so, rather than failing.** An adapter whose `run` (or `translation`) cannot
+reach the engine - an emulator that would not start, a project the machine has no credentials for - throws
+`EnvironmentUnavailable(reason)`. The scenario is then *unavailable*: canceled with the reason, visible in the report,
+never counted as conforming and never a divergence (a divergence that is really an outage trains people to ignore
+divergences). Throw it only for the environment; any other exception is a divergence. Where the environment is
+supposed to be there (CI), set `INVARACT_CONFORMANCE_STRICT=true` (or override `strictEnvironment`) and an unavailable
+scenario fails instead, so a build whose emulator silently went missing cannot pass by skipping everything.
 
 **Each scenario runs under a time limit, on a thread of the kit's own.** `AdapterConformanceSpec.scenarioTimeLimit`
 (ten minutes by default) turns a scenario that never finishes into a divergence that names it, instead of a hung
@@ -224,7 +233,7 @@ Everything `CLAUDE.md` asks of an engine module applies to the new one:
 
 - [ ] The investigation (step 1) is written, with evidence, and its unverified items are settled or listed.
 - [ ] `check_modules.py` is clean.
-- [ ] `<Engine>ConformanceSpec` has no divergence; every scenario is conforms or skipped with the declaration's reason.
+- [ ] `<Engine>ConformanceSpec` has no divergence; every scenario is conforms or skipped with the declaration's reason, and none is unavailable on the CI run that counts (`INVARACT_CONFORMANCE_STRICT=true`).
 - [ ] `<Engine>AttestedClaimsSpec` is green; every claimed attested capability names a test.
 - [ ] The declaration is honest: nothing `supported` without a passing scenario or an attestation.
 - [ ] Both ledgers exist, with no ❓ presented as done.
