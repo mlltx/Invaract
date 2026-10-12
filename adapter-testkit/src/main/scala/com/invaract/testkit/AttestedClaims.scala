@@ -20,6 +20,9 @@ final case class Attestation(suite: String, test: String)
   */
 object AttestedClaims {
 
+  /** The tag ScalaTest puts on an ignored test (its own constant is not public). */
+  private val IgnoreTag = "org.scalatest.Ignore"
+
   /** What a test attesting each capability must demonstrate. Keyed exactly by `Scenarios.attested`. */
   val requirements: Map[Capability, String] = Map(
     Capability.PolicyOrganizational ->
@@ -38,15 +41,21 @@ object AttestedClaims {
       "a custom rule type named in the contract resolves, and its verdict blocks a write that breaks it"
   )
 
-  /** Whether `attestation` names a test that exists: the suite loads, is a ScalaTest `Suite`, and has a test of that exact name. */
+  /** Whether `attestation` names a test that exists and can run: the suite loads, is a ScalaTest `Suite`, has a test of
+    * that exact name, and that test is not ignored (an `ignore(...)` test, or any test of a suite annotated `@Ignore`,
+    * never runs, so it demonstrates nothing). Whether the test passed is for the build that ran it: this is a static
+    * look at the suite, which cannot see a test that cancels or is `pending` at run time.
+    */
   def exists(attestation: Attestation, loader: ClassLoader): Either[String, Unit] =
     try {
       val cls = Class.forName(attestation.suite, false, loader)
       if (!classOf[Suite].isAssignableFrom(cls)) Left(s"${attestation.suite} is not a ScalaTest suite")
       else {
         val suite = cls.getDeclaredConstructor().newInstance().asInstanceOf[Suite]
-        if (suite.testNames.contains(attestation.test)) Right(())
-        else Left(s"${attestation.suite} has no test named '${attestation.test}'")
+        if (!suite.testNames.contains(attestation.test)) Left(s"${attestation.suite} has no test named '${attestation.test}'")
+        else if (suite.tags.getOrElse(attestation.test, Set.empty[String]).contains(IgnoreTag))
+          Left(s"${attestation.suite}'s test '${attestation.test}' is ignored, so it never runs and demonstrates nothing")
+        else Right(())
       }
     } catch {
       case _: ClassNotFoundException => Left(s"no suite named ${attestation.suite}")

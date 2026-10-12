@@ -181,7 +181,8 @@ that is a kit change with its own PR and a `BrokenAdapterSpec` variant.
 
 For each of the seven attested capabilities the adapter claims, name the test that demonstrates it in
 `<Engine>AttestedClaimsSpec`. `AttestedClaims.requirements` says what each must show. Write the test; the kit only
-checks that it exists.
+checks that it exists and is not ignored (a test that cancels or is `pending` at run time passes that check, so read
+the build's test report to see that it ran).
 
 ## Step 7: The two ledgers
 
