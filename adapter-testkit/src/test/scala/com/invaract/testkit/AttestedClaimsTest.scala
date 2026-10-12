@@ -13,6 +13,19 @@ class AttestedFixtureSuite extends AnyFunSuite {
   test("shows the thing") { succeed }
 }
 
+/** Suites whose tests never run: one `ignore`d test among live ones, and a suite annotated `@Ignore` as a whole. */
+@DoNotDiscover
+class SuiteWithAnIgnoredTest extends AnyFunSuite {
+  test("a live test") { succeed }
+  ignore("an ignored test") { fail("never runs") }
+}
+
+@DoNotDiscover
+@org.scalatest.Ignore
+class WhollyIgnoredSuite extends AnyFunSuite {
+  test("a test of an ignored suite") { succeed }
+}
+
 /** A "suite" whose construction fails, as a suite that needs something unavailable would. */
 @DoNotDiscover
 class UnconstructableSuite extends AnyFunSuite {
@@ -56,6 +69,24 @@ class AttestedClaimsTest extends AnyFunSuite {
     assert(AttestedClaims.exists(Attestation("com.example.NoSuchSuite", "x"), loader).left.exists(_.contains("no suite named")))
     assert(AttestedClaims.exists(Attestation("java.lang.String", "x"), loader).left.exists(_.contains("not a ScalaTest suite")))
     assert(AttestedClaims.exists(Attestation("com.invaract.testkit.UnconstructableSuite", "x"), loader).left.exists(_.contains("could not inspect")))
+  }
+
+  test("an attestation naming an ignored test is rejected, whether the test or the whole suite is ignored; a live test beside it is fine") {
+    val ignored = AttestedClaims.exists(Attestation("com.invaract.testkit.SuiteWithAnIgnoredTest", "an ignored test"), loader)
+    assert(ignored.left.exists(m => m.contains("is ignored") && m.contains("SuiteWithAnIgnoredTest") && m.contains("an ignored test")))
+    assert(AttestedClaims.exists(Attestation("com.invaract.testkit.SuiteWithAnIgnoredTest", "a live test"), loader) == Right(()))
+    val whole = AttestedClaims.exists(Attestation("com.invaract.testkit.WhollyIgnoredSuite", "a test of an ignored suite"), loader)
+    assert(whole.left.exists(_.contains("is ignored")))
+  }
+
+  test("an ignored test is reported against the capability it was meant to demonstrate") {
+    val problems = AttestedClaims.problems(
+      declaringAttested("supported"),
+      allAttested(Attestation("com.invaract.testkit.SuiteWithAnIgnoredTest", "an ignored test")),
+      loader
+    )
+    assert(problems.size == Scenarios.attested.size)
+    Scenarios.attested.keys.foreach(c => assert(problems.exists(p => p.startsWith(c.id) && p.contains("is ignored")), c.id))
   }
 
   test("an adapter claiming every attested capability with a real test has no problems") {
