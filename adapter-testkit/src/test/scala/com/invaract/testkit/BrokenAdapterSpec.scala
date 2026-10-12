@@ -249,7 +249,9 @@ class BrokenAdapterSpec extends AnyFunSuite {
       val path = new java.io.File(repositoryRoot, file)
       if (!path.exists) List(s"$scenario is held by $file, which does not exist")
       else {
-        val declared = scala.io.Source.fromFile(path, "UTF-8").getLines().exists(_.trim.startsWith(s"""test("$test"""))
+        val source = scala.io.Source.fromFile(path, "UTF-8")
+        // closed, or Windows cannot delete the file afterwards
+        val declared = try source.getLines().exists(_.trim.startsWith(s"""test("$test""")) finally source.close()
         if (declared) Nil else List(s"""$scenario is held by $file, which declares no test("$test")""")
       }
   }
