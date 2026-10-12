@@ -31,6 +31,13 @@ trait AdapterConformanceSpec extends AnyFunSuite {
     */
   protected def scenarioTimeLimit: Option[FiniteDuration] = Some(10.minutes)
 
+  /** Whether a scenario the engine's environment could not run (`EnvironmentUnavailable`) fails instead of being
+    * canceled. Off by default, so a developer without the engine's service still gets a run; set
+    * `INVARACT_CONFORMANCE_STRICT=true` where the environment is supposed to be there (CI), so a build whose
+    * environment silently went missing cannot pass by skipping everything.
+    */
+  protected def strictEnvironment: Boolean = sys.env.get("INVARACT_CONFORMANCE_STRICT").contains("true")
+
   Scenarios.all.foreach { scenario =>
     test(s"conformance: ${scenario.id} - ${scenario.description}") {
       val verdict = scenarioTimeLimit match {
@@ -41,6 +48,9 @@ trait AdapterConformanceSpec extends AnyFunSuite {
         case ScenarioVerdict.Conforms         => succeed
         case ScenarioVerdict.Skipped(reason)  => cancel(s"does not apply to this adapter: $reason")
         case ScenarioVerdict.Diverges(reason) => fail(reason)
+        case ScenarioVerdict.Unavailable(reason) =>
+          if (strictEnvironment) fail(s"the engine's environment is unavailable, and this run requires it: $reason")
+          else cancel(s"the engine's environment is unavailable, so nothing was checked: $reason")
       }
     }
   }

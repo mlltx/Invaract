@@ -436,6 +436,7 @@ divergence naming it, run on a daemon thread of the kit's, so an adapter binds i
 | a capability the scenario's contract relies on `unsupported` (and it `enforcesContract`) | a rejection including `UNSUPPORTED_CONTRACT_FEATURE` - a quiet pass is a failure |
 | a needed capability `not-applicable`, or a needed operation unsupported | the scenario is **canceled** with the adapter's own note, visible in the report |
 | `reporting.notifications` supported | exactly one `PASSED` (or `FAILED`) validation event |
+| the engine's environment is not there (the adapter throws `EnvironmentUnavailable`) | the scenario is **unavailable**: canceled with the reason, or failed when `INVARACT_CONFORMANCE_STRICT=true`; never a pass, never a divergence |
 
 **Row-level changes and catalog tables have job shapes too.** A `ScenarioJob` with `rowChange` set changes the
 rows of its output in place (a `DELETE`, with or without a predicate) instead of reading and writing; the
