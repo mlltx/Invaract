@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
-import com.invaract.ir.{CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, Write}
+import com.invaract.ir.{CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.JobInfo
 
@@ -99,6 +99,9 @@ object ReferenceAdapter {
       Join(reads(0), reads(1), JoinType.Inner, Some(Comparison("=", ref(job, 0, j.leftColumn), ref(job, 1, j.rightColumn))))
     )
     val filtered: Plan = job.filterColumn.fold(joined)(c => Filter(joined, Comparison(">", ref(job, 0, c), Literal(0L, "long"))))
+    // an opaque step is a node this adapter has no representation for: the translation keeps it as an UnknownPlan that
+    // still carries the plan beneath it, which is what `ir.UnknownPlan` is for ("the rest of the tree stays inspectable")
+    val stepped: Plan = if (job.opaqueStep) UnknownPlan("a step the reference adapter has no representation for", "OpaqueStep", List(filtered)) else filtered
     val columns = job.columns.map { c =>
       NamedExpr(
         c.name,
@@ -110,7 +113,7 @@ object ReferenceAdapter {
         }
       )
     }
-    Write(DatasetRef(job.output.location), Project(filtered, columns), Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
+    Write(DatasetRef(job.output.location), Project(stepped, columns), Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
   }
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {

@@ -72,8 +72,9 @@ object Scenarios {
       inputs: List[ScenarioInput] = List(orders),
       join: Option[JoinOn] = None,
       filterColumn: Option[String] = None,
-      rowChange: Option[RowChange] = None
-  ) = ScenarioJob(inputs, columns, output, join, filterColumn, rowChange = rowChange)
+      rowChange: Option[RowChange] = None,
+      opaqueStep: Boolean = false
+  ) = ScenarioJob(inputs, columns, output, join, filterColumn, rowChange = rowChange, opaqueStep = opaqueStep)
 
   private val defaults = VerificationOptions()
 
@@ -322,6 +323,19 @@ object Scenarios {
       "with rejectUndeclaredInputs, reading a declared input that is not a source of this output is blocked",
       Set(Capability.CheckInputExistence),
       twoOutputContract("orders"), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id"))),
+      defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
+    ),
+    Scenario(
+      "unrecognized-step-keeps-the-reads-beneath-it-visible",
+      "a step the adapter cannot represent does not hide the input that is read beneath it",
+      Set(Capability.CheckInputExistence),
+      contract(), job(opaqueStep = true), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "unrecognized-step-does-not-hide-an-undeclared-read",
+      "with rejectUndeclaredInputs, a dataset read beneath a step the adapter cannot represent is still blocked",
+      Set(Capability.CheckInputExistence),
+      contract(), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id")), opaqueStep = true),
       defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
     ),
     Scenario(

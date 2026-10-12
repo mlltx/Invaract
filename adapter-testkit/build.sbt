@@ -98,8 +98,8 @@ mimaPreviousArtifacts := Set(
   "com.invaract" %% "invaract-adapter-testkit" % sys.env.getOrElse("INVARACT_MIMA_BASELINE_VERSION", "0.3.0")
 )
 
-// Deliberate break (review passes 1 and 4): ScenarioJob gained the `untranslatableWrite` and `rowChange`
-// parameters (the fail-closed and row-level DML scenarios' job shapes). The kit has no consumers outside this repository yet; these are the exact lines
+// Deliberate break (review passes 1 and 4, and later `opaqueStep`): ScenarioJob gained the `untranslatableWrite`,
+// `rowChange` and `opaqueStep` parameters (the fail-closed, row-level DML and unrecognized-step scenarios' job shapes). The kit has no consumers outside this repository yet; these are the exact lines
 // MiMa's own output suggests.
 mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.ScenarioJob.apply"),

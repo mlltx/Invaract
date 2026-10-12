@@ -139,7 +139,13 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       require(job.inputs.size == 1, "a conformance job with a boundary reads one input")
       val checkpointed = filtered.checkpoint()
       checkpointed.select(selectColumns(job, List(checkpointed)): _*)
-    } else filtered.select(selectColumns(job, frames): _*)
+    } else {
+      // Spark's representative of a step the adapter has no translation for: a row sample, a Catalyst node
+      // `SparkPlanAdapter` has no case for (it becomes an `ir.UnknownPlan` over the translated plan beneath it) that
+      // keeps every column, so the projection still refers to the inputs' own attributes.
+      val stepped = if (job.opaqueStep) filtered.sample(0.5) else filtered
+      stepped.select(selectColumns(job, frames): _*)
+    }
   }
 
   /** Spark's representative of "a data-changing operation the adapter has no translation for": `TRUNCATE TABLE` on a

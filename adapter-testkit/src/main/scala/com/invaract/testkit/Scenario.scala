@@ -82,6 +82,12 @@ object RowChange {
   * What the contract and its rules say about the job must come out the same as without it: an adapter
   * that cannot see through the boundary has lost the reads and the filter that sit behind it.
   *
+  * With `opaqueStep` set the work so far (the read, the join, the filter) passes through one step the adapter's
+  * translation has no representation for, before the projection and the write: an engine operation that keeps
+  * the columns as they are (Spark: a row sample). What the contract says about the job must come out the same as
+  * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
+  * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
+  *
   * With `streaming` set the inputs are read as streams and the output is written as a stream (run to
   * completion over the inputs that exist, then stopped), one input only. What the contract says about the job
   * must come out the same as for the batch job: the stream is the declared input, the stream's sink the output.
@@ -95,11 +101,13 @@ final case class ScenarioJob(
     untranslatableWrite: Boolean = false,
     rowChange: Option[RowChange] = None,
     boundary: Boolean = false,
-    streaming: Boolean = false
+    streaming: Boolean = false,
+    opaqueStep: Boolean = false
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
   require(inputs.size == 1 || join.isDefined, "a two-input job must say how its inputs are joined")
   require(inputs.size == 2 || join.isEmpty, "a join needs two inputs")
+  require(!opaqueStep || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "an opaque step is part of a plain read-transform-write")
   require(!streaming || (inputs.size == 1 && rowChange.isEmpty && !untranslatableWrite && !boundary), "a streaming job is a plain read-transform-write of one input")
 }
 
