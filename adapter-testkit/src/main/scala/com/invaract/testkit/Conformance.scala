@@ -5,6 +5,9 @@ package com.invaract.testkit
 
 import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, Support, ViolationType}
 
+import java.util.concurrent.{Callable, ExecutionException, Executors, ThreadFactory, TimeUnit, TimeoutException}
+import scala.concurrent.duration.FiniteDuration
+
 /** How one scenario went on one adapter. */
 sealed trait ScenarioVerdict
 
@@ -192,6 +195,37 @@ object Conformance {
           }
         catch { case e: Exception => ScenarioVerdict.Diverges(s"the adapter threw ${e.getClass.getName}: ${e.getMessage}") }
     }
+
+  /** `evaluateOne`, but a scenario that does not finish within `limit` is a divergence naming the scenario instead of a
+    * hang. An engine job can stall (a lost connection, a runner that never starts), and a kit that waits forever turns
+    * one stuck scenario into a stuck build with nothing to say which. The scenario runs on its own daemon thread, which
+    * is interrupted when the limit passes and then left behind (an engine call that ignores interrupts cannot be forced
+    * to stop, but it no longer holds the run, or the JVM's exit, hostage).
+    *
+    * Everything `evaluateOne` does is unchanged, including an `Error` out of the adapter propagating rather than being
+    * turned into a verdict. The adapter runs on a thread of the kit's, not the caller's: an adapter that needs thread
+    * affinity (a thread-local engine session) should run its scenarios with `evaluateOne` instead.
+    */
+  def evaluateWithin(adapter: ConformanceAdapter, caps: AdapterCapabilities, scenario: Scenario, limit: FiniteDuration): ScenarioVerdict = {
+    val pool = Executors.newSingleThreadExecutor(new ThreadFactory {
+      def newThread(task: Runnable): Thread = {
+        val thread = new Thread(task, s"conformance-${scenario.id}")
+        thread.setDaemon(true)
+        thread
+      }
+    })
+    val running = pool.submit(new Callable[ScenarioVerdict] { def call(): ScenarioVerdict = evaluateOne(adapter, caps, scenario) })
+    try running.get(limit.toMillis, TimeUnit.MILLISECONDS)
+    catch {
+      case _: TimeoutException =>
+        // the run is interrupted by `shutdownNow` below
+        ScenarioVerdict.Diverges(
+          s"the adapter did not finish scenario '${scenario.id}' within $limit: its run is hung, or the engine is too slow for this limit " +
+            "(AdapterConformanceSpec.scenarioTimeLimit sets it)"
+        )
+      case e: ExecutionException => throw e.getCause
+    } finally pool.shutdownNow()
+  }
 
   /** The capabilities the adapter claims (`supported`/`partial`) that no scenario is evidence for. */
   def unverifiedClaims(caps: AdapterCapabilities): List[Capability] =

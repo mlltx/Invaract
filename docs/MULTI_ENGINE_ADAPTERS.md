@@ -423,7 +423,10 @@ turns the neutral job into a real job on its engine, runs it through the *real* 
 reports `Passed` or `Rejected(violation types)` plus the validation statuses it published. Spark's
 `SparkConformanceAdapter` builds a Spark job on a local session and runs it through
 `ContractEnforcementRule.forContract`, the builder `InvaractSparkSessionExtension` registers. The
-adapter mixes `AdapterConformanceSpec` into a test, which registers one test per scenario.
+adapter mixes `AdapterConformanceSpec` into a test, which registers one test per scenario. Each scenario is bounded
+in time (`scenarioTimeLimit`, ten minutes by default; `Conformance.evaluateWithin`): one that never finishes is a
+divergence naming it, run on a daemon thread of the kit's, so an adapter binds its engine's thread-local state inside
+`run`.
 
 **What an adapter is held to** follows from its declaration, not from the neutral verdict alone:
 

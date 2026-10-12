@@ -331,4 +331,82 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(nested.nonEmpty)
     nested.foreach(r => assert(r.verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("UNSUPPORTED_CONTRACT_FEATURE"), r.scenario.id))
   }
+
+  // --- a bounded run: a scenario that never finishes is a divergence naming it, not a hung build ---
+
+  private val firstScenario = Scenarios.all.head
+
+  /** An adapter whose `run` blocks until interrupted, recording that it was and on what kind of thread. */
+  private class HungAdapter extends ConformanceAdapter {
+    @volatile var interrupted = false
+    @volatile var daemon: Option[Boolean] = None
+    @volatile var threadName: Option[String] = None
+    override def capabilities: AdapterCapabilities = reference.capabilities
+    override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome = {
+      daemon = Some(Thread.currentThread.isDaemon)
+      threadName = Some(Thread.currentThread.getName)
+      try { Thread.sleep(60000); throw new IllegalStateException("should have been interrupted") }
+      catch { case e: InterruptedException => interrupted = true; throw e }
+    }
+  }
+
+  test("a scenario that outlasts its limit is a divergence naming the scenario and the limit, returned promptly, with the run interrupted") {
+    import scala.concurrent.duration._
+    val hung = new HungAdapter
+    val started = System.nanoTime()
+    val verdict = Conformance.evaluateWithin(hung, hung.capabilities, firstScenario, 300.millis)
+    val tookMs = (System.nanoTime() - started) / 1000000
+    val reason = verdict.asInstanceOf[ScenarioVerdict.Diverges].reason
+    assert(reason.contains(s"'${firstScenario.id}'") && reason.contains("300 milliseconds") && reason.contains("scenarioTimeLimit"))
+    assert(tookMs < 20000, s"returned after ${tookMs}ms")
+    val deadline = System.nanoTime() + 5000L * 1000000L
+    while (!hung.interrupted && System.nanoTime() < deadline) Thread.sleep(20)
+    assert(hung.interrupted, "the hung run was interrupted")
+    assert(hung.daemon.contains(true), "the run is on a daemon thread, so it cannot keep the JVM alive")
+    assert(hung.threadName.exists(_.contains(firstScenario.id)), "and the thread is named for the scenario")
+  }
+
+  test("a scenario that finishes within its limit gives exactly the verdict evaluateOne does, on a thread other than the caller's") {
+    import scala.concurrent.duration._
+    val caller = Thread.currentThread
+    @volatile var ranOn: Option[Thread] = None
+    val watching = new Tampered(reference, outcomeOf = { case o => ranOn = Some(Thread.currentThread); o })
+    Scenarios.all.take(3).foreach { scenario =>
+      val bounded = Conformance.evaluateWithin(watching, watching.capabilities, scenario, 1.minute)
+      val boundedRanOn = ranOn // the comparison below runs inline and overwrites it
+      assert(boundedRanOn.exists(_ ne caller), scenario.id)
+      assert(bounded == Conformance.evaluateOne(watching, watching.capabilities, scenario), scenario.id)
+    }
+  }
+
+  test("an adapter that throws inside a bounded run is the same divergence as without a limit") {
+    import scala.concurrent.duration._
+    val crashing = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        throw new IllegalStateException("engine exploded")
+    }
+    val verdict = Conformance.evaluateWithin(crashing, crashing.capabilities, firstScenario, 1.minute)
+    assert(verdict == Conformance.evaluateOne(crashing, crashing.capabilities, firstScenario))
+    assert(verdict.asInstanceOf[ScenarioVerdict.Diverges].reason.contains("engine exploded"))
+  }
+
+  test("an Error out of the adapter (a failed assertion, say) still propagates from a bounded run rather than becoming a verdict") {
+    import scala.concurrent.duration._
+    val asserting = new ConformanceAdapter {
+      override def capabilities: AdapterCapabilities = reference.capabilities
+      override def run(id: String, c: com.invaract.contract.Contract, j: ScenarioJob, o: com.invaract.verification.VerificationOptions): ScenarioOutcome =
+        throw new AssertionError("the adapter's own check failed")
+    }
+    val thrown = intercept[AssertionError](Conformance.evaluateWithin(asserting, asserting.capabilities, firstScenario, 1.minute))
+    assert(thrown.getMessage.contains("the adapter's own check failed"))
+  }
+
+  test("a skipped scenario is skipped under a limit too, without running the adapter at all") {
+    import scala.concurrent.duration._
+    val caps = declaring(Map("failClosed.unverifiableWrites" -> (("unsupported", Some("not implemented")))))
+    val untranslatable = Scenarios.all.find(_.id == "untranslatable-write-fails-closed").get
+    val adapter = new ReferenceAdapter(caps)
+    assert(Conformance.evaluateWithin(adapter, caps, untranslatable, 1.minute).isInstanceOf[ScenarioVerdict.Skipped])
+  }
 }

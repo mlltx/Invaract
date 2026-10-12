@@ -5,6 +5,8 @@ package com.invaract.testkit
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import scala.concurrent.duration._
+
 /** Mix this into an adapter's test to run every conformance scenario on it:
   *
   * {{{
@@ -22,9 +24,20 @@ trait AdapterConformanceSpec extends AnyFunSuite {
   /** The adapter under test. Called repeatedly: return the same instance. */
   protected def adapter: ConformanceAdapter
 
+  /** How long one scenario may take before it is reported as a divergence naming it, instead of holding the build
+    * hostage. Generous by default (a scenario starts engine jobs); raise it for a slow engine. `None` runs a scenario
+    * on the test's own thread with no limit, for an adapter that needs thread affinity (a thread-local engine session):
+    * the scenario then runs exactly as `Conformance.evaluateOne` does, and a hang is the build's to time out.
+    */
+  protected def scenarioTimeLimit: Option[FiniteDuration] = Some(10.minutes)
+
   Scenarios.all.foreach { scenario =>
     test(s"conformance: ${scenario.id} - ${scenario.description}") {
-      Conformance.evaluateOne(adapter, adapter.capabilities, scenario) match {
+      val verdict = scenarioTimeLimit match {
+        case Some(limit) => Conformance.evaluateWithin(adapter, adapter.capabilities, scenario, limit)
+        case None        => Conformance.evaluateOne(adapter, adapter.capabilities, scenario)
+      }
+      verdict match {
         case ScenarioVerdict.Conforms         => succeed
         case ScenarioVerdict.Skipped(reason)  => cancel(s"does not apply to this adapter: $reason")
         case ScenarioVerdict.Diverges(reason) => fail(reason)
