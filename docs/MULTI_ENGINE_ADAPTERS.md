@@ -499,6 +499,13 @@ scenario; one that lets everything through fails every scenario expecting a reje
 blocks everything fails every scenario expecting a pass; one that claims notifications and publishes
 none fails all of them; one that throws is a divergence.
 
+**A pass cannot quietly become a cancel.** Each adapter checks in `conformance-baseline-<adapter>.txt` among its test
+resources, the scenarios it conforms to. `AdapterConformanceSpec` ends with a test that fails when a scenario on the baseline
+is skipped or diverges (a capability flipped to `unsupported` to silence a failure shows up here, not as a green cancel) and
+when a scenario conforms that is not yet on it, so the file is the reviewed record of what a real run has shown. A scenario the
+environment could not run (`Unavailable`) is judged neither way. The run also writes `target/conformance/<adapter>.json`, and the
+generated engine-capabilities page states, per adapter, how many of the suite's scenarios its baseline holds it to.
+
 **Every scenario is also shown to be able to fail.** `BrokenAdapterSpec` subclasses the reference adapter
 with one mistake at a time - a filter lost in translation, a join lost, a format spelled the engine's own
 way, a catalog identity never reported, a unique-id function under its native name, a column's derivation

@@ -5,6 +5,11 @@ package com.invaract.testkit
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 
 /** Mix this into an adapter's test to run every conformance scenario on it:
@@ -38,12 +43,18 @@ trait AdapterConformanceSpec extends AnyFunSuite {
     */
   protected def strictEnvironment: Boolean = sys.env.get("INVARACT_CONFORMANCE_STRICT").contains("true")
 
+  /** Where this run's results are written as JSON (`<adapter>.json`), or `None` to write nothing. */
+  protected def resultsDirectory: Option[File] = Some(new File("target/conformance"))
+
+  private val verdicts = new ConcurrentHashMap[String, ScenarioVerdict]()
+
   Scenarios.all.foreach { scenario =>
     test(s"conformance: ${scenario.id} - ${scenario.description}") {
       val verdict = scenarioTimeLimit match {
         case Some(limit) => Conformance.evaluateWithin(adapter, adapter.capabilities, scenario, limit)
         case None        => Conformance.evaluateOne(adapter, adapter.capabilities, scenario)
       }
+      verdicts.put(scenario.id, verdict)
       verdict match {
         case ScenarioVerdict.Conforms         => succeed
         case ScenarioVerdict.Skipped(reason)  => cancel(s"does not apply to this adapter: $reason")
@@ -63,5 +74,22 @@ trait AdapterConformanceSpec extends AnyFunSuite {
     )
     // A claim on something the kit has no scenario for must at least be one the kit knows it lacks.
     assert(unverified.forall(Scenarios.notCovered.contains))
+  }
+
+  test("baseline: every scenario on the checked-in baseline still conforms, and every one that conforms is on it") {
+    val recorded = verdicts.asScala.toMap
+    if (recorded.size < Scenarios.all.size) cancel(s"only ${recorded.size} of ${Scenarios.all.size} scenarios ran, so the run is not compared with the baseline")
+    val name = adapter.capabilities.adapter
+    resultsDirectory.foreach { dir =>
+      Files.createDirectories(dir.toPath)
+      Files.write(new File(dir, s"$name.json").toPath, ConformanceBaseline.resultsJson(name, recorded).getBytes(StandardCharsets.UTF_8))
+    }
+    ConformanceBaseline.load(name, getClass.getClassLoader) match {
+      case Left(why) =>
+        fail(s"$why Create it with:\n${ConformanceBaseline.body(name, recorded)}")
+      case Right(baseline) =>
+        val problems = ConformanceBaseline.problems(baseline, recorded)
+        assert(problems.isEmpty, problems.mkString("\n") + s"\nThe baseline for this run would be:\n${ConformanceBaseline.body(name, recorded)}")
+    }
   }
 }

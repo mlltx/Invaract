@@ -136,6 +136,7 @@ def generate(repo, engine, display, out):
     write(os.path.join(test, f"{display}CapabilitiesSpec.scala"), template("CapabilitiesSpec.scala.tmpl"))
     write(os.path.join(test, f"{display}ConformanceAdapter.scala"), template("ConformanceAdapter.scala.tmpl"))
     write(os.path.join(test, f"{display}ConformanceSpec.scala"), template("ConformanceSpec.scala.tmpl"))
+    write(os.path.join(module, "src", "test", "resources", f"conformance-baseline-{engine}.txt"), template("conformance-baseline.txt.tmpl"))
     write(os.path.join(test, f"{display}AttestedClaimsSpec.scala"), template("AttestedClaimsSpec.scala.tmpl"))
     write(os.path.join(out, doc_path(engine)), template("ENGINE_ADAPTER.md.tmpl"))
     # sbt plugins and the sbt version are the kit's, copied as they are
