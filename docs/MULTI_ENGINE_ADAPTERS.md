@@ -481,7 +481,9 @@ tests fail if a capability is in neither list or in both.
 **Attested claims have a standard shape.** For each attested capability an adapter declares `supported` or
 `partial`, the adapter names the test that demonstrates it (`Attestation(suite, test)`), by mixing
 `AttestedClaimsSpec` into a test (Spark's is `SparkAttestedClaimsSpec`). The kit checks the named test exists
-(the suite loads and has a test of that exact name), that no attestation is left for a capability the adapter
+(the suite loads and has a test of that exact name) and is not ignored (an `ignore(...)` test, or a test of a suite
+annotated `@Ignore`, never runs, so it is rejected; the kit cannot see a test that cancels or is `pending` at run
+time, so a green build is what shows the test ran), that no attestation is left for a capability the adapter
 does not claim, and that nothing is attested that a scenario already checks; `AttestedClaims.requirements`
 says what each test must show, which is the review checklist for the named test (the kit cannot judge
 that). A rename or deletion of the test fails the build, and a new claim without a test fails it too. The generated engine-capabilities page says the same per
