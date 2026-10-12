@@ -55,14 +55,23 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
   override def capabilities: AdapterCapabilities =
     SparkCapabilities.declared.getOrElse(throw new IllegalStateException("Spark's capability declaration did not load"))
 
-  override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome =
-    if (job.untranslatableWrite) runUntranslatable(scenarioId, contract, options)
-    else if (job.streaming) runStreaming(scenarioId, contract, job, options)
-    else
-      job.rowChange match {
-        case Some(change) => runRowChange(scenarioId, contract, job, change, options)
-        case None         => runTransform(scenarioId, contract, job, options)
-      }
+  /** The kit may run a scenario on a thread of its own (it bounds each one in time), and a Spark session is bound to
+    * a thread: `getOrCreate` binds it only to the thread that built it, and a thread with no active session reads the
+    * default configuration instead of this session's (a catalog scenario failed for exactly that). So the session is
+    * bound to whichever thread runs the scenario, and released after.
+    */
+  override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
+    SparkSession.setActiveSession(spark)
+    try
+      if (job.untranslatableWrite) runUntranslatable(scenarioId, contract, options)
+      else if (job.streaming) runStreaming(scenarioId, contract, job, options)
+      else
+        job.rowChange match {
+          case Some(change) => runRowChange(scenarioId, contract, job, change, options)
+          case None         => runTransform(scenarioId, contract, job, options)
+        }
+    finally SparkSession.clearActiveSession()
+  }
 
   /** The ordinary job: read the inputs, filter, join, project, write. The reads and the transformation are built
     * inside the enforced block: a job that goes through a checkpoint is only seen through if the check rule saw the
@@ -111,9 +120,12 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
   override def translation(scenarioId: String, job: ScenarioJob): Option[ir.Plan] =
     if (job.untranslatableWrite || job.rowChange.isDefined || job.streaming) None
     else {
-      materializeInputs(scenarioId, job)
-      val result = resultFrame(job, readInputs(scenarioId, job))
-      Some(SparkPlanAdapter.translateAsWrite(result.queryExecution.analyzed, ir.DatasetRef(path(scenarioId, job.output.location))).plan)
+      SparkSession.setActiveSession(spark) // see `run`: the kit may call this on a thread of its own
+      try {
+        materializeInputs(scenarioId, job)
+        val result = resultFrame(job, readInputs(scenarioId, job))
+        Some(SparkPlanAdapter.translateAsWrite(result.queryExecution.analyzed, ir.DatasetRef(path(scenarioId, job.output.location))).plan)
+      } finally SparkSession.clearActiveSession()
     }
 
   /** The frame a transform job writes: join, filter, then (when asked) the checkpoint every later step reads

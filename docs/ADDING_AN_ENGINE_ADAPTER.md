@@ -177,6 +177,15 @@ adapter's own reason), and *diverges* (the adapter did something its declaration
 bug in the adapter or an overclaim in the declaration; never a reason to edit a scenario. If a scenario is wrong,
 that is a kit change with its own PR and a `BrokenAdapterSpec` variant.
 
+**Each scenario runs under a time limit, on a thread of the kit's own.** `AdapterConformanceSpec.scenarioTimeLimit`
+(ten minutes by default) turns a scenario that never finishes into a divergence that names it, instead of a hung
+build; raise it for a slow engine. Because the scenario runs on a thread the kit creates, anything the engine binds to
+a thread (a session, a client, a transaction) must be bound inside `run` and `translation`, to whatever thread runs
+them: Spark's `getOrCreate` binds a session only to the thread that built it, and a scenario on another thread then
+read the default configuration and failed (`SparkConformanceAdapter.run` calls `SparkSession.setActiveSession`
+first). An adapter that cannot do that overrides `scenarioTimeLimit` to `None`, which runs each scenario on the
+test's own thread with no limit.
+
 ## Step 6: Attest what no job can show
 
 For each of the seven attested capabilities the adapter claims, name the test that demonstrates it in
