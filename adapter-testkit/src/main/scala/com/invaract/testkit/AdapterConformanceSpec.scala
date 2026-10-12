@@ -46,15 +46,13 @@ trait AdapterConformanceSpec extends AnyFunSuite {
   /** Where this run's results are written as JSON (`<adapter>.json`), or `None` to write nothing. */
   protected def resultsDirectory: Option[File] = Some(new File("target/conformance"))
 
-  private val verdicts = new ConcurrentHashMap[String, ScenarioVerdict]()
-
   Scenarios.all.foreach { scenario =>
     test(s"conformance: ${scenario.id} - ${scenario.description}") {
       val verdict = scenarioTimeLimit match {
         case Some(limit) => Conformance.evaluateWithin(adapter, adapter.capabilities, scenario, limit)
         case None        => Conformance.evaluateOne(adapter, adapter.capabilities, scenario)
       }
-      verdicts.put(scenario.id, verdict)
+      VerdictLog.of(this).put(scenario.id, verdict)
       verdict match {
         case ScenarioVerdict.Conforms         => succeed
         case ScenarioVerdict.Skipped(reason)  => cancel(s"does not apply to this adapter: $reason")
@@ -77,7 +75,7 @@ trait AdapterConformanceSpec extends AnyFunSuite {
   }
 
   test("baseline: every scenario on the checked-in baseline still conforms, and every one that conforms is on it") {
-    val recorded = verdicts.asScala.toMap
+    val recorded = VerdictLog.of(this).asScala.toMap
     if (recorded.size < Scenarios.all.size) cancel(s"only ${recorded.size} of ${Scenarios.all.size} scenarios ran, so the run is not compared with the baseline")
     val name = adapter.capabilities.adapter
     resultsDirectory.foreach { dir =>
@@ -92,4 +90,21 @@ trait AdapterConformanceSpec extends AnyFunSuite {
         assert(problems.isEmpty, problems.mkString("\n") + s"\nThe baseline for this run would be:\n${ConformanceBaseline.body(name, recorded)}")
     }
   }
+}
+
+/** The verdicts a spec instance has recorded, kept here rather than in a field of the trait: a `val` in a Scala 2.12
+  * trait becomes an abstract member of its interface, which would break every adapter spec compiled against an earlier
+  * kit. Weakly keyed, so a finished spec's verdicts are collected with it.
+  */
+private object VerdictLog {
+  private val logs = java.util.Collections.synchronizedMap(new java.util.WeakHashMap[AdapterConformanceSpec, ConcurrentHashMap[String, ScenarioVerdict]]())
+
+  def of(spec: AdapterConformanceSpec): ConcurrentHashMap[String, ScenarioVerdict] =
+    logs.synchronized {
+      Option(logs.get(spec)).getOrElse {
+        val fresh = new ConcurrentHashMap[String, ScenarioVerdict]()
+        logs.put(spec, fresh)
+        fresh
+      }
+    }
 }
