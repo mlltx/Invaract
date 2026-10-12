@@ -347,7 +347,8 @@ one per thing an adapter can find:</p>
 
 
 
-<table><thead><tr><th>Entry point</th><th>When an adapter calls it</th></tr></thead><tbody><tr><td><code dir="auto">verifyWrite(contract, write: => CheckedWrite, options, sink, runId)</code></td><td>a recognized write</td></tr><tr><td><code dir="auto">verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId)</code></td><td>a state-changing, non-write operation that commits a schema change (Spark: Iceberg <code dir="auto">CALL</code> procedures)</td></tr><tr><td><code dir="auto">rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId)</code></td><td>the fail-closed response to something that looks like a write but could not be translated</td></tr></tbody></table>
+<table><thead><tr><th>Entry point</th><th>When an adapter calls it</th></tr></thead><tbody><tr><td><code dir="auto">verifyWrite(contract, write: => CheckedWrite, options, sink, runId, capabilities, job)</code></td><td>a recognized write</td></tr><tr><td><code dir="auto">verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId, job)</code></td><td>a state-changing, non-write operation that commits a schema change (Spark: Iceberg <code dir="auto">CALL</code> procedures)</td></tr><tr><td><code dir="auto">rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId, job)</code></td><td>the fail-closed response to something that looks like a write but could not be translated</td></tr></tbody></table>
+<p><code dir="auto">job</code> is the adapter’s <code dir="auto">JobInfo</code> (below): pass it on every call and it rides on every event the call publishes.</p>
 <p><code dir="auto">CheckedWrite</code> is what an adapter hands over for a write: the translated plan, input/output
 <code dir="auto">LogicalSchema</code>s, case sensitivity, its DML classification (<code dir="auto">MutationClassification</code>), the
 lineage-boundary node types it uses, and any resolution caveats. <code dir="auto">write</code> is by-name on purpose:
@@ -625,6 +626,17 @@ obvious.</p>
 engine’s own run identifier, and <code dir="auto">JobInfo</code> carries <code dir="auto">engine</code>, <code dir="auto">engineVersion</code> and a free-form
 <code dir="auto">engineDetails</code> map for whatever else the adapter wants to record. An adapter fills those in;
 it does not add engine-named fields to the event schema.</p>
+<p><strong>Every event names its engine and job.</strong> <code dir="auto">ContractValidationEvent</code>, <code dir="auto">WriteEvent</code> and <code dir="auto">JobSummaryEvent</code> carry
+<code dir="auto">job: Option[JobInfo]</code> (the dry-run events always had a <code dir="auto">job</code>): which engine produced the event
+(<code dir="auto">engine</code>, <code dir="auto">engineVersion</code>), the job’s stable identity across runs (<code dir="auto">jobId</code>), the run (<code dir="auto">runId</code>) and whatever the
+platform attached through the engine’s own configuration (<code dir="auto">attributes</code>). That is what lets a consumer receiving
+events from more than one engine tell them apart, and group one job’s events across runs. An adapter that
+publishes events passes its <code dir="auto">JobInfo</code> to the pipeline (the <code dir="auto">job</code> parameter above) and to any <code dir="auto">WriteEvent</code> it
+builds itself. The conformance kit holds it to that: an adapter that declares <code dir="auto">reporting.notifications</code> must
+publish validation events whose <code dir="auto">job.engine</code> is its own name (the <code dir="auto">adapter:</code> in its capability declaration),
+and <code dir="auto">BrokenAdapterSpec</code> proves the kit fails an adapter that names none or another engine. Spark’s <code dir="auto">JobInfo</code> is
+<code dir="auto">DryRunReporter.jobInfoOf(session)</code>: <code dir="auto">engine = "spark"</code>, <code dir="auto">jobId</code> from <code dir="auto">spark.invaract.jobId</code>, and
+<code dir="auto">attributes</code> from <code dir="auto">spark.invaract.job.metadata.&#x3C;key></code>.</p>
 <p><strong>A sink that needs an engine’s storage library lives in that engine’s adapter.</strong> The core has
 no Hadoop dependency: <code dir="auto">HadoopFsNotificationSink</code> is in <code dir="auto">spark-adapter</code>, and a dead letter with a
 <code dir="auto">scheme://</code> path names its sink with <code dir="auto">deadLetter.class</code>.</p>
@@ -715,7 +727,9 @@ tests fail if a capability is in neither list or in both.</li>
 <p><strong>Attested claims have a standard shape.</strong> For each attested capability an adapter declares <code dir="auto">supported</code> or
 <code dir="auto">partial</code>, the adapter names the test that demonstrates it (<code dir="auto">Attestation(suite, test)</code>), by mixing
 <code dir="auto">AttestedClaimsSpec</code> into a test (Spark’s is <code dir="auto">SparkAttestedClaimsSpec</code>). The kit checks the named test exists
-(the suite loads and has a test of that exact name), that no attestation is left for a capability the adapter
+(the suite loads and has a test of that exact name) and is not ignored (an <code dir="auto">ignore(...)</code> test, or a test of a suite
+annotated <code dir="auto">@Ignore</code>, never runs, so it is rejected; the kit cannot see a test that cancels or is <code dir="auto">pending</code> at run
+time, so a green build is what shows the test ran), that no attestation is left for a capability the adapter
 does not claim, and that nothing is attested that a scenario already checks; <code dir="auto">AttestedClaims.requirements</code>
 says what each test must show, which is the review checklist for the named test (the kit cannot judge
 that). A rename or deletion of the test fails the build, and a new claim without a test fails it too. The generated engine-capabilities page says the same per

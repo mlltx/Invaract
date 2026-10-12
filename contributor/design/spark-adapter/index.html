@@ -1577,7 +1577,11 @@ along on every event, without a second, parallel metadata vocabulary.</p>
 <p><strong>Both events also carry <code dir="auto">runId: Option[String]</code></strong> (named <code dir="auto">applicationId</code> before the
 event format went engine-neutral) — the owning <code dir="auto">SparkSession</code>’s <code dir="auto">sparkContext.applicationId</code>, so a consumer aggregating
 events from many concurrent jobs (or many runs of the same job over time)
-can group by run without inventing its own correlation ID.
+can group by run without inventing its own correlation ID. Both also carry
+<code dir="auto">job: Option[JobInfo]</code> - the engine (<code dir="auto">"spark"</code>), its version, the job’s stable <code dir="auto">jobId</code>
+(<code dir="auto">spark.invaract.jobId</code>), the run and the <code dir="auto">spark.invaract.job.metadata.*</code> attributes, the
+same object the dry-run events carry (<code dir="auto">DryRunReporter.jobInfoOf</code>). <code dir="auto">JobSummaryEvent</code> carries
+the job of the events it summarizes.
 <code dir="auto">ContractValidationEvent</code> gets it from the <code dir="auto">SparkSession</code> captured by
 <code dir="auto">ContractEnforcementRule.forContract</code>’s closure at rule-installation time;
 <code dir="auto">WriteEvent</code> gets it from <code dir="auto">qe.sparkSession</code> on the <code dir="auto">QueryExecution</code>
