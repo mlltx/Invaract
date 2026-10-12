@@ -302,11 +302,12 @@ class BrokenAdapterSpec extends AnyFunSuite {
 
   test("a test that is ignored, or named only inside another test's body, does not hold an exemption") {
     val real = controls.collectFirst { case (_, h: HeldByCore) => h }.get
-    val dir = java.nio.file.Files.createTempDirectory("exemption")
+    // inside the repository (not the system temp directory, which can be on another drive), so the path is relative to the root
+    val dir = repositoryRoot.toPath.resolve("adapter-testkit").resolve("target").resolve("exemption-fixture")
+    java.nio.file.Files.createDirectories(dir)
     val file = dir.resolve("Spec.scala")
     java.nio.file.Files.write(file, s"""  ignore("the ignored one") { }\n  // test("a commented one")\n""".getBytes("UTF-8"))
     try {
-      // a path outside the repository root is resolved against it, so point at the temp file by walking up from the root
       val relative = repositoryRoot.toPath.relativize(file).toString
       assert(problems(real.copy(file = relative, test = "the ignored one")).exists(_.contains("declares no test")))
       assert(problems(real.copy(file = relative, test = "a commented one")).exists(_.contains("declares no test")))
