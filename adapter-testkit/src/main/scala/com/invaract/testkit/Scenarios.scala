@@ -73,10 +73,16 @@ object Scenarios {
       join: Option[JoinOn] = None,
       filterColumn: Option[String] = None,
       rowChange: Option[RowChange] = None,
-      opaqueStep: Boolean = false
-  ) = ScenarioJob(inputs, columns, output, join, filterColumn, rowChange = rowChange, opaqueStep = opaqueStep)
+      opaqueStep: Boolean = false,
+      crossJoin: Boolean = false,
+      groupBy: Option[List[String]] = None
+  ) = ScenarioJob(inputs, columns, output, join, filterColumn, rowChange = rowChange, opaqueStep = opaqueStep, crossJoin = crossJoin, groupBy = groupBy)
 
   private val defaults = VerificationOptions()
+
+  /** Orders aggregated by `keyedBy`, writing `id` (that key, under the output's name for it) and the rows per group. */
+  private def groupedJob(keyedBy: String) =
+    job(columns = List(OutColumn("id", FromInput(0, keyedBy)), OutColumn("total", ColumnSource.RowCount)), groupBy = Some(List(keyedBy)))
 
   private val tagsType = LogicalType.ArrayType(Str)
   private val tagged = ScenarioInput(
@@ -388,6 +394,48 @@ object Scenarios {
       Set(Capability.RulesPlanShape),
       contract(rules = "  - type: required_filter_columns\n    columns: [amount]"), job(),
       defaults, Expectation.Reject(Set(ViolationType.RuleRequiredFilterColumnsViolation))
+    ),
+    Scenario(
+      "forbid-cross-join-allows-a-keyed-join",
+      "a forbid_cross_join rule is satisfied when the inputs are joined on a column",
+      Set(Capability.RulesPlanShape),
+      contract(inputs = twoInputs, rules = "  - type: forbid_cross_join"),
+      job(inputs = List(orders, profiles), join = Some(JoinOn("id", "id"))), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "forbid-cross-join-blocks-a-cartesian-product",
+      "a forbid_cross_join rule is violated when two inputs are joined with no condition",
+      Set(Capability.RulesPlanShape),
+      contract(inputs = twoInputs, rules = "  - type: forbid_cross_join"),
+      job(inputs = List(orders, profiles), crossJoin = true), defaults, Expectation.Reject(Set(ViolationType.RuleCrossJoinViolation))
+    ),
+    Scenario(
+      "required-join-columns-present",
+      "a required_join_columns rule is satisfied when the inputs are joined by equality on that column",
+      Set(Capability.RulesPlanShape),
+      contract(inputs = twoInputs, rules = "  - type: required_join_columns\n    columns: [id]"),
+      job(inputs = List(orders, profiles), join = Some(JoinOn("id", "id"))), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "required-join-columns-missing",
+      "a required_join_columns rule is violated when the join is not on that column",
+      Set(Capability.RulesPlanShape),
+      contract(inputs = twoInputs, rules = "  - type: required_join_columns\n    columns: [amount]"),
+      job(inputs = List(orders, profiles), join = Some(JoinOn("id", "id"))), defaults,
+      Expectation.Reject(Set(ViolationType.RuleRequiredJoinColumnsViolation))
+    ),
+    Scenario(
+      "required-group-by-present",
+      "a required_group_by rule is satisfied when the job aggregates by that column",
+      Set(Capability.RulesPlanShape),
+      contract(rules = "  - type: required_group_by\n    columns: [id]"), groupedJob(keyedBy = "id"), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "required-group-by-wrong-keys",
+      "a required_group_by rule is violated when the job aggregates by a different column, even one the output renames to the required name",
+      Set(Capability.RulesPlanShape),
+      contract(rules = "  - type: required_group_by\n    columns: [id]"), groupedJob(keyedBy = "amount"), defaults,
+      Expectation.Reject(Set(ViolationType.RuleRequiredGroupByViolation))
     ),
     Scenario(
       "fingerprint-flags-nothing-for-a-deterministic-job",

@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
-import com.invaract.ir.{CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
+import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.JobInfo
 
@@ -95,9 +95,12 @@ object ReferenceAdapter {
 
   private def translateTransform(job: ScenarioJob): Plan = {
     val reads = job.inputs.map(i => Read(DatasetRef(i.location)))
-    val joined: Plan = job.join.fold[Plan](reads.head)(j =>
-      Join(reads(0), reads(1), JoinType.Inner, Some(Comparison("=", ref(job, 0, j.leftColumn), ref(job, 1, j.rightColumn))))
-    )
+    val joined: Plan =
+      if (job.crossJoin) Join(reads(0), reads(1), JoinType.Cross, None)
+      else
+        job.join.fold[Plan](reads.head)(j =>
+          Join(reads(0), reads(1), JoinType.Inner, Some(Comparison("=", ref(job, 0, j.leftColumn), ref(job, 1, j.rightColumn))))
+        )
     val filtered: Plan = job.filterColumn.fold(joined)(c => Filter(joined, Comparison(">", ref(job, 0, c), Literal(0L, "long"))))
     // an opaque step is a node this adapter has no representation for: the translation keeps it as an UnknownPlan that
     // still carries the plan beneath it, which is what `ir.UnknownPlan` is for ("the rest of the tree stays inspectable")
@@ -110,10 +113,13 @@ object ReferenceAdapter {
           case ColumnSource.CastInput(i, col, t) => Cast(ref(job, i, col), t.typeName)
           case ColumnSource.NonNullLong(v)       => Literal(v, "long")
           case ColumnSource.UniqueId             => com.invaract.ir.Function(FunctionCatalog.Uuid.name, Nil)
+          case ColumnSource.RowCount             => AggregateCall("COUNT", Literal(1L, "long"))
         }
       )
     }
-    Write(DatasetRef(job.output.location), Project(stepped, columns), Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
+    // a grouping job's columns are the aggregation's own outputs; otherwise a projection of what was read
+    val shaped: Plan = job.groupBy.fold[Plan](Project(stepped, columns))(keys => Aggregate(stepped, keys.map(ref(job, 0, _)), columns))
+    Write(DatasetRef(job.output.location), shaped, Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
   }
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {
@@ -125,6 +131,7 @@ object ReferenceAdapter {
         case ColumnSource.CastInput(i, col, t) => LogicalField(c.name, t, source(i, col).nullable)
         case ColumnSource.NonNullLong(_)       => LogicalField(c.name, LogicalType.LongType, nullable = false)
         case ColumnSource.UniqueId             => LogicalField(c.name, LogicalType.StringType, nullable = false)
+        case ColumnSource.RowCount             => LogicalField(c.name, LogicalType.LongType, nullable = false)
       }
     })
   }

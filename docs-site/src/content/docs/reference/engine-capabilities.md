@@ -32,9 +32,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (38) | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (44) | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (39) | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (45) | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | ✅ |
@@ -56,7 +56,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
 | `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | verified (2) | ◐ |
-| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (2) | ✅ |
+| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (8) | ✅ |
 | `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | attested | ✅ |
 
 ### Analysis and lineage
@@ -118,11 +118,11 @@ Attested:
 
 ## Conformance results
 
-The suite has 45 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 51 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `spark` | 45 | 45 |
+| `spark` | 51 | 51 |
 
 ## Notes
 

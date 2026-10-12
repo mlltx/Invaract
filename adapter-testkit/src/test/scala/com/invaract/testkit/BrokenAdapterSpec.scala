@@ -4,7 +4,7 @@
 package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalType}
-import com.invaract.ir.{CatalogIdentity, ColumnRef, ColumnReference, Comparison, DatasetRef, Filter, Function, Join, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
+import com.invaract.ir.{Aggregate, CatalogIdentity, ColumnRef, ColumnReference, Comparison, DatasetRef, Filter, Function, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
 import com.invaract.verification.{CheckedWrite, VerificationOptions, ViolationType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -43,6 +43,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
       case fl: Filter => fl.copy(input = rewrite(fl.input)(f))
       case j: Join    => j.copy(left = rewrite(j.left)(f), right = rewrite(j.right)(f))
       case u: UnknownPlan => u.copy(children = u.children.map(rewrite(_)(f)))
+      case a: Aggregate   => a.copy(input = rewrite(a.input)(f))
       case other      => other
     }
     f.applyOrElse(rebuilt, identity[Plan])
@@ -117,6 +118,28 @@ class BrokenAdapterSpec extends AnyFunSuite {
     Mistake("drops what is beneath a step it cannot translate",
       new Variant(rewritePlan = (_, p) => rewrite(p) { case u: UnknownPlan => u.copy(children = Nil) }),
       Set("unrecognized-step-keeps-the-reads-beneath-it-visible", "unrecognized-step-does-not-hide-an-undeclared-read")),
+    Mistake("reports every join as having no condition",
+      new Variant(rewritePlan = (_, p) => rewrite(p) { case j: Join => j.copy(condition = None) }),
+      Set("forbid-cross-join-allows-a-keyed-join", "required-join-columns-present")),
+    Mistake("reports a cartesian product as a keyed join",
+      new Variant(rewritePlan = (_, p) => rewrite(p) {
+        case j @ Join(_, _, JoinType.Cross, None) => j.copy(joinType = JoinType.Inner, condition = Some(Comparison("=", Literal(1L, "long"), Literal(1L, "long"))))
+      }),
+      Set("forbid-cross-join-blocks-a-cartesian-product")),
+    Mistake("loses the aggregation in translation",
+      new Variant(rewritePlan = (_, p) => rewrite(p) { case a: Aggregate => a.input }),
+      Set("required-group-by-present")),
+    Mistake("reports a grouping column under the name the output gives it",
+      new Variant(rewritePlan = (job, p) => rewrite(p) {
+        case a: Aggregate =>
+          a.copy(groupBy = a.groupBy.map {
+            case ColumnReference(ref) =>
+              val alias = job.columns.collectFirst { case OutColumn(out, ColumnSource.FromInput(0, ref.name)) => out }.getOrElse(ref.name)
+              ColumnReference(ref.copy(name = alias))
+            case other => other
+          })
+      }),
+      Set("required-group-by-wrong-keys")),
     Mistake("loses the joins in translation", new Variant(rewritePlan = (_, p) => rewrite(p) { case Join(l, _, _, _) => l }),
       Set("undeclared-input-rejected", "derived-from-rejects-a-read-of-another-outputs-source", "lineage-through-join-and-filter")),
     Mistake("writes somewhere other than it reports", new Variant(rewritePlan = onWrite(_.copy(dataset = DatasetRef("somewhere/else")))),
@@ -224,6 +247,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
     "nested-type-mismatch" -> HeldByCore(schemaChecker, "struct properties: a nested type mismatch is reported with the dotted path", "the shared structural comparison"),
     "row-level-delete-own-table-is-not-an-input" -> HeldByCore(pipeline, "DML: the table an in-place change reads is not an undeclared input", "the shared in-place read rule"),
     "invalid-contract" -> HeldByCore(pipeline, "verifyWrite: an invalid contract is rejected BEFORE the adapter is asked to build the write", "contract validation before any job is looked at"),
+    "required-join-columns-missing" -> CaughtBluntly("an adapter that lets a write through unchecked passes a join that is not on the required column"),
     "untranslatable-write-fails-closed" -> CaughtBluntly("an adapter that passes an operation it cannot translate skips the scenario's whole point"),
     "row-level-delete-checked-as-write" -> HeldByKit(
       Attestation("com.invaract.testkit.ConformanceKitSpec", "a scenario that needs something the engine does not have is skipped with the adapter's own reason, not failed"),
