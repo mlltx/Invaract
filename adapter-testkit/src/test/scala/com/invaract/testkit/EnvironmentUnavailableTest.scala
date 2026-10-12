@@ -25,12 +25,14 @@ class EnvironmentlessAdapter(unavailableFor: String => Boolean = _ => true) exte
 class LenientEnvironmentSpec extends AdapterConformanceSpec {
   override protected def adapter: ConformanceAdapter = new EnvironmentlessAdapter()
   override protected def strictEnvironment: Boolean = false
+  override protected def resultsDirectory: Option[java.io.File] = None
 }
 
 @DoNotDiscover
 class StrictEnvironmentSpec extends AdapterConformanceSpec {
   override protected def adapter: ConformanceAdapter = new EnvironmentlessAdapter()
   override protected def strictEnvironment: Boolean = true
+  override protected def resultsDirectory: Option[java.io.File] = None
 }
 
 @DoNotDiscover

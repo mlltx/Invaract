@@ -186,6 +186,15 @@ divergences). Throw it only for the environment; any other exception is a diverg
 supposed to be there (CI), set `INVARACT_CONFORMANCE_STRICT=true` (or override `strictEnvironment`) and an unavailable
 scenario fails instead, so a build whose emulator silently went missing cannot pass by skipping everything.
 
+**A scenario that stops conforming cannot hide as a cancel.** A canceled test is green, so an adapter that flips a
+capability to `unsupported` or `not-applicable` to make a failure go away would turn a pass into a skip with the build
+still passing. Each adapter therefore checks in `src/test/resources/conformance-baseline-<adapter>.txt` (`<adapter>` is the
+`adapter:` of its declaration; one scenario id per line): `AdapterConformanceSpec`'s last test fails when a scenario on it is
+no longer conforming, and when one that conforms is not on it, printing the file the run would produce. The baseline only
+ever grows by a reviewed line, and removing a line is a decision with its reason in the PR. The scaffold writes an empty one;
+add scenarios to it as they start to conform. The same run writes `target/conformance/<adapter>.json`, every scenario's
+verdict and reason, for tooling; `./dev/capabilities` reads the baselines to state how many scenarios each adapter is held to.
+
 **Each scenario runs under a time limit, on a thread of the kit's own.** `AdapterConformanceSpec.scenarioTimeLimit`
 (ten minutes by default) turns a scenario that never finishes into a divergence that names it, instead of a hung
 build; raise it for a slow engine. Because the scenario runs on a thread the kit creates, anything the engine binds to
@@ -233,7 +242,7 @@ Everything `CLAUDE.md` asks of an engine module applies to the new one:
 
 - [ ] The investigation (step 1) is written, with evidence, and its unverified items are settled or listed.
 - [ ] `check_modules.py` is clean.
-- [ ] `<Engine>ConformanceSpec` has no divergence; every scenario is conforms or skipped with the declaration's reason, and none is unavailable on the CI run that counts (`INVARACT_CONFORMANCE_STRICT=true`).
+- [ ] `<Engine>ConformanceSpec` has no divergence; every scenario is conforms or skipped with the declaration's reason, none is unavailable on the CI run that counts (`INVARACT_CONFORMANCE_STRICT=true`), and its `conformance-baseline-<engine>.txt` lists every scenario that conforms.
 - [ ] `<Engine>AttestedClaimsSpec` is green; every claimed attested capability names a test.
 - [ ] The declaration is honest: nothing `supported` without a passing scenario or an attestation.
 - [ ] Both ledgers exist, with no ❓ presented as done.

@@ -72,4 +72,51 @@ class CapabilityMatrixPageSpec extends AnyFunSuite {
       Files.delete(dir)
     }
   }
+
+  // --- the conformance results section, from each adapter's checked-in baseline ---------------------------------
+
+  private def withModule(baselineIds: Option[List[String]], declarationName: String = "invaract-capabilities-reference.yaml")(check: String => Unit): Unit = {
+    val root = Files.createTempDirectory("matrix-results")
+    try {
+      val resources = Files.createDirectories(root.resolve("mod").resolve("src").resolve("main").resolve("resources"))
+      val declaration = resources.resolve(declarationName)
+      Files.copy(Paths.get(repoRoot.getPath, "adapter-testkit", "src", "main", "resources", "reference", "invaract-capabilities-reference.yaml"), declaration)
+      baselineIds.foreach { ids =>
+        val tests = Files.createDirectories(root.resolve("mod").resolve("src").resolve("test").resolve("resources"))
+        Files.write(tests.resolve("conformance-baseline-reference.txt"), ("# held\n" + ids.mkString("\n") + "\n").getBytes(StandardCharsets.UTF_8))
+      }
+      check(CapabilityMatrixPage.renderFiles(List(declaration.toString)))
+    } finally {
+      Files.walk(root).sorted(java.util.Comparator.reverseOrder[java.nio.file.Path]()).forEach(p => Files.delete(p))
+    }
+  }
+
+  test("an adapter with a checked-in baseline gets a conformance-results row counting it against the whole suite, before the notes") {
+    val ids = Scenarios.all.take(3).map(_.id)
+    withModule(Some(ids)) { page =>
+      assert(page.contains(s"The suite has ${Scenarios.all.size} scenarios."))
+      assert(page.contains(s"| `reference` | 3 | ${Scenarios.all.size} |"))
+      assert(page.indexOf("## Conformance results") > 0 && page.indexOf("## Conformance results") < page.indexOf("## Notes"))
+    }
+  }
+
+  test("an empty baseline is a row of zero, not an absent adapter") {
+    withModule(Some(Nil)) { page => assert(page.contains(s"| `reference` | 0 | ${Scenarios.all.size} |")) }
+  }
+
+  test("an adapter with no baseline file gets no results section at all") {
+    withModule(None) { page => assert(!page.contains("## Conformance results")) }
+  }
+
+  test("a declaration not named invaract-capabilities-<adapter>.yaml has no baseline to find, and is not an error") {
+    withModule(Some(List("conforming-write")), declarationName = "capabilities-reference.yaml") { page => assert(!page.contains("## Conformance results")) }
+    withModule(Some(List("conforming-write")), declarationName = "invaract-capabilities-reference.txt") { page => assert(!page.contains("## Conformance results")) }
+  }
+
+  test("the committed page's results section matches the baselines in the repository") {
+    val page = read(new File(repoRoot, "docs-site/src/content/docs/reference/engine-capabilities.md").getPath)
+    val spark = scala.io.Source.fromFile(new File(repoRoot, "spark-adapter/src/test/resources/conformance-baseline-spark.txt"), "UTF-8")
+    val held = try ConformanceBaseline.parse(spark.mkString).size finally spark.close()
+    assert(page.contains(s"| `spark` | $held | ${Scenarios.all.size} |"))
+  }
 }

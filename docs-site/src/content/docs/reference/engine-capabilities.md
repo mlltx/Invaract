@@ -116,6 +116,14 @@ Attested:
 - `config.contractRegistry` — how an adapter attaches to a job is engine-specific, not a job
 - `reporting.dryRunInference` — dry-run mode is a mode of installing, not a job
 
+## Conformance results
+
+The suite has 40 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+
+| Adapter | Scenarios conforming | Of |
+|---|---|---|
+| `spark` | 40 | 40 |
+
 ## Notes
 
 ### spark

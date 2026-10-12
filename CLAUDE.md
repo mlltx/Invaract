@@ -417,7 +417,7 @@ is canceled with its note). A new engine-neutral check means a new scenario in
 could check by its nature, the second for what the kit cannot check yet; there are no gaps today) — the kit's own
 tests fail if a capability is in neither, and `BrokenAdapterSpec` fails if a new scenario is the catch for no
 deliberately broken adapter (add the mistake it exists to catch, or exempt it with a pointer the suite checks: the scenario it is a control for, the `verification-core` test that holds it, or a kit test). An attested capability
-an adapter claims names the test that demonstrates it (`AttestedClaimsSpec`). The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
+an adapter claims names the test that demonstrates it (`AttestedClaimsSpec`). Each adapter also checks in `conformance-baseline-<adapter>.txt` among its test resources (the scenarios it conforms to), and `AdapterConformanceSpec` fails when one stops conforming (a capability flipped to `unsupported` to silence a failure would otherwise be a green cancel) or when a new one conforms and is not yet listed; `dev/new-adapter` writes an empty one. The kit is itself gated by MiMa, coverage and mutation testing in CI (its `Scenarios.scala` catalogue alone is excluded from mutation). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 4.
 
 When designing a new feature: could a platform team enable or configure it
 against a job whose source they don't control, using only
