@@ -504,8 +504,10 @@ with one mistake at a time - a filter lost in translation, a join lost, a format
 way, a catalog identity never reported, a unique-id function under its native name, a column's derivation
 lost, a stream not recognised as a read, a checkpoint it cannot see through, and so on - and lists the
 scenarios that must catch each. The suite fails if a mistake gets past one of them, and fails if a scenario
-is the target of no mistake and is not listed as a control with the reason (the ones left are the shared
-checks `verification-core` already holds, and the control for each option's default). A scenario added
+is the target of no mistake and is not exempted with a reason the suite can check: an exemption names the scenario
+it is the control for, the `verification-core` test that holds the shared check (the file must declare that
+`test("...")`, so a renamed, deleted or `ignore`d test fails the suite), the blunt mistake that catches it, or a kit
+test. "Held elsewhere" is therefore a pointer that is verified, not a claim nobody re-reads. A scenario added
 later therefore arrives with the mistake it is there to catch; one that nothing could make fail says
 nothing about a real adapter.
 

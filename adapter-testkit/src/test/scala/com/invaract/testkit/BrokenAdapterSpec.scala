@@ -177,22 +177,84 @@ class BrokenAdapterSpec extends AnyFunSuite {
       Set("boundary-filter-is-seen-through", "boundary-does-not-excuse-a-missing-input"))
   )
 
+  /** Why a scenario is not the catch for a mistake of its own. Every exemption points at something this suite can
+    * check, so "verification-core's tests hold it" cannot outlive the test it names: a prose reason is a claim
+    * nobody re-reads, and a deleted or ignored test would leave the scenario unguarded with the list still green.
+    */
+  private sealed trait Exemption { def reason: String }
+
+  /** The happy path, or the default of an option, paired with a scenario that is itself guarded: targeted by a mistake,
+    * or exempted for a reason that is not itself a pairing (a pairing with a pairing guards nothing). */
+  private case class ControlFor(scenario: String, reason: String) extends Exemption
+
+  /** The engine-neutral rule the scenario shows is checked by one of `verification-core`'s own tests: `file` (relative
+    * to the repository root) declares a `test("<test>")`. */
+  private case class HeldByCore(file: String, test: String, reason: String) extends Exemption
+
+  /** The scenario is caught by one of the blunt mistakes above, which prove the verdict plumbing. */
+  private case class CaughtBluntly(reason: String) extends Exemption
+
+  /** The kit's own test (a ScalaTest suite on this classpath and a test in it) demonstrates the behaviour. */
+  private case class HeldByKit(attestation: Attestation, reason: String) extends Exemption
+
+  private val schemaChecker = "verification-core/src/test/scala/com/invaract/verification/SchemaCheckerSpec.scala"
+  private val inputOutputChecker = "verification-core/src/test/scala/com/invaract/verification/InputOutputCheckerSpec.scala"
+  private val pipeline = "verification-core/src/test/scala/com/invaract/verification/VerificationPipelineSpec.scala"
+
   // Scenarios that are a negative control (the happy path, or the default of an option) rather than the catch for a mistake.
-  private val controls: Map[String, String] = Map(
-    "undeclared-output-column-allowed-by-default" -> "the default of rejectUndeclaredFields: it is the control for undeclared-output-column-rejected",
-    "fingerprint-flags-nothing-for-a-deterministic-job" -> "the control for the generated-id scenario",
-    "output-type-mismatch" -> "an adapter that maps a cast wrongly is caught by the shared type check, which verification-core's own tests hold",
-    "extended-type-not-produced" -> "holds the engine-neutral rule that a type an engine lacks is a mismatch; verification-core's own tests hold the rule",
-    "missing-output-field" -> "holds the shared field-presence check; verification-core's own tests hold it",
-    "declared-input-not-read" -> "holds the shared missing-input check; verification-core's own tests hold it",
-    "undeclared-output-column-rejected" -> "holds the shared undeclared-field option; verification-core's own tests hold it",
-    "nested-type-mismatch" -> "holds the shared structural comparison; verification-core's own tests hold it",
-    "row-level-delete-checked-as-write" -> "an adapter that does not recognize a DELETE as a write fails the scenario's operation, not its verdict",
-    "row-level-delete-own-table-is-not-an-input" -> "holds the shared in-place read rule; verification-core's own tests hold it",
-    "filtered-delete-allowed" -> "the control for unconditional-delete-forbidden",
-    "untranslatable-write-fails-closed" -> "an adapter that passes an operation it cannot translate skips the scenario's whole point; caught by the blunt mistake",
-    "invalid-contract" -> "holds the shared contract validation before any job is looked at"
+  private val controls: Map[String, Exemption] = Map(
+    "undeclared-output-column-allowed-by-default" -> ControlFor("undeclared-output-column-rejected", "the default of rejectUndeclaredFields"),
+    "fingerprint-flags-nothing-for-a-deterministic-job" -> ControlFor("fingerprint-flags-a-generated-id", "the deterministic job a generated id is told apart from"),
+    "filtered-delete-allowed" -> ControlFor("unconditional-delete-forbidden", "the delete the rule must not block"),
+    "output-type-mismatch" -> HeldByCore(schemaChecker, "scalars: matching type and nullability is clean; a wrong scalar type reports the bare typeName on both sides",
+      "an adapter that maps a cast wrongly is caught by the shared type check"),
+    "extended-type-not-produced" -> HeldByCore(schemaChecker, "an engine type with no logical equivalent never satisfies a declared standard type",
+      "a type an engine lacks is a mismatch, whatever the engine"),
+    "missing-output-field" -> HeldByCore(schemaChecker, "a missing field is only flagged when required; nullability is one-directional", "the shared field-presence check"),
+    "declared-input-not-read" -> HeldByCore(inputOutputChecker, "notRead: the declared inputs no read location matches, in declaration order", "the shared missing-input check"),
+    "undeclared-output-column-rejected" -> HeldByCore(schemaChecker, "undeclared columns are reported only under rejectUndeclaredFields, in schema order", "the shared undeclared-field option"),
+    "nested-type-mismatch" -> HeldByCore(schemaChecker, "struct properties: a nested type mismatch is reported with the dotted path", "the shared structural comparison"),
+    "row-level-delete-own-table-is-not-an-input" -> HeldByCore(pipeline, "DML: the table an in-place change reads is not an undeclared input", "the shared in-place read rule"),
+    "invalid-contract" -> HeldByCore(pipeline, "verifyWrite: an invalid contract is rejected BEFORE the adapter is asked to build the write", "contract validation before any job is looked at"),
+    "untranslatable-write-fails-closed" -> CaughtBluntly("an adapter that passes an operation it cannot translate skips the scenario's whole point"),
+    "row-level-delete-checked-as-write" -> HeldByKit(
+      Attestation("com.invaract.testkit.ConformanceKitSpec", "a scenario that needs something the engine does not have is skipped with the adapter's own reason, not failed"),
+      "an adapter that does not recognize a DELETE as a write fails the scenario's operation, not its verdict"
+    )
   )
+
+  /** The scenarios something guards: those a mistake targets, and those exempted for a reason that points elsewhere. */
+  private def guardedScenarios(targeted: Set[String]): Set[String] =
+    targeted ++ controls.collect { case (id, e) if !e.isInstanceOf[ControlFor] => id }
+
+  /** The repository root, found from where the tests run (`modules.json` marks it). */
+  private lazy val repositoryRoot: java.io.File = {
+    var dir: java.io.File = new java.io.File(sys.props("user.dir")).getAbsoluteFile
+    while (dir != null && !new java.io.File(dir, "modules.json").exists) dir = dir.getParentFile
+    require(dir != null, s"no modules.json above ${sys.props("user.dir")}: the repository root was not found")
+    dir
+  }
+
+  /** What is wrong with an exemption, or empty when what it points at is there. */
+  private def problemWith(scenario: String, exemption: Exemption, guarded: Set[String], bluntlyCaught: Set[String]): List[String] = exemption match {
+    case ControlFor(other, _) =>
+      if (!allIds.contains(other)) List(s"$scenario is a control for '$other', which is not a scenario")
+      else if (!guarded.contains(other)) List(s"$scenario is a control for '$other', which nothing guards: no mistake targets it and it has no exemption of its own")
+      else Nil
+    case CaughtBluntly(_) =>
+      if (bluntlyCaught.contains(scenario)) Nil else List(s"$scenario says a blunt mistake catches it, but none lists it")
+    case HeldByKit(attestation, _) =>
+      AttestedClaims.exists(attestation, getClass.getClassLoader).left.toOption.map(why => s"$scenario: $why").toList
+    case HeldByCore(file, test, _) =>
+      val path = new java.io.File(repositoryRoot, file)
+      if (!path.exists) List(s"$scenario is held by $file, which does not exist")
+      else {
+        val source = scala.io.Source.fromFile(path, "UTF-8")
+        // closed, or Windows cannot delete the file afterwards
+        val declared = try source.getLines().exists(_.trim.startsWith(s"""test("$test""")) finally source.close()
+        if (declared) Nil else List(s"""$scenario is held by $file, which declares no test("$test")""")
+      }
+  }
 
   private def diverging(adapter: ConformanceAdapter): Set[String] =
     Conformance.evaluate(adapter).results.collect { case ScenarioResult(s, _: ScenarioVerdict.Diverges) => s.id }.toSet
@@ -218,8 +280,62 @@ class BrokenAdapterSpec extends AnyFunSuite {
     assert(uncovered.isEmpty, s"scenarios with no mistake that targets them (add one to BrokenAdapterSpec, or list them as a control): ${uncovered.toList.sorted.mkString(", ")}")
     val stale = controls.keySet -- allIds
     assert(stale.isEmpty, s"controls naming no scenario: $stale")
+    val bluntlyCaught = blunt.flatMap(_.mustCatch).toSet
+    val problems = controls.toList.sortBy(_._1).flatMap { case (id, e) => problemWith(id, e, guardedScenarios(targeted), bluntlyCaught) }
+    assert(problems.isEmpty, s"exemptions that point at nothing:\n${problems.mkString("\n")}")
+    assert(controls.values.forall(_.reason.trim.nonEmpty))
     // An exempt scenario really is untargeted: otherwise the exemption is dead weight hiding a coverage fact.
     val needless = controls.keySet.intersect(targeted)
     assert(needless.isEmpty, s"scenarios exempted as controls that a mistake already targets: ${needless.toList.sorted.mkString(", ")}")
+  }
+
+  // --- the exemptions are checked, so a dangling one is caught ------------------------------------------------
+
+  private val targetedByMistakes = specific.flatMap(_.mustCatch).toSet
+  private val bluntTargets = blunt.flatMap(_.mustCatch).toSet
+  private def problems(e: Exemption, scenario: String = "some-scenario"): List[String] = problemWith(scenario, e, guardedScenarios(targetedByMistakes), bluntTargets)
+
+  test("an exemption held by a verification-core test is accepted only while that file declares that test") {
+    val real = controls.collectFirst { case (_, h: HeldByCore) => h }.get
+    assert(problems(real) == Nil)
+    assert(problems(real.copy(test = "a test that was renamed")).exists(_.contains("declares no test")))
+    assert(problems(real.copy(file = "verification-core/src/test/scala/Nope.scala")).exists(_.contains("does not exist")))
+  }
+
+  test("a test that is ignored, or named only inside another test's body, does not hold an exemption") {
+    val real = controls.collectFirst { case (_, h: HeldByCore) => h }.get
+    // inside the repository (not the system temp directory, which can be on another drive), so the path is relative to the root
+    val dir = repositoryRoot.toPath.resolve("adapter-testkit").resolve("target").resolve("exemption-fixture")
+    java.nio.file.Files.createDirectories(dir)
+    val file = dir.resolve("Spec.scala")
+    java.nio.file.Files.write(file, s"""  ignore("the ignored one") { }\n  // test("a commented one")\n""".getBytes("UTF-8"))
+    try {
+      val relative = repositoryRoot.toPath.relativize(file).toString
+      assert(problems(real.copy(file = relative, test = "the ignored one")).exists(_.contains("declares no test")))
+      assert(problems(real.copy(file = relative, test = "a commented one")).exists(_.contains("declares no test")))
+    } finally java.nio.file.Files.deleteIfExists(file)
+  }
+
+  test("a control must name a scenario that exists and that a mistake targets") {
+    val targetedOne = targetedByMistakes.head
+    assert(problems(ControlFor(targetedOne, "x")) == Nil)
+    assert(problems(ControlFor("no-such-scenario", "x")).exists(_.contains("not a scenario")))
+    val unguarded = (allIds -- guardedScenarios(targetedByMistakes)).head
+    assert(problems(ControlFor(unguarded, "x")).exists(_.contains("nothing guards")))
+    // a scenario exempted for a reason of its own guards its pair; one that is only a pairing does not
+    assert(problems(ControlFor("undeclared-output-column-rejected", "x")) == Nil)
+    assert(problems(ControlFor("undeclared-output-column-allowed-by-default", "x")).exists(_.contains("nothing guards")))
+  }
+
+  test("a 'caught bluntly' exemption holds only for a scenario a blunt mistake lists") {
+    assert(problems(CaughtBluntly("x"), bluntTargets.head) == Nil)
+    assert(problems(CaughtBluntly("x"), "not-listed-anywhere").exists(_.contains("none lists it")))
+  }
+
+  test("an exemption held by a kit test is accepted only while that suite has that live test") {
+    val real = controls.collectFirst { case (_, h: HeldByKit) => h }.get
+    assert(problems(real) == Nil)
+    assert(problems(real.copy(attestation = real.attestation.copy(test = "no such test"))).nonEmpty)
+    assert(problems(real.copy(attestation = real.attestation.copy(suite = "com.invaract.testkit.NoSuchSuite"))).nonEmpty)
   }
 }
