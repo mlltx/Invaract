@@ -324,6 +324,14 @@ never counted as conforming and never a divergence (a divergence that is really 
 divergences). Throw it only for the environment; any other exception is a divergence. Where the environment is
 supposed to be there (CI), set <code dir="auto">INVARACT_CONFORMANCE_STRICT=true</code> (or override <code dir="auto">strictEnvironment</code>) and an unavailable
 scenario fails instead, so a build whose emulator silently went missing cannot pass by skipping everything.</p>
+<p><strong>A scenario that stops conforming cannot hide as a cancel.</strong> A canceled test is green, so an adapter that flips a
+capability to <code dir="auto">unsupported</code> or <code dir="auto">not-applicable</code> to make a failure go away would turn a pass into a skip with the build
+still passing. Each adapter therefore checks in <code dir="auto">src/test/resources/conformance-baseline-&#x3C;adapter>.txt</code> (<code dir="auto">&#x3C;adapter></code> is the
+<code dir="auto">adapter:</code> of its declaration; one scenario id per line): <code dir="auto">AdapterConformanceSpec</code>’s last test fails when a scenario on it is
+no longer conforming, and when one that conforms is not on it, printing the file the run would produce. The baseline only
+ever grows by a reviewed line, and removing a line is a decision with its reason in the PR. The scaffold writes an empty one;
+add scenarios to it as they start to conform. The same run writes <code dir="auto">target/conformance/&#x3C;adapter>.json</code>, every scenario’s
+verdict and reason, for tooling; <code dir="auto">./dev/capabilities</code> reads the baselines to state how many scenarios each adapter is held to.</p>
 <p><strong>Each scenario runs under a time limit, on a thread of the kit’s own.</strong> <code dir="auto">AdapterConformanceSpec.scenarioTimeLimit</code>
 (ten minutes by default) turns a scenario that never finishes into a divergence that names it, instead of a hung
 build; raise it for a slow engine. Because the scenario runs on a thread the kit creates, anything the engine binds to
@@ -365,7 +373,7 @@ not run the Spark demo; its own conformance run is its real-engine proof.)</li>
 <ul class="contains-task-list">
 <li class="task-list-item"><input type="checkbox" disabled> The investigation (step 1) is written, with evidence, and its unverified items are settled or listed.</li>
 <li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">check_modules.py</code> is clean.</li>
-<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">&#x3C;Engine>ConformanceSpec</code> has no divergence; every scenario is conforms or skipped with the declaration’s reason, and none is unavailable on the CI run that counts (<code dir="auto">INVARACT_CONFORMANCE_STRICT=true</code>).</li>
+<li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">&#x3C;Engine>ConformanceSpec</code> has no divergence; every scenario is conforms or skipped with the declaration’s reason, none is unavailable on the CI run that counts (<code dir="auto">INVARACT_CONFORMANCE_STRICT=true</code>), and its <code dir="auto">conformance-baseline-&#x3C;engine>.txt</code> lists every scenario that conforms.</li>
 <li class="task-list-item"><input type="checkbox" disabled> <code dir="auto">&#x3C;Engine>AttestedClaimsSpec</code> is green; every claimed attested capability names a test.</li>
 <li class="task-list-item"><input type="checkbox" disabled> The declaration is honest: nothing <code dir="auto">supported</code> without a passing scenario or an attestation.</li>
 <li class="task-list-item"><input type="checkbox" disabled> Both ledgers exist, with no ❓ presented as done.</li>
