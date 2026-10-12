@@ -49,7 +49,8 @@ object Scenarios {
                           |    schema:
                           |      fields:
                           |$ordersContractFields""".stripMargin,
-      outputLocation: String = "out/report"
+      outputLocation: String = "out/report",
+      otherOutputs: String = ""
   ): Contract = ContractParser.parse(
     s"""id: conformance
        |version: "1.0.0"
@@ -60,7 +61,7 @@ object Scenarios {
        |${if (outputExtras.isEmpty) "" else outputExtras + "\n"}    schema:
        |      fields:
        |$outputFields
-       |${if (rules.isEmpty) "" else "rules:\n" + rules + "\n"}""".stripMargin
+       |${if (otherOutputs.isEmpty) "" else otherOutputs + "\n"}${if (rules.isEmpty) "" else "rules:\n" + rules + "\n"}""".stripMargin
   )
 
   private val passThrough = List(OutColumn("id", FromInput(0, "id")), OutColumn("total", NonNullLong(1)))
@@ -132,6 +133,33 @@ object Scenarios {
        |        - name: label
        |          type: string
        |          sensitivityTags: [pii]""".stripMargin
+
+  /** A contract governing two writes: `orders` and `customers` are both declared inputs, and `audit` is a second output
+    * (`out/audit`) so each output can say which inputs it is built from (`Dataset.derivedFrom`). */
+  private val customersInput =
+    s"""  - name: customers
+       |    location: in/customers
+       |    schema:
+       |      fields:
+       |${fields(8, ("id", "long", false))}""".stripMargin
+  private val ordersInput =
+    s"""  - name: orders
+       |    location: in/orders
+       |    schema:
+       |      fields:
+       |$ordersContractFields""".stripMargin
+  private val auditOutput =
+    s"""  - name: audit
+       |    location: out/audit
+       |    derivedFrom: [customers]
+       |    schema:
+       |      fields:
+       |$defaultOutputFields""".stripMargin
+  private def twoOutputContract(reportDerivedFrom: String) = contract(
+    outputExtras = s"    derivedFrom: [$reportDerivedFrom]",
+    inputs = ordersInput + "\n" + customersInput,
+    otherOutputs = auditOutput
+  )
 
   private val twoInputs =
     s"""  - name: orders
@@ -275,6 +303,25 @@ object Scenarios {
       "with rejectUndeclaredInputs, reading a dataset the contract does not declare is blocked",
       Set(Capability.CheckInputExistence),
       contract(), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id"))),
+      defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
+    ),
+    Scenario(
+      "derived-from-excuses-an-input-the-output-is-not-built-from",
+      "an input that feeds only another of the contract's outputs is not required of a write to this one",
+      Set(Capability.CheckInputExistence),
+      twoOutputContract("orders"), job(), defaults, Expectation.Pass
+    ),
+    Scenario(
+      "derived-from-requires-every-source-of-the-output",
+      "reading an input that is not a source of the output does not stand in for the one that is",
+      Set(Capability.CheckInputExistence),
+      twoOutputContract("customers"), job(), defaults, Expectation.Reject(Set(ViolationType.MissingInput))
+    ),
+    Scenario(
+      "derived-from-rejects-a-read-of-another-outputs-source",
+      "with rejectUndeclaredInputs, reading a declared input that is not a source of this output is blocked",
+      Set(Capability.CheckInputExistence),
+      twoOutputContract("orders"), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id"))),
       defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
     ),
     Scenario(
