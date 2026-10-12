@@ -16,6 +16,9 @@ undeclared-output-column-allowed-by-default
 undeclared-output-column-rejected
 declared-input-not-read
 undeclared-input-rejected
+derived-from-excuses-an-input-the-output-is-not-built-from
+derived-from-requires-every-source-of-the-output
+derived-from-rejects-a-read-of-another-outputs-source
 output-format-matches
 output-format-mismatch
 output-save-mode-matches
