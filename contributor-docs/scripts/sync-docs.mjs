@@ -82,6 +82,13 @@ const PAGES = [
     order: 7,
   },
   {
+    src: 'docs/BEAM_ADAPTER_SURVEY.md',
+    slug: 'design/beam-adapter-survey',
+    section: 'Design Docs',
+    label: 'Beam Adapter Survey',
+    order: 9,
+  },
+  {
     src: 'docs/ADDING_AN_ENGINE_ADAPTER.md',
     slug: 'design/adding-an-engine-adapter',
     section: 'Design Docs',

@@ -142,7 +142,7 @@ convention, once, in one place:
 | Engine | Configuration surface the settings go through | Spelling of `locationMap` |
 |---|---|---|
 | Spark | `spark-submit --conf` (the session's conf) | `spark.invaract.locationMap` |
-| Beam | pipeline options, reached through the wrapper runner named by `--runner` (`docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md`, unverified for a `PipelineOptionsRegistrar`) | decided and recorded by the Beam adapter |
+| Beam | pipeline options registered through a `PipelineOptionsRegistrar` and reached through the wrapper runner named by `--runner` (shown to work on an unmodified job; `docs/BEAM_ADAPTER_SURVEY.md`, section 5) | `--invaractLocationMap` (predicted; recorded by the Beam adapter) |
 | BigQuery | none established: the research found only observation, no zero-code attach | decided by the BigQuery adapter, or `config.zeroCodeInstall` stays unsupported |
 
 Only the Spark row is a decided spelling. The adapter that adds a row chooses the spelling from the engine's own
