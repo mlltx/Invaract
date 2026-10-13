@@ -466,6 +466,13 @@ input read beneath it to still count as read and an undeclared one to still be r
 what it could not interpret fails them. This is `ir.UnknownPlan`'s own promise ("the rest of the tree stays
 inspectable"), held at the adapter's translation.
 
+**The plan-shape rules need two more job shapes.** `rules.planShape` claims four rule types, and a scenario per rule
+is what makes the claim checked: `required_filter_columns` needs only a filter, but `forbid_cross_join` needs a join
+with no condition (`crossJoin`: engines report a cartesian product as a cross join or as a join with no condition, and
+the rule must catch both) and `required_group_by` needs an aggregation (`groupBy`, with `RowCount` for the aggregate
+column). Each rule has a satisfied and a violated scenario; the violated `required_group_by` one groups by a column the
+output merely *renames* to the required name, which an adapter that confuses a grouping column with its alias gets wrong.
+
 **The analyses are read from what the run reported and from the adapter's own translation.** The outcome
 carries the static data-quality results, the role-consistency verdicts and the inputs reported hidden
 behind a boundary, all read off the last `ContractValidationEvent` (so an adapter fills them in by finishing

@@ -10,7 +10,7 @@ import com.invaract.verification.{AdapterCapabilities, ContractViolationExceptio
 
 import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.functions.{expr, lit}
+import org.apache.spark.sql.functions.{count, expr, lit}
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
@@ -133,7 +133,9 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     * with a boundary reads one input (the projection refers to it by name).
     */
   private def resultFrame(job: ScenarioJob, frames: List[DataFrame], materialize: Boolean = false): DataFrame = {
-    val joined = job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
+    val joined =
+      if (job.crossJoin) frames(0).crossJoin(frames(1))
+      else job.join.fold(frames.head)(j => frames(0).join(frames(1), frames(0)(j.leftColumn) === frames(1)(j.rightColumn)))
     val filtered = job.filterColumn.fold(joined)(c => joined.filter(frames(0)(c) > 0))
     if (materialize) {
       require(job.inputs.size == 1, "a conformance job with a boundary reads one input")
@@ -144,7 +146,17 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
       // `SparkPlanAdapter` has no case for (it becomes an `ir.UnknownPlan` over the translated plan beneath it) that
       // keeps every column, so the projection still refers to the inputs' own attributes.
       val stepped = if (job.opaqueStep) filtered.sample(0.5) else filtered
-      stepped.select(selectColumns(job, frames): _*)
+      job.groupBy.fold(stepped.select(selectColumns(job, frames): _*)) { keys =>
+        // the aggregate's own output: the group columns (kept under the output's names) and the rows per group
+        val grouped = stepped.groupBy(keys.map(frames(0)(_)): _*).agg(count(lit(1)).as(RowCountColumn))
+        grouped.select(job.columns.map { c =>
+          (c.source match {
+            case ColumnSource.FromInput(_, col) => grouped(col)
+            case ColumnSource.RowCount          => grouped(RowCountColumn)
+            case other                          => throw new IllegalArgumentException(s"a grouping job's columns are group columns and row counts, not $other")
+          }).as(c.name)
+        }: _*)
+      }
     }
   }
 
@@ -212,8 +224,11 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
         case ColumnSource.CastInput(i, col, t) => frames(i)(col).cast(DataType.fromDDL(t.catalogString))
         case ColumnSource.NonNullLong(v)       => lit(v)
         case ColumnSource.UniqueId             => expr("uuid()")
+        case ColumnSource.RowCount             => throw new IllegalArgumentException("a row count only exists in a grouping job")
       }).as(c.name)
     }
+
+  private val RowCountColumn = "__rows_in_group"
 
   private def tableName(scenarioId: String): String = "conformance_" + scenarioId.replace('-', '_')
 

@@ -29,6 +29,12 @@ nested-type-matches
 nested-type-mismatch
 required-filter-column-present
 required-filter-column-missing
+forbid-cross-join-allows-a-keyed-join
+forbid-cross-join-blocks-a-cartesian-product
+required-join-columns-present
+required-join-columns-missing
+required-group-by-present
+required-group-by-wrong-keys
 fingerprint-flags-nothing-for-a-deterministic-job
 fingerprint-flags-a-generated-id
 static-data-quality-proves-a-constant

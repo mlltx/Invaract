@@ -40,6 +40,10 @@ object ColumnSource {
 
   /** A constant integer, typed `long` and never null (the way to get a guaranteed non-null column). */
   final case class NonNullLong(value: Long) extends ColumnSource
+
+  /** The number of rows in each group of a job that groups (`ScenarioJob.groupBy`): typed `long`, never null. Only
+    * meaningful in such a job. */
+  case object RowCount extends ColumnSource
 }
 
 final case class OutColumn(name: String, source: ColumnSource)
@@ -82,6 +86,13 @@ object RowChange {
   * What the contract and its rules say about the job must come out the same as without it: an adapter
   * that cannot see through the boundary has lost the reads and the filter that sit behind it.
   *
+  * With `crossJoin` set the two inputs are joined with no condition at all - a cartesian product, which engines
+  * report either as a cross join or as a join with no condition (a rule that forbids cross joins must catch both).
+  *
+  * With `groupBy` set the work so far (the read, the join, the filter) is aggregated by those columns of the first
+  * input before the write, and `columns` are then the group columns (`FromInput`, which may rename one) and
+  * `RowCount`.
+  *
   * With `opaqueStep` set the work so far (the read, the join, the filter) passes through one step the adapter's
   * translation has no representation for, before the projection and the write: an engine operation that keeps
   * the columns as they are (Spark: a row sample). What the contract says about the job must come out the same as
@@ -102,11 +113,22 @@ final case class ScenarioJob(
     rowChange: Option[RowChange] = None,
     boundary: Boolean = false,
     streaming: Boolean = false,
-    opaqueStep: Boolean = false
+    opaqueStep: Boolean = false,
+    crossJoin: Boolean = false,
+    groupBy: Option[List[String]] = None
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
-  require(inputs.size == 1 || join.isDefined, "a two-input job must say how its inputs are joined")
-  require(inputs.size == 2 || join.isEmpty, "a join needs two inputs")
+  require(inputs.size == 1 || join.isDefined || crossJoin, "a two-input job must say how its inputs are joined")
+  require(inputs.size == 2 || (join.isEmpty && !crossJoin), "a join needs two inputs")
+  require(!(join.isDefined && crossJoin), "inputs are joined on a column or not at all, not both")
+  require(
+    groupBy.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming),
+    "a grouping job is a plain read-transform-write"
+  )
+  require(
+    groupBy.isDefined || !columns.exists(_.source == ColumnSource.RowCount),
+    "a row count is the count of a group, so only a grouping job can have one"
+  )
   require(!opaqueStep || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "an opaque step is part of a plain read-transform-write")
   require(!streaming || (inputs.size == 1 && rowChange.isEmpty && !untranslatableWrite && !boundary), "a streaming job is a plain read-transform-write of one input")
 }
