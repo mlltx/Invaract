@@ -742,6 +742,11 @@ adapter’s own tests carry it; or a <strong>gap</strong> (<code dir="auto">Scen
 cannot yet. There are no gaps today: every capability a job can show is shown by a scenario. The kit’s own
 tests fail if a capability is in neither list or in both.</li>
 </ul>
+<p>Every scenario also carries a <code dir="auto">userStory</code>: the same scenario in plain words, from the point of view of the team whose
+job it is (“a job writes its report to a different folder than the contract promises; Invaract stops it before
+anything is written”). It is required, so a new scenario cannot be added without one, and it is shown beside the
+technical description by <code dir="auto">ScenarioCatalogue</code> (and so by <code dir="auto">./dev/adapter-survey</code> and the engine surveys). The kit’s tests
+fail if one is blank, repeated, or restates the description.</p>
 <p><strong>Attested claims have a standard shape.</strong> For each attested capability an adapter declares <code dir="auto">supported</code> or
 <code dir="auto">partial</code>, the adapter names the test that demonstrates it (<code dir="auto">Attestation(suite, test)</code>), by mixing
 <code dir="auto">AttestedClaimsSpec</code> into a test (Spark’s is <code dir="auto">SparkAttestedClaimsSpec</code>). The kit checks the named test exists
