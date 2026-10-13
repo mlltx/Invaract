@@ -71,10 +71,11 @@ private[beamadapter] object BeamSchemas {
 
   /** The columns of an Avro record schema given as JSON, or `None` when it is not a record. */
   def fromAvroJson(json: String): Option[LogicalSchema] =
-    Try(new Yaml().load[AnyRef](json)).toOption.flatMap {
+    // anything that is not a well-formed record (not JSON, no `fields`) is "no columns", never an exception into the job's launch
+    Try(new Yaml().load[AnyRef](json) match {
       case record: java.util.Map[_, _] if record.get("type") == "record" => Some(recordSchema(record.asInstanceOf[java.util.Map[String, AnyRef]]))
       case _                                                             => None
-    }
+    }).toOption.flatten
 
   private def recordSchema(record: java.util.Map[String, AnyRef]): LogicalSchema =
     LogicalSchema(record.get("fields").asInstanceOf[java.util.List[java.util.Map[String, AnyRef]]].asScala.toList.map { f =>

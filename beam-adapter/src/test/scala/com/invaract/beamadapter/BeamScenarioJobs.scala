@@ -214,6 +214,11 @@ private[beamadapter] object BeamScenarioJobs {
     @ProcessElement def process(@DoFn.Element record: GenericRecord): Unit = () // imagine an HTTP call or a JDBC insert here
   }
 
+  /** The same representative for a pipeline of numbers (the translator tests need one that reads no file). */
+  final class SideEffectLong extends DoFn[java.lang.Long, Void] {
+    @ProcessElement def process(@DoFn.Element number: java.lang.Long): Unit = ()
+  }
+
   final class MergeFn(mergedJson: String, leftJson: String, rightJson: String) extends DoFn[KV[String, CoGbkResult], GenericRecord] {
     @ProcessElement def process(@DoFn.Element element: KV[String, CoGbkResult], out: DoFn.OutputReceiver[GenericRecord]): Unit = {
       val merged = new Schema.Parser().parse(mergedJson)

@@ -72,7 +72,9 @@ don't present it as something external consumers would bind to.
   adapter depends on this, not on `spark-adapter` — see
   docs/MULTI_ENGINE_ADAPTERS.md), `adapter-testkit` (the engine-neutral conformance
   scenarios every adapter's tests run — test-scope infrastructure, not part of any
-  runtime jar)
+  runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
+  submitted through a wrapper runner named by `--runner`, the second adapter after
+  `spark-adapter` — see docs/BEAM_ADAPTER.md)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)
@@ -200,7 +202,7 @@ This bar — and every other regression-testing guardrail in this repo
 (property-based fuzzing, mutation testing, API-compatibility checking, the
 Spark/Delta/Iceberg version compatibility matrix, and coverage gating) — applies to the
 engine modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
-every adapter (`spark-adapter` today). `modules.json` is the authority: a module that is
+every adapter (`spark-adapter` and `beam-adapter` today). `modules.json` is the authority: a module that is
 `published` is in the API-compatibility and coverage loops, and one with `mutation: true` has
 a `mutation-testing-<name>` job. The bar does not apply to `plugin`/`runner`, which are
 example/test code, not the engine.

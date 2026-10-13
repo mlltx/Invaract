@@ -100,12 +100,13 @@ Test / fork := true
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set.empty
 
-// Line/branch coverage gating (sbt-scoverage). These are a starting floor, not a measurement: once the adapter
-// has real code, run `sbt coverage test coverageReport`, then pin both a few points under what you measure
-// (CLAUDE.md's "Coverage Gating Requirement"). Never lower them to make a failure go away.
+// Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating
+// Requirement"). Never lower them to make a failure go away.
 coverageScalacPluginVersion := "2.4.2"
-coverageMinimumStmtTotal := 50
-coverageMinimumBranchTotal := 30
+// Measured with `sbt coverage test coverageReport` on the adapter's own suite (the 51 conformance scenarios on the in-process
+// runner, the attach tests and the unit tests): 92.09% statement, 91.41% branch. Pinned a few points under.
+coverageMinimumStmtTotal := 88
+coverageMinimumBranchTotal := 87
 coverageFailOnMinimum := true
 coverageHighlighting := true
 
@@ -116,4 +117,6 @@ strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerExcludedMutations := Seq("StringLiteral")
 strykerThresholdsHigh := 90
 strykerThresholdsLow := 80
-strykerThresholdsBreak := 70
+// Whole-module run: 98.68% (180 mutants, one survivor: the visited-set guard in BeamTranslator.readsBeneath, which only keeps a diamond-shaped
+// graph from being walked twice - the result is de-duplicated afterwards, so no test can tell). Pinned a few points under.
+strykerThresholdsBreak := 90

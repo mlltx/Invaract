@@ -88,6 +88,10 @@ export default defineConfig({
 							label: 'Use a Contract Registry',
 							slug: 'guides/using-a-contract-registry',
 						},
+						{
+							label: 'Use Invaract with Apache Beam',
+							slug: 'guides/using-invaract-with-apache-beam',
+						},
 					],
 				},
 				{

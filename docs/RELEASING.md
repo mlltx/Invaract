@@ -12,12 +12,14 @@ not before.
 
 ## What gets published
 
-Six modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit` and
-`spark-adapter`. The first five plus `spark-adapter` are the verification engine CLAUDE.md's
+Seven modules: `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit`,
+`spark-adapter` and `beam-adapter` (the Apache Beam adapter; it depends on `contract`, `ir` and
+`verification-core`, and on the kit in tests, so it is released after them and is independent of
+`spark-adapter`). The first five plus `spark-adapter` are the verification engine CLAUDE.md's
 "What's the product" section describes, and `spark-adapter`'s published POM depends on all the
 others, so a release that left any of them out would be unresolvable. `adapter-testkit` is
 test-scope infrastructure, but it is what a third-party adapter compiles its conformance tests
-against, and `spark-adapter` itself lists it as a test dependency. All six have Maven Central
+against, and `spark-adapter` itself lists it as a test dependency. All seven have Maven Central
 publishing settings in their `build.sbt`/`project/*.sbt` (identical, copied from `ir`).
 
 `plugin`, `runner`, `demo`, and `web` are the example harness — never
@@ -116,7 +118,7 @@ project's Sonatype account.
    ```
    This triggers `.github/workflows/release.yml`, which builds, signs, and
    releases `contract`, `ir`, `fingerprint`, `verification-core`, `adapter-testkit`, then
-   `spark-adapter` in that order (order matters: each module's own `libraryDependencies` resolve
+   `spark-adapter` and `beam-adapter` in that order (order matters: each module's own `libraryDependencies` resolve
    the earlier ones from the same runner's local Ivy cache — see
    `spark-adapter/build.sbt`'s comment on that dependency, and
    `dev/build`'s matching local-build pattern). `contract`'s step

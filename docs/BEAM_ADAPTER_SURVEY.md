@@ -1,6 +1,7 @@
 # Apache Beam adapter survey
 
-> **Status: survey. No adapter code exists.** This document helps decide whether and how to build one.
+> **Status: survey, and the adapter has since been built** (`docs/BEAM_ADAPTER.md`; see the Retrospective at the end). This document is
+> what the go-ahead was given on; it is kept as written, with the retrospective saying where reality differed.
 > Engine surface surveyed: the Beam Java SDK, version 2.77.0, run on Beam's in-process test runner (the `DirectRunner`).
 > Written: 2026-10-13. Evidence checked: 2026-10-13. Source of each claim: section 10, "Evidence log".
 
@@ -854,4 +855,23 @@ mirror of it (`maven-central.storage-download.googleapis.com`), the only externa
 
 ## Retrospective
 
-_Not yet: no adapter exists._
+Added after the adapter was built (2026-10-13), as `.claude/skills/survey-engine-adapter` asks, so the next survey is better.
+
+**The forecast against the run.** Of the 51 scenarios, the adapter's own conformance run gave: 21 conform by doing the check, 17 by
+refusing safely, 13 skipped. That is the forecast's 21 and 17 exactly. The 13 are the forecast's 11 plus the two streaming
+scenarios (48, 49), which the survey marked ⚠️ and which became skipped: the adapter declares streaming unsupported until a streaming job
+is run under the kit, because a read shape (`FileIO.match().continuously`) it does not yet recognise is needed. Every ✅, every ❌ and every ➖ held.
+
+**What the survey got wrong or missed.**
+1. *A Parquet write is not a transform of its own.* The survey described a write step that states its destination and format, by analogy
+   with `ParquetIO.read`. In fact a Parquet write is `FileIO.write().via(ParquetIO.sink(...))`, which publishes neither. The destination and the
+   sink are read from non-public members of `FileIO.Write` by reflection (confined to one method, tested, failing closed). The survey's
+   "public calls only" claim (D2) holds for reads, the graph, coders and schemas, not for this.
+2. *D3's location rule needed a second case.* A prefix write (`TextIO.write().to("out/text")`) has no folder; the adapter reports the prefix.
+3. *D5's text rule was implemented as a rewrite of the reported format* (a text write is reported as the text-family format the contract
+   declares), because the format check compares names exactly.
+4. *The kit had a latent bug the survey could not have seen*: an adapter that declares an analysis unsupported was still judged on that
+   analysis's results (PR #147).
+5. *Unverified items settled:* the Scala `fromOptions` is found by Beam; empty Parquet inputs read fine; reflection can tell a separate temporary
+   directory from the destination; reads beneath an opaque step stay reachable. Still open: streaming, production runners, the portable form,
+   a short runner name, other Beam versions.

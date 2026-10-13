@@ -4,8 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.ir.Plan
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, LocationMatching, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -63,7 +62,7 @@ final class BeamCheck private[beamadapter] (
           VerificationPipeline.verifyWrite(
             c,
             // Avro and Beam column names are case-sensitive; there is no cast, row-level change or checkpoint to account for
-            CheckedWrite(w.plan, w.inputSchemas, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty),
+            CheckedWrite(BeamCheck.asDeclared(c, w), w.inputSchemas, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty),
             options,
             sink,
             runId,
@@ -98,7 +97,19 @@ final class BeamCheck private[beamadapter] (
     }
 }
 
-/** The plan a check translated for a write, exposed for tests and for the conformance adapter's lineage hook. */
 private[beamadapter] object BeamCheck {
-  def planOf(pipeline: Pipeline): List[Plan] = BeamTranslator.translate(pipeline).writes.map(_.plan)
+
+  /** The formats a text writer can be producing: Beam's text writers publish no delimiter or encoding, so a write through one
+    * is `text` and nothing in the graph says whether its lines are CSV or JSON (docs/BEAM_ADAPTER.md, D5). */
+  private val TextFamily = Set("text", "csv", "json")
+
+  /** `write`'s plan, with a text write reported in the text-family format the contract declares for the dataset it lands on
+    * (`csv` and `json` included), since the graph cannot tell them apart; a contract that declares any other format for it, or
+    * none, sees `text`, and a mismatch stays a mismatch. The limit is the declaration's (`check.format` is partial), not a guess. */
+  def asDeclared(contract: Contract, write: TranslatedWrite): com.invaract.ir.Write =
+    if (!write.format.contains("text")) write.plan
+    else {
+      val declared = contract.outputs.find(o => LocationMatching.matches(o.location, write.location)).flatMap(_.format).map(_.trim.toLowerCase)
+      declared.filter(TextFamily.contains).fold(write.plan)(f => write.plan.copy(format = Some(f)))
+    }
 }

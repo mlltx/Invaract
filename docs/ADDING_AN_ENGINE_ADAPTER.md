@@ -51,7 +51,7 @@ the adapter's tests should do is settle those.
 | # | Question | Why it matters | Feeds |
 |---|---|---|---|
 | 1 | **Where can this engine be gated?** Inside the engine, blocking (a hook that can abort a write: Spark's check rule); before submission (a graph or statement is available and a wrapper can refuse to submit it); or only observed afterwards? | It is the adapter's `enforcement.point`, and it bounds every claim below | capability declaration |
-| 2 | **What is knowable at that point?** The reads and writes; the output schema and nullability; the plan (filters, joins, groupings, function calls); parameters (disposition, format) | Anything not knowable cannot be checked: declare it unsupported, do not approximate | which capabilities can ever be `supported` |
+| 2 | **What is knowable at that point?** The reads and writes; the output schema and nullability; the plan (filters, joins, groupings, function calls); parameters (disposition, format). Check the *write* on its own terms: an engine whose read states its location does not necessarily publish a write's (Beam's `FileIO.write` publishes neither its destination nor its sink; the Beam adapter reads them from non-public members, and refuses the write if it cannot) | Anything not knowable cannot be checked: declare it unsupported, do not approximate | which capabilities can ever be `supported` |
 | 3 | **How could a platform attach this to a job it does not own?** The engine's own configuration surface (flags, options, environment, runner selection) | The External Attachability Requirement in `CLAUDE.md`; `config.zeroCodeInstall` is `unsupported` if there is no answer | `ConfigSource` spelling |
 | 4 | **How are datasets named?** Paths, qualified names (`project.dataset.table`), URIs | Locations are canonical `/`-separated strings; an engine whose names are not paths converts with `LocationMatching.fromParts` | location checks |
 | 5 | **What are its formats and catalog technologies?** | Use the canonical names (`Formats`, `CatalogTechnologies`) where they exist; never respell one | format and catalog checks |
@@ -93,7 +93,8 @@ and line, and what is missing:
   `modules.json` is `in-progress`, `TODO` and ❓ are allowed; changing it to `complete` makes the check fail until
   neither remains.
 
-Also, because the check cannot see them: the mutation-shard list if the adapter is large enough to shard
+Also, because the check cannot see them: the `mutation-testing-<engine>-adapter` job's steps (`check_modules.py` says only that
+the job is missing; copy `mutation-testing-adapter-testkit` and rename), the mutation-shard list if the adapter is large enough to shard
 (`mutation-shard-drift-check` will say), `docs/RELEASING.md`, and the engine-neutral docs that count adapters.
 Run the check again until it is clean.
 
@@ -270,6 +271,7 @@ them now, or because there is nothing yet to change them for. Each says when to 
 
 ## What this guide does not cover yet
 
-It has been written from one real adapter (Spark) and the reference adapter, and checked against research on two
-more. The first adapter built from it will find what it gets wrong; the friction log is how that comes back here.
-The add-an-adapter skill should be written from that log, not before it.
+It was written from one real adapter (Spark) and the reference adapter, and the Beam adapter (`docs/BEAM_ADAPTER.md`, with its
+friction log) is the first built from it. What that build found has been folded in above (the note on question 2, the mutation job
+in step 2) and into the kit (an adapter that must refuse a scenario is no longer judged on its analysis results). The
+add-an-adapter skill should be written from that log and the next adapter's, not before.

@@ -64,7 +64,8 @@ module move in Stage 2.
 | 3 | Per-adapter capability declaration (machine-readable YAML), generated docs matrix, CI drift check | Removes leak #8: gaps between engines are visible and checked, not discovered; a contract that relies on something an adapter declares unsupported is rejected, not passed unchecked | Done — see below |
 | 4 | `adapter-testkit`: engine-neutral conformance scenarios, Spark as the first adapter | Every adapter passes the same scenarios or declares N/A (with a reason), and a declaration is checked against behaviour | In review |
 | 5 | Function canonicalisation (canonical catalog + per-adapter aliases; catalog-driven non-determinism) | Removes leak #4: the same logic is classified the same on every engine, and `GENERATE_UUID()` is not "deterministic" | In review |
-| — | BigQuery / Beam adapters | The goal; deliberately last | Not started — needs a go-ahead. Prerequisites in progress: kit hardening (Stage 4), module registration and the adapter guide, and the engine research (`docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md`) |
+| — | Apache Beam adapter | The first adapter other than Spark, built from `docs/BEAM_ADAPTER_SURVEY.md` | In progress — `beam-adapter` checks a pipeline before it is submitted and conforms to 38 of the 51 scenarios (the rest skipped by its own declaration); streaming and BigQueryIO are open items in `docs/BEAM_ADAPTER.md` |
+| — | BigQuery adapter | The goal; deliberately last | Not started — needs a go-ahead and a survey (`docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md` is the research) |
 
 ## Stage 1 — the logical type model
 

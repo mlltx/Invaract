@@ -1,0 +1,231 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024 Invaract Contributors
+
+package com.invaract.beamadapter
+
+import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, ViolationType}
+import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, InferenceStatus, NotificationEvent, NotificationSink}
+import org.apache.avro.generic.GenericRecord
+import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
+import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TextIO}
+import org.apache.beam.sdk.io.parquet.ParquetIO
+import org.apache.beam.sdk.options.PipelineOptionsFactory
+import org.apache.beam.sdk.transforms.{Create, ParDo}
+import org.scalatest.funsuite.AnyFunSuite
+
+import scala.collection.mutable.ListBuffer
+
+/** The check itself: what it does with a pipeline whose writes it can and cannot verify, in enforcement and in dry-run mode. */
+class BeamCheckSpec extends AnyFunSuite {
+  import ExampleJob.OrdersSchema
+
+  private final class Capture extends NotificationSink {
+    val events = ListBuffer.empty[NotificationEvent]
+    override def publish(event: NotificationEvent): Unit = events += event
+  }
+
+  private def pipeline: Pipeline = Pipeline.create(PipelineOptionsFactory.create())
+
+  private def ordersToParquet(p: Pipeline, dir: String = "/data/out/report"): Unit =
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to(dir))
+
+  private def stringsToText(p: Pipeline): Unit =
+    p.apply("Lines", Create.of("a", "b")).apply("WriteLines", TextIO.write().to("/data/out/lines"))
+
+  // --- enforcement ---
+
+  test("a write whose data exposes no schema is refused as unverifiable, naming the write, and the refusal is published") {
+    val capture = new Capture
+    val check = InvaractBeam.enforce(ExampleJob.contract("out/lines"), sink = Some(capture))
+    val p = pipeline
+    stringsToText(p)
+    val e = intercept[ContractViolationException](check.verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.result.violations.head.message.contains("/data/out/lines"))
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
+  }
+
+  test("a step that ends the pipeline without a recognised write is refused before any write is judged") {
+    val check = InvaractBeam.enforce(ExampleJob.contract())
+    val p = pipeline
+    ordersToParquet(p)
+    p.apply("Counter", GenerateSequence.from(0).to(5)).apply("PushToSomeService", ParDo.of(new BeamScenarioJobs.SideEffectLong))
+    val e = intercept[ContractViolationException](check.verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("PushToSomeService"))
+  }
+
+  test("a pipeline with no write it recognises checks nothing and does not fail") {
+    val capture = new Capture
+    val check = InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture))
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    check.verify(p)
+    assert(capture.events.isEmpty)
+  }
+
+  test("a write that keeps to the contract passes and publishes a PASSED validation naming Beam") {
+    val capture = new Capture
+    val check = InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture))
+    val p = pipeline
+    ordersToParquet(p)
+    check.verify(p)
+    val validations = capture.events.collect { case v: ContractValidationEvent => v }
+    assert(validations.map(_.status) == List("PASSED"))
+    assert(validations.head.job.flatMap(_.engine).contains("beam"))
+    assert(check.enforces)
+  }
+
+  // --- dry-run mode ---
+
+  test("dry-run mode infers a draft contract from each write it can describe, and enforces nothing") {
+    val capture = new Capture
+    val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true").create()
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(options), BeamCapabilities.declared)
+    val p = pipeline
+    ordersToParquet(p, "/data/out/anywhere")
+    check.verify(p)
+    val Seq(event) = capture.events.collect { case e: ContractInferenceEvent => e }
+    assert(!check.enforces)
+    assert(event.status == InferenceStatus.Inferred)
+    assert(event.writeLocation.contains("/data/out/anywhere"))
+    assert(event.contractYaml.exists(y => y.contains("anywhere") && y.contains("orders") || y.contains("in/orders")))
+    assert(event.job.engine.contains("beam"))
+  }
+
+  test("dry-run mode reports, rather than guesses at, a write with no schema and a step it cannot describe") {
+    val capture = new Capture
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None)
+    val p = pipeline
+    stringsToText(p)
+    p.apply("Counter", GenerateSequence.from(0).to(5)).apply("PushToSomeService", ParDo.of(new BeamScenarioJobs.SideEffectLong))
+    check.verify(p)
+    val statuses = capture.events.collect { case e: ContractInferenceEvent => e.status }
+    assert(statuses.nonEmpty && statuses.forall(_ == InferenceStatus.SkippedUnrecognized))
+    assert(capture.events.collect { case e: ContractInferenceEvent => e.reason.getOrElse("") }.exists(_.contains("exposes no schema")))
+  }
+
+  test("dry-run mode with no sink logs and does not fail") {
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), None, InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None)
+    val p = pipeline
+    ordersToParquet(p)
+    stringsToText(p)
+    check.verify(p)
+  }
+
+  // --- the options as settings ---
+
+  test("every neutral setting is read from its --invaract option, and a blank or absent option is no setting") {
+    val options = PipelineOptionsFactory
+      .fromArgs(
+        "--invaractContract=c.yaml", "--invaractDryRun=true", "--invaractNotifyConfig=n.properties", "--invaractRegistryUrl=http://r",
+        "--invaractRegistryClientClass=a.B", "--invaractLocationMap=l.properties", "--invaractOrgPolicy=p.yaml", "--invaractOrgPolicyOverlays=o.yaml",
+        "--invaractRejectUndeclaredInputs=true", "--invaractRejectUndeclaredFields=false", "--invaractComputeFingerprint=true",
+        "--invaractStaticDataQuality=true", "--invaractRoleConsistency=true", "--invaractDelegate=DirectRunner"
+      )
+      .create()
+    val config = new BeamConfigSource(options.as(classOf[InvaractBeamOptions]))
+    val expected = Map(
+      InvaractConf.Contract -> "c.yaml", InvaractConf.DryRun -> "true", InvaractConf.NotifyConfig -> "n.properties",
+      InvaractConf.RegistryUrl -> "http://r", InvaractConf.RegistryClientClass -> "a.B", InvaractConf.LocationMap -> "l.properties",
+      InvaractConf.OrgPolicy -> "p.yaml", InvaractConf.OrgPolicyOverlays -> "o.yaml", InvaractConf.RejectUndeclaredInputs -> "true",
+      InvaractConf.RejectUndeclaredFields -> "false", InvaractConf.ComputeFingerprint -> "true", InvaractConf.StaticDataQuality -> "true",
+      InvaractConf.RoleConsistency -> "true"
+    )
+    expected.foreach { case (name, value) => assert(config.get(name).contains(value), name) }
+    assert(config.get("nothing") .isEmpty)
+    assert(config.describe(InvaractConf.LocationMap) == "--invaractLocationMap")
+    assert(config.describe(InvaractConf.RejectUndeclaredInputs) == "--invaractRejectUndeclaredInputs")
+
+    val blank = new BeamConfigSource(PipelineOptionsFactory.fromArgs("--invaractContract=  ").create().as(classOf[InvaractBeamOptions]))
+    assert(blank.get(InvaractConf.Contract).isEmpty && blank.get(InvaractConf.DryRun).isEmpty)
+  }
+
+  test("the events name Beam, its version and the job") {
+    val options = PipelineOptionsFactory.fromArgs("--jobName=nightly-orders").create()
+    val job = InvaractBeam.jobInfoOf(options)
+    assert(job.engine.contains("beam") && job.name.contains("nightly-orders") && job.runId.contains("nightly-orders"))
+    assert(job.engineVersion.exists(_.nonEmpty))
+    assert(job.engineDetails.contains("runner"))
+    assert(job.startTimeMs.isDefined)
+  }
+
+  // --- the runner ---
+
+  private final class CountingRunner extends PipelineRunner[PipelineResult] {
+    var runs = 0
+    override def run(p: Pipeline): PipelineResult = { runs += 1; null }
+  }
+
+  test("the runner hands a pipeline to its delegate only after it passes") {
+    val delegate = new CountingRunner
+    val runner = InvaractRunner.enforcing(InvaractBeam.enforce(ExampleJob.contract()), delegate)
+    val violating = pipeline
+    ordersToParquet(violating, "/data/out/elsewhere")
+    intercept[ContractViolationException](runner.run(violating))
+    assert(delegate.runs == 0, "a pipeline that breaks the contract is never submitted")
+    val conforming = pipeline
+    ordersToParquet(conforming)
+    runner.run(conforming)
+    assert(delegate.runs == 1)
+  }
+
+  test("the runner takes a delegate named by class, refusing a class that is not a runner without initialising it") {
+    val root = java.nio.file.Files.createTempDirectory("beam-delegate-")
+    try {
+      ExampleJob.withOrders(root, (1L, 10L))
+      val contract = root.resolve("contract.yaml")
+      java.nio.file.Files.write(contract, ExampleJob.contractYaml().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      val before = NotRegisteredRunner.runs
+      new ExampleJob(root).main(Array("--runner=com.invaract.beamadapter.InvaractRunner", s"--invaractContract=$contract", "--invaractDelegate=com.invaract.beamadapter.NotRegisteredRunner"))
+      assert(NotRegisteredRunner.runs == before + 1, "the pipeline went to the runner the platform named")
+
+      val e = intercept[IllegalArgumentException](
+        new ExampleJob(root).main(Array("--runner=com.invaract.beamadapter.InvaractRunner", s"--invaractContract=$contract", "--invaractDelegate=com.invaract.beamadapter.InitSpy"))
+      )
+      assert(e.getMessage.contains("not a Beam PipelineRunner"))
+      assert(System.getProperty("invaract.initspy.initialised") == null, "a configured class name is checked before it is allowed to run any code")
+    } finally BeamConformanceAdapter.deleteQuietly(root)
+  }
+
+  // --- a text write and the formats a contract can declare for one ---
+
+  private def textWrite(p: Pipeline, dir: String): Unit =
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("WriteLines", FileIO.write[GenericRecord]().via(org.apache.beam.sdk.transforms.Contextful.fn[GenericRecord, String](new BeamScenarioJobs.CsvFn), TextIO.sink()).to(dir))
+
+  private def contractWithOutputFormat(format: Option[String]) =
+    com.invaract.contract.ContractParser.parse(ExampleJob.contractYaml(outputLocation = "out/lines").replace(
+      "    location: out/lines\n    format: parquet\n",
+      "    location: out/lines\n" + format.map(f => s"    format: $f\n").getOrElse("")
+    ))
+
+  test("a text write satisfies a declared csv, json or text format, because the graph cannot tell them apart") {
+    Seq("csv", "json", "text").foreach { declared =>
+      val p = pipeline
+      textWrite(p, "/data/out/lines")
+      InvaractBeam.enforce(contractWithOutputFormat(Some(declared))).verify(p) // does not throw
+    }
+  }
+
+  test("a text write does not satisfy any other declared format, and a contract that declares none sees no mismatch") {
+    val p = pipeline
+    textWrite(p, "/data/out/lines")
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithOutputFormat(Some("parquet"))).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputFormatMismatch))
+
+    val q = pipeline
+    textWrite(q, "/data/out/lines")
+    InvaractBeam.enforce(contractWithOutputFormat(None)).verify(q)
+  }
+
+  test("a write that is not a text write is reported in its own format, whatever the contract declares") {
+    val p = pipeline
+    ordersToParquet(p, "/data/out/report")
+    val e = intercept[ContractViolationException](
+      InvaractBeam.enforce(ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(format = Some("csv"))))).verify(p)
+    )
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputFormatMismatch))
+  }
+}
