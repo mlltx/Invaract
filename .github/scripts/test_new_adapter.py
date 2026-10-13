@@ -142,16 +142,21 @@ class Registration(unittest.TestCase):
             return json.load(f)["modules"]
 
     def test_a_new_adapter_is_registered_after_the_last_published_module(self):
+        # whichever module is the last published one when the adapter is added (an earlier adapter may already follow spark-adapter)
+        last_published = [m["name"] for m in self.modules() if m["published"]][-1]
         na.register(self.root, "demo", "Demo")
         modules = self.modules()
         names = [m["name"] for m in modules]
-        self.assertEqual(names[names.index("spark-adapter") + 1], "demo-adapter")
+        self.assertEqual(names[names.index(last_published) + 1], "demo-adapter")
         entry = modules[names.index("demo-adapter")]
         self.assertEqual(entry["role"], "adapter")
         self.assertTrue(entry["published"] and entry["mutation"])
         self.assertEqual(entry["capabilities"], "invaract-capabilities-demo.yaml")
 
     def test_registration_records_the_write_up_and_renders_it_in_the_contributor_docs(self):
+        with open(os.path.join(self.root, "contributor-docs", "scripts", "sync-docs.mjs")) as f:
+            before = f.read()
+        next_order = max(int(o) for o in re.findall(r"section: 'Design Docs',\n    label: '[^']*',\n    order: (\d+),", before)) + 1
         na.register(self.root, "demo", "Demo")
         entry = [m for m in self.modules() if m["name"] == "demo-adapter"][0]
         self.assertEqual(entry["doc"], "docs/DEMO_ADAPTER.md")
@@ -160,8 +165,8 @@ class Registration(unittest.TestCase):
         with open(os.path.join(self.root, "contributor-docs", "scripts", "sync-docs.mjs")) as f:
             sync = f.read()
         self.assertIn("src: 'docs/DEMO_ADAPTER.md',\n    slug: 'design/demo-adapter',\n    section: 'Design Docs',\n    label: 'Demo Adapter',", sync)
-        # after the guide (order 8), before the Connectors section
-        self.assertIn("order: 9,", sync.split("src: 'docs/DEMO_ADAPTER.md'", 1)[1].split("},", 1)[0])
+        # one past the last design doc, before the Connectors section
+        self.assertIn(f"order: {next_order},", sync.split("src: 'docs/DEMO_ADAPTER.md'", 1)[1].split("},", 1)[0])
         self.assertLess(sync.index("DEMO_ADAPTER.md"), sync.index("docs/connectors/delta.md"))
 
     def test_registering_twice_is_refused(self):

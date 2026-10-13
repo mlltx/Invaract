@@ -1,0 +1,160 @@
+---
+title: Use Invaract with Apache Beam
+description: Check a Beam pipeline against a data contract before it is submitted, and switch that on from the command line without changing the job.
+sidebar:
+  order: 16
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide checks an [Apache Beam](https://beam.apache.org/) pipeline against a data contract
+**before the pipeline is submitted**, and shows how a platform team turns that on from the
+command line for a job whose source it does not own. The contract is the same YAML you
+[write for Spark](/guides/writing-a-contract/); only the way Invaract reaches the job is
+different.
+
+<Aside type="caution" title="What this does and does not check">
+The Beam adapter reads the *shape* of a pipeline: where it reads, where it writes, which
+columns and types come out, and in which format. It cannot read what your own functions do to
+values, and it cannot see which column a filter, join or grouping uses. It checks pipelines
+that read and write **Parquet, Avro and text files**; other IO (BigQueryIO, KafkaIO, JdbcIO, ...)
+is not recognised yet. A contract that relies on something the adapter cannot check is
+refused with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed unchecked. The full list is in
+[Engine Capabilities](/reference/engine-capabilities/).
+</Aside>
+
+## What a job needs
+
+The job must build its options from its command line the way any Beam job does
+(`PipelineOptionsFactory.fromArgs(args)`) and must **not** choose its own runner in code.
+Beam is a `provided` dependency of the adapter: the job brings its own Beam (2.77.0 is the
+version the adapter is tested with).
+
+Add the `invaract-beam-adapter` jar to the job's classpath, then name the runner and the
+contract:
+
+```bash
+java -cp job.jar:invaract-beam-adapter.jar com.example.Job \
+  --runner=com.invaract.beamadapter.InvaractRunner \
+  --invaractContract=contracts/orders_report.yaml
+```
+
+`InvaractRunner` receives the finished pipeline before anything has started, checks it, and
+hands it to the real runner. By default that is the `DirectRunner`; name another with
+`--invaractDelegate=<runner>`. The settings (`--invaractContract`, `--invaractLocationMap`,
+`--invaractNotifyConfig`, `--invaractOrgPolicy`, `--invaractRejectUndeclaredInputs`,
+`--invaractRegistryUrl`, ...) are Beam options like any other, found by Beam without any code
+in the job.
+
+## A pipeline that keeps to its contract
+
+Given this contract, for a job that reads `in/orders` and writes `out/report`:
+
+```yaml
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: in/orders
+    format: parquet
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: amount, type: long }
+outputs:
+  - name: report
+    location: out/report
+    format: parquet
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: amount, type: long }
+```
+
+the flags above let the job run to completion and write its files. Nothing is printed unless
+you [configure a notification sink](/guides/notification-sinks/): then a `ContractValidationEvent`
+with status `PASSED` is published, naming engine `beam`, the Beam version and the job name.
+
+## A pipeline that does not
+
+If the same job writes to a different folder, the pipeline is never submitted and the job
+fails with the same four-part explanation Spark gives. This is the real output of the
+unmodified example job in the adapter's tests (the job's folder shortened to `<job folder>`):
+
+```text
+Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+What the contract expects:
+  input  'orders' at in/orders: id: long, amount: long (optional)
+  output 'report' at out/report: id: long, amount: long (optional)
+What the plan contains:
+  Write(<job folder>/out/elsewhere, format=parquet)
+  ?? Read(<job folder>/in/orders)
+Why it violates the contract (1 violation):
+  1. [OUTPUT_LOCATION_MISMATCH] contract declares output location 'out/report' but the plan writes to '<job folder>/out/elsewhere'
+How to correct it:
+  1. Write to 'out/report' instead, or update the contract's declared output location to '<job folder>/out/elsewhere' if this location change is intentional.
+```
+
+Nothing was written: the check happens in `run`, before the pipeline is handed on.
+
+## How locations are written in a contract
+
+| In the job | Declared in the contract |
+|---|---|
+| `ParquetIO.read(...).from("in/orders/*.parquet")` (or `TextIO`, `AvroIO`) | the folder, `in/orders` |
+| `FileIO.write().to("out/report")` | the directory, `out/report` |
+| `TextIO.write().to("out/text")`, `AvroIO.write...to("out/avro/part")` | the prefix as passed to `.to()`, `out/text` |
+
+A relative location matches any path that ends with it, so a contract need not know where a
+deployment keeps its data; declare an absolute location to pin one.
+
+## Formats, types and what cannot be told
+
+- A write through `ParquetIO.sink` is `parquet`, through `AvroIO` is `avro`, and through a text
+  writer is `text`. A text writer publishes no delimiter, so a text write satisfies a declared
+  `csv`, `json` or `text`; it does not satisfy `parquet`.
+- The columns come from the data feeding the write: an Avro schema or a Beam row schema.
+  A write whose data is plain Java objects (a `TextIO.write()` of strings) has no columns to
+  check, so it is **refused as an unverifiable write**, not passed.
+- An input's schema is the one the job states it expects, not the files' real schema; Beam does
+  not open files before running.
+- A step that ends the pipeline without being a recognised write (BigQueryIO, a function that
+  pushes rows to a service) is refused as an unverifiable write. A function that does so in the
+  middle of a pipeline cannot be seen by any check made before the run.
+- The Beam adapter does not support: save-mode and catalog requirements for file writes,
+  transformation-shape rules (required filter, join or group-by), static data-quality proofs,
+  role consistency, fingerprints and column lineage. A contract that needs one is refused with
+  `UNSUPPORTED_CONTRACT_FEATURE`, naming it.
+
+## When the command line cannot reach the job
+
+A job that sets its runner in code after reading its arguments overrides `--runner`, and a job
+that never reads its arguments never sees the flags. Neither is checked by the flag route. For
+those, one line in the job calls the same check:
+
+```scala
+InvaractBeam.verify(pipeline)  // reads the --invaract options from pipeline.getOptions
+```
+
+## Dry-run mode
+
+With `--invaractDryRun=true` and no contract, the job runs unchanged and Invaract reports a
+contract inferred from each write it can describe. With a
+[notification sink](/guides/notification-sinks/) configured the draft is published as a
+`CONTRACT_INFERENCE` event (real output, trimmed):
+
+```json
+{"eventType": "CONTRACT_INFERENCE", "status": "INFERRED", "writeLocation": "<job folder>/out/anywhere",
+ "contractYaml": "id: inferred_contract\nversion: 0.1.0\nstatus: draft\ninputs:\n- name: input\n  location: <job folder>/in/orders\n  ...",
+ "job": {"engine": "beam", "engineVersion": "2.77.0", "name": "examplejob-root-1013211353-4b52c371"}}
+```
+
+A write with no schema, or a step the adapter cannot describe, is reported with status
+`SKIPPED_UNRECOGNIZED` and the reason; with no sink the drafts are logged.
+
+## Related
+
+- [Engine Capabilities](/reference/engine-capabilities/): what each engine adapter checks, per capability.
+- [Resolve Dataset Locations at Runtime](/guides/resolving-dataset-locations/): `ref://` locations, here via `--invaractLocationMap`.
+- [Use a Contract Registry](/guides/using-a-contract-registry/): `registry://` contracts, here via `--invaractContract` and `--invaractRegistryUrl`.
+- [Enforce an Organizational Policy](/guides/enforcing-organizational-policy/): here via `--invaractOrgPolicy`.

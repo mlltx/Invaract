@@ -1,6 +1,6 @@
 name: Release to Maven Central
 
-# Publishes contract/ir/fingerprint/verification-core/adapter-testkit/spark-adapter to Maven Central via Sonatype's
+# Publishes contract/ir/fingerprint/verification-core/adapter-testkit/spark-adapter/beam-adapter to Maven Central via Sonatype's
 # Central Portal — see docs/RELEASING.md for the full process, the
 # required repo secrets, and why only these six modules (not
 # plugin/runner/notification-kafka) are published (CLAUDE.md's "What's
@@ -148,6 +148,15 @@ jobs:
       # on for local builds — see spark-adapter/build.sbt's own comment on the coordinates it depends on).
       - name: Publish spark-adapter
         working-directory: spark-adapter
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: sbt -batch clean test publishSigned sonatypeCentralRelease
+
+      # beam-adapter depends on contract/ir/verification-core (and the kit as a test dependency), all published above.
+      - name: Publish beam-adapter
+        working-directory: beam-adapter
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}

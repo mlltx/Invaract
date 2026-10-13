@@ -97,6 +97,13 @@ const PAGES = [
     order: 8,
   },
   {
+    src: 'docs/BEAM_ADAPTER.md',
+    slug: 'design/beam-adapter',
+    section: 'Design Docs',
+    label: 'Beam Adapter',
+    order: 9,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',

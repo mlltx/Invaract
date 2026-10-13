@@ -170,6 +170,7 @@ if command -v sbt &> /dev/null; then
   warm_module "verification-core" "compile test assembly publishLocal"
   warm_module "adapter-testkit" "compile test publishLocal"
   warm_module "spark-adapter" "compile test assembly publishLocal"
+  warm_module "beam-adapter" "compile test publishLocal"
   warm_module "runner" "compile assembly"
 fi
 
