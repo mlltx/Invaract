@@ -41,24 +41,42 @@ class ScenarioCatalogueTest extends AnyFunSuite {
   test("without a declaration the table lists every scenario once, in the catalogue's order, with empty columns to fill in") {
     val table = ScenarioCatalogue.render(None)
     val header = table.split("\n").head
-    assert(header == "| # | Scenario | What it checks | Evidence for | Neutral result | Forecast | Why |")
+    assert(header == "| # | Scenario | What it means for a user | What it checks | Evidence for | Neutral result | Forecast | Why |")
     val body = rows(table)
     assert(body.map(_(1)) == Scenarios.all.map(s => s"`${s.id}`"))
     assert(body.map(_.head) == (1 to Scenarios.all.size).map(_.toString).toList)
-    assert(body.forall(_.size == 7), "every row has the same number of cells as the header")
-    assert(body.forall(r => r(5).isEmpty && r(6).isEmpty))
+    assert(body.forall(_.size == 8), "every row has the same number of cells as the header")
+    assert(body.forall(r => r(6).isEmpty && r(7).isEmpty))
   }
 
   test("each row says what the scenario checks, the capabilities it is evidence for, and the neutral result") {
     val byId = rows(ScenarioCatalogue.render(None)).map(r => r(1).stripPrefix("`").stripSuffix("`") -> r).toMap
     val format = byId("output-format-mismatch")
-    assert(format(2) == Scenarios.all.find(_.id == "output-format-mismatch").get.description)
-    assert(format(3) == "`check.format`")
-    assert(format(4) == "blocked: `OUTPUT_FORMAT_MISMATCH`")
-    assert(byId("conforming-write")(4) == "allowed")
+    val mismatch = Scenarios.all.find(_.id == "output-format-mismatch").get
+    assert(format(2) == mismatch.userStory)
+    assert(format(3) == mismatch.description)
+    assert(format(4) == "`check.format`")
+    assert(format(5) == "blocked: `OUTPUT_FORMAT_MISMATCH`")
+    assert(byId("conforming-write")(5) == "allowed")
     // a scenario with several capabilities in focus lists them all, in a stable order
     val several = Scenarios.all.find(_.focus.size > 1).get
-    assert(byId(several.id)(3) == several.focus.toList.sortBy(_.id).map(c => s"`${c.id}`").mkString(", "))
+    assert(byId(several.id)(4) == several.focus.toList.sortBy(_.id).map(c => s"`${c.id}`").mkString(", "))
+  }
+
+  test("every scenario says in plain words what it means for the team whose job it is, and no two say the same") {
+    val stories = Scenarios.all.map(_.userStory)
+    assert(stories.forall(_.trim.nonEmpty))
+    assert(stories.distinct.size == stories.size, "two scenarios share a story")
+    // a story is for a reader outside the kit, so it must not just restate the technical description
+    assert(Scenarios.all.forall(s => s.userStory != s.description))
+    // plain words: no violation-type constants or capability ids leaking into the story
+    assert(Scenarios.all.forall(s => !"[A-Z]{3,}_[A-Z_]+".r.pattern.matcher(s.userStory).find()), "a story names a violation type")
+    assert(Scenarios.all.forall(s => !s.userStory.contains("`")), "a story carries code formatting")
+  }
+
+  test("a scenario without a story cannot be built") {
+    val e = intercept[IllegalArgumentException](Scenarios.all.head.copy(userStory = "  "))
+    assert(e.getMessage.contains("conforming-write"))
   }
 
   test("a violation list is sorted so the table does not change between runs") {
@@ -70,8 +88,8 @@ class ScenarioCatalogueTest extends AnyFunSuite {
 
   test("with a declaration the table adds what the kit expects of that adapter, by name") {
     val table = ScenarioCatalogue.render(Some(declaring("sketch", Map.empty)))
-    assert(table.split("\n").head == "| # | Scenario | What it checks | Evidence for | Neutral result | What the kit expects of `sketch` | Forecast | Why |")
-    assert(rows(table).forall(_.size == 8))
+    assert(table.split("\n").head == "| # | Scenario | What it means for a user | What it checks | Evidence for | Neutral result | What the kit expects of `sketch` | Forecast | Why |")
+    assert(rows(table).forall(_.size == 9))
   }
 
   test("for an adapter that supports everything the kit expects exactly the neutral result on every scenario") {
@@ -89,7 +107,7 @@ class ScenarioCatalogueTest extends AnyFunSuite {
     val formatScenario = Scenarios.all.find(_.id == "output-format-matches").get
     assert(ScenarioCatalogue.forecast(formatScenario, caps) == ScenarioCatalogue.Forecast.RefusesAsUnsupported)
     val row = rows(ScenarioCatalogue.render(Some(caps))).find(_(1) == "`output-format-matches`").get
-    assert(row(5) == "must refuse safely (`UNSUPPORTED_CONTRACT_FEATURE`)")
+    assert(row(6) == "must refuse safely (`UNSUPPORTED_CONTRACT_FEATURE`)")
   }
 
   test("a capability that does not apply skips the scenarios that need it, with the adapter's own reason, escaped for a table") {
@@ -101,7 +119,7 @@ class ScenarioCatalogueTest extends AnyFunSuite {
     }
     val table = ScenarioCatalogue.render(Some(caps))
     assert(table.contains("skipped: ") && table.contains("streams \\| never batches"))
-    assert(rows(table).forall(_.size == 8), "an escaped pipe does not add a cell")
+    assert(rows(table).forall(_.size == 9), "an escaped pipe does not add a cell")
   }
 
   test("the forecast is the kit's own rule: for several declarations it agrees with what Conformance does to a real adapter") {

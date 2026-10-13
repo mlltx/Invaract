@@ -71,7 +71,7 @@ object ScenarioCatalogue {
     * adapter; either way it ends with `Forecast` and `Why` columns for the author to fill in. */
   def render(declaration: Option[AdapterCapabilities]): String = {
     val sb = new StringBuilder
-    val header = List("#", "Scenario", "What it checks", "Evidence for", "Neutral result") ++
+    val header = List("#", "Scenario", "What it means for a user", "What it checks", "Evidence for", "Neutral result") ++
       declaration.map(d => s"What the kit expects of `${d.adapter}`") ++ List("Forecast", "Why")
     sb.append(header.mkString("| ", " | ", " |")).append('\n')
     sb.append(header.map(_ => "---").mkString("| ", " | ", " |")).append('\n')
@@ -79,6 +79,7 @@ object ScenarioCatalogue {
       val cells = List(
         (i + 1).toString,
         s"`${s.id}`",
+        cell(s.userStory),
         cell(s.description),
         focusOf(s),
         neutral(s)

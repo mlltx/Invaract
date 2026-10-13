@@ -212,10 +212,24 @@ Before you call it finished, check each of these against the document, and fix w
 
 ## Phase 7 - Report, and stop
 
-Reply in chat with: the verdict in a few lines (what it would be, how much of the suite it is expected to
-conform to, the two biggest risks), the numbered decisions you need, and where the document is. Offer to open the
-survey as a pull request; follow the session's rules on merging. **Do not start the adapter.** The next step is
-the person reading the survey and saying go.
+**The default is the full report, printed in the chat.** The person often cannot open files, so the chat reply is
+the deliverable and the document is its copy for the repository. After writing the document, reply with the whole
+survey, section by section, in the document's own order and wording (the short version first, then sections 1 to 10
+and the glossary). Do not summarise it and point to the file; the reply must stand on its own. Keep tables as
+markdown tables. The scenario table carries the column `What it means for a user` (each scenario's `userStory`,
+printed by `./dev/adapter-survey`) beside the mark and the reason, so a reader can follow every row without knowing the kit.
+
+The person can change this with an argument after the engine name:
+
+- *(none)*: the full report in chat, and the document written.
+- `--short`: the verdict in a few lines (what it would be, how much of the suite it is expected to conform to, the
+  two biggest risks), the capability table, the scenario table (mark, user story, reason) and the numbered
+  decisions; everything else stays in the document.
+- `--file-only`: write the document and reply with the verdict, the decisions and the path.
+
+Whatever the argument, end with the numbered decisions you need, offer to open the survey as a pull request (follow
+the session's rules on merging), and say that the adapter has not been started. **Do not start the adapter.** The
+next step is the person reading the survey and saying go.
 
 ## Phase 8 - After the adapter exists (the survey earns its keep here)
 

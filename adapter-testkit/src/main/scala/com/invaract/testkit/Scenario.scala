@@ -217,6 +217,11 @@ final case class Analysis(
 
 /** One engine-neutral behaviour every adapter must show.
   *
+  * @param description what the scenario checks, in the kit's terms (it names the test).
+  * @param userStory the same scenario from the point of view of the team whose job it is: what their job does and what
+  *   Invaract does about it, in plain words with no engine or Invaract jargon. A survey of a new engine, the capability
+  *   page and `ScenarioCatalogue` show it beside the technical description, so a person who has never read the kit can
+  *   tell what each scenario is protecting them from. Required, so a new scenario cannot be added without one.
   * @param focus the capabilities this scenario is the evidence for: an adapter that declares one of
   *   these `supported` or `partial` is claiming this scenario passes on it.
   * @param expectNonDeterministic when set, exactly these output columns must be reported non-deterministic by the
@@ -229,6 +234,7 @@ final case class Analysis(
 final case class Scenario(
     id: String,
     description: String,
+    userStory: String,
     focus: Set[Capability],
     contract: Contract,
     job: ScenarioJob,
@@ -237,4 +243,6 @@ final case class Scenario(
     expectNonDeterministic: Option[Set[String]] = None,
     analysis: Analysis = Analysis(),
     operations: Set[Capability] = Set(Capability.ReadBatch, Capability.WriteBatch)
-)
+) {
+  require(userStory.trim.nonEmpty, s"scenario '$id' needs a userStory: what it means for the team whose job it is")
+}
