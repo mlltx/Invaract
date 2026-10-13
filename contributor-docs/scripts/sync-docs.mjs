@@ -88,6 +88,14 @@ const PAGES = [
     label: 'Adding an Engine Adapter',
     order: 8,
   },
+  // Same slot as the guide it precedes: dev/new-adapter numbers a new adapter's write-up after the highest order here.
+  {
+    src: 'docs/BEAM_ADAPTER_SURVEY.md',
+    slug: 'design/beam-adapter-survey',
+    section: 'Design Docs',
+    label: 'Beam Adapter Survey',
+    order: 8,
+  },
   {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
