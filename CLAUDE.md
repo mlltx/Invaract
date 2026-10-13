@@ -402,7 +402,7 @@ position; regenerate the docs-site matrix with `./dev/capabilities` (a drift tes
 `adapter-testkit` fails otherwise; the kit generates it because the page also says how the
 conformance scenarios check each capability). See docs/MULTI_ENGINE_ADAPTERS.md, Stage 3.
 
-**Adding an adapter for a new engine** follows `docs/ADDING_AN_ENGINE_ADAPTER.md` (investigate the engine, then
+**Surveying a new engine comes before adding it:** the `survey-engine-adapter` skill (`.claude/skills/survey-engine-adapter/`) writes `docs/<ENGINE>_ADAPTER_SURVEY.md`, a plain-language feasibility document (key design decisions, how the adapter gets hold of a job, how it attaches without touching the job, a forecast of every conformance scenario), using `./dev/adapter-survey` for the scenario table; it never starts the adapter. **Adding an adapter for a new engine** follows `docs/ADDING_AN_ENGINE_ADAPTER.md` (investigate the engine, then
 `dev/new-adapter <engine>`, then walk the kit's scenarios one capability at a time). `modules.json` is the one
 list of the repository's sbt modules; `.github/scripts/check_modules.py` (CI's "Workflow script tests" job) fails
 when any file that lists modules - the CI loops, the release steps, `dev/build`, the warm-up list, the dependency

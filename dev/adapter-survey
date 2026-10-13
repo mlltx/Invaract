@@ -1,0 +1,30 @@
+#!/bin/bash
+# Writes the conformance suite as a table for the survey that precedes a new engine adapter
+# (.claude/skills/survey-engine-adapter): one row per scenario - what it checks, which capabilities it is evidence
+# for, the neutral result - and, when a draft capability declaration is given, what the kit will expect of that
+# adapter on every scenario (it uses the kit's own rule, so the forecast and the later verdict cannot disagree).
+# The last two columns, Forecast and Why, are left empty for the author.
+#
+# Needs verification-core published locally (./dev/build does it).
+#
+# Usage: ./dev/adapter-survey <output.md> [draft-declaration.yaml]
+#        paths are absolute or relative to the repository root
+set -e
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "usage: ./dev/adapter-survey <output.md> [draft-declaration.yaml]" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+abs() { case "$1" in /*) echo "$1" ;; *) echo "$SCRIPT_DIR/$1" ;; esac; }
+
+ARGS="$(abs "$1")"
+if [ "$#" -eq 2 ]; then
+  ARGS="$ARGS $(abs "$2")"
+fi
+
+(cd adapter-testkit && sbt -batch "runMain com.invaract.testkit.ScenarioCatalogue $ARGS")
+echo "Wrote $1"
