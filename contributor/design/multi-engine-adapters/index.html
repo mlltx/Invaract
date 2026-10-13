@@ -712,7 +712,18 @@ output as a stream sink, run to completion; two scenarios hold it to the batch j
 the declared input, a sink elsewhere is blocked). <code dir="auto">boundary</code> runs the work so far (read, join, filter)
 through the engine’s checkpoint or cache before the projection; the scenarios require a filter made before
 the boundary to still satisfy a <code dir="auto">required_filter_columns</code> rule, no declared input to be reported hidden, and
-a genuinely unread input to still be missing. An adapter that cannot see through its boundary fails them.</p>
+a genuinely unread input to still be missing. An adapter that cannot see through its boundary fails them.
+<code dir="auto">opaqueStep</code> passes the work so far through one step the adapter’s translation has no representation for
+(Spark: a row sample, which becomes an <code dir="auto">ir.UnknownPlan</code> over the plan beneath it); the two scenarios require the
+input read beneath it to still count as read and an undeclared one to still be rejected, so an adapter that drops
+what it could not interpret fails them. This is <code dir="auto">ir.UnknownPlan</code>’s own promise (“the rest of the tree stays
+inspectable”), held at the adapter’s translation.</p>
+<p><strong>The plan-shape rules need two more job shapes.</strong> <code dir="auto">rules.planShape</code> claims four rule types, and a scenario per rule
+is what makes the claim checked: <code dir="auto">required_filter_columns</code> needs only a filter, but <code dir="auto">forbid_cross_join</code> needs a join
+with no condition (<code dir="auto">crossJoin</code>: engines report a cartesian product as a cross join or as a join with no condition, and
+the rule must catch both) and <code dir="auto">required_group_by</code> needs an aggregation (<code dir="auto">groupBy</code>, with <code dir="auto">RowCount</code> for the aggregate
+column). Each rule has a satisfied and a violated scenario; the violated <code dir="auto">required_group_by</code> one groups by a column the
+output merely <em>renames</em> to the required name, which an adapter that confuses a grouping column with its alias gets wrong.</p>
 <p><strong>The analyses are read from what the run reported and from the adapter’s own translation.</strong> The outcome
 carries the static data-quality results, the role-consistency verdicts and the inputs reported hidden
 behind a boundary, all read off the last <code dir="auto">ContractValidationEvent</code> (so an adapter fills them in by finishing
