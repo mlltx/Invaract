@@ -121,6 +121,20 @@ mimaBinaryIssueFilters ++= Seq(
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.apply$default$9"),
   ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$9"),
   ProblemFilters.exclude[MissingTypesProblem]("com.invaract.testkit.Scenario$"),
+  // `userStory`: every Scenario now says, in plain words, what it means for the team whose job it is (the survey, the
+  // scenario catalogue and the capability page show it). It is a required third parameter, so every positional default
+  // getter after it moves by one. Same reason as above: no consumer outside this repository yet.
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.<init>$default$10"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.<init>$default$8"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.apply$default$10"),
+  ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.testkit.Scenario.apply$default$8"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$10"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$3"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$4"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$5"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$6"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$7"),
+  ProblemFilters.exclude[IncompatibleResultTypeProblem]("com.invaract.testkit.Scenario.copy$default$8"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.dataQuality"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.roles"),
   ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.testkit.ScenarioOutcome.unverifiableInputs"),

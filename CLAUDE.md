@@ -413,7 +413,7 @@ graph, the mutation jobs - disagrees with it, naming the file and line. A new mo
 and each must come out as the adapter's declaration promises (a capability declared
 unsupported must fail closed with `UNSUPPORTED_CONTRACT_FEATURE`; one declared not-applicable
 is canceled with its note). A new engine-neutral check means a new scenario in
-`Scenarios.scala` (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
+`Scenarios.scala`, with a `userStory` (the same scenario in plain words, from the point of view of the team whose job it is; the survey and `ScenarioCatalogue` show it) (or an entry in `Scenarios.attested` / `Scenarios.gaps` saying why not, the first for what no job
 could check by its nature, the second for what the kit cannot check yet; there are no gaps today) — the kit's own
 tests fail if a capability is in neither, and `BrokenAdapterSpec` fails if a new scenario is the catch for no
 deliberately broken adapter (add the mistake it exists to catch, or exempt it with a pointer the suite checks: the scenario it is a control for, the `verification-core` test that holds it, or a kit test). An attested capability
