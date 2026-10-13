@@ -294,6 +294,36 @@ class ConformanceKitSpec extends AnyFunSuite {
     assert(Set("catalog-required-output-unregistered", "catalog-required-output-registered").subsetOf(failingIds(lying)))
   }
 
+  test("an adapter that declares an analysis unsupported conforms by failing closed, and is not held to the analysis result it said it cannot give") {
+    val caps = declaring(
+      Map(
+        "analysis.staticDataQuality" -> (("unsupported", Some("functions are opaque"))),
+        "analysis.roleConsistency" -> (("unsupported", Some("no column-level usage")))
+      )
+    )
+    // an engine without the analysis reports no verdicts at all, where the scenarios expect them of an engine that has it
+    val noVerdicts = new Tampered(new ReferenceAdapter(caps), outcomeOf = {
+      case r: ScenarioOutcome.Rejected => r.copy(dataQuality = Set.empty, roles = Map.empty)
+      case p: ScenarioOutcome.Passed   => p.copy(dataQuality = Set.empty, roles = Map.empty)
+    })
+    val report = Conformance.evaluate(noVerdicts)
+    assert(report.failures == Nil)
+    val refused = Set(
+      "static-data-quality-proves-a-constant",
+      "static-data-quality-cannot-prove-a-passthrough",
+      "static-data-quality-violation-blocks",
+      "role-source-contributing-conforms",
+      "role-control-contributing-contradicts"
+    )
+    assert(refused.subsetOf(report.conforming.map(_.scenario.id).toSet))
+    // ...while the same missing verdicts from an adapter that does claim the analyses are still caught
+    val claiming = new Tampered(new ReferenceAdapter(), outcomeOf = {
+      case r: ScenarioOutcome.Rejected => r.copy(dataQuality = Set.empty, roles = Map.empty)
+      case p: ScenarioOutcome.Passed   => p.copy(dataQuality = Set.empty, roles = Map.empty)
+    })
+    assert(failingIds(claiming).contains("static-data-quality-proves-a-constant"))
+  }
+
   // --- the reference adapter's own translation --------------------------------------------------
 
   private def scenario(id: String): Scenario = Scenarios.all.find(_.id == id).getOrElse(fail(s"no scenario '$id'"))

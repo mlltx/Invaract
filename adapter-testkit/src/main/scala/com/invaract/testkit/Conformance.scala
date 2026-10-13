@@ -148,6 +148,9 @@ object Conformance {
               ScenarioVerdict.Diverges(
                 s"the fingerprint must report exactly ${show(columns)} non-deterministic; it reported ${show(outcome.nonDeterministicColumns)} - an engine function name did not reach the catalog"
               )
+            // An adapter that must refuse the scenario (it declared a capability the contract needs unsupported) has said it
+            // cannot do that analysis, so it is not held to the analysis result the scenario expects of one that can.
+            case _ if expected == Expected.RejectedAsUnsupported => ScenarioVerdict.Conforms
             case _ => judgeAnalysis(analysis, outcome)
           }
     }
