@@ -213,9 +213,17 @@ Before you call it finished, check each of these against the document, and fix w
 ## Phase 7 - Report, and stop
 
 Reply in chat with: the verdict in a few lines (what it would be, how much of the suite it is expected to
-conform to, the two biggest risks), the numbered decisions you need, and where the document is. Offer to open the
-survey as a pull request; follow the session's rules on merging. **Do not start the adapter.** The next step is
-the person reading the survey and saying go.
+conform to, the two biggest risks), **the scenario table**, the numbered decisions you need, and where the document
+is. The person often cannot open files, so the chat reply must stand on its own:
+
+- Print the scenario forecast as a compact table in the reply itself, one row per scenario: `#`, scenario id, the
+  mark (✅ ⚠️ ❌ ➖), and a reason of at most a dozen plain words. Group the rows under the family headings the
+  document uses, and end with the totals line. Do not link to the document instead of printing it.
+- Also print the capability declaration as a compact table: capability, status it would declare, one-line reason.
+- Do not paste the whole document, and keep every other table out of the reply; point to the section instead.
+
+Offer to open the survey as a pull request; follow the session's rules on merging. **Do not start the adapter.** The
+next step is the person reading the survey and saying go.
 
 ## Phase 8 - After the adapter exists (the survey earns its keep here)
 
