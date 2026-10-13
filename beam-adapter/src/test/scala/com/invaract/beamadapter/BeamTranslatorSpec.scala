@@ -66,11 +66,15 @@ class BeamTranslatorSpec extends AnyFunSuite {
     p.apply("ReadAvro", AvroIO.readGenericRecords(OrdersSchema).from("/data/in/avro/*.avro")).apply("WriteAvro", AvroIO.writeGenericRecords(OrdersSchema).to("/data/out/avro/part"))
     val translation = BeamTranslator.translate(p)
     assert(translation.unverifiable.isEmpty)
-    val byLocation = translation.writes.map(w => w.location -> w).toMap
+    // Beam resolves a text write's prefix against the file system, so on Windows it comes back as "D:/data/out/lines"
+    val byLocation = translation.writes.map(w => withoutDrive(w.location) -> w).toMap
     assert(readsIn(byLocation("/data/out/report").plan) == List("/data/in/orders"))
     assert(readsIn(byLocation("/data/out/lines").plan) == List("/data/in/lines"))
     assert(readsIn(byLocation("/data/out/avro/part").plan) == List("/data/in/avro"), "an Avro write is located by the prefix the job passed to .to()")
   }
+
+  /** A location without the drive letter Beam adds to a text write's prefix on Windows (`D:/data/x` is `/data/x`). */
+  private def withoutDrive(location: String): String = location.replaceFirst("^[A-Za-z]:(?=/)", "")
 
   // --- writes ---
 
@@ -107,7 +111,7 @@ class BeamTranslatorSpec extends AnyFunSuite {
     val p = pipeline
     p.apply("Lines", Create.of("a", "b")).apply("WriteLines", TextIO.write().to("/data/out/lines/part"))
     val Seq(w) = BeamTranslator.translate(p).writes
-    assert(w.location == "/data/out/lines/part" && w.format.contains("text"))
+    assert(withoutDrive(w.location) == "/data/out/lines/part" && w.format.contains("text"))
     assert(w.outputSchema.isEmpty)
   }
 
