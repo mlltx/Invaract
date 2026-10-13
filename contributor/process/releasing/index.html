@@ -85,12 +85,14 @@ relevant docs-site/ guide with the real coordinate and a real
 update belongs in the PR/commit that makes the release genuinely usable,
 not before.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="what-gets-published">What gets published</h2><a class="sl-anchor-link" href="#what-gets-published"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “What gets published”</span></a></div>
-<p>Six modules: <code dir="auto">contract</code>, <code dir="auto">ir</code>, <code dir="auto">fingerprint</code>, <code dir="auto">verification-core</code>, <code dir="auto">adapter-testkit</code> and
-<code dir="auto">spark-adapter</code>. The first five plus <code dir="auto">spark-adapter</code> are the verification engine CLAUDE.md’s
+<p>Seven modules: <code dir="auto">contract</code>, <code dir="auto">ir</code>, <code dir="auto">fingerprint</code>, <code dir="auto">verification-core</code>, <code dir="auto">adapter-testkit</code>,
+<code dir="auto">spark-adapter</code> and <code dir="auto">beam-adapter</code> (the Apache Beam adapter; it depends on <code dir="auto">contract</code>, <code dir="auto">ir</code> and
+<code dir="auto">verification-core</code>, and on the kit in tests, so it is released after them and is independent of
+<code dir="auto">spark-adapter</code>). The first five plus <code dir="auto">spark-adapter</code> are the verification engine CLAUDE.md’s
 “What’s the product” section describes, and <code dir="auto">spark-adapter</code>’s published POM depends on all the
 others, so a release that left any of them out would be unresolvable. <code dir="auto">adapter-testkit</code> is
 test-scope infrastructure, but it is what a third-party adapter compiles its conformance tests
-against, and <code dir="auto">spark-adapter</code> itself lists it as a test dependency. All six have Maven Central
+against, and <code dir="auto">spark-adapter</code> itself lists it as a test dependency. All seven have Maven Central
 publishing settings in their <code dir="auto">build.sbt</code>/<code dir="auto">project/*.sbt</code> (identical, copied from <code dir="auto">ir</code>).</p>
 <p><code dir="auto">plugin</code>, <code dir="auto">runner</code>, <code dir="auto">demo</code>, and <code dir="auto">web</code> are the example harness — never
 published, nothing to release. <code dir="auto">notification-kafka</code> is an optional
@@ -183,7 +185,7 @@ is not exempt from any of this.</li>
 <div class="expressive-code"><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="plaintext"><code><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">git tag v2026.09.0   # any tag matching v* — the tag name itself isn't</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                      </span></span><span style="--0:#d6deeb;--1:#403f53"># read by release.yml; each module's own</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#d6deeb;--1:#403f53">                      </span></span><span style="--0:#d6deeb;--1:#403f53"># ThisBuild/version is authoritative</span></div></div><div class="ec-line"><div class="code"><span style="--0:#d6deeb;--1:#403f53">git push origin v2026.09.0</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="git tag v2026.09.0   # any tag matching v* — the tag name itself isn&#x27;t                      # read by release.yml; each module&#x27;s own                      # ThisBuild/version is authoritativegit push origin v2026.09.0"><div></div></button></div></figure></div>
 This triggers <code dir="auto">.github/workflows/release.yml</code>, which builds, signs, and
 releases <code dir="auto">contract</code>, <code dir="auto">ir</code>, <code dir="auto">fingerprint</code>, <code dir="auto">verification-core</code>, <code dir="auto">adapter-testkit</code>, then
-<code dir="auto">spark-adapter</code> in that order (order matters: each module’s own <code dir="auto">libraryDependencies</code> resolve
+<code dir="auto">spark-adapter</code> and <code dir="auto">beam-adapter</code> in that order (order matters: each module’s own <code dir="auto">libraryDependencies</code> resolve
 the earlier ones from the same runner’s local Ivy cache — see
 <code dir="auto">spark-adapter/build.sbt</code>’s comment on that dependency, and
 <code dir="auto">dev/build</code>’s matching local-build pattern). <code dir="auto">contract</code>’s step
