@@ -1,0 +1,2 @@
+# The scenarios beam conforms to (adapter-testkit ConformanceBaseline). A scenario on this list must keep conforming;
+# one that now conforms is added here, in the PR that makes it conform. Empty while every capability is declared unsupported.

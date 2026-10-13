@@ -34,7 +34,7 @@ jobs:
       matrix:
         # Every module in modules.json - .github/scripts/check_modules.py (CI's "Module registry
         # check") fails when this list and the registry disagree.
-        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, notification-kafka, registry-client]
+        module: [contract, ir, fingerprint, verification-core, adapter-testkit, plugin, runner, spark-adapter, beam-adapter, notification-kafka, registry-client]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

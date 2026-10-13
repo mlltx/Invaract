@@ -36,6 +36,9 @@
 #   spark-adapter          (needs contract, ir, fingerprint, verification-core
 #                            and adapter-testkit (tests) published locally
 #                            — not plugin)
+#   beam-adapter           (needs contract, ir, verification-core published and
+#                            adapter-testkit (tests); independent of spark-adapter,
+#                            so it is built alongside it)
 #   runner                 (needs contract, ir, spark-adapter published
 #                            locally, plus plugin's jar directly)
 #
@@ -159,7 +162,9 @@ wait_module adapter-testkit
 
 echo ""
 start_module spark-adapter "compile test assembly publishLocal"
+start_module beam-adapter "compile test publishLocal"
 wait_module spark-adapter
+wait_module beam-adapter
 
 echo ""
 start_module runner "compile assembly"
