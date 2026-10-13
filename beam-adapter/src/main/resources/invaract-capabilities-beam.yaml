@@ -6,105 +6,100 @@
 # (AdapterCapabilities.parse refuses a file that leaves one out): an adapter that cannot do
 # something says so, with a reason. Anything other than `supported` needs a `note`.
 #
-# Generated with every capability `unsupported` - the safe default, which makes a contract that relies on
-# one fail with UNSUPPORTED_CONTRACT_FEATURE instead of passing unchecked. Move a capability to `supported`
-# or `partial` only when the engine investigation (docs/ADDING_AN_ENGINE_ADAPTER.md) has a finding for it
-# AND the conformance kit passes its scenarios; the kit holds a declaration to what it says.
+# Written from docs/BEAM_ADAPTER_SURVEY.md and held to the conformance kit: a capability is `supported`
+# only if the kit's scenario for it passes on a real Beam pipeline (BeamConformanceSpec), or, for the
+# ones no job can show, a named test demonstrates it (BeamAttestedClaimsSpec).
 adapter: beam
-engine: Beam
+engine: Apache Beam (Java SDK)
 enforcement:
-  # TODO(engine investigation, question 1): in-engine-blocking, pre-submit-gate or observe-only.
-  point: observe-only
+  point: pre-submit-gate
   note: >-
-    Not yet investigated: where Beam can be gated has not been decided.
+    A wrapper runner, named by --runner, receives the constructed pipeline in run(), reads its graph (before any
+    step executes), verifies it against the contract, and either throws (the pipeline is never submitted) or hands
+    it to the real runner. Nothing inside a running pipeline is intercepted.
 capabilities:
   read.batch:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
+    note: For the read transforms the adapter recognises (TextIO, AvroIO, ParquetIO, BigQueryIO and similar), whose location the graph states. A read through a source it does not recognise is not seen as an input.
   read.streaming:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: An unbounded read is visible (PCollection.isBounded), but no streaming job has been run to completion under the conformance kit on the in-process runner, so nothing is claimed.
   write.batch:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
+    note: For the write transforms the adapter recognises. A terminal step it does not recognise is treated as an unverifiable write (failClosed.unverifiableWrites).
   write.streaming:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: As read.streaming.
   write.rowLevelDml:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: not-applicable
+    note: Beam has no row-level MERGE, UPDATE or DELETE; a pipeline reads collections and writes new output.
   write.stateChange:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: not-applicable
+    note: Beam has no operation that commits a schema change without writing rows.
   check.inputExistence:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
   check.location:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
+    note: TextIO states its read pattern as given but its write prefix as an absolute path, so both are normalised; a FileIO write states no location in its display data and is read through WriteFiles.getSink() (unverified).
   check.schema:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: partial
+    note: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare.
   check.nestedTypes:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
+    note: Beam ROW, ARRAY and MAP, and Avro records, arrays and maps, map to struct, array and map wherever a schema is known.
   check.format:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: partial
+    note: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.
   check.saveMode:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: File-based writes have no write disposition in Beam, so a job cannot say append or overwrite. BigQueryIO does (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY) and could support this later.
   check.catalogRegistration:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: A file-based Beam write has no catalog. A BigQueryIO write is to a catalog table and could support this later.
   rules.dml:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: not-applicable
+    note: There is no row-level DML in Beam.
   rules.planShape:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: The fields a schema filter, join or group-by uses are held in non-public state and the plain-function forms are opaque; supporting these would rest on reflection into Beam internals or on analysing SQL (SqlTransform).
   rules.custom:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Custom rule verifiers are given a row-level change to judge, and Beam has none.
   analysis.staticDataQuality:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Proving a property of an output column needs to see how it is computed; functions in Beam are opaque Java code.
   analysis.roleConsistency:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Needs column-level usage, which the graph does not give.
   analysis.fingerprint:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: A fingerprint of the graph alone would not capture the logic inside functions and would mislead.
   analysis.functionCatalog:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Beam jobs call Java methods, not named engine functions.
   analysis.sensitivityPropagation:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Needs column-level lineage.
   lineage.columnLevel:
     status: unsupported
-    note: Not yet investigated for Beam.
+    note: Needs to see how each output column is computed, which opaque functions hide.
   lineage.boundaryResolution:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: not-applicable
+    note: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
   policy.organizational:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
   config.zeroCodeInstall:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: partial
+    note: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
   config.locationRefs:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
   config.contractRegistry:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
   reporting.notifications:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: supported
   reporting.dryRunInference:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: partial
+    note: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer.
   failClosed.unverifiableWrites:
-    status: unsupported
-    note: Not yet investigated for Beam.
+    status: partial
+    note: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.

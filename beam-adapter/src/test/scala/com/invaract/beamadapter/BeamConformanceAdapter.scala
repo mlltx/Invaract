@@ -5,20 +5,21 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.Contract
 import com.invaract.ir.Plan
-import com.invaract.testkit.{ConformanceAdapter, RecordingSink, ScenarioJob, ScenarioOutcome}
-import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
+import com.invaract.testkit.{ConformanceAdapter, EnvironmentUnavailable, RecordingSink, ScenarioJob, ScenarioOutcome}
+import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, VerificationOptions}
+import org.apache.beam.runners.direct.DirectRunner
+import org.apache.beam.sdk.options.PipelineOptionsFactory
+import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
+
+import java.nio.file.{Files, Path}
+import scala.util.Try
 
 /** Beam as an adapter for the conformance kit (docs/MULTI_ENGINE_ADAPTERS.md, Stage 4).
   *
-  * `run` turns a neutral `ScenarioJob` into a real Beam job and runs it through the adapter's REAL
-  * enforcement path - the engine's own hook, not a direct call to `VerificationPipeline` (that is what
-  * `ReferenceAdapter` does, and why it proves nothing about an engine). It finishes with `sink.passed` or
-  * `sink.rejected(violationTypes)`; the sink is handed to the enforcement as its notification sink.
-  *
-  * Everything the declaration marks `unsupported` or `not-applicable` is skipped by the kit, so with the
-  * generated declaration (all unsupported) every conformance test is canceled and this compiles and passes.
-  * Work through the capabilities one at a time: investigate, implement, flip the declaration to `supported`,
-  * and the scenarios for it start to run here.
+  * `run` turns a neutral `ScenarioJob` into a real Beam pipeline (`BeamScenarioJobs`: Parquet in, Beam transforms, Parquet or
+  * CSV out), constructs it, and runs it through `InvaractRunner` - the adapter's real enforcement path, the one a job gets
+  * when its command line names `--runner=...InvaractRunner` - which checks the pipeline before handing it to Beam's
+  * in-process `DirectRunner`. A rejected pipeline never reaches the `DirectRunner`; an allowed one really runs, over empty data.
   */
 class BeamConformanceAdapter extends ConformanceAdapter {
 
@@ -27,20 +28,32 @@ class BeamConformanceAdapter extends ConformanceAdapter {
 
   override def run(scenarioId: String, contract: Contract, job: ScenarioJob, options: VerificationOptions): ScenarioOutcome = {
     val sink = new RecordingSink
-    // TODO: build the job on Beam, enforce `contract` with `options` and `sink` through the engine's own hook,
-    // run it, and answer `sink.passed` or, when the engine's enforcement rejects it, `sink.rejected(types)`.
-    // The kit runs each scenario on a thread of its own, under a time limit (AdapterConformanceSpec.scenarioTimeLimit):
-    // bind anything the engine ties to a thread (a session, a client) here, to the thread that runs this.
-    // If the engine's environment is missing (a service that is down, credentials the machine lacks), throw
-    // EnvironmentUnavailable("why"): the scenario is then reported unavailable, not a divergence. Nothing else.
-    // The enforcement must publish its events with a JobInfo whose `engine` is "beam" (the `adapter:` in the
-    // capability declaration): the kit fails an adapter whose validation events do not name its engine.
-    // See ReferenceAdapter (adapter-testkit) for the translation, schemas and rejection handling an adapter owns.
-    throw new NotImplementedError("BeamConformanceAdapter.run is not implemented")
+    val root = Files.createTempDirectory(s"beam-conformance-")
+    try {
+      val beamOptions = PipelineOptionsFactory.create()
+      val pipeline = Pipeline.create(beamOptions)
+      BeamScenarioJobs.build(pipeline, job, root)
+      val check = InvaractBeam.enforce(contract, options, Some(sink), ConfigSource.empty, InvaractBeam.jobInfoOf(beamOptions))
+      val runner = InvaractRunner.enforcing(check, DirectRunner.fromOptions(beamOptions).asInstanceOf[PipelineRunner[PipelineResult]])
+      runner.run(pipeline).waitUntilFinish()
+      sink.passed
+    } catch {
+      case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
+    } finally BeamConformanceAdapter.deleteQuietly(root)
   }
 
-  /** The `ir.Plan` this adapter's enforcement would check for `job` (nothing written, nothing enforced), for the
-    * lineage and sensitivity scenarios. Leave it `None` only while `lineage.columnLevel` and
-    * `analysis.sensitivityPropagation` are declared unsupported. */
+  /** Beam's plan lineage is not available (the functions in a Beam job are opaque), and the lineage and sensitivity
+    * capabilities are declared unsupported, so the kit never asks. */
   override def translation(scenarioId: String, job: ScenarioJob): Option[Plan] = None
+}
+
+private[beamadapter] object BeamConformanceAdapter {
+
+  /** Removes `root` and everything under it; a file the platform still holds open is left rather than failing the run. */
+  def deleteQuietly(root: Path): Unit =
+    Try {
+      val walk = Files.walk(root)
+      try walk.sorted(java.util.Comparator.reverseOrder[Path]()).forEach(p => Try(Files.deleteIfExists(p)))
+      finally walk.close()
+    }
 }
