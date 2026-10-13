@@ -42,6 +42,7 @@ class BrokenAdapterSpec extends AnyFunSuite {
       case p: Project => p.copy(input = rewrite(p.input)(f))
       case fl: Filter => fl.copy(input = rewrite(fl.input)(f))
       case j: Join    => j.copy(left = rewrite(j.left)(f), right = rewrite(j.right)(f))
+      case u: UnknownPlan => u.copy(children = u.children.map(rewrite(_)(f)))
       case other      => other
     }
     f.applyOrElse(rebuilt, identity[Plan])
@@ -113,6 +114,9 @@ class BrokenAdapterSpec extends AnyFunSuite {
   private val specific = List(
     Mistake("loses the filters in translation", new Variant(rewritePlan = (_, p) => rewrite(p) { case Filter(in, _) => in }),
       Set("required-filter-column-present", "boundary-filter-is-seen-through")),
+    Mistake("drops what is beneath a step it cannot translate",
+      new Variant(rewritePlan = (_, p) => rewrite(p) { case u: UnknownPlan => u.copy(children = Nil) }),
+      Set("unrecognized-step-keeps-the-reads-beneath-it-visible", "unrecognized-step-does-not-hide-an-undeclared-read")),
     Mistake("loses the joins in translation", new Variant(rewritePlan = (_, p) => rewrite(p) { case Join(l, _, _, _) => l }),
       Set("undeclared-input-rejected", "derived-from-rejects-a-read-of-another-outputs-source", "lineage-through-join-and-filter")),
     Mistake("writes somewhere other than it reports", new Variant(rewritePlan = onWrite(_.copy(dataset = DatasetRef("somewhere/else")))),

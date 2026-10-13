@@ -32,9 +32,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (36) | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (38) | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (37) | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (39) | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | ✅ |
@@ -43,7 +43,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | spark |
 |---|---|---|---|
-| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | verified (6) | ✅ |
+| `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | verified (8) | ✅ |
 | `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | verified (3) | ◐ |
 | `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (7) | ✅ |
 | `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ |
@@ -118,11 +118,11 @@ Attested:
 
 ## Conformance results
 
-The suite has 43 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 45 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `spark` | 43 | 43 |
+| `spark` | 45 | 45 |
 
 ## Notes
 
