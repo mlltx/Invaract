@@ -136,7 +136,7 @@ The suite has 51 scenarios. For each adapter, the scenarios it is held to confor
 - `write.streaming` — unsupported: As read.streaming.
 - `write.rowLevelDml` — not-applicable: Beam has no row-level MERGE, UPDATE or DELETE; a pipeline reads collections and writes new output.
 - `write.stateChange` — not-applicable: Beam has no operation that commits a schema change without writing rows.
-- `check.location` — supported: TextIO states its read pattern as given but its write prefix as an absolute path, so both are normalised; a FileIO write states no location in its display data and is read through WriteFiles.getSink() (unverified).
+- `check.location` — supported: TextIO states its read pattern as given but its write prefix as an absolute path, so both are normalised; a FileIO write states no location in its display data, so its output directory is read from FileIO.Write by reflection (Beam 2.77.0; a write it cannot read is refused as unverifiable).
 - `check.schema` — partial: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare.
 - `check.nestedTypes` — supported: Beam ROW, ARRAY and MAP, and Avro records, arrays and maps, map to struct, array and map wherever a schema is known.
 - `check.format` — partial: The format is the IO transform (ParquetIO is parquet, AvroIO is avro). TextIO cannot tell csv from json from plain text.

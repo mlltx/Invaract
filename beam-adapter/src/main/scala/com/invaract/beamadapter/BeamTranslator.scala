@@ -5,6 +5,7 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.LogicalSchema
 import com.invaract.ir.{DatasetRef, Plan, Read, UnknownPlan, Write}
+import com.invaract.verification.LocationMatching
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.io.WriteFiles
 import org.apache.beam.sdk.options.ValueProvider
@@ -47,23 +48,28 @@ private[beamadapter] object BeamTranslator {
     val consumed = nodes.flatMap(_.step.inputs.map(_.name)).toSet
 
     val planOf = mutable.Map.empty[String, Plan]
-    def sourcesOf(node: Node): List[Node] = node.step.inputs.flatMap(i => producers.get(i.name)).distinct
+    // by step name: a Node is a case class over the whole step subtree, which `distinct` would hash in full
+    def sourcesOf(node: Node): List[Node] = {
+      val seen = mutable.Set.empty[String]
+      node.step.inputs.flatMap(i => producers.get(i.name)).filter(n => seen.add(n.step.name))
+    }
     def plan(node: Node): Plan = planOf.getOrElseUpdate(
       node.step.name,
       node match {
         case r: ReadNode => Read(DatasetRef(r.location))
         case o: OtherNode =>
           UnknownPlan(s"${o.step.name} (${simpleName(o.step)})", simpleName(o.step), sourcesOf(o).map(plan))
-        case w: WriteNode => Write(DatasetRef(w.location), inputPlan(w), w.format)
+        case w: WriteNode => writePlan(w)
         case u: UnverifiableWriteNode => UnknownPlan(s"${u.step.name}: ${u.why}", simpleName(u.step), sourcesOf(u).map(plan))
       }
     )
+    def writePlan(w: WriteNode): Write = Write(DatasetRef(w.location), inputPlan(w), w.format)
     def inputPlan(w: WriteNode): Plan = sourcesOf(w) match {
       case Nil     => UnknownPlan(s"${w.step.name}: no input was found", simpleName(w.step))
       case sources => sources.map(plan) match { case only :: Nil => only; case many => UnknownPlan(s"${w.step.name}: several inputs", "Inputs", many) }
     }
     def readsBeneath(node: Node): List[ReadNode] = {
-      val seen = mutable.LinkedHashSet.empty[String]
+      val seen = mutable.Set.empty[String]
       def walk(n: Node): List[ReadNode] =
         if (!seen.add(n.step.name)) Nil
         else
@@ -76,7 +82,7 @@ private[beamadapter] object BeamTranslator {
 
     val writes = nodes.collect { case w: WriteNode => w }.map { w =>
       val schemas = readsBeneath(w).flatMap(r => r.step.outputs.headOption.flatMap(BeamSchemas.of).map(r.location -> _)).distinct
-      TranslatedWrite(w.location, w.format, plan(w).asInstanceOf[Write], w.step.inputs.headOption.flatMap(BeamSchemas.of), schemas)
+      TranslatedWrite(w.location, w.format, writePlan(w), w.step.inputs.headOption.flatMap(BeamSchemas.of), schemas)
     }
 
     val unwritable = nodes.collect { case u: UnverifiableWriteNode => u }.map(u => UnverifiableStep(u.why, plan(u)))
@@ -123,10 +129,9 @@ private[beamadapter] object BeamTranslator {
 
   /** The folder a read pattern reads from: the pattern `in/orders/` plus a glob file name is `in/orders` (a contract declares the folder). */
   private[beamadapter] def readLocation(pattern: String): String = {
-    val path = pattern.replace('\\', '/')
+    val path = LocationMatching.normalizeDeclared(pattern)
     val last = path.substring(path.lastIndexOf('/') + 1)
-    val folder = if (last.exists("*?[{".contains(_))) path.substring(0, math.max(path.lastIndexOf('/'), 0)) else path
-    folder.stripSuffix("/")
+    folder(if (last.exists("*?[{".contains(_))) path.substring(0, math.max(path.lastIndexOf('/'), 0)) else path)
   }
 
   // --- writes ---
@@ -135,10 +140,8 @@ private[beamadapter] object BeamTranslator {
     val sink = step.withDescendants.map(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = step.withDescendants.flatMap(_.display.get("filePrefix")).headOption
     sink match {
-      case Some("org.apache.beam.sdk.io.TextSink") =>
-        prefix.fold[Node](UnverifiableWriteNode(step, "a text write whose file prefix is not published"))(p => WriteNode(step, folder(p), Some("text")))
-      case Some(avro) if avro.endsWith(".AvroSink") =>
-        prefix.fold[Node](UnverifiableWriteNode(step, "an Avro write whose file prefix is not published"))(p => WriteNode(step, folder(p), Some("avro")))
+      case Some("org.apache.beam.sdk.io.TextSink") => prefixWrite(step, prefix, "text", "a text")
+      case Some(avro) if avro.endsWith(".AvroSink") => prefixWrite(step, prefix, "avro", "an Avro")
       case Some("org.apache.beam.sdk.io.FileIO$Write$ViaFileBasedSink") =>
         fileIoWrite(step) match {
           case Some((location, sinkClass)) => WriteNode(step, location, formatOf(sinkClass))
@@ -149,7 +152,11 @@ private[beamadapter] object BeamTranslator {
     }
   }
 
-  private def folder(path: String): String = path.replace('\\', '/').stripSuffix("/")
+  /** A write located by the file prefix its display data publishes; unverifiable when it publishes none. */
+  private def prefixWrite(step: BeamStep, prefix: Option[String], format: String, what: String): Node =
+    prefix.fold[Node](UnverifiableWriteNode(step, s"$what write whose file prefix is not published"))(p => WriteNode(step, folder(p), Some(format)))
+
+  private def folder(path: String): String = LocationMatching.normalizeDeclared(path).stripSuffix("/")
 
   private def formatOf(sinkClass: String): Option[String] =
     if (sinkClass.contains("ParquetIO")) Some("parquet")
