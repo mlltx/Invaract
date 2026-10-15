@@ -123,9 +123,13 @@ deployment keeps its data; declare an absolute location to pin one.
   delimiter, so its write satisfies a declared `csv`, `json` or `text`; it does not satisfy
   `parquet`.
 - The columns come from the data feeding the write (an Avro schema or a Beam row schema), or
-  from the table schema a BigQuery write declares. A write whose data is plain Java objects (a
-  `TextIO.write()` of strings) has no columns to check, so it is **refused as an unverifiable
-  write**, not passed.
+  from the table schema a BigQuery write declares. A Kafka write of key-value pairs, and a Kafka
+  read `withoutMetadata()`, has the columns `key` and `value`, typed by the job's coders (a
+  `Long` key is `long`, a `String` value is `string`) and nullable, as a Kafka record's are; the
+  same contract describes a Spark job writing `key` and `value` columns to the topic. A write whose data is plain Java objects (a
+  `TextIO.write()` of strings, a Pub/Sub write of strings or messages, a BigQuery write of
+  `TableRow`s that names no table schema, as a write into an existing table with `CREATE_NEVER`
+  often does) has no columns to check, so it is **refused as an unverifiable write**, not passed.
 - An input's schema is the one the job states for it: the file schema a Parquet or Avro read
   names (even when the job reads only some columns), or the rows a `JsonToRow` or
   `CsvIO.parseRows` straight after a text read produces. Beam does not open files before running.

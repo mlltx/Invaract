@@ -134,6 +134,11 @@ class BeamIOSpec extends AnyFunSuite {
     val Seq(w) = BeamTranslator.translate(p).writes
     assert(w.location == "broker:9092/report" && w.format.contains("kafka"))
     assert(readsIn(w.plan) == List("broker:9092/orders", "broker:9092/refunds"))
+    // a key-value pair is the columns key and value, as Kafka and Spark name them
+    val kv = Some(List("key" -> LogicalType.LongType, "value" -> LogicalType.StringType))
+    assert(w.outputSchema.map(_.fields.map(f => f.name -> f.dataType)) == kv)
+    assert(w.inputSchemas.map { case (l, s) => l -> s.fields.map(f => f.name -> f.dataType) } ==
+      List("broker:9092/orders" -> kv.get, "broker:9092/refunds" -> kv.get))
   }
 
   test("a Kafka read of topics matching a pattern is seen but not located") {
@@ -232,6 +237,22 @@ class BeamIOSpec extends AnyFunSuite {
     val t = BeamTranslator.translate(p)
     assert(t.writes.isEmpty)
     assert(t.unverifiable.map(_.operation).exists(_.contains("destination or sink cannot be read")))
+  }
+
+  test("an IO Invaract does not know is a read it cannot locate (Bigtable) and a write it refuses (Spanner), never a pass") {
+    val p = pipeline
+    p.apply("ReadBt", org.apache.beam.sdk.io.gcp.bigtable.BigtableIO.read().withProjectId("proj").withInstanceId("i").withTableId("orders"))
+      .apply("Count", org.apache.beam.sdk.transforms.Count.globally[com.google.bigtable.v2.Row]())
+      .apply("ToText", MapElements.into(TypeDescriptors.strings()).via(new SerializableFunction[java.lang.Long, String] { def apply(l: java.lang.Long) = l.toString }))
+      .apply("Write", TextIO.write().to("/data/out/count"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(unlocatedIn(w.plan).nonEmpty && w.unlocatedReads.exists(_.contains("BigtableSource")))
+
+    val q = pipeline
+    q.apply("Mutations", Create.of(com.google.cloud.spanner.Mutation.newInsertBuilder("report").set("id").to(1L).build()))
+      .apply("WriteSpanner", org.apache.beam.sdk.io.gcp.spanner.SpannerIO.write().withProjectId("proj").withInstanceId("i").withDatabaseId("db"))
+    val t = BeamTranslator.translate(q)
+    assert(t.writes.isEmpty && t.unverifiable.map(_.operation).exists(_.contains("WriteSpanner")))
   }
 
   // --- files matched by FileIO.match() ---

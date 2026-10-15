@@ -373,6 +373,37 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))
   }
 
+  test("a Kafka job is checked on the key and value it writes, against the same contract a Spark Kafka job would have") {
+    import org.apache.beam.sdk.io.kafka.KafkaIO
+    import org.apache.kafka.common.serialization.{LongDeserializer, LongSerializer, StringDeserializer, StringSerializer}
+    def contract(valueType: String) = com.invaract.contract.ContractParser.parse(
+      s"""id: orders_stream
+        |version: "1.0.0"
+        |inputs:
+        |  - { name: orders, location: orders, format: kafka, schema: { fields: [ { name: key, type: long }, { name: value, type: string } ] } }
+        |outputs:
+        |  - name: report
+        |    location: report
+        |    format: kafka
+        |    schema:
+        |      fields:
+        |        - { name: key, type: long }
+        |        - { name: value, type: $valueType }
+        |""".stripMargin)
+    // KafkaIO encodes keys and values as nullable, since a Kafka record may have neither
+    def job = {
+      val p = pipeline
+      p.apply("Read", KafkaIO.read[java.lang.Long, String]().withBootstrapServers("broker:9092").withTopic("orders")
+          .withKeyDeserializer(classOf[LongDeserializer]).withValueDeserializer(classOf[StringDeserializer]).withoutMetadata())
+        .apply("Write", KafkaIO.write[java.lang.Long, String]().withBootstrapServers("broker:9092").withTopic("report")
+          .withKeySerializer(classOf[LongSerializer]).withValueSerializer(classOf[StringSerializer]))
+      p
+    }
+    InvaractBeam.enforce(contract("string")).verify(job)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contract("binary")).verify(job))
+    assert(e.result.violations.map(_.violationType).contains(ViolationType.OutputFieldTypeMismatch))
+  }
+
   test("strict about undeclared inputs, a write that depends on a read that cannot be located is refused") {
     val p = pipeline
     queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)

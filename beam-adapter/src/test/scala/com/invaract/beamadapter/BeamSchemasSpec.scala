@@ -166,6 +166,23 @@ class BeamSchemasSpec extends AnyFunSuite {
   private def collection(coder: Option[org.apache.beam.sdk.coders.Coder[_]], row: Option[BeamSchema] = None) =
     BeamCollection("c", bounded = true, coder, row)
 
+  test("key-value pairs of plain values are the columns key and value, typed and made nullable by their coders") {
+    import org.apache.beam.sdk.coders._
+    def kv(k: Coder[_], v: Coder[_]) = BeamSchemas.of(collection(Some(KvCoder.of(k.asInstanceOf[Coder[Any]], v.asInstanceOf[Coder[Any]]))))
+    def types(k: Coder[_]) = kv(k, StringUtf8Coder.of()).map(_.fields.head.dataType)
+    assert(kv(VarLongCoder.of(), StringUtf8Coder.of()).contains(LogicalSchema(List(LogicalField("key", LongType, nullable = false), LogicalField("value", StringType, nullable = false)))))
+    assert(kv(NullableCoder.of(ByteArrayCoder.of()), NullableCoder.of(StringUtf8Coder.of()))
+      .contains(LogicalSchema(List(LogicalField("key", BinaryType, nullable = true), LogicalField("value", StringType, nullable = true)))))
+    Map[Coder[_], LogicalType](
+      StringUtf8Coder.of() -> StringType, VarLongCoder.of() -> LongType, BigEndianLongCoder.of() -> LongType, VarIntCoder.of() -> IntegerType,
+      BigEndianIntegerCoder.of() -> IntegerType, BigEndianShortCoder.of() -> ShortType, ByteCoder.of() -> ByteType, DoubleCoder.of() -> DoubleType,
+      FloatCoder.of() -> FloatType, BooleanCoder.of() -> BooleanType, ByteArrayCoder.of() -> BinaryType
+    ).foreach { case (coder, t) => assert(types(coder).contains(t), coder.toString) }
+    assert(kv(SerializableCoder.of(classOf[java.util.Date]), StringUtf8Coder.of()).isEmpty, "a key that is an object has no type")
+    assert(kv(StringUtf8Coder.of(), SerializableCoder.of(classOf[java.util.Date])).isEmpty, "nor a value that is one")
+    assert(BeamSchemas.of(collection(Some(StringUtf8Coder.of()))).isEmpty, "a plain value alone is not a row of columns")
+  }
+
   test("a collection's columns come from its Beam row schema first, then from the Avro schema its coder carries") {
     val avroSchema = new Schema.Parser().parse("""{"type":"record","name":"R","fields":[{"name":"a","type":"long"}]}""")
     val fromAvro = BeamSchemas.of(collection(Some(AvroGenericCoder.of(avroSchema))))

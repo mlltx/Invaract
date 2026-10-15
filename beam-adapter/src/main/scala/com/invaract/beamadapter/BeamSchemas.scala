@@ -4,7 +4,10 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
-import org.apache.beam.sdk.coders.Coder
+import org.apache.beam.sdk.coders.{
+  BigEndianIntegerCoder, BigEndianLongCoder, BigEndianShortCoder, BooleanCoder, ByteArrayCoder, ByteCoder, Coder, DoubleCoder, FloatCoder,
+  KvCoder, NullableCoder, StringUtf8Coder, VarIntCoder, VarLongCoder
+}
 import org.apache.beam.sdk.schemas.Schema.{FieldType, TypeName}
 import org.apache.beam.sdk.schemas.{Schema => BeamSchema}
 import org.yaml.snakeyaml.Yaml
@@ -12,8 +15,9 @@ import org.yaml.snakeyaml.Yaml
 import scala.collection.JavaConverters._
 import scala.util.Try
 
-/** What a collection's columns are, in the contract's terms: from the Beam row schema when the collection has one, or from
-  * the Avro schema its coder carries (a Parquet or Avro read yields Avro records). Both mappings follow
+/** What a collection's columns are, in the contract's terms: from the Beam row schema when the collection has one, from
+  * the Avro schema its coder carries (a Parquet or Avro read yields Avro records), or, for key-value pairs of plain values (what
+  * a Kafka read without metadata yields and a Kafka write takes), the columns `key` and `value`, as Kafka and Spark name them. Both mappings follow
   * docs/ENGINE_RESEARCH_BIGQUERY_BEAM.md; a type with no neutral equivalent becomes `OtherType`, which equals only itself,
   * so a mismatch stays visible instead of being papered over by a lossy guess.
   *
@@ -81,7 +85,29 @@ private[beamadapter] object BeamSchemas {
 
   /** The Avro schema `coder` carries, as the contract's columns. An Avro coder exposes it as `getSchema` (an
     * `org.apache.avro.Schema`, read here through its JSON form, so no Avro class is needed by this module). */
-  private def fromCoder(coder: Coder[_]): Option[LogicalSchema] =
+  private def fromCoder(coder: Coder[_]): Option[LogicalSchema] = coder match {
+    case kv: KvCoder[_, _] =>
+      for { (k, kn) <- plainValue(kv.getKeyCoder); (v, vn) <- plainValue(kv.getValueCoder) } yield
+        LogicalSchema(List(LogicalField("key", k, kn), LogicalField("value", v, vn)))
+    case _ => fromAvroCoder(coder)
+  }
+
+  /** The type of a plain value its coder encodes, and whether it may be null; `None` for anything else (an object). */
+  private def plainValue(coder: Coder[_]): Option[(LogicalType, Boolean)] = coder match {
+    case n: NullableCoder[_] => plainValue(n.getValueCoder).map { case (t, _) => (t, true) }
+    case _: StringUtf8Coder                       => Some((LogicalType.StringType, false))
+    case _: VarLongCoder | _: BigEndianLongCoder  => Some((LogicalType.LongType, false))
+    case _: VarIntCoder | _: BigEndianIntegerCoder => Some((LogicalType.IntegerType, false))
+    case _: BigEndianShortCoder                   => Some((LogicalType.ShortType, false))
+    case _: ByteCoder                             => Some((LogicalType.ByteType, false))
+    case _: DoubleCoder                           => Some((LogicalType.DoubleType, false))
+    case _: FloatCoder                            => Some((LogicalType.FloatType, false))
+    case _: BooleanCoder                          => Some((LogicalType.BooleanType, false))
+    case _: ByteArrayCoder                        => Some((LogicalType.BinaryType, false))
+    case _                                        => None
+  }
+
+  private def fromAvroCoder(coder: Coder[_]): Option[LogicalSchema] =
     Try {
       val method = coder.getClass.getMethods.find(m => m.getName == "getSchema" && m.getParameterCount == 0)
       method.flatMap(m => Option(m.invoke(coder))).map(_.toString)

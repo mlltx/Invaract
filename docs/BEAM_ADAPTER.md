@@ -132,6 +132,8 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | A declared save mode on a write that states none (every write but BigQuery) | 🚫 refused as unverifiable (D13) | `BeamCheckSpec` "a file write, which states no save mode..." |
 | A step that ends the pipeline without a recognised write (any other IO, a `DoFn` with a side effect, a metrics step, a step that consumes a write's own result) | 🚫 refused as unverifiable (D14 is a decision for the reviewer) | scenario `untranslatable-write-fails-closed`; `BeamCheckSpec`; probes 07, 08 (friction log 18) |
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
+| A Kafka write of key-value pairs; a Kafka read without metadata | ✅ the columns `key` and `value` (D20) | `BeamCheckSpec` "a Kafka job is checked on the key and value it writes..."; `BeamSchemasSpec` |
+| An IO Invaract does not know (Bigtable, Spanner, ...) | 🚫 its read is an unlocated read and its write is refused as unverifiable | `BeamIOSpec` "an IO Invaract does not know..." |
 | Several writes in one pipeline, a multi-output `ParDo`, `Partition`, `Flatten`, side inputs | ✅ each write is checked with the reads beneath it | `BeamTranslatorSpec`; probes 05, 06, 12, 13 (friction log 18) |
 | A write that waits on another write's result (`Wait.on`) | ✅ each is checked with its own reads; the first ends nothing | `BeamIOSpec` "a write that waits on another write's result..." |
 | A `FileIO` write named only by `withNaming`, with no `.to()` directory | 🚫 refused as unverifiable (the file names come from a function) | `BeamIOSpec` "a FileIO write named only by withNaming..." |
@@ -194,6 +196,11 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   is refused as an unverifiable write, by the survey's D6 rule. Real jobs do both (notify-on-write, count-and-log). Options:
   (a) keep refusing (today); (b) let a step through that consumes only a write's result, since it sees file names, not the data;
   (c) an allow-list of step names a platform trusts, an engine-neutral setting in `InvaractConf`. Recommended: (b) and (c).
+- **D20. A key-value pair of plain values is the columns `key` and `value`.** Kafka's own record model, and the columns a Spark
+  job writes to a Kafka topic, so one contract describes a Kafka output on either engine. The types come from the pair's coders
+  (string, the integer widths, double, float, boolean, bytes); `NullableCoder`, which KafkaIO always uses, makes a column
+  nullable. A pair holding an object, a Kafka read with metadata (`KafkaRecord`) and a `writeRecords()` of `ProducerRecord`s
+  expose no columns, so such a write is refused (D7). `BeamSchemas.fromCoder`.
 - **D15. A JDBC query's table is taken only from a plain `SELECT ... FROM <one table>`** (no join, sub-query, set operation or
   comma list); anything else is an `UnlocatedRead` (D12). No SQL parser is pulled in. `BeamLocations.singleTableOf`.
 - **D16. The production runner proven is Flink**, in a local mini-cluster, on the Flink line Beam publishes for the release under
@@ -207,7 +214,18 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   the contract format requires every schema to list at least one field. Options: (a) keep it so (a job with a text side output
   is refused); (b) let a contract declare an output with no schema (a contract-model change, for every adapter); (c) a text write
   of the result of a known formatter keeps its rows' columns (done for `ToJson` and `CsvIO`). Recommended: (b), for outputs whose
-  content no contract governs.
+  content no contract governs. Related but different: a BigQuery write of `TableRow`s into an existing table that names no
+  schema (`CREATE_NEVER`, a common way to append to a managed table) is refused for the same reason, though the table has columns;
+  only BigQuery knows them, and the check runs before the job can ask it. Its remedy is the job's (`withSchema`, or rows with a
+  Beam schema and `useBeamSchema()`), not the contract's.
+- **D19. Decision needed: plan-shape rules for Beam's schema transforms.** `Filter.whereFieldName(s)`, `Group.byFieldNames`,
+  `Join.innerJoin(...).using(...)` and `CoGroup` name the fields they use, which is what `required_filter_columns`,
+  `required_group_by`, `required_join_columns` and `forbid_cross_join` check. None of them has a public getter (checked with
+  `javap` on 2.77.0), so reading them means reflecting into private state, as the adapter already does for a JDBC URL and a
+  decimal's precision. Options: (a) keep `rules.planShape` unsupported (today); (b) read the schema transforms' fields by
+  reflection, gated by the version matrix and failing closed when reflection fails, and declare `rules.planShape` partial: a
+  filter or join written as a plain function stays opaque, so a rule requiring one would reject it. Recommended: (b), since
+  the rules are column lists and schema transforms are how Beam users who care about columns write these steps.
 
 ## Friction log
 
