@@ -88,9 +88,9 @@ private[beamadapter] object BeamTranslator {
       val above = upstream(w)
       val located = above.collect { case r: ReadNode => r }
       // a read's columns: its own output's; for the folder a FileIO.match() reads, those of the reader its files are handed to
-      val readSchemas = located.flatMap(r => r.step.outputs.headOption.flatMap(BeamSchemas.of).toList.flatMap(s => r.locations.map(_ -> s)))
+      val readSchemas = located.flatMap(r => r.columns.toList.flatMap(s => r.locations.map(_ -> s)))
       val readerSchemas = above.collect { case f: FileReaderNode => f }.flatMap { f =>
-        f.step.outputs.headOption.flatMap(BeamSchemas.of).toList.flatMap(s => upstream(f).collect { case r: ReadNode => r }.flatMap(_.locations).map(_ -> s))
+        f.columns.toList.flatMap(s => upstream(f).collect { case r: ReadNode => r }.flatMap(_.locations).map(_ -> s))
       }
       val unlocated = above.collect { case u: UnlocatedReadNode => s"${u.step.name}: ${u.what}" } ++
         above.collect { case f: FileReaderNode if !upstream(f).exists(_.isInstanceOf[ReadNode]) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
@@ -114,8 +114,13 @@ private[beamadapter] object BeamTranslator {
   // --- the steps that matter, found top-down so the outermost recognisable step wins ---
 
   private sealed trait Node { def step: BeamStep }
-  private final case class ReadNode(step: BeamStep, locations: List[String], catalog: Option[com.invaract.ir.CatalogIdentity]) extends Node
-  private final case class FileReaderNode(step: BeamStep) extends Node
+  private final case class ReadNode(step: BeamStep, locations: List[String], catalog: Option[com.invaract.ir.CatalogIdentity], schema: Option[LogicalSchema])
+      extends Node {
+    def columns: Option[LogicalSchema] = schema.orElse(step.outputs.headOption.flatMap(BeamSchemas.of))
+  }
+  private final case class FileReaderNode(step: BeamStep, schema: Option[LogicalSchema]) extends Node {
+    def columns: Option[LogicalSchema] = schema.orElse(step.outputs.headOption.flatMap(BeamSchemas.of))
+  }
   private final case class UnlocatedReadNode(step: BeamStep, what: String) extends Node
   private final case class WriteNode(
       step: BeamStep,
@@ -138,8 +143,8 @@ private[beamadapter] object BeamTranslator {
     }
 
   private def readNode(step: BeamStep, read: IoRead): Node = read match {
-    case IoRead.Located(locations, _, catalog) => ReadNode(step, locations, catalog)
-    case IoRead.FileReader(_)                  => FileReaderNode(step)
+    case IoRead.Located(locations, _, catalog, schema) => ReadNode(step, locations, catalog, schema)
+    case IoRead.FileReader(_, schema)                  => FileReaderNode(step, schema)
     case IoRead.Unlocated(what)                => UnlocatedReadNode(step, what)
   }
 

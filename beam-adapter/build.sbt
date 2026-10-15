@@ -72,6 +72,9 @@ val beamVersion = sys.env.getOrElse("INVARACT_TEST_BEAM_VERSION", {
   props.getProperty("beam.primary").trim
 })
 
+// The Flink line Beam publishes a runner for at `beamVersion` (1.18 up to Beam 2.64, 1.19 from 2.65).
+val flinkLine = if (beamVersion.split('.')(1).toInt >= 65) "1.19" else "1.18"
+
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
   "com.invaract" %% "invaract-ir" % "0.6.0",
@@ -99,7 +102,11 @@ libraryDependencies ++= Seq(
   // construct a KafkaIO graph), so it is left out.
   ("org.apache.beam" % "beam-sdks-java-io-kafka" % beamVersion % "test").excludeAll(ExclusionRule("io.confluent")),
   "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
-  "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test"
+  "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test",
+  // A production runner, run in-process (a local Flink mini-cluster), to show the hand-over from InvaractRunner to a runner
+  // other than the DirectRunner. Beam publishes one artifact per Flink line, and no one line spans every release in
+  // supported-beam-versions.properties, so the line follows the Beam release under test.
+  "org.apache.beam" % s"beam-runners-flink-$flinkLine" % beamVersion % "test"
 )
 
 scalacOptions ++= Seq(

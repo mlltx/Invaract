@@ -189,6 +189,25 @@ class BeamCheckSpec extends AnyFunSuite {
     } finally BeamConformanceAdapter.deleteQuietly(root)
   }
 
+  test("the runner is registered with Beam, so a command line names it --runner=Invaract, and it refuses itself as its delegate") {
+    Seq("Invaract", "InvaractRunner", "invaract").foreach { name =>
+      assert(PipelineOptionsFactory.fromArgs(s"--runner=$name").create().getRunner == classOf[InvaractRunner], name)
+    }
+    val root = java.nio.file.Files.createTempDirectory("beam-short-name-")
+    try {
+      ExampleJob.withOrders(root, (1L, 10L))
+      val contract = root.resolve("contract.yaml")
+      java.nio.file.Files.write(contract, ExampleJob.contractYaml().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      val before = NotRegisteredRunner.runs
+      new ExampleJob(root).main(Array("--runner=Invaract", s"--invaractContract=$contract", "--invaractDelegate=com.invaract.beamadapter.NotRegisteredRunner"))
+      assert(NotRegisteredRunner.runs == before + 1)
+      Seq("InvaractRunner", "com.invaract.beamadapter.InvaractRunner").foreach { itself =>
+        val e = intercept[IllegalArgumentException](new ExampleJob(root).main(Array("--runner=Invaract", s"--invaractContract=$contract", s"--invaractDelegate=$itself")))
+        assert(e.getMessage.contains("names the Invaract runner itself"), itself)
+      }
+    } finally BeamConformanceAdapter.deleteQuietly(root)
+  }
+
   // --- a text write and the formats a contract can declare for one ---
 
   private def textWrite(p: Pipeline, dir: String): Unit =

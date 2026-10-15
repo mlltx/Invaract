@@ -89,6 +89,11 @@ class BeamLocationsSpec extends AnyFunSuite {
     assert(folderOf("/data/in/orders/part-0.parquet") == "/data/in/orders/part-0.parquet", "a plain file name is the file")
     assert(folderOf("C:\\data\\in\\*.avro") == "C:/data/in")
     assert(folderOf("*.parquet") == "")
+    assert(folderOf("/data/in/orders/date=*/part-*.parquet") == "/data/in/orders", "a partitioned layout is the dataset's folder")
+    assert(folderOf("/data/in/orders/**") == "/data/in/orders")
+    assert(folderOf("/data/in/orders/**/*.parquet") == "/data/in/orders")
+    assert(folderOf("/data/*/orders") == "/data/*/orders", "a glob before a plain segment is left as written")
+    assert(folderOf("/data/*/orders/*.parquet") == "/data/*/orders")
   }
 
   // --- BigQuery table schemas ---

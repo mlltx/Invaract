@@ -18,12 +18,15 @@ import scala.util.Try
 private[beamadapter] sealed trait IoRead
 private[beamadapter] object IoRead {
 
-  /** A read whose source the step states: `locations` (one per topic or file pattern), in the canonical location form. */
-  final case class Located(locations: List[String], format: Option[String], catalog: Option[CatalogIdentity] = None) extends IoRead
+  /** A read whose source the step states: `locations` (one per topic or file pattern), in the canonical location form.
+    * `schema` is the dataset's own schema when the step states it (a Parquet or Avro read names the file schema, which a
+    * projection narrows only for the job); `None` falls back to the columns of what the read produces. */
+  final case class Located(locations: List[String], format: Option[String], catalog: Option[CatalogIdentity] = None, schema: Option[LogicalSchema] = None)
+      extends IoRead
 
   /** A reader of files (`ParquetIO.readFiles()`, `TextIO.readFiles()`, ...) handed to it by an upstream step: located by the
     * `FileIO.match()` that feeds it, if one does. */
-  final case class FileReader(format: Option[String]) extends IoRead
+  final case class FileReader(format: Option[String], schema: Option[LogicalSchema] = None) extends IoRead
 
   /** A read from outside the pipeline whose source the step does not state (a query, a source class it does not know, file
     * patterns the job computes): seen, so never mistaken for data the job makes itself, but not located. */
@@ -93,8 +96,10 @@ private[beamadapter] object BeamIO {
   /** The read `step` is, if it is one. Composites are asked before what they contain, so the outermost recognised step wins. */
   def read(step: BeamStep): Option[IoRead] = {
     val name = simpleName(step)
-    PatternReads.get(name).flatMap(format => step.display.get("filePattern").map(p => IoRead.Located(List(BeamLocations.folderOf(p)), format)))
-      .orElse(FileReaders.get(name).map(IoRead.FileReader))
+    // the file schema a Parquet or Avro read states (`schema`), not its projection
+    lazy val fileSchema = step.display.get("schema").flatMap(BeamSchemas.fromAvroJson)
+    PatternReads.get(name).flatMap(format => step.display.get("filePattern").map(p => IoRead.Located(List(BeamLocations.folderOf(p)), format, schema = fileSchema)))
+      .orElse(FileReaders.get(name).map(format => IoRead.FileReader(format, fileSchema)))
       .orElse(ComputedReads.get(name).map(IoRead.Unlocated))
       .orElse(name match {
         case "AutoValue_BigQueryIO_TypedRead" => Some(bigQueryRead(step))
@@ -275,11 +280,14 @@ private[beamadapter] object BeamLocations {
 
   def folder(path: String): String = LocationMatching.normalizeDeclared(path).stripSuffix("/")
 
-  /** The folder a read pattern reads from: the pattern `in/orders/` plus a glob file name is `in/orders` (a contract declares the folder). */
+  /** The folder a read pattern reads from: the pattern without its trailing glob segments, so a glob file name, a
+    * partitioned layout (`date=*` then `part-*.parquet`) and a recursive `**` all leave `in/orders` (a contract declares the
+    * dataset's folder). A glob in a folder before the last plain segment (a star for the tenant, then `orders`) is left as written:
+    * which folder is the dataset is then not the pattern's to say. */
   def folderOf(pattern: String): String = {
-    val path = LocationMatching.normalizeDeclared(pattern)
-    val last = path.substring(path.lastIndexOf('/') + 1)
-    folder(if (last.exists("*?[{".contains(_))) path.substring(0, math.max(path.lastIndexOf('/'), 0)) else path)
+    val segments = LocationMatching.normalizeDeclared(pattern).split("/", -1).toList
+    val kept = segments.reverse.dropWhile(_.exists("*?[{".contains(_))).reverse
+    folder(kept.mkString("/"))
   }
 
   /** A BigQuery table as Beam states it: a table spec (`proj:ds.table`, `proj.ds.table` or `ds.table`) or its JSON form

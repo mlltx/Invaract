@@ -249,3 +249,17 @@ private final class TeamSource extends BoundedSource[String] {
   override def createReader(options: PipelineOptions): BoundedSource.BoundedReader[String] = throw new UnsupportedOperationException("graph only")
   override def getOutputCoder: org.apache.beam.sdk.coders.Coder[String] = StringUtf8Coder.of()
 }
+
+/** A Parquet read the job projects to fewer columns still reads a dataset with all of them: the input's columns are the file
+  * schema the read states, not the projection, so a contract that declares the dataset's columns is not told some are missing. */
+class BeamProjectionReadSpec extends AnyFunSuite {
+  test("a projected Parquet read's columns are the dataset's, not the projection's") {
+    val p = Pipeline.create(PipelineOptionsFactory.create())
+    val idOnly = new org.apache.avro.Schema.Parser().parse("""{"type":"record","name":"Orders","fields":[{"name":"id","type":"long"}]}""")
+    p.apply("Read", ParquetIO.read(ExampleJob.OrdersSchema).withProjection(idOnly, idOnly).from("/data/in/orders/date=*/part-*.parquet"))
+      .apply("Write", FileIO.write[GenericRecord]().via(ParquetIO.sink(idOnly)).to("/data/out/ids"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.inputSchemas.map { case (l, s) => l -> s.fields.map(_.name) } == List("/data/in/orders" -> List("id", "amount")))
+    assert(w.outputSchema.exists(_.fields.map(_.name) == List("id")), "what is written is the projection")
+  }
+}
