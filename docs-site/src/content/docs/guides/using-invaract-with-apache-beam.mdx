@@ -151,6 +151,15 @@ deployment keeps its data; declare an absolute location to pin one.
   group-by), static data-quality proofs, role consistency, fingerprints and column lineage. A
   contract that needs one is refused with `UNSUPPORTED_CONTRACT_FEATURE`, naming it.
 
+## Dataflow templates
+
+A Flex Template builds its pipeline when it is launched, with the values of its parameters, so
+it is checked like any other job. A classic template builds its pipeline once, ahead of time,
+with its paths left as runtime parameters (`ValueProvider`s) that have no value until the job
+runs. Invaract checks before that, so a read from such a parameter is treated as a read it
+cannot locate (as above), and a write to one is refused as unverifiable, naming the parameter.
+Use a Flex Template, or fixed paths, for a job whose writes a contract governs.
+
 ## When the command line cannot reach the job
 
 A job that sets its runner in code after reading its arguments overrides `--runner`, and a job

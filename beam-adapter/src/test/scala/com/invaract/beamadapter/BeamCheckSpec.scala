@@ -404,6 +404,17 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(e.result.violations.map(_.violationType).contains(ViolationType.OutputFieldTypeMismatch))
   }
 
+  test("a template that reads from a runtime parameter leaves the declared input unverifiable, and is checked otherwise") {
+    val capture = new Capture
+    val o = PipelineOptionsFactory.fromArgs().as(classOf[TemplateOptions])
+    val p = Pipeline.create(o)
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from(o.getInputFile))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture)).verify(p)
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.unverifiableInputs.map(_.inputName) == List("orders"))
+  }
+
   test("strict about undeclared inputs, a write that depends on a read that cannot be located is refused") {
     val p = pipeline
     queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)

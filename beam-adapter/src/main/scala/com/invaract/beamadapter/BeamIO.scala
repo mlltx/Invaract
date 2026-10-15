@@ -94,7 +94,26 @@ private[beamadapter] object BeamIO {
   )
 
   /** The read `step` is, if it is one. Composites are asked before what they contain, so the outermost recognised step wins. */
-  def read(step: BeamStep): Option[IoRead] = {
+  def read(step: BeamStep): Option[IoRead] =
+    statedRead(step).map {
+      case _: IoRead.Located if runtimeParameter(step).isDefined =>
+        IoRead.Unlocated(s"a read whose source is a template parameter (${runtimeParameter(step).get}), known only when the job runs")
+      case other => other
+    }
+
+  /** The keys of the display data an IO names its data by. */
+  private val LocationKeys = List("filePattern", "table", "query", "topic", "topics", "subscription", "bootstrap.servers", "jdbcUrl", "statement", "filePrefix")
+
+  /** A value Beam cannot state before the job runs: a classic template's runtime parameter (a `ValueProvider` with no value yet),
+    * which display data shows as the provider itself. A Flex Template builds its pipeline with the values, so it has none. */
+  def isRuntimeParameter(value: String): Boolean = value.startsWith("RuntimeValueProvider{") || value.startsWith("NestedValueProvider{")
+
+  /** The name of the runtime parameter `step` names its data by, if it does (`inputFile`, or the value as shown). */
+  private def runtimeParameter(step: BeamStep): Option[String] =
+    LocationKeys.flatMap(step.display.get).find(isRuntimeParameter)
+      .map(v => """propertyName=([^,}]+)""".r.findFirstMatchIn(v).fold(v)(_.group(1)))
+
+  private def statedRead(step: BeamStep): Option[IoRead] = {
     val name = simpleName(step)
     // the file schema a Parquet or Avro read states (`schema`), not its projection
     lazy val fileSchema = step.display.get("schema").flatMap(BeamSchemas.fromAvroJson)
@@ -176,6 +195,15 @@ private[beamadapter] object BeamIO {
 
   /** The write `step` is, if it is one of the non-file IOs (BigQuery, Kafka, JDBC, Pub/Sub). */
   def write(step: BeamStep): Option[IoWrite] =
+    statedWrite(step).map {
+      case _: IoWrite.Located if runtimeParameter(step).isDefined => unknownUntilRun(runtimeParameter(step).get)
+      case other                                                => other
+    }
+
+  private def unknownUntilRun(parameter: String): IoWrite =
+    IoWrite.Unverifiable(s"a write whose destination is a template parameter ($parameter), known only when the job runs")
+
+  private def statedWrite(step: BeamStep): Option[IoWrite] =
     simpleName(step) match {
       case "AutoValue_BigQueryIO_Write"                                     => Some(bigQueryWrite(step))
       case "AutoValue_KafkaIO_Write" | "AutoValue_KafkaIO_WriteRecords"     => Some(kafkaWrite(step))
@@ -254,8 +282,11 @@ private[beamadapter] object BeamIO {
     val all = unit.withDescendants
     val sink = all.map(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = all.flatMap(_.display.get("filePrefix")).headOption
-    def prefixed(format: String, what: String): IoWrite =
-      prefix.fold[IoWrite](IoWrite.Unverifiable(s"$what write whose file prefix is not published"))(p => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format))))
+    def prefixed(format: String, what: String): IoWrite = prefix match {
+      case None                              => IoWrite.Unverifiable(s"$what write whose file prefix is not published")
+      case Some(p) if isRuntimeParameter(p)  => unknownUntilRun(all.flatMap(runtimeParameter).headOption.getOrElse(p))
+      case Some(p)                           => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)))
+    }
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")
       case Some(avro) if avro.endsWith(".AvroSink") => prefixed(Formats.Avro, "an Avro")

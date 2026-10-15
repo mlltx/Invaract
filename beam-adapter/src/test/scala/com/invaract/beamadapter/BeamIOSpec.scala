@@ -26,6 +26,14 @@ import scala.collection.JavaConverters._
 
 /** The IOs other than files, and the file reads that go through `FileIO.match()`: what the translator reads from each one's
   * display data. Every pipeline is only constructed, never run (a construction needs no BigQuery, Kafka or database). */
+/** A classic template's options: paths given as runtime parameters, with no value while the pipeline is built. */
+trait TemplateOptions extends PipelineOptions {
+  def getInputFile: org.apache.beam.sdk.options.ValueProvider[String]
+  def setInputFile(v: org.apache.beam.sdk.options.ValueProvider[String]): Unit
+  def getOutputDir: org.apache.beam.sdk.options.ValueProvider[String]
+  def setOutputDir(v: org.apache.beam.sdk.options.ValueProvider[String]): Unit
+}
+
 class BeamIOSpec extends AnyFunSuite {
   import ExampleJob.OrdersSchema
 
@@ -253,6 +261,42 @@ class BeamIOSpec extends AnyFunSuite {
       .apply("WriteSpanner", org.apache.beam.sdk.io.gcp.spanner.SpannerIO.write().withProjectId("proj").withInstanceId("i").withDatabaseId("db"))
     val t = BeamTranslator.translate(q)
     assert(t.writes.isEmpty && t.unverifiable.map(_.operation).exists(_.contains("WriteSpanner")))
+  }
+
+  // --- classic templates: paths that are runtime parameters ---
+
+  private def templateOptions = PipelineOptionsFactory.fromArgs().as(classOf[TemplateOptions])
+
+  test("a read from a template parameter is seen but not located, naming the parameter") {
+    val o = templateOptions
+    val p = Pipeline.create(o)
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from(o.getInputFile))
+      .apply("Write", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(readsIn(w.plan).isEmpty, "the provider's own text is not a location")
+    assert(w.unlocatedReads == List("ReadOrders: a read whose source is a template parameter (inputFile), known only when the job runs"))
+    val q = Pipeline.create(o)
+    q.apply("ReadLines", TextIO.read().from(o.getInputFile)).apply("Write", TextIO.write().to("/data/out/lines"))
+    assert(BeamTranslator.translate(q).writes.flatMap(_.unlocatedReads).exists(_.contains("template parameter (inputFile)")))
+  }
+
+  test("a write to a template parameter is refused as unverifiable, naming the parameter") {
+    val o = templateOptions
+    val p = Pipeline.create(o)
+    p.apply("Lines", Create.of("a")).apply("WriteLines", TextIO.write().to(o.getOutputDir))
+    val t = BeamTranslator.translate(p)
+    assert(t.writes.isEmpty)
+    assert(t.unverifiable.map(_.operation) == List("a write whose destination is a template parameter (outputDir), known only when the job runs"))
+    val q = Pipeline.create(o)
+    q.apply("Lines", Create.of("a")).apply("WriteTopic", PubsubIO.writeStrings().to(o.getOutputDir))
+    assert(BeamTranslator.translate(q).unverifiable.map(_.operation).exists(_.contains("template parameter (outputDir)")))
+  }
+
+  test("a value is a runtime parameter only when Beam shows the provider itself") {
+    assert(BeamIO.isRuntimeParameter("RuntimeValueProvider{propertyName=inputFile, default=null}"))
+    assert(BeamIO.isRuntimeParameter("NestedValueProvider{value=RuntimeValueProvider{propertyName=out}}"))
+    assert(!BeamIO.isRuntimeParameter("/data/in/orders/*.parquet"))
+    assert(!BeamIO.isRuntimeParameter("gs://b/RuntimeValueProvider{x}"), "only the provider's own text, not a path that contains it")
   }
 
   // --- files matched by FileIO.match() ---

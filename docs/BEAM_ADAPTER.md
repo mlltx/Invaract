@@ -133,6 +133,7 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | A step that ends the pipeline without a recognised write (any other IO, a `DoFn` with a side effect, a metrics step, a step that consumes a write's own result) | 🚫 refused as unverifiable (D14 is a decision for the reviewer) | scenario `untranslatable-write-fails-closed`; `BeamCheckSpec`; probes 07, 08 (friction log 18) |
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
 | A Kafka write of key-value pairs; a Kafka read without metadata | ✅ the columns `key` and `value` (D20) | `BeamCheckSpec` "a Kafka job is checked on the key and value it writes..."; `BeamSchemasSpec` |
+| A classic template's runtime parameters (`ValueProvider` paths with no value yet) | ✅ a read is unlocated, 🚫 a write is refused, each naming the parameter (D21) | `BeamIOSpec` "a read from a template parameter...", "a write to a template parameter..."; `BeamCheckSpec` |
 | An IO Invaract does not know (Bigtable, Spanner, ...) | 🚫 its read is an unlocated read and its write is refused as unverifiable | `BeamIOSpec` "an IO Invaract does not know..." |
 | Several writes in one pipeline, a multi-output `ParDo`, `Partition`, `Flatten`, side inputs | ✅ each write is checked with the reads beneath it | `BeamTranslatorSpec`; probes 05, 06, 12, 13 (friction log 18) |
 | A write that waits on another write's result (`Wait.on`) | ✅ each is checked with its own reads; the first ends nothing | `BeamIOSpec` "a write that waits on another write's result..." |
@@ -201,6 +202,12 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   (string, the integer widths, double, float, boolean, bytes); `NullableCoder`, which KafkaIO always uses, makes a column
   nullable. A pair holding an object, a Kafka read with metadata (`KafkaRecord`) and a `writeRecords()` of `ProducerRecord`s
   expose no columns, so such a write is refused (D7). `BeamSchemas.fromCoder`.
+- **D21. A classic template's runtime parameters are not locations.** A path given as a `ValueProvider` with no value while the
+  pipeline is built (a classic Dataflow template's parameter) is shown in display data as the provider itself
+  (`RuntimeValueProvider{propertyName=inputFile, ...}`). It was taken as a path (an empty read location, a write "to" the
+  provider's text). Now a read from one is an `UnlocatedRead` naming the parameter (D12) and a write to one is refused as
+  unverifiable, naming it: the check runs before the values exist. A Flex Template builds its pipeline with the values, so it
+  is checked like any job. `BeamIO.isRuntimeParameter`.
 - **D15. A JDBC query's table is taken only from a plain `SELECT ... FROM <one table>`** (no join, sub-query, set operation or
   comma list); anything else is an `UnlocatedRead` (D12). No SQL parser is pulled in. `BeamLocations.singleTableOf`.
 - **D16. The production runner proven is Flink**, in a local mini-cluster, on the Flink line Beam publishes for the release under
