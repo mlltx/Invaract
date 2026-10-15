@@ -282,10 +282,12 @@ private[beamadapter] object BeamIO {
     val all = unit.withDescendants
     val sink = all.map(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = all.flatMap(_.display.get("filePrefix")).headOption
+    // the schema the files are written with (an Avro write states it): the records' own may have columns it leaves out
+    val writtenSchema = all.flatMap(_.display.get("schema")).headOption.flatMap(BeamSchemas.fromAvroJson)
     def prefixed(format: String, what: String): IoWrite = prefix match {
       case None                              => IoWrite.Unverifiable(s"$what write whose file prefix is not published")
       case Some(p) if isRuntimeParameter(p)  => unknownUntilRun(all.flatMap(runtimeParameter).headOption.getOrElse(p))
-      case Some(p)                           => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)))
+      case Some(p)                           => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format)), schema = writtenSchema)
     }
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")
@@ -293,8 +295,8 @@ private[beamadapter] object BeamIO {
       case Some(tf) if tf.endsWith("TFRecordIO$TFRecordSink") => prefixed("tfrecord", "a TFRecord")
       case Some("org.apache.beam.sdk.io.FileIO$Write$ViaFileBasedSink") =>
         fileIoWrite(all) match {
-          case Some((location, sinkClass)) => IoWrite.Located(location, formatOfSink(sinkClass))
-          case None                        => IoWrite.Unverifiable("a FileIO write whose destination or sink cannot be read")
+          case Some((location, sink)) => IoWrite.Located(location, formatOfSink(sink.getClass.getName), schema = sinkSchema(sink))
+          case None                   => IoWrite.Unverifiable("a FileIO write whose destination or sink cannot be read")
         }
       case Some(other) => IoWrite.Unverifiable(s"a file write through $other, which this adapter does not recognise")
       case None        => IoWrite.Unverifiable("a write whose sink cannot be read")
@@ -308,12 +310,20 @@ private[beamadapter] object BeamIO {
     else if (sinkClass.contains("TFRecordIO")) Some("tfrecord")
     else None
 
-  /** `(output directory, sink class)` of a `FileIO.write()`. Beam publishes neither: the writer's display data names only its
+  /** The schema a sink writes its files with (`ParquetIO.sink(schema)`, `AvroIO.sink(schema)`: `getJsonSchema`), which is
+    * what the files hold whatever the records carry; `None` for a sink that states none (a text sink). */
+  private def sinkSchema(sink: AnyRef): Option[LogicalSchema] =
+    Iterator.iterate[Class[_]](sink.getClass)(_.getSuperclass).takeWhile(_ != null)
+      .flatMap(c => Try(c.getDeclaredMethod("getJsonSchema")).toOption).toSeq.headOption
+      .flatMap(m => Try { m.setAccessible(true); Option(m.invoke(sink)).map(_.toString) }.toOption.flatten)
+      .flatMap(BeamSchemas.fromAvroJson)
+
+  /** `(output directory, sink)` of a `FileIO.write()`. Beam publishes neither: the writer's display data names only its
     * sink class, and the destination and the sink are held in non-public members of `FileIO.Write` (docs/BEAM_ADAPTER.md,
     * "Friction log"). Any failure returns `None` and the write is refused as unverifiable rather than guessed. A separate
     * temporary directory (`withTempDirectory`) is not the destination, and the output directory is read directly, so it
     * cannot be mistaken for one. */
-  private def fileIoWrite(steps: List[BeamStep]): Option[(String, String)] =
+  private def fileIoWrite(steps: List[BeamStep]): Option[(String, AnyRef)] =
     steps.find(_.className.endsWith("AutoValue_FileIO_Write")).flatMap { s =>
       Try {
         val t = s.transform
@@ -325,7 +335,7 @@ private[beamadapter] object BeamIO {
         val directory = Option(member("getOutputDirectory")).map(_.asInstanceOf[ValueProvider[String]].get()).filter(_.nonEmpty)
         val sinkFn = member("getSinkFn").asInstanceOf[Contextful[Contextful.Fn[AnyRef, AnyRef]]]
         val sink = sinkFn.getClosure.apply(null, null)
-        directory.map(d => BeamLocations.folder(d) -> sink.getClass.getName)
+        directory.map(d => BeamLocations.folder(d) -> sink)
       }.toOption.flatten
     }
 }

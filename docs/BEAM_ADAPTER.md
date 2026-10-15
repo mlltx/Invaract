@@ -135,6 +135,7 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
 | A Kafka write of key-value pairs; a Kafka read without metadata | ✅ the columns `key` and `value` (D20) | `BeamCheckSpec` "a Kafka job is checked on the key and value it writes..."; `BeamSchemasSpec` |
 | A classic template's runtime parameters (`ValueProvider` paths with no value yet) | ✅ a read is unlocated, 🚫 a write is refused, each naming the parameter (D21) | `BeamIOSpec` "a read from a template parameter...", "a write to a template parameter..."; `BeamCheckSpec` |
+| A file write whose sink schema differs from its records' (`ParquetIO.sink(narrower)`, `AvroIO.sink`, `AvroIO.writeGenericRecords(schema)`) | ✅ the columns are the schema the files are written with | `BeamIOSpec` "a file write's columns are the schema its sink writes with..." |
 | An IO Invaract does not know (Bigtable, Spanner, ...) | 🚫 its read is an unlocated read and its write is refused as unverifiable | `BeamIOSpec` "an IO Invaract does not know..." |
 | Several writes in one pipeline, a multi-output `ParDo`, `Partition`, `Flatten`, side inputs | ✅ each write is checked with the reads beneath it | `BeamTranslatorSpec`; probes 05, 06, 12, 13 (friction log 18) |
 | A write that waits on another write's result (`Wait.on`) | ✅ each is checked with its own reads; the first ends nothing | `BeamIOSpec` "a write that waits on another write's result..." |
@@ -319,6 +320,12 @@ Every undocumented decision, surprise, or guess made while building this adapter
     write's result, `Partition`, `Flatten`, `watchForNewFiles`, BigQuery's Storage Read and Write APIs, Pub/Sub subscriptions, an
     unknown IO (Bigtable read unlocated, Spanner write refused), `FileIO.write().withNaming(...)` with no directory (refused).
     Found to be a decision: plan-shape rules from schema transforms (D19), whose fields have no public getter.
+24. **A file write's columns were the records', not the file's.** `FileIO.write().via(ParquetIO.sink(schema))`,
+    `AvroIO.sink(schema)` and `AvroIO.writeGenericRecords(schema)` write their files with the schema they are given, which can
+    leave out columns the records carry; the adapter reported the records' columns, so a contract requiring a column the file
+    lacks would have passed. The columns are now the sink's (`getJsonSchema`, read like the sink class already is) or the Avro
+    write's own (`schema` in its display data). Found with D17/D18's probe pass; a buggy `populateDisplayData` in a user
+    transform was confirmed harmless (the step just has no display data).
 
 ## Unverified items
 
