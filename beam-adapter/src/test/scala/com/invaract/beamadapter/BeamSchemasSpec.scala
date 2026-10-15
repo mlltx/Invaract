@@ -137,7 +137,7 @@ class BeamSchemasSpec extends AnyFunSuite {
     assert(mapped(FixedPrecisionNumeric.of(10, 2)) == DecimalType(10, 2))
     assert(mapped(FixedPrecisionNumeric.of(38, 0)) == DecimalType(38, 0))
     assert(mapped(EnumerationType.create("a", "b")) == StringType)
-    assert(mapped(SqlTypes.UUID) == StringType)
+    assert(mapped(new UuidLogicalType()) == StringType)
     assert(mapped(FixedString.of(4)) == StringType && mapped(VariableString.of(8)) == StringType)
     assert(mapped(FixedBytes.of(4)) == BinaryType && mapped(VariableBytes.of(8)) == BinaryType)
     assert(mapped(new NanosDuration()) == OtherType("beam:logical_type:nanos_duration:v1"), "a duration has no neutral type")

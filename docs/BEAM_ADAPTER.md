@@ -134,6 +134,8 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
 | Several writes in one pipeline, a multi-output `ParDo`, `Partition`, `Flatten`, side inputs | ✅ each write is checked with the reads beneath it | `BeamTranslatorSpec`; probes 05, 06, 12, 13 (friction log 18) |
 | Join, grouping, filter, opaque function | ✅ kept as unknown steps that carry the reads beneath them (the fields they use are not public, so shape rules are refused) | scenarios `unrecognized-step-*`, `required-*`, `forbid-cross-join-*` |
+| Beam SQL (`SqlTransform`) over a collection, and the tables a query defines (`CREATE EXTERNAL TABLE`) | ✅ an opaque step with known output columns; its own tables are reads and writes the translator sees | `BeamSqlSpec` |
+| A BigQuery write of rows with `useBeamSchema()` | ✅ the rows' columns | `BeamIOSpec` "a BigQuery write of rows with useBeamSchema..." |
 | Row-level MERGE, UPDATE, DELETE; schema-change commands | n/a, Beam has none | declaration |
 | Hand-over to a production runner | ✅ Flink (a local mini-cluster), with its own options | `BeamProductionRunnerSpec` |
 
@@ -271,6 +273,10 @@ Every undocumented decision, surprise, or guess made while building this adapter
 21. **A BigQuery write can be run in CI with no Google Cloud project.** Beam ships an in-memory BigQuery (`FakeBigQueryServices`,
     in the main `beam-sdks-java-io-google-cloud-platform` jar), so the save-mode and catalog scenarios write a real table there instead of
     being refused.
+22. **Beam SQL needs no special case.** A query is an opaque step whose output has a schema; the tables a query defines for itself
+    expand into the IO transforms they name (a text table into `TextIO`), which the translator already recognises. A probe that used
+    `p:d.report` as a BigQuery table met Beam's own refusal of a one-letter project id while building display data; the adapter
+    fails closed on that (no display data, so the write is unverifiable), which is what a real job with a bad table name would see.
 
 ## Unverified items
 

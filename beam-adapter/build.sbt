@@ -104,6 +104,8 @@ libraryDependencies ++= Seq(
   "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
   "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test",
   "org.apache.beam" % "beam-sdks-java-io-csv" % beamVersion % "test",
+  // Beam SQL, whose queries can read and write through tables they define themselves (CREATE EXTERNAL TABLE)
+  "org.apache.beam" % "beam-sdks-java-extensions-sql" % beamVersion % "test",
   // A production runner, run in-process (a local Flink mini-cluster), to show the hand-over from InvaractRunner to a runner
   // other than the DirectRunner. Beam publishes one artifact per Flink line, and no one line spans every release in
   // supported-beam-versions.properties, so the line follows the Beam release under test.

@@ -91,6 +91,16 @@ class BeamIOSpec extends AnyFunSuite {
     assert(translation.unverifiable.map(_.operation).exists(_.contains("dynamic destinations")))
   }
 
+  test("a BigQuery write of rows with useBeamSchema has the rows' columns") {
+    val schema = org.apache.beam.sdk.schemas.Schema.builder().addInt64Field("id").addNullableField("label", org.apache.beam.sdk.schemas.Schema.FieldType.STRING).build()
+    val p = pipeline
+    p.apply("Rows", Create.of(org.apache.beam.sdk.values.Row.withSchema(schema).addValues(java.lang.Long.valueOf(1L), "a").build()).withRowSchema(schema))
+      .apply("Write", BigQueryIO.write[org.apache.beam.sdk.values.Row]().to("proj:ds.report").useBeamSchema().withCreateDisposition(CreateDisposition.CREATE_NEVER))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.location == "proj/ds/report")
+    assert(w.outputSchema.contains(LogicalSchema(List(LogicalField("id", LogicalType.LongType, nullable = false), LogicalField("label", LogicalType.StringType, nullable = true)))))
+  }
+
   test("a BigQuery table read is a located input in the bigquery catalog; a query read is seen but not located") {
     val p = pipeline
     val write = p.apply("Read2", BigQueryIO.readTableRows().from("proj.ds.customers"))
