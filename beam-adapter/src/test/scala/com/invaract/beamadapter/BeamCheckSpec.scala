@@ -354,4 +354,15 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(event.reason.exists(_.contains("Query: a BigQuery query")))
     assert(event.contractYaml.exists(y => y.contains("saveMode: append") && y.contains("location: proj/ds/report")))
   }
+
+  test("column names are compared case-sensitively, as Avro and Beam name them") {
+    val upper = new org.apache.avro.Schema.Parser().parse(
+      """{"type":"record","name":"Orders","fields":[{"name":"ID","type":"long"},{"name":"amount","type":["null","long"],"default":null}]}"""
+    )
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(upper).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(upper)).to("/data/out/report"))
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(ExampleJob.contract()).verify(p))
+    assert(e.result.violations.map(_.violationType).contains(ViolationType.MissingOutputField), "'ID' is not the declared 'id'")
+  }
 }

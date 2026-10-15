@@ -20,8 +20,7 @@ private[beamadapter] final case class TranslatedWrite(
     plan: Write,
     outputSchema: Option[LogicalSchema],
     inputSchemas: List[(String, LogicalSchema)],
-    unlocatedReads: List[String] = Nil,
-    bounded: Boolean = true
+    unlocatedReads: List[String] = Nil
 )
 
 /** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). */
@@ -113,8 +112,7 @@ private[beamadapter] object BeamTranslator {
         writePlan(written),
         w.declaredSchema.orElse(w.step.inputs.headOption.flatMap(BeamSchemas.of)).orElse(formatter.flatMap(_._2)),
         (readSchemas ++ readerSchemas).distinct,
-        unlocated.distinct,
-        bounded = w.step.inputs.forall(_.bounded)
+        unlocated.distinct
       )
     }
 
@@ -147,7 +145,8 @@ private[beamadapter] object BeamTranslator {
   private final case class OtherNode(step: BeamStep) extends Node
 
   private def visible(step: BeamStep): List[Node] =
-    BeamIO.read(step).map(readNode(step, _)).orElse(BeamIO.write(step).map(writeNode(step, _))) match {
+    if (BeamIO.isInJobData(step)) List(OtherNode(step))
+    else BeamIO.read(step).map(readNode(step, _)).orElse(BeamIO.write(step).map(writeNode(step, _))) match {
       case Some(node) => List(node)
       case None =>
         if (isFileWriteUnit(step)) List(writeNode(step, BeamIO.fileWrite(step)))
@@ -168,14 +167,20 @@ private[beamadapter] object BeamTranslator {
 
   private def isIo(s: BeamStep): Boolean = BeamIO.read(s).isDefined || BeamIO.write(s).isDefined || BeamIO.isFileWrite(s)
 
-  private def containsIo(step: BeamStep): Boolean = step.withDescendants.exists(isIo)
+  /** Whether an IO step is beneath `step`, not counting the steps that make data in the job (an Impulse inside `Create.of`). */
+  private def containsIo(step: BeamStep): Boolean = withoutJobData(step).exists(isIo)
 
   /** The outermost step that holds exactly one file write and no other IO: the write as the job wrote it (`TextIO.write()`,
     * `FileIO.write()`, or a team's composite around one). Anything holding more is searched deeper. */
   private def isFileWriteUnit(step: BeamStep): Boolean = {
-    val all = step.withDescendants
+    val all = withoutJobData(step)
     all.count(BeamIO.isFileWrite) == 1 && !all.exists(s => BeamIO.read(s).isDefined || BeamIO.write(s).isDefined)
   }
+
+  /** `step` and every step beneath it, leaving out the steps that make data in the job and what they are built from (a
+    * `Create.of` inside Beam's own `WriteFiles` is not a read inside the write). */
+  private def withoutJobData(step: BeamStep): List[BeamStep] =
+    if (BeamIO.isInJobData(step)) Nil else step :: step.children.flatMap(withoutJobData)
 
   /** The folder a read pattern reads from (kept here for the tests that pin it). */
   private[beamadapter] def readLocation(pattern: String): String = BeamLocations.folderOf(pattern)

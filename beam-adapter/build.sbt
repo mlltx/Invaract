@@ -127,9 +127,9 @@ mimaPreviousArtifacts := Set.empty
 // Requirement"). Never lower them to make a failure go away.
 coverageScalacPluginVersion := "2.4.2"
 // Measured with `sbt coverage test coverageReport` on the adapter's own suite (the 51 conformance scenarios on the in-process
-// runner, the attach tests and the unit tests): 92.09% statement, 91.41% branch. Pinned a few points under.
-coverageMinimumStmtTotal := 88
-coverageMinimumBranchTotal := 87
+// runner, the IO, attach and production-runner tests and the unit tests): 95.39% statement, 93.86% branch. Pinned a few points under.
+coverageMinimumStmtTotal := 92
+coverageMinimumBranchTotal := 90
 coverageFailOnMinimum := true
 coverageHighlighting := true
 
@@ -138,8 +138,10 @@ coverageHighlighting := true
 // under a real whole-module run; new code in this module is held to 70% when you touch it.
 strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerExcludedMutations := Seq("StringLiteral")
-strykerThresholdsHigh := 90
-strykerThresholdsLow := 80
-// Whole-module run: 98.68% (180 mutants, one survivor: the visited-set guard in BeamTranslator.readsBeneath, which only keeps a diamond-shaped
-// graph from being walked twice - the result is de-duplicated afterwards, so no test can tell). Pinned a few points under.
+// Stryker requires high > low > break, and the module's break is pinned high (below), so the bands sit above it.
+strykerThresholdsHigh := 95
+strykerThresholdsLow := 92
+// Whole-module run: 95.92% (419 mutants, 6 survivors). Of those, a Kafka branch no constructible read reaches was folded away, two were
+// killed by tests added for them (case-sensitive column names, a direct counting-source read) and a dead field was removed; the rest are
+// equivalent: a log-only branch in BeamCheck, and BeamGraph's root frame, which pushing twice leaves the same. Pinned a few points under.
 strykerThresholdsBreak := 90

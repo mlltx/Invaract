@@ -124,7 +124,6 @@ class BeamIOSpec extends AnyFunSuite {
     val Seq(w) = BeamTranslator.translate(p).writes
     assert(w.location == "broker:9092/report" && w.format.contains("kafka"))
     assert(readsIn(w.plan) == List("broker:9092/orders", "broker:9092/refunds"))
-    assert(!w.bounded, "a Kafka read is a stream")
   }
 
   test("a Kafka read of topics matching a pattern is seen but not located") {
@@ -229,12 +228,41 @@ class BeamIOSpec extends AnyFunSuite {
     assert(writes.size == 2 && writes.forall(_.unlocatedReads.isEmpty))
   }
 
+  test("a source started from an Impulse is seen but not located, while Create.of (built on one) is data the job makes") {
+    val p = pipeline
+    p.apply("Start", org.apache.beam.sdk.transforms.Impulse.create()).apply("ReadSomething", ParDo.of(new FromImpulse))
+      .apply("Write", TextIO.write().to("/data/out/sdf"))
+    p.apply("Empty", Create.empty(StringUtf8Coder.of())).apply("Write2", TextIO.write().to("/data/out/empty"))
+    p.apply("One", Create.of("x")).apply("Write3", TextIO.write().to("/data/out/one"))
+    p.apply("Ticks", org.apache.beam.sdk.transforms.PeriodicImpulse.create().stopAfter(org.joda.time.Duration.standardSeconds(1)))
+      .apply("ToText", MapElements.into(TypeDescriptors.strings()).via(new SerializableFunction[org.joda.time.Instant, String] { def apply(i: org.joda.time.Instant) = i.toString }))
+      .apply("Window", org.apache.beam.sdk.transforms.windowing.Window.into[String](org.apache.beam.sdk.transforms.windowing.FixedWindows.of(org.joda.time.Duration.standardMinutes(1))))
+      .apply("Write4", TextIO.write().to("/data/out/ticks").withWindowedWrites().withNumShards(1))
+    val writes = BeamTranslator.translate(p).writes.map(w => w.location.substring(w.location.lastIndexOf('/') + 1) -> w.unlocatedReads).toMap
+    assert(writes("sdf").exists(_.contains("Start: a source started from an Impulse")))
+    assert(writes("empty").isEmpty && writes("one").isEmpty && writes("ticks").isEmpty)
+  }
+
+  test("a direct read of a counting source is data the job makes, not a read from outside it") {
+    val p = pipeline
+    p.apply("Count", BeamRead.from(org.apache.beam.sdk.io.CountingSource.upTo(3)))
+      .apply("ToText", MapElements.into(TypeDescriptors.strings()).via(new SerializableFunction[java.lang.Long, String] { def apply(l: java.lang.Long) = l.toString }))
+      .apply("Write", TextIO.write().to("/data/out/counted"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.unlocatedReads.isEmpty)
+  }
+
   test("a read from a source class the adapter does not know is seen but not located") {
     val p = pipeline
     p.apply("Read", BeamRead.from(new TeamSource)).apply("Write", TextIO.write().to("/data/out/team"))
     val Seq(w) = BeamTranslator.translate(p).writes
     assert(w.unlocatedReads.exists(_.contains("TeamSource")))
   }
+}
+
+private final class FromImpulse extends DoFn[Array[Byte], String] {
+  @DoFn.ProcessElement
+  def process(out: DoFn.OutputReceiver[String]): Unit = out.output("x")
 }
 
 private final class ReadOwnFormat extends DoFn[FileIO.ReadableFile, String] {

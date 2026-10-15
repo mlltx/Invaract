@@ -106,9 +106,11 @@ private[beamadapter] object BeamIO {
         case "KafkaIO$TypedWithoutMetadata" | "AutoValue_KafkaIO_Read" => Some(kafkaRead(step))
         case "AutoValue_JdbcIO_Read" | "AutoValue_JdbcIO_ReadRows" | "AutoValue_JdbcIO_ReadWithPartitions" => Some(jdbcRead(step))
         case "AutoValue_PubsubIO_Read" => Some(pubsubRead(step))
-        // Read.from(source): any bounded or unbounded source, including one an IO above wraps (asked first, so never here),
-        // except the sources Beam uses for data the job makes itself (Create.of, GenerateSequence), which read nothing outside it
-        case "Read$Bounded" | "Read$Unbounded" if !step.display.get("source").exists(isInJobSource) =>
+        // Impulse, outside the steps that make data in the job: what a splittable DoFn (the modern way to write an IO) reads from
+        case "Impulse" => Some(IoRead.Unlocated("a source started from an Impulse (a splittable DoFn or an IO built on one), whose source states no location"))
+        // Read.from(source): any bounded or unbounded source, including one an IO above wraps (asked first, so never here); one of
+        // the sources Beam uses for data the job makes itself is left out before this is asked (isInJobData)
+        case "Read$Bounded" | "Read$Unbounded" =>
           Some(IoRead.Unlocated(s"a read from ${step.display.getOrElse("source", "a source")} (Read.from), whose source states no location"))
         case _ => None
       })
@@ -125,9 +127,8 @@ private[beamadapter] object BeamIO {
   private def kafkaRead(step: BeamStep): IoRead =
     (step.display.get("topics").map(_.split(",").map(_.trim).filter(_.nonEmpty).toList).filter(_.nonEmpty), step.display.get("bootstrap.servers")) match {
       case (Some(topics), servers) => IoRead.Located(topics.map(t => BeamLocations.kafkaTopic(servers, t)), Some(Formats.Kafka))
-      case (None, _) =>
-        if (step.display.contains("topicPattern")) IoRead.Unlocated(s"Kafka topics matching the pattern ${step.display("topicPattern")}")
-        else IoRead.Unlocated("a Kafka read whose topics are not stated")
+      // KafkaIO refuses to build a read with neither topics nor a pattern, so the pattern is the one other case
+      case (None, _) => IoRead.Unlocated(s"Kafka topics matching the pattern ${step.display.getOrElse("topicPattern", "(not stated)")}")
     }
 
   private def jdbcRead(step: BeamStep): IoRead = {
@@ -146,7 +147,17 @@ private[beamadapter] object BeamIO {
       case None       => IoRead.Unlocated("a Pub/Sub read whose topic or subscription is not stated")
     }
 
-  /** The sources behind `Create.of(...)` and `GenerateSequence`: data made by the job itself, not read from anywhere. */
+  /** The steps that make data in the job itself (`Create.of`, `GenerateSequence`, `PeriodicImpulse`, `TestStream`, a
+    * `Read.from` of one of their sources): never a read from outside the pipeline, whatever primitives (an Impulse, a splittable
+    * DoFn) they are built from. */
+  def isInJobData(step: BeamStep): Boolean = {
+    val name = simpleName(step)
+    name.startsWith("Create$") || Set("AutoValue_GenerateSequence", "PeriodicImpulse", "PeriodicSequence", "TestStream").contains(name) ||
+      (Set("Read$Bounded", "Read$Unbounded").contains(name) && step.display.get("source").exists(isInJobSource))
+  }
+
+  /** The sources behind `Create.of(...)`, `GenerateSequence` and a direct `Read.from(CountingSource...)`: data made by the job
+    * itself, not read from anywhere. */
   private def isInJobSource(sourceClass: String): Boolean =
     sourceClass.endsWith("Create$Values$CreateSource") || sourceClass.contains("CountingSource")
 
