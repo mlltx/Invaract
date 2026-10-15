@@ -183,7 +183,9 @@ contract inferred from each write it can describe. With a
  "job": {"engine": "beam", "engineVersion": "2.77.0", "name": "examplejob-root-1013211353-4b52c371"}}
 ```
 
-A write with no schema, or a step the adapter cannot describe, is reported with status
+Each draft is checked against the write it was inferred from, as enforcement would check it, and
+the result is the event's `selfCheck` (`PASSED`, or `FAILED` with the violations). A write with
+no schema, or a step the adapter cannot describe, is reported with status
 `SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `JOB_SUMMARY` event counts
 the writes by status and merges every draft into one contract named after the job (its
 `--jobName`), the same summary Spark publishes when its application ends. Beam publishes it

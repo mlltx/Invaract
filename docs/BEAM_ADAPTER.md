@@ -90,7 +90,7 @@ backing is not allowed.
 | `config.locationRefs` | supported | BeamAttachSpec "location refs: ..." |
 | `config.contractRegistry` | supported | BeamAttachSpec "contract registry: ..." |
 | `reporting.notifications` | supported | the PASSED/FAILED events every scenario checks; BeamCheckSpec for the engine, version and job they name |
-| `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec (per-write drafts, then the job summary `DryRunSummary` builds for both adapters; no self-check of a draft) |
+| `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec (per-write drafts, each self-checked by `DryRunSelfCheck`, then the job summary `DryRunSummary` builds; both shared with Spark) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed`; BeamTranslatorSpec and BeamCheckSpec for the other shapes it refuses |
 
 ## Operation surface

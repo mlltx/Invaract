@@ -4,20 +4,21 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{ContractInference, DryRunSummary, StructuralVerifier, VerificationOptions, Violation, Violations}
+import com.invaract.verification.{ContractInference, DryRunSelfCheck, DryRunSummary, StructuralVerifier, VerificationOptions, Violation}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import com.invaract.contract.{Contract, ContractParser, ContractValidator}
+import com.invaract.contract.{Contract, ContractParser}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.sparkadapter.ContractEnforcementRule.InferenceOutcome
 import com.invaract.verification.notification.{
   ContractInferenceEvent,
   MergeStatus,
   InferenceStatus,
+  SelfCheckStatus,
   JobInfo,
   NotificationEvent,
   NotificationSink
@@ -159,26 +160,15 @@ private[sparkadapter] final class DryRunReporter(
 
   /** `(verdict, violations, note)`: verdict is `PASSED`, `FAILED`, `INVALID` or `ERROR`. */
   private def selfCheckOf(inferred: InferenceOutcome.Inferred): (String, List[Violation], List[String]) =
-    try {
-      val validation = ContractValidator.validate(inferred.contract)
-      if (!validation.isValid) {
-        val violations = validation.errors.map(issue => Violations.invalidInferredContract(issue.path, issue.message))
-        (SelfCheckInvalid, violations, Nil)
-      } else {
-        val result = StructuralVerifier.verify(
-          inferred.contract,
-          inferred.translated.plan,
-          inferred.inputSchemas,
-          SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema),
-          options,
-          caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis,
-          lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes
-        )
-        (if (result.passed) SelfCheckPassed else SelfCheckFailed, result.violations, Nil)
-      }
-    } catch {
-      case NonFatal(e) => (SelfCheckError, Nil, List(s"self-check threw ${e.getClass.getSimpleName}: ${e.getMessage}"))
-    }
+    DryRunSelfCheck.of(
+      inferred.contract,
+      inferred.translated.plan,
+      inferred.inputSchemas,
+      SparkSchemas.toLogicalSchema(inferred.writeInfo.outputSchema),
+      options,
+      caseSensitive = org.apache.spark.sql.internal.SQLConf.get.caseSensitiveAnalysis,
+      lineageBoundaryTypes = CheckpointRegistry.BoundarySourceTypes
+    )
 
   private def fingerprintOf(inferred: InferenceOutcome.Inferred): Option[TransformationFingerprint] =
     Try {
@@ -247,10 +237,10 @@ private[sparkadapter] final class DryRunReporter(
 private[sparkadapter] object DryRunReporter {
   private val logger = LoggerFactory.getLogger(classOf[DryRunReporter])
 
-  val SelfCheckPassed = "PASSED"
-  val SelfCheckFailed = "FAILED"
-  val SelfCheckInvalid = "INVALID"
-  val SelfCheckError = "ERROR"
+  val SelfCheckPassed: String = SelfCheckStatus.Passed
+  val SelfCheckFailed: String = SelfCheckStatus.Failed
+  val SelfCheckInvalid: String = SelfCheckStatus.Invalid
+  val SelfCheckError: String = SelfCheckStatus.Error
 
   val MergeMerged: String = MergeStatus.Merged
   val MergeConflict: String = MergeStatus.Conflict

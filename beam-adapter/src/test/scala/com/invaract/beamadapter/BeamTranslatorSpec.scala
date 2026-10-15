@@ -131,6 +131,14 @@ class BeamTranslatorSpec extends AnyFunSuite {
     assert(withoutDrive(w.location) == "/data/out/tf/part" && w.format.contains("tfrecord"))
   }
 
+  test("a FileIO write through TFRecordIO's sink is in the tfrecord format") {
+    val p = pipeline
+    p.apply("Bytes", Create.of(Array[Byte](1, 2)).withCoder(ByteArrayCoder.of()))
+      .apply("WriteRecords", FileIO.write[Array[Byte]]().via(TFRecordIO.sink()).to("/data/out/tf"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(withoutDrive(w.location) == "/data/out/tf" && w.format.contains("tfrecord"))
+  }
+
   test("a file write through a sink this adapter does not recognise is refused as unverifiable, not guessed") {
     val p = pipeline
     p.apply("Lines", Create.of("a", "b")).apply("WriteTeam", WriteFiles.to[String, Void, String](new TeamSink("/data/out/team")))

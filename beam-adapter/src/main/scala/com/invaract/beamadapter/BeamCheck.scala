@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSummary, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline, Violation}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -83,7 +83,11 @@ final class BeamCheck private[beamadapter] (
             val (status, reason) =
               if (w.unlocatedReads.isEmpty) (InferenceStatus.Inferred, None)
               else (InferenceStatus.InferredDegraded, Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}"))
-            report(status, reason, Some(w.location), Some(ContractParser.write(draft)))
+            // the draft checked against the write it describes, as enforcement would check it
+            val selfCheck = DryRunSelfCheck.of(
+              draft, BeamCheck.asDeclared(draft, w), w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType)
+            )
+            report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck))
             status -> Some(draft)
           } catch {
             case NonFatal(e) =>
@@ -114,10 +118,19 @@ final class BeamCheck private[beamadapter] (
     }
   }
 
-  private def report(status: String, reason: Option[String], location: Option[String], yaml: Option[String]): Unit =
+  private def report(
+      status: String,
+      reason: Option[String],
+      location: Option[String],
+      yaml: Option[String],
+      selfCheck: Option[(String, List[Violation], List[String])] = None
+  ): Unit =
     sink match {
       case Some(s) =>
-        s.publish(ContractInferenceEvent(status, reason, location, yaml, None, Nil, Nil, None, job, System.currentTimeMillis(), Map.empty))
+        s.publish(ContractInferenceEvent(
+          status, reason, location, yaml, selfCheck.map(_._1), selfCheck.toList.flatMap(_._2), selfCheck.toList.flatMap(_._3), None, job,
+          System.currentTimeMillis(), Map.empty
+        ))
       case None =>
         logger.info(s"Invaract dry run: $status ${location.getOrElse("")}${yaml.map("\n" + _).getOrElse(reason.map(" - " + _).getOrElse(""))}")
     }

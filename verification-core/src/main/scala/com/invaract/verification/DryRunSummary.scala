@@ -3,9 +3,11 @@
 
 package com.invaract.verification
 
-import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser}
-import com.invaract.verification.notification.{DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus}
+import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser, ContractValidator, LogicalSchema}
+import com.invaract.ir.Plan
+import com.invaract.verification.notification.{DryRunSummaryEvent, InferenceStatus, JobInfo, MergeStatus, SelfCheckStatus}
 
+import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
 /** The once-per-job dry-run summary every adapter publishes (`DryRunSummaryEvent`): how many writes landed in each
@@ -42,4 +44,32 @@ private[invaract] object DryRunSummary {
     else if (cleaned.head.isLetter) cleaned
     else "job_" + cleaned
   }
+}
+
+/** A dry run's check of a draft against the very write it was inferred from (`ContractInferenceEvent.selfCheck`): a draft that
+  * is not valid, or that its own write would not pass, describes the write wrongly, and says so rather than being published as
+  * if it were sound. Both adapters run it; the arguments are those the adapter's enforcement passes `StructuralVerifier`. */
+private[invaract] object DryRunSelfCheck {
+
+  /** `(status, violations, diagnostics)`: a `SelfCheckStatus`, the violations behind `FAILED` or `INVALID`, and what went wrong
+    * for `ERROR`. `outputSchema` is taken by name, so an adapter's conversion of the write's schema that throws is an `ERROR` too. */
+  def of(
+      draft: Contract,
+      plan: Plan,
+      inputSchemas: List[(String, LogicalSchema)],
+      outputSchema: => LogicalSchema,
+      options: VerificationOptions,
+      caseSensitive: Boolean,
+      lineageBoundaryTypes: Set[String]
+  ): (String, List[Violation], List[String]) =
+    try {
+      val validation = ContractValidator.validate(draft)
+      if (!validation.isValid) (SelfCheckStatus.Invalid, validation.errors.map(i => Violations.invalidInferredContract(i.path, i.message)), Nil)
+      else {
+        val result = StructuralVerifier.verify(draft, plan, inputSchemas, outputSchema, options, caseSensitive, lineageBoundaryTypes)
+        (if (result.passed) SelfCheckStatus.Passed else SelfCheckStatus.Failed, result.violations, Nil)
+      }
+    } catch {
+      case NonFatal(e) => (SelfCheckStatus.Error, Nil, List(s"self-check threw ${e.getClass.getSimpleName}: ${e.getMessage}"))
+    }
 }

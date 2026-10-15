@@ -311,6 +311,7 @@ class BeamIOSpec extends AnyFunSuite {
     assert(w.inputSchemas.map(_._1) == List("/data/in/orders"))
     assert(w.inputSchemas.head._2.fields.map(_.name) == List("id", "amount"))
     assert(w.unlocatedReads.isEmpty)
+    assert(unlocatedIn(w.plan).isEmpty, "a reader of located files is not a lineage boundary")
   }
 
   test("matched files the job reads with its own function are still a read of that folder") {
@@ -436,6 +437,14 @@ class BeamTextFormatsSpec extends AnyFunSuite {
     parsedJson(p).apply("Json", ToJson.of[Row]()).apply("Write", TextIO.write().to("/data/out/json/part"))
     val Seq(w) = BeamTranslator.translate(p).writes
     assert(w.format.contains("json") && w.plan.format.contains("json"))
+    assert(columns(w.outputSchema).contains(List("id" -> false, "amount" -> true)))
+  }
+
+  test("a Pub/Sub write of rows ToJson made has the rows' columns, and stays a Pub/Sub write") {
+    val p = pipeline
+    parsedJson(p).apply("Json", ToJson.of[Row]()).apply("Publish", org.apache.beam.sdk.io.gcp.pubsub.PubsubIO.writeStrings().to("projects/my-project/topics/report"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.format.contains("pubsub") && w.plan.format.contains("pubsub"), "only a text write's format is the formatter's")
     assert(columns(w.outputSchema).contains(List("id" -> false, "amount" -> true)))
   }
 

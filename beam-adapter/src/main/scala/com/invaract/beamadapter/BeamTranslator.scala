@@ -104,12 +104,12 @@ private[beamadapter] object BeamTranslator {
       }
       val unlocated = above.collect { case u: UnlocatedReadNode => s"${u.step.name}: ${u.what}" } ++
         above.collect { case f: FileReaderNode if !readsLocated(f) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
-      // a text write of what a formatter made from rows (ToJson) has those rows' columns, in the formatter's format
-      val formatter = if (!w.format.contains("text")) None else sourcesOf(w) match {
+      // a write of what a formatter made from rows (ToJson) has those rows' columns; a text write of it is in the formatter's format
+      val formatter = sourcesOf(w) match {
         case (o: OtherNode) :: Nil => BeamIO.textFormatterFormat(o.step).map(f => f -> o.step.inputs.headOption.flatMap(BeamSchemas.of))
         case _                     => None
       }
-      val written = formatter.fold(w)(f => w.copy(format = Some(f._1)))
+      val written = formatter.filter(_ => w.format.contains("text")).fold(w)(f => w.copy(format = Some(f._1)))
       TranslatedWrite(
         written.location,
         written.format,

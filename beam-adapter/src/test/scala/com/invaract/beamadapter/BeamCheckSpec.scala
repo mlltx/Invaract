@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, ViolationType}
-import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, DryRunSummaryEvent, InferenceStatus, MergeStatus, NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, DryRunSummaryEvent, InferenceStatus, MergeStatus, NotificationEvent, NotificationSink, SelfCheckStatus}
 import org.apache.avro.generic.GenericRecord
 import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TextIO}
@@ -94,6 +94,7 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(event.writeLocation.contains("/data/out/anywhere"))
     assert(event.contractYaml.exists(y => y.contains("anywhere") && y.contains("orders") || y.contains("in/orders")))
     assert(event.job.engine.contains("beam"))
+    assert(event.selfCheck.contains(SelfCheckStatus.Passed) && event.selfCheckViolations.isEmpty, "the draft passes against its own write")
   }
 
   test("dry-run mode reports, rather than guesses at, a write with no schema and a step it cannot describe") {
@@ -455,6 +456,7 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(event.status == InferenceStatus.InferredDegraded)
     assert(event.reason.exists(_.contains("Query: a BigQuery query")))
     assert(event.contractYaml.exists(y => y.contains("saveMode: append") && y.contains("location: proj/ds/report")))
+    assert(event.selfCheck.contains(SelfCheckStatus.Passed), "a degraded draft still passes against its own write: the unlocated read is a boundary")
   }
 
   test("column names are compared case-sensitively, as Avro and Beam name them") {

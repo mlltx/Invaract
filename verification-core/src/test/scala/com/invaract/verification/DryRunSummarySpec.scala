@@ -67,3 +67,48 @@ class DryRunSummarySpec extends AnyFunSuite {
     assert(DryRunSummary.mergedContractId(JobInfo(name = Some(""))) == ContractInference.InferredId)
   }
 }
+
+class DryRunSelfCheckSpec extends AnyFunSuite {
+  import com.invaract.contract.{LogicalField, LogicalSchema, LogicalType}
+  import com.invaract.ir.{DatasetRef, Read, Write}
+  import com.invaract.verification.notification.SelfCheckStatus
+
+  private val draft = ContractParser.parse(
+    """id: inferred_contract
+      |version: 0.1.0
+      |status: draft
+      |inputs:
+      |  - { name: input, location: /in/orders, schema: { fields: [ { name: id, type: long } ] } }
+      |outputs:
+      |  - { name: output, location: /out/report, format: parquet, schema: { fields: [ { name: id, type: long } ] } }
+      |""".stripMargin)
+  private val columns = LogicalSchema(List(LogicalField("id", LogicalType.LongType, nullable = true)))
+  private def plan(out: String) = Write(DatasetRef(out), Read(DatasetRef("/in/orders")), Some("parquet"))
+  private def check(c: Contract, out: String = "/out/report") =
+    DryRunSelfCheck.of(c, plan(out), List("/in/orders" -> columns), columns, VerificationOptions(), caseSensitive = true, Set.empty)
+
+  test("a draft its own write passes is PASSED, with nothing to report") {
+    assert(check(draft) == ((SelfCheckStatus.Passed, Nil, Nil)))
+  }
+
+  test("a draft its own write would not pass is FAILED, with the violations") {
+    val (status, violations, notes) = check(draft, "/out/elsewhere")
+    assert(status == SelfCheckStatus.Failed && violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch) && notes.isEmpty)
+  }
+
+  test("a draft that is not a valid contract is INVALID, naming what is wrong, and is not verified") {
+    val (status, violations, _) = check(draft.copy(id = ""))
+    assert(status == SelfCheckStatus.Invalid && violations.nonEmpty && violations.forall(_.violationType == ViolationType.InvalidContract))
+  }
+
+  test("a self-check that throws is ERROR, with what it threw, never an exception into the job") {
+    val (status, violations, notes) = DryRunSelfCheck.of(draft, null, Nil, columns, VerificationOptions(), caseSensitive = true, Set.empty)
+    assert(status == SelfCheckStatus.Error && violations.isEmpty && notes.exists(_.startsWith("self-check threw NullPointerException")))
+  }
+
+  test("an output schema whose conversion throws is ERROR too") {
+    val (status, _, notes) =
+      DryRunSelfCheck.of(draft, plan("/out/report"), Nil, throw new IllegalStateException("no schema"), VerificationOptions(), caseSensitive = true, Set.empty)
+    assert(status == SelfCheckStatus.Error && notes == List("self-check threw IllegalStateException: no schema"))
+  }
+}

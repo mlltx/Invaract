@@ -169,7 +169,7 @@ class BeamSchemasSpec extends AnyFunSuite {
   test("key-value pairs of plain values are the columns key and value, typed and made nullable by their coders") {
     import org.apache.beam.sdk.coders._
     def kv(k: Coder[_], v: Coder[_]) = BeamSchemas.of(collection(Some(KvCoder.of(k.asInstanceOf[Coder[Any]], v.asInstanceOf[Coder[Any]]))))
-    def types(k: Coder[_]) = kv(k, StringUtf8Coder.of()).map(_.fields.head.dataType)
+    def types(k: Coder[_]) = kv(k, StringUtf8Coder.of()).map(_.fields.head).filter(!_.nullable).map(_.dataType)
     assert(kv(VarLongCoder.of(), StringUtf8Coder.of()).contains(LogicalSchema(List(LogicalField("key", LongType, nullable = false), LogicalField("value", StringType, nullable = false)))))
     assert(kv(NullableCoder.of(ByteArrayCoder.of()), NullableCoder.of(StringUtf8Coder.of()))
       .contains(LogicalSchema(List(LogicalField("key", BinaryType, nullable = true), LogicalField("value", StringType, nullable = true)))))
