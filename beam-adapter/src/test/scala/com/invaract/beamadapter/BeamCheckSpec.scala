@@ -194,6 +194,49 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(failing.events.last.isInstanceOf[DryRunSummaryEvent])
   }
 
+  test("dry-run mode ends with one job summary merging every draft, after the per-write events, and flushes the sink") {
+    val capture = new Capture
+    val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true", "--jobName=nightly-orders").create()
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(options), None)
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/a"))
+    stringsToText(p)
+    check.verify(p)
+    assert(capture.events.size == 3 && capture.events.last.isInstanceOf[DryRunSummaryEvent], "the summary comes last")
+    assert(capture.flushedAfter == 3, "the sink is flushed once everything is published")
+    val summary = capture.events.last.asInstanceOf[DryRunSummaryEvent]
+    assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.SkippedUnrecognized -> 1L))
+    assert(summary.mergeStatus == MergeStatus.Merged)
+    val merged = com.invaract.contract.ContractParser.parse(summary.mergedContractYaml.get)
+    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a"))
+    assert(summary.job.engine.contains("beam"))
+  }
+
+  test("dry-run mode's summary merges a degraded draft too, and a job with nothing to infer says it saw no writes") {
+    val degraded = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(degraded), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    val Seq(summary) = degraded.events.collect { case e: DryRunSummaryEvent => e }
+    assert(summary.statusCounts == Map(InferenceStatus.InferredDegraded -> 1L) && summary.mergeStatus == MergeStatus.Merged)
+
+    val empty = new Capture
+    val q = pipeline
+    q.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(empty), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(q)
+    val Seq(nothing: DryRunSummaryEvent) = empty.events.toList
+    assert(nothing.statusCounts == Map(InferenceStatus.NoWritesObserved -> 1L) && nothing.mergeStatus == MergeStatus.NoDrafts)
+  }
+
+  test("dry-run mode does not fail when its sink cannot flush") {
+    val failing = new Capture { override def flush(timeoutMs: Long): Unit = throw new IllegalStateException("down") }
+    val p = pipeline
+    ordersToParquet(p)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(failing), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    assert(failing.events.last.isInstanceOf[DryRunSummaryEvent])
+  }
+
   test("dry-run mode with no sink logs and does not fail") {
     val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), None, InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None)
     val p = pipeline
