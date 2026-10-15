@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSummary, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -61,7 +61,7 @@ final class BeamCheck private[beamadapter] (
         w.outputSchema.get, // `refusal` refuses a write with no schema before it gets here
         caseSensitive = true,
         rowMutation = None,
-        lineageBoundaryTypes = if (w.unlocatedReads.isEmpty) Set.empty else Set(BeamTranslator.UnlocatedSourceType)
+        lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType)
       ),
       options,
       sink,
@@ -74,7 +74,7 @@ final class BeamCheck private[beamadapter] (
     VerificationPipeline.rejectUnverifiableWrite(c, why, w.plan, sink, runId, Some(job))
 
   private def infer(translation: BeamTranslation): Unit = {
-    translation.writes.foreach { w =>
+    val outcomes = translation.writes.map { w =>
       w.outputSchema match {
         case Some(schema) =>
           try {
@@ -84,12 +84,34 @@ final class BeamCheck private[beamadapter] (
               if (w.unlocatedReads.isEmpty) (InferenceStatus.Inferred, None)
               else (InferenceStatus.InferredDegraded, Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}"))
             report(status, reason, Some(w.location), Some(ContractParser.write(draft)))
-          } catch { case NonFatal(e) => report(InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(w.location), None) }
+            status -> Some(draft)
+          } catch {
+            case NonFatal(e) =>
+              report(InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(w.location), None)
+              InferenceStatus.InferenceError -> None
+          }
         case None =>
           report(InferenceStatus.SkippedUnrecognized, Some(s"the write to ${w.location} exposes no schema to infer a contract from"), Some(w.location), None)
+          InferenceStatus.SkippedUnrecognized -> None
       }
+    } ++ translation.unverifiable.map { u =>
+      report(InferenceStatus.SkippedUnrecognized, Some(u.operation), None, None)
+      InferenceStatus.SkippedUnrecognized -> None
     }
-    translation.unverifiable.foreach(u => report(InferenceStatus.SkippedUnrecognized, Some(u.operation), None, None))
+    // the whole job is known before it runs, so its summary is published straight away rather than when it ends; every draft
+    // is merged, a degraded one included (as Spark merges it), so the summary describes every write a draft describes
+    val counts = outcomes.groupBy(_._1).map { case (status, all) => status -> all.size.toLong }
+    val mergeable = outcomes.flatMap(_._2)
+    val summary = DryRunSummary.event(counts, mergeable, job, System.currentTimeMillis(), Map.empty)
+    sink match {
+      case Some(s) =>
+        s.publish(summary)
+        try s.flush(BeamCheck.FlushTimeoutMs)
+        catch { case NonFatal(e) => logger.warn(s"Invaract dry run could not flush its sink: $e") }
+      case None =>
+        logger.info(s"Invaract dry run summary: ${summary.statusCounts.toList.sorted.map { case (k, v) => s"$k=$v" }.mkString(", ")}; " +
+          s"merge ${summary.mergeStatus}${summary.mergedContractYaml.map("\n" + _).getOrElse(summary.mergeConflicts.map("\n  " + _).mkString)}")
+    }
   }
 
   private def report(status: String, reason: Option[String], location: Option[String], yaml: Option[String]): Unit =
@@ -102,6 +124,9 @@ final class BeamCheck private[beamadapter] (
 }
 
 private[beamadapter] object BeamCheck {
+
+  /** How long the dry run waits for its sink to deliver the job's events before the pipeline is handed on. */
+  val FlushTimeoutMs = 10000L
 
   /** The formats a text writer can be producing: Beam's text writers publish no delimiter or encoding, so a write through one
     * is `text` and nothing in the graph says whether its lines are CSV or JSON (docs/BEAM_ADAPTER.md, D5). */

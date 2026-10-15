@@ -4,19 +4,19 @@
 package com.invaract.sparkadapter
 
 
-import com.invaract.verification.{ContractInference, StructuralVerifier, VerificationOptions, Violation, Violations}
+import com.invaract.verification.{ContractInference, DryRunSummary, StructuralVerifier, VerificationOptions, Violation, Violations}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import com.invaract.contract.{Contract, ContractDraftMerger, ContractParser, ContractValidator}
+import com.invaract.contract.{Contract, ContractParser, ContractValidator}
 import com.invaract.fingerprint.{TransformationFingerprint, TransformationFingerprinter}
 import com.invaract.sparkadapter.ContractEnforcementRule.InferenceOutcome
 import com.invaract.verification.notification.{
   ContractInferenceEvent,
-  DryRunSummaryEvent,
+  MergeStatus,
   InferenceStatus,
   JobInfo,
   NotificationEvent,
@@ -238,38 +238,10 @@ private[sparkadapter] final class DryRunReporter(
   def finish(): Unit =
     if (finished.compareAndSet(false, true)) {
       val (statusCounts, mergeable) = lock.synchronized((counts.toMap, drafts.toList))
-      val (mergeStatus, mergedYaml, conflicts) =
-        if (mergeable.isEmpty) (MergeNoDrafts, None, Nil)
-        else
-          Try(ContractDraftMerger.merge(mergeable, mergedContractId, ContractInference.InferredVersion)) match {
-            case scala.util.Success(Right(merged))    => (MergeMerged, Some(ContractParser.write(merged)), Nil)
-            case scala.util.Success(Left(mergeConflicts)) => (MergeConflict, None, mergeConflicts.map(_.message))
-            case scala.util.Failure(e)                => (MergeConflict, None, List(s"merge threw: $e"))
-          }
-      emit(
-        DryRunSummaryEvent(
-          statusCounts = if (statusCounts.isEmpty) Map(InferenceStatus.NoWritesObserved -> 1L) else statusCounts,
-          mergeStatus = mergeStatus,
-          mergedContractYaml = mergedYaml,
-          mergeConflicts = conflicts,
-          job = job,
-          timestamp = clock(),
-          metadata = contractMetadata
-        )
-      )
+      emit(DryRunSummary.event(statusCounts, mergeable, job, clock(), contractMetadata))
       try sink.flush(FlushTimeoutMs)
       catch { case NonFatal(e) => logger.warn(s"Dry-run reporting could not flush its sink: $e") }
     }
-
-  /** The merged contract's id: the job's stable identity, made safe for a contract id
-    * (`ContractValidator` wants a letter first, then alphanumerics/`.`/`_`/`-`).
-    */
-  private def mergedContractId: String = {
-    val cleaned = job.jobId.orElse(job.name).map(_.replaceAll("[^A-Za-z0-9._-]", "_")).getOrElse("")
-    if (cleaned.isEmpty) ContractInference.InferredId
-    else if (cleaned.head.isLetter) cleaned
-    else "job_" + cleaned
-  }
 }
 
 private[sparkadapter] object DryRunReporter {
@@ -280,9 +252,9 @@ private[sparkadapter] object DryRunReporter {
   val SelfCheckInvalid = "INVALID"
   val SelfCheckError = "ERROR"
 
-  val MergeMerged = "MERGED"
-  val MergeConflict = "CONFLICT"
-  val MergeNoDrafts = "NO_DRAFTS"
+  val MergeMerged: String = MergeStatus.Merged
+  val MergeConflict: String = MergeStatus.Conflict
+  val MergeNoDrafts: String = MergeStatus.NoDrafts
 
   /** How long `finish` lets an asynchronous sink drain. Bounded: this runs on Spark's
     * listener thread during shutdown, and must never be able to hang it.

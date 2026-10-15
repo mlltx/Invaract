@@ -66,7 +66,9 @@ private[beamadapter] object BeamTranslator {
             case many        => UnknownPlan(s"${r.step.name}: several sources", BeamIO.simpleName(r.step), many)
           }
         case u: UnlocatedReadNode     => passThrough(u, s"${u.step.name}: ${u.what}", UnlocatedSourceType)
-        case f: FileReaderNode        => passThrough(f, s"${f.step.name} (${BeamIO.simpleName(f.step)})", BeamIO.simpleName(f.step))
+        // a reader handed files by a step that does not say where they are is itself a read whose source is not located
+        case f: FileReaderNode =>
+          passThrough(f, s"${f.step.name} (${BeamIO.simpleName(f.step)})", if (readsLocated(f)) BeamIO.simpleName(f.step) else UnlocatedSourceType)
         case o: OtherNode             => passThrough(o, s"${o.step.name} (${BeamIO.simpleName(o.step)})", BeamIO.simpleName(o.step))
         case w: WriteNode             => writePlan(w)
         case u: UnverifiableWriteNode => passThrough(u, s"${u.step.name}: ${u.why}", BeamIO.simpleName(u.step))
@@ -84,6 +86,8 @@ private[beamadapter] object BeamTranslator {
       sourcesOf(node).flatMap(walk)
     }
 
+    def readsLocated(f: FileReaderNode): Boolean = upstream(f).exists(_.isInstanceOf[ReadNode])
+
     val writes = nodes.collect { case w: WriteNode => w }.map { w =>
       val above = upstream(w)
       val located = above.collect { case r: ReadNode => r }
@@ -99,7 +103,7 @@ private[beamadapter] object BeamTranslator {
         f.columns.toList.flatMap(s => upstream(f).collect { case r: ReadNode => r }.flatMap(_.locations).map(_ -> s))
       }
       val unlocated = above.collect { case u: UnlocatedReadNode => s"${u.step.name}: ${u.what}" } ++
-        above.collect { case f: FileReaderNode if !upstream(f).exists(_.isInstanceOf[ReadNode]) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
+        above.collect { case f: FileReaderNode if !readsLocated(f) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
       // a text write of what a formatter made from rows (ToJson) has those rows' columns, in the formatter's format
       val formatter = if (!w.format.contains("text")) None else sourcesOf(w) match {
         case (o: OtherNode) :: Nil => BeamIO.textFormatterFormat(o.step).map(f => f -> o.step.inputs.headOption.flatMap(BeamSchemas.of))

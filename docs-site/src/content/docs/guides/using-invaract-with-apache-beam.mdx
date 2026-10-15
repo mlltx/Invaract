@@ -110,6 +110,7 @@ Nothing was written: the check happens in `run`, before the pipeline is handed o
 | `KafkaIO...withBootstrapServers("broker:9092").withTopic("orders")` | `broker:9092/orders`, or `orders` on any cluster |
 | `JdbcIO` with URL `jdbc:postgresql://db/shop`, table `orders` | `jdbc:postgresql://db/shop/orders`, or `orders` |
 | `PubsubIO...fromTopic("projects/p/topics/orders")` | `projects/p/topics/orders` |
+| `PubsubIO...fromSubscription("projects/p/subscriptions/orders-sub")` | `projects/p/subscriptions/orders-sub` (the pipeline does not say which topic a subscription follows) |
 
 A relative location matches any path that ends with it, so a contract need not know where a
 deployment keeps its data; declare an absolute location to pin one.
@@ -170,7 +171,11 @@ contract inferred from each write it can describe. With a
 ```
 
 A write with no schema, or a step the adapter cannot describe, is reported with status
-`SKIPPED_UNRECOGNIZED` and the reason; with no sink the drafts are logged.
+`SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `JOB_SUMMARY` event counts
+the writes by status and merges every draft into one contract named after the job (its
+`--jobName`), the same summary Spark publishes when its application ends. Beam publishes it
+before the pipeline runs, since the whole pipeline is known by then. With no sink, the drafts
+and the summary are logged.
 
 ## Related
 

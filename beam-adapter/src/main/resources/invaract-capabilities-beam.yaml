@@ -117,7 +117,7 @@ capabilities:
     status: supported
   reporting.dryRunInference:
     status: partial
-    note: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer.
+    note: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer. Each draft, then one job summary merging them, is published before the pipeline runs; a draft is not self-checked as Spark's are.
   failClosed.unverifiableWrites:
     status: partial
     note: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.

@@ -192,6 +192,48 @@ class BeamIOSpec extends AnyFunSuite {
     assert(readsIn(w.plan) == List("projects/my-project/topics/orders"))
   }
 
+  test("a Pub/Sub read from a subscription is located at the subscription, the only name the pipeline states") {
+    val p = pipeline
+    p.apply("Read", PubsubIO.readStrings().fromSubscription("projects/my-project/subscriptions/orders-sub"))
+      .apply("Write", PubsubIO.writeStrings().to("projects/my-project/topics/report"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(readsIn(w.plan) == List("projects/my-project/subscriptions/orders-sub"))
+  }
+
+  test("BigQuery's Storage Read and Write APIs are the same table read and write, with their disposition") {
+    val p = pipeline
+    val schema = new TableSchema().setFields(List(new TableFieldSchema().setName("id").setType("INT64").setMode("REQUIRED")).asJava)
+    p.apply("Read", BigQueryIO.readTableRows().from("proj:ds.orders").withMethod(BigQueryIO.TypedRead.Method.DIRECT_READ).withSelectedFields(List("id").asJava))
+      .apply("Write", BigQueryIO.writeTableRows().to("proj:ds.report").withSchema(schema)
+        .withMethod(BigQueryIO.Write.Method.STORAGE_WRITE_API).withWriteDisposition(WriteDisposition.WRITE_APPEND))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(readsIn(w.plan) == List("proj/ds/orders"))
+    assert(w.location == "proj/ds/report" && w.plan.saveMode.contains("append") && w.outputSchema.exists(_.fields.map(_.name) == List("id")))
+  }
+
+  test("a write that waits on another write's result (Wait.on) is checked with its own reads, and the first write ends nothing") {
+    val p = pipeline
+    val orders = p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    val first = orders.apply("WriteA", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/a"))
+    orders.apply("AfterA", org.apache.beam.sdk.transforms.Wait.on(first.getPerDestinationOutputFilenames))
+      .setCoder(org.apache.beam.sdk.extensions.avro.coders.AvroCoder.of(OrdersSchema))
+      .apply("WriteB", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/b"))
+    val t = BeamTranslator.translate(p)
+    assert(t.writes.map(_.location) == List("/data/out/a", "/data/out/b"))
+    assert(t.writes.map(w => readsIn(w.plan)) == List(List("/data/in/orders"), List("/data/in/orders")))
+    assert(t.unverifiable.isEmpty)
+  }
+
+  test("a FileIO write named only by withNaming, with no directory, is refused as unverifiable") {
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("Write", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema))
+        .withNaming(FileIO.Write.defaultNaming("/data/out/report/part", ".parquet")).withTempDirectory("/tmp/invaract-temp"))
+    val t = BeamTranslator.translate(p)
+    assert(t.writes.isEmpty)
+    assert(t.unverifiable.map(_.operation).exists(_.contains("destination or sink cannot be read")))
+  }
+
   // --- files matched by FileIO.match() ---
 
   test("files matched by FileIO.match() and read by readFiles() are the folder the pattern names, with the reader's columns") {

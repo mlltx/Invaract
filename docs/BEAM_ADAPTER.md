@@ -90,7 +90,7 @@ backing is not allowed.
 | `config.locationRefs` | supported | BeamAttachSpec "location refs: ..." |
 | `config.contractRegistry` | supported | BeamAttachSpec "contract registry: ..." |
 | `reporting.notifications` | supported | the PASSED/FAILED events every scenario checks; BeamCheckSpec for the engine, version and job they name |
-| `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec |
+| `reporting.dryRunInference` | partial | BeamAttachSpec "dry-run inference: ..." and BeamCheckSpec (per-write drafts, then the job summary `DryRunSummary` builds for both adapters; no self-check of a draft) |
 | `failClosed.unverifiableWrites` | partial | `untranslatable-write-fails-closed`; BeamTranslatorSpec and BeamCheckSpec for the other shapes it refuses |
 
 ## Operation surface
@@ -133,6 +133,11 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | A step that ends the pipeline without a recognised write (any other IO, a `DoFn` with a side effect, a metrics step, a step that consumes a write's own result) | 🚫 refused as unverifiable (D14 is a decision for the reviewer) | scenario `untranslatable-write-fails-closed`; `BeamCheckSpec`; probes 07, 08 (friction log 18) |
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
 | Several writes in one pipeline, a multi-output `ParDo`, `Partition`, `Flatten`, side inputs | ✅ each write is checked with the reads beneath it | `BeamTranslatorSpec`; probes 05, 06, 12, 13 (friction log 18) |
+| A write that waits on another write's result (`Wait.on`) | ✅ each is checked with its own reads; the first ends nothing | `BeamIOSpec` "a write that waits on another write's result..." |
+| A `FileIO` write named only by `withNaming`, with no `.to()` directory | 🚫 refused as unverifiable (the file names come from a function) | `BeamIOSpec` "a FileIO write named only by withNaming..." |
+| BigQuery's Storage Read (`DIRECT_READ`, selected fields) and Storage Write APIs | ✅ the same table read and write | `BeamIOSpec` "BigQuery's Storage Read and Write APIs..." |
+| A Pub/Sub read from a subscription | ✅ located at the subscription path (the pipeline does not state its topic) | `BeamIOSpec` "a Pub/Sub read from a subscription..." |
+| Files handed to a reader by in-job data (`Create.of` of file metadata) | ✅ an unlocated read: a declared input it may be is unverifiable, not missing | `BeamCheckSpec` "files handed to a reader by a step that does not say where they are..." |
 | Join, grouping, filter, opaque function | ✅ kept as unknown steps that carry the reads beneath them (the fields they use are not public, so shape rules are refused) | scenarios `unrecognized-step-*`, `required-*`, `forbid-cross-join-*` |
 | Beam SQL (`SqlTransform`) over a collection, and the tables a query defines (`CREATE EXTERNAL TABLE`) | ✅ an opaque step with known output columns; its own tables are reads and writes the translator sees | `BeamSqlSpec` |
 | A BigQuery write of rows with `useBeamSchema()` | ✅ the rows' columns | `BeamIOSpec` "a BigQuery write of rows with useBeamSchema..." |

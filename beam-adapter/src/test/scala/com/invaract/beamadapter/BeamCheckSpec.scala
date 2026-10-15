@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, ViolationType}
-import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, InferenceStatus, NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, DryRunSummaryEvent, InferenceStatus, MergeStatus, NotificationEvent, NotificationSink}
 import org.apache.avro.generic.GenericRecord
 import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TextIO}
@@ -19,9 +19,11 @@ import scala.collection.mutable.ListBuffer
 class BeamCheckSpec extends AnyFunSuite {
   import ExampleJob.OrdersSchema
 
-  private final class Capture extends NotificationSink {
+  private class Capture extends NotificationSink {
     val events = ListBuffer.empty[NotificationEvent]
+    var flushedAfter = -1
     override def publish(event: NotificationEvent): Unit = events += event
+    override def flush(timeoutMs: Long): Unit = flushedAfter = events.size
   }
 
   private def pipeline: Pipeline = Pipeline.create(PipelineOptionsFactory.create())
@@ -104,6 +106,49 @@ class BeamCheckSpec extends AnyFunSuite {
     val statuses = capture.events.collect { case e: ContractInferenceEvent => e.status }
     assert(statuses.nonEmpty && statuses.forall(_ == InferenceStatus.SkippedUnrecognized))
     assert(capture.events.collect { case e: ContractInferenceEvent => e.reason.getOrElse("") }.exists(_.contains("exposes no schema")))
+  }
+
+  test("dry-run mode ends with one job summary merging every draft, after the per-write events, and flushes the sink") {
+    val capture = new Capture
+    val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true", "--jobName=nightly-orders").create()
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(options), None)
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/a"))
+    stringsToText(p)
+    check.verify(p)
+    assert(capture.events.size == 3 && capture.events.last.isInstanceOf[DryRunSummaryEvent], "the summary comes last")
+    assert(capture.flushedAfter == 3, "the sink is flushed once everything is published")
+    val summary = capture.events.last.asInstanceOf[DryRunSummaryEvent]
+    assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.SkippedUnrecognized -> 1L))
+    assert(summary.mergeStatus == MergeStatus.Merged)
+    val merged = com.invaract.contract.ContractParser.parse(summary.mergedContractYaml.get)
+    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a"))
+    assert(summary.job.engine.contains("beam"))
+  }
+
+  test("dry-run mode's summary merges a degraded draft too, and a job with nothing to infer says it saw no writes") {
+    val degraded = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(degraded), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    val Seq(summary) = degraded.events.collect { case e: DryRunSummaryEvent => e }
+    assert(summary.statusCounts == Map(InferenceStatus.InferredDegraded -> 1L) && summary.mergeStatus == MergeStatus.Merged)
+
+    val empty = new Capture
+    val q = pipeline
+    q.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(empty), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(q)
+    val Seq(nothing: DryRunSummaryEvent) = empty.events.toList
+    assert(nothing.statusCounts == Map(InferenceStatus.NoWritesObserved -> 1L) && nothing.mergeStatus == MergeStatus.NoDrafts)
+  }
+
+  test("dry-run mode does not fail when its sink cannot flush") {
+    val failing = new Capture { override def flush(timeoutMs: Long): Unit = throw new IllegalStateException("down") }
+    val p = pipeline
+    ordersToParquet(p)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(failing), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    assert(failing.events.last.isInstanceOf[DryRunSummaryEvent])
   }
 
   test("dry-run mode with no sink logs and does not fail") {
@@ -308,6 +353,21 @@ class BeamCheckSpec extends AnyFunSuite {
     val p = pipeline
     queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
     InvaractBeam.enforce(bigQueryContract, sink = Some(capture)).verify(p) // does not throw: MISSING_INPUT would be a false alarm
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.status == "PASSED")
+    assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))
+  }
+
+  test("files handed to a reader by a step that does not say where they are leave a declared input unverifiable, not missing") {
+    import org.apache.beam.sdk.io.fs.MatchResult
+    val capture = new Capture
+    val p = pipeline
+    val file = MatchResult.Metadata.builder().setResourceId(org.apache.beam.sdk.io.FileSystems.matchNewResource("/data/x/part-0.parquet", false))
+      .setSizeBytes(1L).setIsReadSeekEfficient(true).setLastModifiedMillis(0L).build()
+    p.apply("Files", Create.of(file).withCoder(org.apache.beam.sdk.io.fs.MetadataCoderV2.of())).apply("Open", FileIO.readMatches())
+      .apply("Read", ParquetIO.readFiles(OrdersSchema))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture)).verify(p)
     val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
     assert(passed.status == "PASSED")
     assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))

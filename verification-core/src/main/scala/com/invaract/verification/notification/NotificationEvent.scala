@@ -433,6 +433,13 @@ case class ContractInferenceEvent(
   val eventType: String = "CONTRACT_INFERENCE"
 }
 
+/** `DryRunSummaryEvent.mergeStatus`: whether the job's drafts merged into one contract. */
+object MergeStatus {
+  val Merged = "MERGED"
+  val Conflict = "CONFLICT"
+  val NoDrafts = "NO_DRAFTS"
+}
+
 /** Published once per application, at application end, by `DryRunReporter`:
   * how many writes landed in each `InferenceStatus`, plus every draft inferred
   * during the run merged (`ContractDraftMerger`) into one contract.

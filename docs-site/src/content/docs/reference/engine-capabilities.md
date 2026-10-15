@@ -153,7 +153,7 @@ The suite has 51 scenarios. For each adapter, the scenarios it is held to confor
 - `lineage.columnLevel` — unsupported: Needs to see how each output column is computed, which opaque functions hide.
 - `lineage.boundaryResolution` — not-applicable: A Beam pipeline is an immutable graph; there is no checkpoint or cache that erases what produced a collection.
 - `config.zeroCodeInstall` — partial: --runner names the wrapper and the Invaract settings are Beam options registered through ServiceLoader (both shown to work). A job that sets its runner in its own code bypasses it.
-- `reporting.dryRunInference` — partial: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer.
+- `reporting.dryRunInference` — partial: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer. Each draft, then one job summary merging them, is published before the pipeline runs; a draft is not self-checked as Spark's are.
 - `failClosed.unverifiableWrites` — partial: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.
 
 ### spark
