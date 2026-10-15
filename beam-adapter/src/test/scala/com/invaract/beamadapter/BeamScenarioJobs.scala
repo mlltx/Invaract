@@ -10,14 +10,20 @@ import org.apache.avro.generic.{GenericData, GenericRecord}
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.extensions.avro.coders.AvroGenericCoder
 import org.apache.beam.sdk.coders.{KvCoder, StringUtf8Coder}
+import com.google.api.services.bigquery.model.{TableFieldSchema, TableRow, TableSchema}
 import org.apache.beam.sdk.io.{FileIO, TextIO}
+import org.apache.beam.sdk.io.gcp.bigquery.{BigQueryIO, BigQueryServices}
+import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.{CreateDisposition, WriteDisposition}
 import org.apache.beam.sdk.io.parquet.ParquetIO
+import org.apache.beam.sdk.transforms.Watch
+import org.apache.beam.sdk.transforms.windowing.{FixedWindows, Window}
+import org.joda.time.Duration
 import org.apache.beam.sdk.transforms.DoFn.ProcessElement
 import org.apache.beam.sdk.transforms.join.{CoGbkResult, CoGroupByKey, KeyedPCollectionTuple}
 import org.apache.beam.sdk.transforms.{Contextful, DoFn, Filter, GroupByKey, MapElements, ParDo, ProcessFunction, SerializableFunction, View}
 import org.apache.beam.sdk.values.{KV, PCollection, PCollectionView, TupleTag, TypeDescriptor, TypeDescriptors}
 import org.apache.parquet.avro.AvroParquetWriter
-import org.apache.parquet.io.LocalOutputFile
+import org.apache.parquet.io.{OutputFile, PositionOutputStream}
 
 import java.nio.file.{Files, Path => NioPath}
 import scala.collection.JavaConverters._
@@ -33,15 +39,37 @@ import scala.collection.JavaConverters._
   */
 private[beamadapter] object BeamScenarioJobs {
 
-  /** The pipeline for `job`, reading and writing under `root` (the scenario's locations are relative to it). */
-  def build(pipeline: Pipeline, job: ScenarioJob, root: NioPath): Unit = {
-    require(job.rowChange.isEmpty && !job.boundary && !job.streaming, "this adapter's jobs are batch read-transform-writes")
+  /** Where a scenario job's output goes: files under the scenario's root, or a BigQuery table (the only Beam sink that states
+    * a save mode and a catalog table), written to Beam's in-memory BigQuery so the job really runs. */
+  sealed trait Target
+  case object ToFiles extends Target
+  final case class BigQuery(services: BigQueryServices, project: String) extends Target
+
+  /** The BigQuery table a scenario output location names: `out/report` is dataset `out`, table `report`. */
+  def bigQueryTable(project: String, location: String): String = {
+    val parts = location.split('/')
+    s"$project:${parts.init.mkString("_")}.${parts.last}"
+  }
+
+  /** The pipeline for `job`, reading and writing under `root` (the scenario's locations are relative to it). A streaming job
+    * reads its input as a stream that watches the folder for new files and stops a few seconds after the last one, and writes
+    * windowed output, so it runs to completion over the files that exist. */
+  def build(pipeline: Pipeline, job: ScenarioJob, root: NioPath, target: Target = ToFiles): Unit = {
+    require(job.rowChange.isEmpty && !job.boundary, "this adapter's jobs are read-transform-writes")
     val schemas = job.inputs.map(i => avro(s"in_${i.location.replace('/', '_')}", i.schema))
     val reads: List[PCollection[GenericRecord]] = job.inputs.zip(schemas).zipWithIndex.map { case ((input, schema), i) =>
       materialize(root, input, schema)
-      pipeline
-        .apply(s"Read$i", ParquetIO.read(schema).from(root.resolve(input.location).toString + "/*.parquet"))
-        .asInstanceOf[PCollection[GenericRecord]]
+      val pattern = root.resolve(input.location).toString + "/*.parquet"
+      if (job.streaming)
+        pipeline
+          .apply(s"Watch$i", FileIO.`match`().filepattern(pattern).continuously(Duration.millis(200), Watch.Growth.afterTimeSinceNewOutput[String](Duration.standardSeconds(2))))
+          .apply(s"Open$i", FileIO.readMatches())
+          .apply(s"Read$i", ParquetIO.readFiles(schema))
+          .apply(s"Window$i", Window.into[GenericRecord](FixedWindows.of(Duration.standardMinutes(1))))
+      else
+        pipeline
+          .apply(s"Read$i", ParquetIO.read(schema).from(pattern))
+          .asInstanceOf[PCollection[GenericRecord]]
     }
 
     if (job.untranslatableWrite) {
@@ -70,7 +98,10 @@ private[beamadapter] object BeamScenarioJobs {
           .apply("Project", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new ProjectFn(outAvro.toString, job.columns.map(c => resolve(c, joinedFieldOf)))))
           .setCoder(AvroGenericCoder.of(outAvro))
     }
-    write(shaped, job, root, outAvro)
+    target match {
+      case ToFiles                     => write(shaped, job, root, outAvro)
+      case BigQuery(services, project) => writeBigQuery(shaped, job, out, services, project)
+    }
   }
 
   // --- reading ---
@@ -78,13 +109,31 @@ private[beamadapter] object BeamScenarioJobs {
   /** An empty Parquet file of `schema` at the input's location, so a read of the folder finds a dataset. */
   private def materialize(root: NioPath, input: ScenarioInput, schema: Schema): Unit = materialize(root.resolve(input.location), schema, Nil)
 
-  /** A Parquet file of `schema` holding `rows` in folder `dir`. Written through parquet's own `LocalOutputFile`, not Hadoop's
-    * file system, so a machine without Hadoop's native libraries (Windows) writes it all the same. */
+  /** A Parquet file of `schema` holding `rows` in folder `dir`. Written through a plain local `OutputFile`, not Hadoop's
+    * file system, so a machine without Hadoop's native libraries (Windows) writes it all the same. (Parquet's own
+    * `LocalOutputFile` would do, but it arrived in Parquet 1.14 and the oldest Beam release tested brings 1.13.) */
   def materialize(dir: NioPath, schema: Schema, rows: List[GenericRecord]): Unit = {
     Files.createDirectories(dir)
-    val writer = AvroParquetWriter.builder[GenericRecord](new LocalOutputFile(dir.resolve("part-0.parquet"))).withSchema(schema).build()
+    val writer = AvroParquetWriter.builder[GenericRecord](new LocalFile(dir.resolve("part-0.parquet"))).withSchema(schema).build()
     try rows.foreach(writer.write)
     finally writer.close()
+  }
+
+  private final class LocalFile(path: NioPath) extends OutputFile {
+    override def create(blockSizeHint: Long): PositionOutputStream = createOrOverwrite(blockSizeHint)
+    override def createOrOverwrite(blockSizeHint: Long): PositionOutputStream = {
+      val out = new java.io.BufferedOutputStream(Files.newOutputStream(path))
+      new PositionOutputStream {
+        private var position = 0L
+        override def getPos: Long = position
+        override def write(b: Int): Unit = { out.write(b); position += 1 }
+        override def write(b: Array[Byte], off: Int, len: Int): Unit = { out.write(b, off, len); position += len }
+        override def flush(): Unit = out.flush()
+        override def close(): Unit = out.close()
+      }
+    }
+    override def supportsBlockSize(): Boolean = false
+    override def defaultBlockSize(): Long = 0L
   }
 
   // --- combining the inputs: nothing, a keyed join, or a cartesian product ---
@@ -145,12 +194,54 @@ private[beamadapter] object BeamScenarioJobs {
 
   private def write(data: PCollection[GenericRecord], job: ScenarioJob, root: NioPath, out: Schema): Unit = {
     val destination = root.resolve(job.output.location).toString
+    // a stream is written window by window, which Beam requires to name its number of files
+    def sharded[D](w: FileIO.Write[D, GenericRecord]): FileIO.Write[D, GenericRecord] = if (job.streaming) w.withNumShards(1) else w
     job.output.format match {
       case "parquet" =>
-        data.apply("Write", FileIO.write[GenericRecord]().via(ParquetIO.sink(out)).to(destination).withSuffix(".parquet"))
+        data.apply("Write", sharded(FileIO.write[GenericRecord]().via(ParquetIO.sink(out)).to(destination).withSuffix(".parquet")))
       case "csv" =>
-        data.apply("Write", FileIO.write[GenericRecord]().via(Contextful.fn[GenericRecord, String](new CsvFn), TextIO.sink()).to(destination).withSuffix(".csv"))
+        data.apply("Write", sharded(FileIO.write[GenericRecord]().via(Contextful.fn[GenericRecord, String](new CsvFn), TextIO.sink()).to(destination).withSuffix(".csv")))
       case other => throw new IllegalArgumentException(s"this adapter's jobs write parquet or csv, not '$other'")
+    }
+  }
+
+  private val Dispositions = Map("append" -> WriteDisposition.WRITE_APPEND, "overwrite" -> WriteDisposition.WRITE_TRUNCATE, "error" -> WriteDisposition.WRITE_EMPTY)
+
+  private def writeBigQuery(data: PCollection[GenericRecord], job: ScenarioJob, out: LogicalSchema, services: BigQueryServices, project: String): Unit = {
+    val disposition = Dispositions.getOrElse(job.output.saveMode, throw new IllegalArgumentException(s"BigQuery has no write disposition for '${job.output.saveMode}'"))
+    data
+      .apply("ToTableRows", MapElements.into(TypeDescriptor.of(classOf[TableRow])).via(new TableRowFn))
+      .apply(
+        "Write",
+        BigQueryIO.writeTableRows().to(bigQueryTable(project, job.output.location)).withSchema(tableSchema(out))
+          .withWriteDisposition(disposition).withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
+          .withTestServices(services).withoutValidation()
+      )
+  }
+
+  private def tableSchema(schema: LogicalSchema): TableSchema =
+    new TableSchema().setFields(schema.fields.map { f =>
+      val (bqType, repeated) = f.dataType match {
+        case LogicalType.ArrayType(e) => (bigQueryType(e), true)
+        case t                        => (bigQueryType(t), false)
+      }
+      new TableFieldSchema().setName(f.name).setType(bqType).setMode(if (repeated) "REPEATED" else if (f.nullable) "NULLABLE" else "REQUIRED")
+    }.asJava)
+
+  private def bigQueryType(t: LogicalType): String = t match {
+    case LogicalType.LongType    => "INT64"
+    case LogicalType.StringType  => "STRING"
+    case LogicalType.BooleanType => "BOOL"
+    case LogicalType.DoubleType  => "FLOAT64"
+    case LogicalType.BinaryType  => "BYTES"
+    case other                   => throw new IllegalArgumentException(s"no BigQuery type chosen for the scenario type ${other.catalogString}")
+  }
+
+  private final class TableRowFn extends SerializableFunction[GenericRecord, TableRow] {
+    override def apply(r: GenericRecord): TableRow = {
+      val row = new TableRow()
+      r.getSchema.getFields.asScala.foreach(f => row.set(f.name, Option(r.get(f.name)).map(_.toString).orNull))
+      row
     }
   }
 

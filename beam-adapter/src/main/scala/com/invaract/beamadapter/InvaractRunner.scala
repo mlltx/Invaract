@@ -13,9 +13,10 @@ import scala.collection.JavaConverters._
   * `BeamCheck` verify it against the contract (throwing, so the pipeline is never submitted, when it breaks it), and then
   * hands it to the real runner.
   *
-  * Named on a job's command line it is how Invaract attaches to a job nobody here owns: `--runner=com.invaract.beamadapter.InvaractRunner`,
-  * `--invaractContract=...`, and `--invaractDelegate=<runner>` for the runner the pipeline should really go to (default
-  * `DirectRunner`). Beam builds it through the static `fromOptions` below.
+  * Named on a job's command line it is how Invaract attaches to a job nobody here owns: `--runner=Invaract` (the name it
+  * registers with Beam, `InvaractRunnerRegistrar`; the full class name works too), `--invaractContract=...`, and
+  * `--invaractDelegate=<runner>` for the runner the pipeline should really go to (default `DirectRunner`). Beam builds it
+  * through the static `fromOptions` below.
   */
 final class InvaractRunner private (check: BeamCheck, delegate: PipelineRunner[PipelineResult]) extends PipelineRunner[PipelineResult] {
 
@@ -49,6 +50,14 @@ object InvaractRunner {
   }
 
   private def resolve(name: String): Class[_ <: PipelineRunner[_]] = {
+    val runner = resolveAny(name)
+    // a pipeline handed to this runner would be verified again and handed to itself, without end
+    if (runner == classOf[InvaractRunner])
+      throw new IllegalArgumentException(s"--invaractDelegate=$name names the Invaract runner itself; name the runner the pipeline should run on.")
+    runner
+  }
+
+  private def resolveAny(name: String): Class[_ <: PipelineRunner[_]] = {
     val registered = java.util.ServiceLoader.load(classOf[PipelineRunnerRegistrar]).asScala.toList
       .flatMap(_.getPipelineRunners.asScala).find(c => c.getSimpleName == name || c.getName == name)
     registered.getOrElse {
@@ -63,4 +72,11 @@ object InvaractRunner {
       loaded.asSubclass(classOf[PipelineRunner[_]])
     }
   }
+}
+
+/** Registers `InvaractRunner` with Beam (through `META-INF/services`), so a command line can name it `--runner=Invaract` or
+  * `--runner=InvaractRunner` as it names Beam's own runners, instead of by its full class name. */
+final class InvaractRunnerRegistrar extends PipelineRunnerRegistrar {
+  override def getPipelineRunners: java.lang.Iterable[Class[_ <: PipelineRunner[_]]] =
+    java.util.Collections.singletonList[Class[_ <: PipelineRunner[_]]](classOf[InvaractRunner])
 }

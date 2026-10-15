@@ -433,6 +433,21 @@ case class ContractInferenceEvent(
   val eventType: String = "CONTRACT_INFERENCE"
 }
 
+/** `ContractInferenceEvent.selfCheck`: whether a draft passes against the write it was inferred from. */
+object SelfCheckStatus {
+  val Passed = "PASSED"
+  val Failed = "FAILED"
+  val Invalid = "INVALID"
+  val Error = "ERROR"
+}
+
+/** `DryRunSummaryEvent.mergeStatus`: whether the job's drafts merged into one contract. */
+object MergeStatus {
+  val Merged = "MERGED"
+  val Conflict = "CONFLICT"
+  val NoDrafts = "NO_DRAFTS"
+}
+
 /** Published once per application, at application end, by `DryRunReporter`:
   * how many writes landed in each `InferenceStatus`, plus every draft inferred
   * during the run merged (`ContractDraftMerger`) into one contract.

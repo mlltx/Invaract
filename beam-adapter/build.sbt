@@ -62,8 +62,18 @@ pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 
 name := "invaract-beam-adapter"
 
-// The Beam release this adapter is built and tested against (docs/BEAM_ADAPTER.md: only this version has been probed).
-val beamVersion = "2.77.0"
+// The Beam release this adapter is built and tested against: `beam.primary` in supported-beam-versions.properties, the one
+// list of the Beam releases CI has evidence for (docs/BEAM_ADAPTER.md, "Beam version compatibility"). CI's beam-version-matrix
+// job runs this suite against each `beam.verified` release by setting INVARACT_TEST_BEAM_VERSION; a plain `sbt test` uses the primary.
+val beamVersion = sys.env.getOrElse("INVARACT_TEST_BEAM_VERSION", {
+  val props = new java.util.Properties()
+  val in = new java.io.FileInputStream(file("src/main/resources/supported-beam-versions.properties"))
+  try props.load(in) finally in.close()
+  props.getProperty("beam.primary").trim
+})
+
+// The Flink line Beam publishes a runner for at `beamVersion` (1.18 up to Beam 2.64, 1.19 from 2.65).
+val flinkLine = if (beamVersion.split('.')(1).toInt >= 65) "1.19" else "1.18"
 
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
@@ -84,7 +94,22 @@ libraryDependencies ++= Seq(
   "org.apache.beam" % "beam-runners-direct-java" % beamVersion % "test",
   "org.apache.beam" % "beam-sdks-java-io-parquet" % beamVersion % "test",
   "org.apache.hadoop" % "hadoop-client" % "3.4.1" % "test",
-  "org.apache.hadoop" % "hadoop-common" % "3.4.1" % "test"
+  "org.apache.hadoop" % "hadoop-common" % "3.4.1" % "test",
+  // The other IOs a Beam job commonly reads and writes, so the adapter's tests can build real pipelines with them (the
+  // graphs are only constructed, never run against the services): BigQuery, Kafka and JDBC.
+  "org.apache.beam" % "beam-sdks-java-io-google-cloud-platform" % beamVersion % "test",
+  // Beam's Kafka IO depends on Confluent's schema-registry client, which is not on Maven Central (and not needed to
+  // construct a KafkaIO graph), so it is left out.
+  ("org.apache.beam" % "beam-sdks-java-io-kafka" % beamVersion % "test").excludeAll(ExclusionRule("io.confluent")),
+  "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
+  "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test",
+  "org.apache.beam" % "beam-sdks-java-io-csv" % beamVersion % "test",
+  // Beam SQL, whose queries can read and write through tables they define themselves (CREATE EXTERNAL TABLE)
+  "org.apache.beam" % "beam-sdks-java-extensions-sql" % beamVersion % "test",
+  // A production runner, run in-process (a local Flink mini-cluster), to show the hand-over from InvaractRunner to a runner
+  // other than the DirectRunner. Beam publishes one artifact per Flink line, and no one line spans every release in
+  // supported-beam-versions.properties, so the line follows the Beam release under test.
+  "org.apache.beam" % s"beam-runners-flink-$flinkLine" % beamVersion % "test"
 )
 
 scalacOptions ++= Seq(
@@ -99,14 +124,21 @@ Test / fork := true
 // compare with: set this to the first released version, and add the module to the CI loops (check_modules.py says where).
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set.empty
+// The adapter's API is what a job or a platform touches: InvaractRunner (and its registrar), InvaractBeam, BeamCheck,
+// InvaractBeamOptions (and its registrar) and BeamCapabilities. Everything below is `private[beamadapter]`, which Scala compiles to
+// public bytecode, so MiMa sees it; no code outside this module can call it, so a change to it is not a break.
+mimaBinaryIssueFilters ++= Seq(
+  "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
+  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$"
+).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*"))
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating
 // Requirement"). Never lower them to make a failure go away.
 coverageScalacPluginVersion := "2.4.2"
 // Measured with `sbt coverage test coverageReport` on the adapter's own suite (the 51 conformance scenarios on the in-process
-// runner, the attach tests and the unit tests): 92.09% statement, 91.41% branch. Pinned a few points under.
-coverageMinimumStmtTotal := 88
-coverageMinimumBranchTotal := 87
+// runner, the IO, attach and production-runner tests and the unit tests): 95.39% statement, 93.86% branch. Pinned a few points under.
+coverageMinimumStmtTotal := 92
+coverageMinimumBranchTotal := 90
 coverageFailOnMinimum := true
 coverageHighlighting := true
 
@@ -115,8 +147,10 @@ coverageHighlighting := true
 // under a real whole-module run; new code in this module is held to 70% when you touch it.
 strykerMutate := Seq("src/main/scala/**/*.scala")
 strykerExcludedMutations := Seq("StringLiteral")
-strykerThresholdsHigh := 90
-strykerThresholdsLow := 80
-// Whole-module run: 98.68% (180 mutants, one survivor: the visited-set guard in BeamTranslator.readsBeneath, which only keeps a diamond-shaped
-// graph from being walked twice - the result is de-duplicated afterwards, so no test can tell). Pinned a few points under.
+// Stryker requires high > low > break, and the module's break is pinned high (below), so the bands sit above it.
+strykerThresholdsHigh := 95
+strykerThresholdsLow := 92
+// Whole-module run: 95.92% (419 mutants, 6 survivors). Of those, a Kafka branch no constructible read reaches was folded away, two were
+// killed by tests added for them (case-sensitive column names, a direct counting-source read) and a dead field was removed; the rest are
+// equivalent: a log-only branch in BeamCheck, and BeamGraph's root frame, which pushing twice leaves the same. Pinned a few points under.
 strykerThresholdsBreak := 90

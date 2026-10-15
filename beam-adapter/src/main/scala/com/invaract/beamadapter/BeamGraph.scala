@@ -43,7 +43,7 @@ private[beamadapter] final case class BeamStep(
   def isComposite: Boolean = children.nonEmpty
 
   /** This step and every step beneath it, outermost first. */
-  def withDescendants: List[BeamStep] = this :: children.flatMap(_.withDescendants)
+  lazy val withDescendants: List[BeamStep] = this :: children.flatMap(_.withDescendants)
 }
 
 /** The pipeline graph: the steps of a constructed pipeline, in the order Beam reports them (inputs before the steps that

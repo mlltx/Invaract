@@ -54,14 +54,16 @@ object InvaractBeam {
   def verify(pipeline: Pipeline): Unit = fromOptions(pipeline.getOptions).verify(pipeline)
 
   /** Which engine and job a check's events come from. */
-  private[beamadapter] def jobInfoOf(options: PipelineOptions): JobInfo =
+  private[beamadapter] def jobInfoOf(options: PipelineOptions): JobInfo = {
+    val jobName = Option(options.getJobName)
     JobInfo(
-      runId = Option(options.getJobName),
-      name = Option(options.getJobName),
+      runId = jobName,
+      name = jobName,
       engine = Some(Engine),
       engineVersion = Try(org.apache.beam.sdk.util.ReleaseInfo.getReleaseInfo.getSdkVersion).toOption,
-      engineDetails = Option(options.getRunner).map(r => Map("runner" -> r.getName)).getOrElse(Map.empty),
+      engineDetails = Option(options.getRunner).map(r => "runner" -> r.getName).toMap,
       user = Option(options.getUserAgent).filter(_.nonEmpty).flatMap(_ => Try(System.getProperty("user.name")).toOption),
       startTimeMs = Some(System.currentTimeMillis())
     )
+  }
 }

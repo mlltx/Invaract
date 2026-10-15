@@ -875,3 +875,12 @@ is run under the kit, because a read shape (`FileIO.match().continuously`) it do
 5. *Unverified items settled:* the Scala `fromOptions` is found by Beam; empty Parquet inputs read fine; reflection can tell a separate temporary
    directory from the destination; reads beneath an opaque step stay reachable. Still open: streaming, production runners, the portable form,
    a short runner name, other Beam versions.
+
+**A second pass (2026-10-15) closed the rest.** Streaming (the two ⚠️ scenarios now conform, run to completion in-process), BigQueryIO
+(save mode and catalog checked, the scenarios run on Beam's in-memory BigQuery, so `check.saveMode` and `check.catalogRegistration`
+became `partial`: 40 of 51 conform), KafkaIO, JdbcIO, Pub/Sub, a hand-over to Flink, `--runner=Invaract`, Beam 2.60 to 2.77 in CI.
+The portable form was probed and does not help (`docs/BEAM_ADAPTER.md`, friction log 19). Probing common pipeline shapes found what the
+survey had not foreseen: the `FileIO.match()` read idiom hid its read, a partitioned glob pattern and a projected read were mislocated or
+mis-schema'd, and an `Impulse`-driven source was invisible (all fixed); and two shapes that are refused but should perhaps not be, left
+as a decision (D14). *For the next survey:* forecast every IO the engine's users actually use, not only file IO, and probe what the
+engine's own built-in transforms expand to.

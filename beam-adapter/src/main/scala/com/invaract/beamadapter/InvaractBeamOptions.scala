@@ -76,7 +76,7 @@ trait InvaractBeamOptions extends PipelineOptions {
 private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) extends ConfigSource {
 
   override def get(name: String): Option[String] =
-    (name match {
+    Option(name match {
       case InvaractConf.Contract               => options.getInvaractContract
       case InvaractConf.DryRun                 => options.getInvaractDryRun
       case InvaractConf.NotifyConfig           => options.getInvaractNotifyConfig
@@ -91,10 +91,7 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.StaticDataQuality      => options.getInvaractStaticDataQuality
       case InvaractConf.RoleConsistency        => options.getInvaractRoleConsistency
       case _                                   => null
-    }) match {
-      case null  => None
-      case value => Some(value).filter(_.trim.nonEmpty)
-    }
+    }).filter(_.trim.nonEmpty)
 
   override def describe(name: String): String = "--invaract" + name.capitalize
 }

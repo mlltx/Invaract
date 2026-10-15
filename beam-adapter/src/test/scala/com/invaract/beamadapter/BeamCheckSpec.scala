@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.verification.{ConfigSource, ContractViolationException, InvaractConf, ViolationType}
-import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, InferenceStatus, NotificationEvent, NotificationSink}
+import com.invaract.verification.notification.{ContractInferenceEvent, ContractValidationEvent, DryRunSummaryEvent, InferenceStatus, MergeStatus, NotificationEvent, NotificationSink, SelfCheckStatus}
 import org.apache.avro.generic.GenericRecord
 import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TextIO}
@@ -19,9 +19,11 @@ import scala.collection.mutable.ListBuffer
 class BeamCheckSpec extends AnyFunSuite {
   import ExampleJob.OrdersSchema
 
-  private final class Capture extends NotificationSink {
+  private class Capture extends NotificationSink {
     val events = ListBuffer.empty[NotificationEvent]
+    var flushedAfter = -1
     override def publish(event: NotificationEvent): Unit = events += event
+    override def flush(timeoutMs: Long): Unit = flushedAfter = events.size
   }
 
   private def pipeline: Pipeline = Pipeline.create(PipelineOptionsFactory.create())
@@ -92,6 +94,7 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(event.writeLocation.contains("/data/out/anywhere"))
     assert(event.contractYaml.exists(y => y.contains("anywhere") && y.contains("orders") || y.contains("in/orders")))
     assert(event.job.engine.contains("beam"))
+    assert(event.selfCheck.contains(SelfCheckStatus.Passed) && event.selfCheckViolations.isEmpty, "the draft passes against its own write")
   }
 
   test("dry-run mode reports, rather than guesses at, a write with no schema and a step it cannot describe") {
@@ -104,6 +107,49 @@ class BeamCheckSpec extends AnyFunSuite {
     val statuses = capture.events.collect { case e: ContractInferenceEvent => e.status }
     assert(statuses.nonEmpty && statuses.forall(_ == InferenceStatus.SkippedUnrecognized))
     assert(capture.events.collect { case e: ContractInferenceEvent => e.reason.getOrElse("") }.exists(_.contains("exposes no schema")))
+  }
+
+  test("dry-run mode ends with one job summary merging every draft, after the per-write events, and flushes the sink") {
+    val capture = new Capture
+    val options = PipelineOptionsFactory.fromArgs("--invaractDryRun=true", "--jobName=nightly-orders").create()
+    val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(options), None)
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/a"))
+    stringsToText(p)
+    check.verify(p)
+    assert(capture.events.size == 3 && capture.events.last.isInstanceOf[DryRunSummaryEvent], "the summary comes last")
+    assert(capture.flushedAfter == 3, "the sink is flushed once everything is published")
+    val summary = capture.events.last.asInstanceOf[DryRunSummaryEvent]
+    assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.SkippedUnrecognized -> 1L))
+    assert(summary.mergeStatus == MergeStatus.Merged)
+    val merged = com.invaract.contract.ContractParser.parse(summary.mergedContractYaml.get)
+    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a"))
+    assert(summary.job.engine.contains("beam"))
+  }
+
+  test("dry-run mode's summary merges a degraded draft too, and a job with nothing to infer says it saw no writes") {
+    val degraded = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(degraded), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    val Seq(summary) = degraded.events.collect { case e: DryRunSummaryEvent => e }
+    assert(summary.statusCounts == Map(InferenceStatus.InferredDegraded -> 1L) && summary.mergeStatus == MergeStatus.Merged)
+
+    val empty = new Capture
+    val q = pipeline
+    q.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(empty), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(q)
+    val Seq(nothing: DryRunSummaryEvent) = empty.events.toList
+    assert(nothing.statusCounts == Map(InferenceStatus.NoWritesObserved -> 1L) && nothing.mergeStatus == MergeStatus.NoDrafts)
+  }
+
+  test("dry-run mode does not fail when its sink cannot flush") {
+    val failing = new Capture { override def flush(timeoutMs: Long): Unit = throw new IllegalStateException("down") }
+    val p = pipeline
+    ordersToParquet(p)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(failing), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None).verify(p)
+    assert(failing.events.last.isInstanceOf[DryRunSummaryEvent])
   }
 
   test("dry-run mode with no sink logs and does not fail") {
@@ -189,6 +235,25 @@ class BeamCheckSpec extends AnyFunSuite {
     } finally BeamConformanceAdapter.deleteQuietly(root)
   }
 
+  test("the runner is registered with Beam, so a command line names it --runner=Invaract, and it refuses itself as its delegate") {
+    Seq("Invaract", "InvaractRunner", "invaract").foreach { name =>
+      assert(PipelineOptionsFactory.fromArgs(s"--runner=$name").create().getRunner == classOf[InvaractRunner], name)
+    }
+    val root = java.nio.file.Files.createTempDirectory("beam-short-name-")
+    try {
+      ExampleJob.withOrders(root, (1L, 10L))
+      val contract = root.resolve("contract.yaml")
+      java.nio.file.Files.write(contract, ExampleJob.contractYaml().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      val before = NotRegisteredRunner.runs
+      new ExampleJob(root).main(Array("--runner=Invaract", s"--invaractContract=$contract", "--invaractDelegate=com.invaract.beamadapter.NotRegisteredRunner"))
+      assert(NotRegisteredRunner.runs == before + 1)
+      Seq("InvaractRunner", "com.invaract.beamadapter.InvaractRunner").foreach { itself =>
+        val e = intercept[IllegalArgumentException](new ExampleJob(root).main(Array("--runner=Invaract", s"--invaractContract=$contract", s"--invaractDelegate=$itself")))
+        assert(e.getMessage.contains("names the Invaract runner itself"), itself)
+      }
+    } finally BeamConformanceAdapter.deleteQuietly(root)
+  }
+
   // --- a text write and the formats a contract can declare for one ---
 
   private def textWrite(p: Pipeline, dir: String): Unit =
@@ -227,5 +292,181 @@ class BeamCheckSpec extends AnyFunSuite {
       InvaractBeam.enforce(ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(format = Some("csv"))))).verify(p)
     )
     assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputFormatMismatch))
+  }
+
+  test("a text write to the wrong place in a single-output contract is reported for its location only, not also for its format") {
+    // the declared output is the one the write is checked against even when the location misses (OutputChecker.expectedOutputFor),
+    // so the text-family rule must use the same declared output, or a csv contract would also see a format mismatch
+    val p = pipeline
+    textWrite(p, "/data/elsewhere/lines")
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithOutputFormat(Some("csv"))).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
+  }
+
+  test("a write through a sink whose format cannot be told is refused when the contract declares a format, and checked when it declares none") {
+    def otherSinkWrite(p: Pipeline): Unit =
+      p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+        .apply("WriteOther", FileIO.write[GenericRecord]().via(new OtherSink).to("/data/out/lines"))
+    val p = pipeline
+    otherSinkWrite(p)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithOutputFormat(Some("parquet"))).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("whose file format cannot be told") && e.getMessage.contains("'parquet'"))
+
+    val q = pipeline
+    otherSinkWrite(q)
+    InvaractBeam.enforce(contractWithOutputFormat(None)).verify(q) // nothing declared, nothing to tell apart
+    val r = pipeline
+    otherSinkWrite(r)
+    InvaractBeam.enforce(contractWithOutputFormat(Some("  "))).verify(r) // a blank format declares nothing
+  }
+
+  // --- reads that cannot be located, save modes, BigQuery ---
+
+  private val bigQueryContract = com.invaract.contract.ContractParser.parse(
+    """id: orders_report
+      |version: "1.0.0"
+      |inputs:
+      |  - name: orders
+      |    location: in/orders
+      |    schema:
+      |      fields:
+      |        - { name: id, type: long }
+      |outputs:
+      |  - name: report
+      |    location: ds/report
+      |    saveMode: append
+      |    schema:
+      |      fields:
+      |        - { name: id, type: long, required: true }
+      |""".stripMargin
+  )
+
+  private def queryToBigQuery(p: Pipeline, disposition: org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition): Unit = {
+    val schema = new com.google.api.services.bigquery.model.TableSchema()
+      .setFields(java.util.Arrays.asList(new com.google.api.services.bigquery.model.TableFieldSchema().setName("id").setType("INT64").setMode("REQUIRED")))
+    p.apply("Query", org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.readTableRows().fromQuery("SELECT id FROM `proj.in.orders`").usingStandardSql())
+      .apply("Write", org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.writeTableRows().to("proj:ds.report").withSchema(schema).withWriteDisposition(disposition))
+  }
+
+  test("a declared input the job may read through a read that cannot be located is reported unverifiable, not missing") {
+    val capture = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    InvaractBeam.enforce(bigQueryContract, sink = Some(capture)).verify(p) // does not throw: MISSING_INPUT would be a false alarm
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.status == "PASSED")
+    assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))
+  }
+
+  test("files handed to a reader by a step that does not say where they are leave a declared input unverifiable, not missing") {
+    import org.apache.beam.sdk.io.fs.MatchResult
+    val capture = new Capture
+    val p = pipeline
+    val file = MatchResult.Metadata.builder().setResourceId(org.apache.beam.sdk.io.FileSystems.matchNewResource("/data/x/part-0.parquet", false))
+      .setSizeBytes(1L).setIsReadSeekEfficient(true).setLastModifiedMillis(0L).build()
+    p.apply("Files", Create.of(file).withCoder(org.apache.beam.sdk.io.fs.MetadataCoderV2.of())).apply("Open", FileIO.readMatches())
+      .apply("Read", ParquetIO.readFiles(OrdersSchema))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture)).verify(p)
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.status == "PASSED")
+    assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))
+  }
+
+  test("a Kafka job is checked on the key and value it writes, against the same contract a Spark Kafka job would have") {
+    import org.apache.beam.sdk.io.kafka.KafkaIO
+    import org.apache.kafka.common.serialization.{LongDeserializer, LongSerializer, StringDeserializer, StringSerializer}
+    def contract(valueType: String) = com.invaract.contract.ContractParser.parse(
+      s"""id: orders_stream
+        |version: "1.0.0"
+        |inputs:
+        |  - { name: orders, location: orders, format: kafka, schema: { fields: [ { name: key, type: long }, { name: value, type: string } ] } }
+        |outputs:
+        |  - name: report
+        |    location: report
+        |    format: kafka
+        |    schema:
+        |      fields:
+        |        - { name: key, type: long }
+        |        - { name: value, type: $valueType }
+        |""".stripMargin)
+    // KafkaIO encodes keys and values as nullable, since a Kafka record may have neither
+    def job = {
+      val p = pipeline
+      p.apply("Read", KafkaIO.read[java.lang.Long, String]().withBootstrapServers("broker:9092").withTopic("orders")
+          .withKeyDeserializer(classOf[LongDeserializer]).withValueDeserializer(classOf[StringDeserializer]).withoutMetadata())
+        .apply("Write", KafkaIO.write[java.lang.Long, String]().withBootstrapServers("broker:9092").withTopic("report")
+          .withKeySerializer(classOf[LongSerializer]).withValueSerializer(classOf[StringSerializer]))
+      p
+    }
+    InvaractBeam.enforce(contract("string")).verify(job)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contract("binary")).verify(job))
+    assert(e.result.violations.map(_.violationType).contains(ViolationType.OutputFieldTypeMismatch))
+  }
+
+  test("a template that reads from a runtime parameter leaves the declared input unverifiable, and is checked otherwise") {
+    val capture = new Capture
+    val o = PipelineOptionsFactory.fromArgs().as(classOf[TemplateOptions])
+    val p = Pipeline.create(o)
+    p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from(o.getInputFile))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/report"))
+    InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture)).verify(p)
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.unverifiableInputs.map(_.inputName) == List("orders"))
+  }
+
+  test("strict about undeclared inputs, a write that depends on a read that cannot be located is refused") {
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    val strict = com.invaract.verification.VerificationOptions(rejectUndeclaredInputs = true)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(bigQueryContract, strict).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("an undeclared input cannot be ruled out") && e.getMessage.contains("Query: a BigQuery query"))
+  }
+
+  test("a BigQuery write's save mode is checked against the declared one") {
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_TRUNCATE)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(bigQueryContract).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputSaveModeMismatch))
+  }
+
+  test("a file write, which states no save mode, is refused when the contract declares one, and checked when it declares none") {
+    val withSaveMode = ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(saveMode = Some("append"))))
+    val p = pipeline
+    ordersToParquet(p)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(withSaveMode).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("states no save mode") && e.getMessage.contains("'append'"))
+
+    val blank = ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(saveMode = Some(" "))))
+    val q = pipeline
+    ordersToParquet(q)
+    InvaractBeam.enforce(blank).verify(q) // a blank save mode declares nothing
+  }
+
+  test("dry-run mode marks a draft that cannot list every input degraded, naming the read") {
+    val capture = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), BeamCapabilities.declared)
+      .verify(p)
+    val Seq(event) = capture.events.collect { case e: ContractInferenceEvent => e }
+    assert(event.status == InferenceStatus.InferredDegraded)
+    assert(event.reason.exists(_.contains("Query: a BigQuery query")))
+    assert(event.contractYaml.exists(y => y.contains("saveMode: append") && y.contains("location: proj/ds/report")))
+    assert(event.selfCheck.contains(SelfCheckStatus.Passed), "a degraded draft still passes against its own write: the unlocated read is a boundary")
+  }
+
+  test("column names are compared case-sensitively, as Avro and Beam name them") {
+    val upper = new org.apache.avro.Schema.Parser().parse(
+      """{"type":"record","name":"Orders","fields":[{"name":"ID","type":"long"},{"name":"amount","type":["null","long"],"default":null}]}"""
+    )
+    val p = pipeline
+    p.apply("ReadOrders", ParquetIO.read(upper).from("/data/in/orders/*.parquet"))
+      .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(upper)).to("/data/out/report"))
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(ExampleJob.contract()).verify(p))
+    assert(e.result.violations.map(_.violationType).contains(ViolationType.MissingOutputField), "'ID' is not the declared 'id'")
   }
 }
