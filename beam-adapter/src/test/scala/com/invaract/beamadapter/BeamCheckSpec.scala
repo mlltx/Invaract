@@ -96,6 +96,16 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
   }
 
+  test("a write with no columns that lands on no declared output is refused for its missing columns, not let off by them") {
+    val p = pipeline
+    ordersToParquet(p, "/data/out/report")
+    p.apply("Lines", Create.of("a")).apply("WriteAudit", TextIO.write().to("/data/out/audit"))
+    p.apply("More", Create.of("b")).apply("WriteStray", TextIO.write().to("/data/out/stray"))
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(reportAndAudit).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("/data/out/stray") && e.getMessage.contains("exposes no schema"))
+  }
+
   test("a pipeline that writes every declared output is checked write by write as before") {
     val capture = new Capture
     val p = pipeline

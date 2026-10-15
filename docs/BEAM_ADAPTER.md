@@ -70,6 +70,7 @@ backing is not allowed.
 | `write.stateChange` | not-applicable | not applicable: Beam commits no schema change apart from a write |
 | `check.inputExistence` | supported | `conforming-write`, `declared-input-not-read`, `undeclared-input-rejected` (+5 more) |
 | `check.location` | supported | `conforming-write`, `wrong-output-location`, `row-level-delete-checked-as-write` |
+| `check.outputsWritten` | supported | scenario `declared-output-never-written`; BeamCheckSpec "a declared output the pipeline never writes refuses it..." (D17) |
 | `check.schema` | partial | `conforming-write`, `missing-output-field`, `output-type-mismatch` (+4 more) |
 | `check.nestedTypes` | supported | `nested-type-matches`, `nested-type-mismatch` |
 | `check.format` | partial | `output-format-matches`, `output-format-mismatch` |
