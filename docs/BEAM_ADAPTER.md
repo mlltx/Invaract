@@ -197,17 +197,6 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   is refused as an unverifiable write, by the survey's D6 rule. Real jobs do both (notify-on-write, count-and-log). Options:
   (a) keep refusing (today); (b) let a step through that consumes only a write's result, since it sees file names, not the data;
   (c) an allow-list of step names a platform trusts, an engine-neutral setting in `InvaractConf`. Recommended: (b) and (c).
-- **D20. A key-value pair of plain values is the columns `key` and `value`.** Kafka's own record model, and the columns a Spark
-  job writes to a Kafka topic, so one contract describes a Kafka output on either engine. The types come from the pair's coders
-  (string, the integer widths, double, float, boolean, bytes); `NullableCoder`, which KafkaIO always uses, makes a column
-  nullable. A pair holding an object, a Kafka read with metadata (`KafkaRecord`) and a `writeRecords()` of `ProducerRecord`s
-  expose no columns, so such a write is refused (D7). `BeamSchemas.fromCoder`.
-- **D21. A classic template's runtime parameters are not locations.** A path given as a `ValueProvider` with no value while the
-  pipeline is built (a classic Dataflow template's parameter) is shown in display data as the provider itself
-  (`RuntimeValueProvider{propertyName=inputFile, ...}`). It was taken as a path (an empty read location, a write "to" the
-  provider's text). Now a read from one is an `UnlocatedRead` naming the parameter (D12) and a write to one is refused as
-  unverifiable, naming it: the check runs before the values exist. A Flex Template builds its pipeline with the values, so it
-  is checked like any job. `BeamIO.isRuntimeParameter`.
 - **D15. A JDBC query's table is taken only from a plain `SELECT ... FROM <one table>`** (no join, sub-query, set operation or
   comma list); anything else is an `UnlocatedRead` (D12). No SQL parser is pulled in. `BeamLocations.singleTableOf`.
 - **D16. The production runner proven is Flink**, in a local mini-cluster, on the Flink line Beam publishes for the release under
@@ -233,6 +222,17 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   reflection, gated by the version matrix and failing closed when reflection fails, and declare `rules.planShape` partial: a
   filter or join written as a plain function stays opaque, so a rule requiring one would reject it. Recommended: (b), since
   the rules are column lists and schema transforms are how Beam users who care about columns write these steps.
+- **D20. A key-value pair of plain values is the columns `key` and `value`.** Kafka's own record model, and the columns a Spark
+  job writes to a Kafka topic, so one contract describes a Kafka output on either engine. The types come from the pair's coders
+  (string, the integer widths, double, float, boolean, bytes); `NullableCoder`, which KafkaIO always uses, makes a column
+  nullable. A pair holding an object, a Kafka read with metadata (`KafkaRecord`) and a `writeRecords()` of `ProducerRecord`s
+  expose no columns, so such a write is refused (D7). `BeamSchemas.fromCoder`.
+- **D21. A classic template's runtime parameters are not locations.** A path given as a `ValueProvider` with no value while the
+  pipeline is built (a classic Dataflow template's parameter) is shown in display data as the provider itself
+  (`RuntimeValueProvider{propertyName=inputFile, ...}`). It was taken as a path (an empty read location, a write "to" the
+  provider's text). Now a read from one is an `UnlocatedRead` naming the parameter (D12) and a write to one is refused as
+  unverifiable, naming it: the check runs before the values exist. A Flex Template builds its pipeline with the values, so it
+  is checked like any job. `BeamIO.isRuntimeParameter`.
 
 ## Friction log
 
@@ -307,6 +307,13 @@ Every undocumented decision, surprise, or guess made while building this adapter
     expand into the IO transforms they name (a text table into `TextIO`), which the translator already recognises. A probe that used
     `p:d.report` as a BigQuery table met Beam's own refusal of a one-letter project id while building display data; the adapter
     fails closed on that (no display data, so the write is unverifiable), which is what a real job with a bad table name would see.
+23. **The second probe pass (after the gaps closed).** Each shape below became a permanent test. Fixed: a classic template's runtime
+    parameters were taken as paths (D21); every Kafka write was refused for exposing no columns (D20); a reader handed files by in-job
+    data made a declared input "missing" instead of unverifiable; a Pub/Sub write of `ToJson` rows had no columns; Beam's dry run
+    published no job summary and no self-check (both now shared with Spark in `verification-core`). Fine as they were: `Wait.on` a
+    write's result, `Partition`, `Flatten`, `watchForNewFiles`, BigQuery's Storage Read and Write APIs, Pub/Sub subscriptions, an
+    unknown IO (Bigtable read unlocated, Spanner write refused), `FileIO.write().withNaming(...)` with no directory (refused).
+    Found to be a decision: plan-shape rules from schema transforms (D19), whose fields have no public getter.
 
 ## Unverified items
 
