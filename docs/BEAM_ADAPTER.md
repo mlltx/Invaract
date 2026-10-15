@@ -122,7 +122,7 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | `FileIO.write` with a separate temporary directory | ✅ | `BeamTranslatorSpec` |
 | `FileIO.write` through a sink it cannot name | ✅ written where it lands, no format; 🚫 refused when the contract declares a format (D10) | `BeamTranslatorSpec`; `BeamCheckSpec` "a write through a sink whose format cannot be told..." |
 | `FileIO.writeDynamic` | ✅ located by its output directory | probe 03 (friction log 18); the output directory is read as for `FileIO.write` |
-| `TextIO.write`, `AvroIO.write`, `TFRecordIO.write` (prefix writes) | ✅ located by the prefix; 🚫 a text write of plain strings has no columns, so it is refused | `BeamTranslatorSpec`, `BeamCheckSpec` "a write whose data exposes no schema..." |
+| `TextIO.write`, `AvroIO.write`, `TFRecordIO.write` (prefix writes) | ✅ located by the prefix; 🚫 a text write of plain strings has no columns, so it is refused unless its output declares none (D18) | `BeamTranslatorSpec`, `BeamCheckSpec` "a write whose data exposes no schema..." |
 | A text write of rows formatted by `ToJson`, `CsvIO.writeRows` | ✅ `json`/`csv`, with the rows' columns | `BeamTextFormatsSpec` |
 | A file write through a team's own `FileBasedSink` (`XmlIO` and others) | 🚫 refused as unverifiable | `BeamTranslatorSpec` "a file write through a sink this adapter does not recognise..." |
 | `BigQueryIO` write to a table | ✅ save mode, catalog table and declared table schema; runs on the in-memory BigQuery in the kit | `BeamIOSpec`; scenarios `output-save-mode-*`, `catalog-required-output-registered` |
@@ -202,18 +202,22 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
 - **D16. The production runner proven is Flink**, in a local mini-cluster, on the Flink line Beam publishes for the release under
   test (1.18 before Beam 2.65, 1.19 from it). Dataflow cannot run without a Google Cloud project, so its hand-over is the same
   code path (`PipelineRunner.fromOptions` on the delegate's class) without a test of its own.
-- **D17. Decision needed: a declared output no write lands on.** Beam sees the whole pipeline before it runs, so it could report a
-  declared output the pipeline never writes (`MISSING_OUTPUT`), which Spark, checking one write at a time, cannot. Today each write is
-  checked on its own, as on Spark. Doing it needs a whole-pipeline entry in `VerificationPipeline` (a core change).
-- **D18. Decision needed: an output with no columns can never pass.** A write of plain strings (a dead-letter folder of error
-  lines, a log export) exposes no columns, so it is refused (the survey's D5), and a contract cannot declare such an output either:
-  the contract format requires every schema to list at least one field. Options: (a) keep it so (a job with a text side output
-  is refused); (b) let a contract declare an output with no schema (a contract-model change, for every adapter); (c) a text write
-  of the result of a known formatter keeps its rows' columns (done for `ToJson` and `CsvIO`). Recommended: (b), for outputs whose
-  content no contract governs. Related but different: a BigQuery write of `TableRow`s into an existing table that names no
-  schema (`CREATE_NEVER`, a common way to append to a managed table) is refused for the same reason, though the table has columns;
-  only BigQuery knows them, and the check runs before the job can ask it. Its remedy is the job's (`withSchema`, or rows with a
-  Beam schema and `useBeamSchema()`), not the contract's.
+- **D17. Decided: a declared output no write lands on refuses the job.** If a contract says the job writes an output and it does
+  not, that is a contract break. Beam sees the whole pipeline before it runs, so `BeamCheck` calls the new engine-neutral
+  `VerificationPipeline.requireOutputsWritten` with every write's location, right after the unverifiable-step gate and before any
+  write is checked: one `MISSING_OUTPUT` per declared output nothing lands on, one FAILED event, nothing started. A pipeline with
+  no recognised write at all is refused the same way (it used to pass with a warning). The new capability `check.outputsWritten`
+  (not blocking, since every contract declares outputs) is `supported` here and `unsupported` on Spark, which checks one write at
+  a time and cannot know a write will never come; the kit's `declared-output-never-written` scenario holds it. The three
+  `derivedFrom` scenarios became single-output contracts, so no scenario but that one has a job that skips a declared output.
+- **D18. Decided: a dataset may declare no columns.** A write of plain strings (a dead-letter folder of error lines, a log export)
+  exposes no columns. The contract format now lets a dataset leave `schema` out (or list no fields): its content is not governed,
+  `SchemaChecker` compares nothing for it, and `ContractValidator` warns so the omission is never silent. A Beam write with no
+  columns is refused only when the output it lands on declares columns (`BeamCheck.declaresColumns`); in dry-run mode such a write
+  gets a draft whose output declares none (`INFERRED_DEGRADED`, saying why), rather than being skipped. Still refused, and for the
+  job to fix rather than the contract: a BigQuery write of `TableRow`s into an existing table that names no schema
+  (`CREATE_NEVER`), whose columns exist but only BigQuery knows them (`withSchema`, or rows with a Beam schema and
+  `useBeamSchema()`, fixes it).
 - **D19. Decision needed: plan-shape rules for Beam's schema transforms.** `Filter.whereFieldName(s)`, `Group.byFieldNames`,
   `Join.innerJoin(...).using(...)` and `CoGroup` name the fields they use, which is what `required_filter_columns`,
   `required_group_by`, `required_join_columns` and `forbid_cross_join` check. None of them has a public getter (checked with

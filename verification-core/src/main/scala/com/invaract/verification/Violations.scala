@@ -103,6 +103,15 @@ private[invaract] object Violations {
       location = Some(output.location)
     )
 
+  /** A whole job (every write it makes known) never writes `output` - see `OutputChecker.unwrittenOutputs`. */
+  def outputNeverWritten(output: Dataset): Violation =
+    Violation(
+      ViolationType.MissingOutput,
+      s"the job never writes declared output '${output.name}' (${output.location})",
+      remediation = s"Add a write to '${output.location}' to the job, or remove output '${output.name}' from the contract if the job no longer produces it.",
+      location = Some(output.location)
+    )
+
   def outputLocationMismatch(declaredLocations: List[String], actualLocation: String): Violation = {
     val single = declaredLocations.size == 1
     Violation(

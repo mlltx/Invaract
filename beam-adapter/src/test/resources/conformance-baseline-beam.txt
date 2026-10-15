@@ -6,6 +6,7 @@ conforming-write
 declared-input-not-read
 derived-from-excuses-an-input-the-output-is-not-built-from
 derived-from-rejects-a-read-of-another-outputs-source
+declared-output-never-written
 derived-from-requires-every-source-of-the-output
 extended-type-not-produced
 forbid-cross-join-allows-a-keyed-join

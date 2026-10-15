@@ -48,6 +48,20 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
   }
 
+  test("a write with no columns passes against an output that declares none: its content is not governed (D18)") {
+    val capture = new Capture
+    val noColumns = com.invaract.contract.ContractParser.parse(
+      """id: lines
+        |version: "1.0.0"
+        |outputs:
+        |  - { name: lines, location: out/lines, format: text }
+        |""".stripMargin)
+    val p = pipeline
+    stringsToText(p)
+    InvaractBeam.enforce(noColumns, sink = Some(capture)).verify(p)
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("PASSED"))
+  }
+
   test("a step that ends the pipeline without a recognised write is refused before any write is judged") {
     val check = InvaractBeam.enforce(ExampleJob.contract())
     val p = pipeline
@@ -58,13 +72,37 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(e.getMessage.contains("PushToSomeService"))
   }
 
-  test("a pipeline with no write it recognises checks nothing and does not fail") {
+  test("a pipeline that never writes its contract's output is refused with MISSING_OUTPUT, before it runs (D17)") {
     val capture = new Capture
     val check = InvaractBeam.enforce(ExampleJob.contract(), sink = Some(capture))
     val p = pipeline
     p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
-    check.verify(p)
-    assert(capture.events.isEmpty)
+    val e = intercept[ContractViolationException](check.verify(p))
+    assert(e.result.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some("out/report"))))
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
+  }
+
+  private val reportAndAudit = com.invaract.contract.ContractParser.parse(
+    ExampleJob.contractYaml() + "  - { name: audit, location: out/audit, derivedFrom: [] }\n"
+  )
+
+  test("a declared output the pipeline never writes refuses it before its writes are checked, publishing one FAILED event") {
+    val capture = new Capture
+    val p = pipeline
+    ordersToParquet(p, "/data/out/report")
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(reportAndAudit, sink = Some(capture)).verify(p))
+    assert(e.result.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some("out/audit"))))
+    assert(e.getMessage.contains("the job never writes declared output 'audit' (out/audit)"))
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("FAILED"))
+  }
+
+  test("a pipeline that writes every declared output is checked write by write as before") {
+    val capture = new Capture
+    val p = pipeline
+    ordersToParquet(p, "/data/out/report")
+    p.apply("Lines", Create.of("a")).apply("WriteAudit", TextIO.write().to("/data/out/audit"))
+    InvaractBeam.enforce(reportAndAudit, sink = Some(capture)).verify(p)
+    assert(capture.events.collect { case v: ContractValidationEvent => v.status } == List("PASSED", "PASSED"))
   }
 
   test("a write that keeps to the contract passes and publishes a PASSED validation naming Beam") {
@@ -97,16 +135,20 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(event.selfCheck.contains(SelfCheckStatus.Passed) && event.selfCheckViolations.isEmpty, "the draft passes against its own write")
   }
 
-  test("dry-run mode reports, rather than guesses at, a write with no schema and a step it cannot describe") {
+  test("dry-run mode drafts a write with no columns as one, and reports rather than guesses at a step it cannot describe") {
     val capture = new Capture
     val check = new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), None)
     val p = pipeline
     stringsToText(p)
     p.apply("Counter", GenerateSequence.from(0).to(5)).apply("PushToSomeService", ParDo.of(new BeamScenarioJobs.SideEffectLong))
     check.verify(p)
-    val statuses = capture.events.collect { case e: ContractInferenceEvent => e.status }
-    assert(statuses.nonEmpty && statuses.forall(_ == InferenceStatus.SkippedUnrecognized))
-    assert(capture.events.collect { case e: ContractInferenceEvent => e.reason.getOrElse("") }.exists(_.contains("exposes no schema")))
+    val events = capture.events.collect { case e: ContractInferenceEvent => e }.toList
+    assert(events.map(_.status) == List(InferenceStatus.InferredDegraded, InferenceStatus.SkippedUnrecognized))
+    // a write with no columns gets a draft that declares none for it, and says so (D18)
+    assert(events.head.reason.contains("the write to /data/out/lines exposes no columns, so the draft declares none for it"))
+    assert(events.head.contractYaml.exists(y => y.contains("location: /data/out/lines") && !y.contains("schema:")))
+    assert(events.head.selfCheck.contains(SelfCheckStatus.Passed))
+    assert(events(1).reason.exists(_.contains("PushToSomeService")))
   }
 
   test("dry-run mode ends with one job summary merging every draft, after the per-write events, and flushes the sink") {
@@ -121,10 +163,10 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(capture.events.size == 3 && capture.events.last.isInstanceOf[DryRunSummaryEvent], "the summary comes last")
     assert(capture.flushedAfter == 3, "the sink is flushed once everything is published")
     val summary = capture.events.last.asInstanceOf[DryRunSummaryEvent]
-    assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.SkippedUnrecognized -> 1L))
+    assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.InferredDegraded -> 1L))
     assert(summary.mergeStatus == MergeStatus.Merged)
     val merged = com.invaract.contract.ContractParser.parse(summary.mergedContractYaml.get)
-    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a"))
+    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a", "/data/out/lines"))
     assert(summary.job.engine.contains("beam"))
   }
 

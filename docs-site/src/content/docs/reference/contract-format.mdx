@@ -73,7 +73,7 @@ extensions:
 | `description` | no | Free-form human-readable explanation of what this dataset is/contains. Purely documentary — never checked against a real write. An [organizational policy](/guides/enforcing-organizational-policy/) can require every dataset to declare one. |
 | `type` | no | Declared semantic role — `DATA_ASSET`, `SOURCE`, or `CONTROL`, matched case-insensitively. A closed set: any other value is rejected when the contract is parsed. See [Declare Input and Output Types](/guides/declaring-input-and-output-types/). |
 | `derivedFrom` | no | Outputs only: the `name`s of the contract's `inputs` this output is built from. Absent means "all of them" (the default, and the only behavior before this key existed); a list scopes every input check for a write to *this* output to just those inputs. `[]` means derived from no declared input. A name that isn't a declared input is a validation error. See [Map Outputs to Their Inputs](/guides/mapping-outputs-to-inputs/). |
-| `schema.fields` | yes | List of fields (at least one). |
+| `schema.fields` | no | List of fields. Leave `schema` out (or list no fields) for a dataset whose content no contract governs, such as a dead-letter folder of text lines: its columns are not checked, and validation warns so a schema left out by mistake is never silent. |
 
 ## Field fields
 
@@ -153,7 +153,7 @@ well-formed. `ContractValidator` collects every issue in one pass:
 | Empty/missing dataset `name` or `location` | Error |
 | Duplicate dataset name within `inputs` or `outputs` | Error |
 | Two `outputs` entries declaring the same `location` | Warning |
-| Schema with zero fields | Error |
+| Dataset with no `schema`, or a schema with zero fields (its columns are not checked) | Warning |
 | Duplicate field name within a schema (including nested `properties`) | Error |
 | Empty field `name` or `type` | Error |
 | Field `type` not in the known-types set (and not a struct) | Warning |

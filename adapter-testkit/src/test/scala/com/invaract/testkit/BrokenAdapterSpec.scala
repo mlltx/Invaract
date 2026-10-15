@@ -25,8 +25,10 @@ class BrokenAdapterSpec extends AnyFunSuite {
       rewritePlan: (ScenarioJob, Plan) => Plan = (_, p) => p,
       rewriteChecked: CheckedWrite => CheckedWrite = identity,
       rewriteOutcome: (ScenarioJob, ScenarioOutcome) => ScenarioOutcome = (_, o) => o,
-      boundaryTypes: Set[String] = Set.empty
+      boundaryTypes: Set[String] = Set.empty,
+      outputsWritten: Boolean = true
   ) extends ReferenceAdapter() {
+    override protected def checksOutputsWritten: Boolean = outputsWritten
     override protected def checkedWrite(job: ScenarioJob): CheckedWrite = {
       val c = super.checkedWrite(job)
       rewriteChecked(c.copy(plan = rewritePlan(job, c.plan), lineageBoundaryTypes = boundaryTypes))
@@ -176,6 +178,8 @@ class BrokenAdapterSpec extends AnyFunSuite {
     Mistake("loses what each column is derived from",
       new Variant(rewritePlan = (_, p) => rewrite(p) { case Project(in, cols) => Project(in, cols.map(c => NamedExpr(c.name, Literal(0L, "long")))) }),
       Set("lineage-passthrough-cast-and-constant", "lineage-through-join-and-filter", "sensitivity-follows-a-cast", "role-control-contributing-contradicts", "role-source-contributing-conforms")),
+    Mistake("does not refuse a job that never writes a declared output", new Variant(outputsWritten = false),
+      Set("declared-output-never-written")),
     Mistake("cannot classify a row-level change", new Variant(rewriteChecked = _.copy(rowMutation = None)),
       Set("unconditional-delete-forbidden")),
     Mistake("flattens nested types to strings",

@@ -3,7 +3,7 @@
 
 package com.invaract.testkit
 
-import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, ViolationType}
+import com.invaract.verification.{AdapterCapabilities, Capability, CapabilityCheck, OutputChecker, ViolationType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -53,7 +53,9 @@ class ConformanceKitSpec extends AnyFunSuite {
 
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
-      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet
+      // a contract declaring an output the job never writes is what check.outputsWritten is about
+      val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, List(s.job.output.location)).nonEmpty
+      val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ (if (unwritten) Set(Capability.CheckOutputsWritten) else Set.empty)
       s.focus.foreach { c =>
         assert(
           relied.contains(c) || s.operations.contains(c) || notDerivable.contains(c),

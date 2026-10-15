@@ -115,7 +115,7 @@ object ContractParser {
     m.put("name", dataset.name)
     m.put("location", dataset.location)
     dataset.format.foreach(m.put("format", _))
-    m.put("schema", schemaToJava(dataset.schema))
+    if (dataset.schema.fields.nonEmpty) m.put("schema", schemaToJava(dataset.schema))
     dataset.saveMode.foreach(m.put("saveMode", _))
     dataset.catalog.foreach(c => m.put("catalog", catalogToJava(c)))
     dataset.description.foreach(m.put("description", _))
@@ -224,11 +224,9 @@ object ContractParser {
     // alone can't tell those two apart (both yield Nil), so presence is
     // decided separately first.
     val derivedFrom = optValue(raw, "derivedFrom").map(_ => optStringList(raw, "derivedFrom", context))
-    val schemaRaw = raw.getOrElse(
-      "schema",
-      throw new ContractParseException(s"Missing 'schema' in $context")
-    )
-    val schema = parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema")
+    // No `schema` declares no columns: the dataset's content is not governed (a dead-letter folder of text lines, a log
+    // export), and its columns are not checked. ContractValidator warns, so it is never mistaken for a schema left out.
+    val schema = raw.get("schema").fold(Schema(Nil))(schemaRaw => parseSchema(loadMap(schemaRaw, s"$context.schema"), s"$context.schema"))
     Dataset(name, location, format, schema, saveMode, catalog, description, datasetType, derivedFrom)
   }
 

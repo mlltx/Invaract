@@ -118,6 +118,39 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(ex.getMessage.contains("2. [MISSING_OUTPUT_FIELD]"))
   }
 
+  private val twoOutputs = ContractParser.parse(
+    """id: pipe2
+      |version: "1.0.0"
+      |outputs:
+      |  - { name: report, location: out/report }
+      |  - { name: audit, location: out/audit }
+      |""".stripMargin
+  )
+
+  test("requireOutputsWritten: a job that writes every declared output goes on, publishing nothing") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.requireOutputsWritten(twoOutputs, List("file:/w/out/report", "out/audit"), UnknownPlan("job"), Some(sink))
+    assert(sink.events.isEmpty)
+  }
+
+  test("requireOutputsWritten: a declared output the job never writes refuses the job, publishing one FAILED event first") {
+    val sink = new TestNotificationSink
+    val job = JobInfo(engine = Some("test"))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireOutputsWritten(twoOutputs, List("out/report"), UnknownPlan("the job's writes"), Some(sink), None, Some(job))
+    }
+    assert(ex.result.violations.map(v => (v.violationType, v.location)) == List((ViolationType.MissingOutput, Some("out/audit"))))
+    assert(ex.getMessage.contains("the job never writes declared output 'audit' (out/audit)") && ex.getMessage.contains("the job's writes"))
+    assert(validationEvents(sink).map(e => (e.status, e.job.flatMap(_.engine))) == List(("FAILED", Some("test"))))
+  }
+
+  test("requireOutputsWritten: an invalid contract is rejected as one, before outputs are looked at") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireOutputsWritten(ContractParser.parse("id: bad\nversion: \"1.0.0\"\n"), Nil, UnknownPlan("job"))
+    }
+    assert(ex.result.violations.forall(_.violationType == ViolationType.InvalidContract))
+  }
+
   test("verifyWrite: an invalid contract is rejected BEFORE the adapter is asked to build the write") {
     val invalid = ContractParser.parse("id: bad\nversion: \"1.0.0\"\n") // no outputs
     var built = false

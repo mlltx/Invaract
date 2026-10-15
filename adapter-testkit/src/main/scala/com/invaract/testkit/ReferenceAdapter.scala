@@ -33,12 +33,19 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
           None,
           Some(jobInfo)
         )
+      // the whole job is known, as on Beam: a declared output it never writes refuses it before its write is checked
+      if (checksOutputsWritten)
+        VerificationPipeline.requireOutputsWritten(contract, List(job.output.location), ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
       VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities), Some(jobInfo))
       sink.passed
     } catch {
       case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
     }
   }
+
+  /** Whether the adapter refuses a job that never writes a declared output (`check.outputsWritten`); the kit's own tests
+    * turn it off to show the scenario for it catches the omission. */
+  protected def checksOutputsWritten: Boolean = true
 
   /** Which engine and job the adapter's events name - an adapter that publishes events always says which engine it is. */
   protected def jobInfo: JobInfo = JobInfo(engine = Some(capabilities.adapter))

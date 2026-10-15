@@ -50,6 +50,9 @@ capabilities:
     status: partial
     note: Declared locations are matched by normalized path suffix. A CTAS with no pre-existing physical path (Hive) has a known, documented location-resolution gap, and ClickHouse reads and writes report locations in different formats.
     docs: SPARK_ADAPTER.md
+  check.outputsWritten:
+    status: unsupported
+    note: Spark is checked one write at a time, as each runs, so it cannot know that a declared output will never be written. A job that never writes one is not refused.
   check.schema:
     status: supported
     note: Column names follow spark.sql.caseSensitive.

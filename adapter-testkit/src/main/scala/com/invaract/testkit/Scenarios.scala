@@ -141,8 +141,9 @@ object Scenarios {
        |          type: string
        |          sensitivityTags: [pii]""".stripMargin
 
-  /** A contract governing two writes: `orders` and `customers` are both declared inputs, and `audit` is a second output
-    * (`out/audit`) so each output can say which inputs it is built from (`Dataset.derivedFrom`). */
+  /** A contract whose output says which of its two declared inputs (`orders`, `customers`) it is built from
+    * (`Dataset.derivedFrom`); the other input is the contract's too, but this output is not built from it. One output, so
+    * the job writes every output its contract declares (an adapter that checks whole jobs refuses one that does not). */
   private val customersInput =
     s"""  - name: customers
        |    location: in/customers
@@ -155,18 +156,18 @@ object Scenarios {
        |    schema:
        |      fields:
        |$ordersContractFields""".stripMargin
+  private def scopedContract(reportDerivedFrom: String) = contract(
+    outputExtras = s"    derivedFrom: [$reportDerivedFrom]",
+    inputs = ordersInput + "\n" + customersInput
+  )
+
+  /** A second declared output, `audit`, that no scenario job writes. */
   private val auditOutput =
     s"""  - name: audit
        |    location: out/audit
-       |    derivedFrom: [customers]
        |    schema:
        |      fields:
        |$defaultOutputFields""".stripMargin
-  private def twoOutputContract(reportDerivedFrom: String) = contract(
-    outputExtras = s"    derivedFrom: [$reportDerivedFrom]",
-    inputs = ordersInput + "\n" + customersInput,
-    otherOutputs = auditOutput
-  )
 
   private val twoInputs =
     s"""  - name: orders
@@ -330,25 +331,32 @@ object Scenarios {
     ),
     Scenario(
       "derived-from-excuses-an-input-the-output-is-not-built-from",
-      "an input that feeds only another of the contract's outputs is not required of a write to this one",
-      "A contract has two outputs built from different inputs. The job writing the first output does not read the second one's input, and that is fine: Invaract does not demand it.",
+      "an input the output is not built from is not required of a write to it",
+      "A contract declares two inputs and says its output is built from only one of them. The job reads that one and not the other, and that is fine: Invaract does not demand an input the output is not built from.",
       Set(Capability.CheckInputExistence),
-      twoOutputContract("orders"), job(), defaults, Expectation.Pass
+      scopedContract("orders"), job(), defaults, Expectation.Pass
     ),
     Scenario(
       "derived-from-requires-every-source-of-the-output",
       "reading an input that is not a source of the output does not stand in for the one that is",
-      "The job writing an output skips the input that output is built from and reads the other output's source instead. Invaract still reports the missing input.",
+      "The job skips the input its output is built from and reads the contract's other input instead. Invaract still reports the missing input.",
       Set(Capability.CheckInputExistence),
-      twoOutputContract("customers"), job(), defaults, Expectation.Reject(Set(ViolationType.MissingInput))
+      scopedContract("customers"), job(), defaults, Expectation.Reject(Set(ViolationType.MissingInput))
     ),
     Scenario(
       "derived-from-rejects-a-read-of-another-outputs-source",
       "with rejectUndeclaredInputs, reading a declared input that is not a source of this output is blocked",
-      "With the strict option on, a job reads an input that belongs to a different output. Invaract stops it as an unapproved source for this output.",
+      "With the strict option on, a job reads a declared input its output is not built from. Invaract stops it as an unapproved source for this output.",
       Set(Capability.CheckInputExistence),
-      twoOutputContract("orders"), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id"))),
+      scopedContract("orders"), job(inputs = List(orders, customers), join = Some(JoinOn("id", "id"))),
       defaults.copy(rejectUndeclaredInputs = true), Expectation.Reject(Set(ViolationType.UndeclaredInput))
+    ),
+    Scenario(
+      "declared-output-never-written",
+      "a job that never writes one of its contract's declared outputs is refused before anything runs",
+      "A contract promises two outputs, a report and an audit. The job writes the report, correctly, but never the audit. Invaract refuses the job: an output the contract says the job writes, it must write.",
+      Set(Capability.CheckOutputsWritten),
+      contract(otherOutputs = auditOutput), job(), defaults, Expectation.Reject(Set(ViolationType.MissingOutput))
     ),
     Scenario(
       "unrecognized-step-keeps-the-reads-beneath-it-visible",

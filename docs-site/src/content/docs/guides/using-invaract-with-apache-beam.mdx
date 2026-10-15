@@ -99,6 +99,15 @@ How to correct it:
 
 Nothing was written: the check happens in `run`, before the pipeline is handed on.
 
+## Every declared output must be written
+
+A contract that declares an output promises the job writes it. Because the whole pipeline is
+known before it runs, a pipeline that never writes one of its contract's outputs is refused
+before anything starts, with one `MISSING_OUTPUT` violation per output nothing lands on, as in
+`the job never writes declared output 'audit' (out/audit)`. Write it, or take it out of the
+contract if the job no longer produces it. (Spark checks one write at a time, as each runs, so
+it cannot know a write will never come and does not refuse this.)
+
 ## How locations are written in a contract
 
 | In the job | Declared in the contract |
@@ -129,7 +138,10 @@ deployment keeps its data; declare an absolute location to pin one.
   same contract describes a Spark job writing `key` and `value` columns to the topic. A write whose data is plain Java objects (a
   `TextIO.write()` of strings, a Pub/Sub write of strings or messages, a BigQuery write of
   `TableRow`s that names no table schema, as a write into an existing table with `CREATE_NEVER`
-  often does) has no columns to check, so it is **refused as an unverifiable write**, not passed.
+  often does) has no columns to check, so it is **refused as an unverifiable write**, not passed,
+  unless the output it lands on declares no columns either: an output whose content no contract
+  governs (a folder of rejected lines) can leave `schema` out, and is then checked for its
+  location and format only.
 - An input's schema is the one the job states for it: the file schema a Parquet or Avro read
   names (even when the job reads only some columns), or the rows a `JsonToRow` or
   `CsvIO.parseRows` straight after a text read produces. Beam does not open files before running.
@@ -185,7 +197,8 @@ contract inferred from each write it can describe. With a
 
 Each draft is checked against the write it was inferred from, as enforcement would check it, and
 the result is the event's `selfCheck` (`PASSED`, or `FAILED` with the violations). A write with
-no schema, or a step the adapter cannot describe, is reported with status
+no columns (a text write of strings) gets a draft whose output declares none, with status
+`INFERRED_DEGRADED` and that reason; a step the adapter cannot describe is reported with status
 `SKIPPED_UNRECOGNIZED` and the reason. After the last write, one `JOB_SUMMARY` event counts
 the writes by status and merges every draft into one contract named after the job (its
 `--jobName`), the same summary Spark publishes when its application ends. Beam publishes it

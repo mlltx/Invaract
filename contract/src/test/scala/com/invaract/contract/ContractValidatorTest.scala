@@ -73,7 +73,7 @@ class ContractValidatorTest extends AnyFunSuite {
     assert(warnings("variant<int>").head.message.contains("Unrecognized field type 'variant<int>'"))
   }
 
-  test("validate should error when a dataset schema has no fields") {
+  test("validate should accept, with a warning, a dataset that declares no fields") {
     val contract = Contract(
       id = "empty_schema",
       version = ContractVersion(1, 0, 0),
@@ -85,7 +85,8 @@ class ContractValidatorTest extends AnyFunSuite {
     )
 
     val result = ContractValidator.validate(contract)
-    assert(result.errors.exists(_.message.contains("at least one field")))
+    assert(result.isValid, "a dataset may declare no columns")
+    assert(result.warnings.map(i => (i.path, i.message)) == List(("outputs[0].schema", "Declares no fields, so this dataset's columns are not checked")))
   }
 
   test("validate should error on duplicate output dataset names") {

@@ -247,8 +247,10 @@ object ContractValidator {
     issues ++= nonCanonicalWarning(s"$path.catalog.technology", "catalog technology", dataset.catalog.flatMap(_.technology), "technologies",
       CatalogTechnologies.All, CatalogTechnologies.isCanonical, "")
 
+    // A dataset may declare no columns (its content is not governed, so its columns are not checked). That is allowed, and
+    // said out loud, so a schema left out by mistake is never silent.
     if (dataset.schema.fields.isEmpty) {
-      issues += ValidationIssue(ValidationSeverity.Error, s"$path.schema", "Schema must declare at least one field")
+      issues += ValidationIssue(ValidationSeverity.Warning, s"$path.schema", "Declares no fields, so this dataset's columns are not checked")
     }
 
     duplicateNames(dataset.schema.fields.map(_.name)).foreach { name =>
