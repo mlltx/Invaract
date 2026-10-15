@@ -46,51 +46,44 @@ final class BeamCheck private[beamadapter] (
     // a step that may change data but that cannot be checked is refused before any write is judged (fail closed)
     translation.unverifiable.headOption.foreach(u => VerificationPipeline.rejectUnverifiableWrite(c, u.operation, u.plan, sink, runId, Some(job)))
     if (translation.writes.isEmpty)
-      logger.warn(s"Invaract found no file write it recognises in this Beam pipeline, so nothing was checked against '${c.id}@${c.version}'.")
-    translation.writes.foreach { w =>
-      w.outputSchema match {
-        case None =>
-          VerificationPipeline.rejectUnverifiableWrite(
-            c,
-            s"a write to ${w.location} whose data exposes no schema (Beam shows only plain Java objects), so its columns cannot be checked",
-            w.plan,
-            sink,
-            runId,
-            Some(job)
-          )
-        case Some(_) if w.format.isEmpty && BeamCheck.declaredFormat(c, w).isDefined =>
-          // the core skips a format check when the actual format is unknown; a contract that names a format would then pass a
-          // write through a sink nobody can name, so it is refused instead (docs/BEAM_ADAPTER.md, D10)
-          VerificationPipeline.rejectUnverifiableWrite(
-            c,
-            s"a write to ${w.location} through a sink whose file format cannot be told, while the contract declares '${BeamCheck.declaredFormat(c, w).get}'",
-            w.plan,
-            sink,
-            runId,
-            Some(job)
-          )
-        case Some(schema) =>
-          VerificationPipeline.verifyWrite(
-            c,
-            // Avro and Beam column names are case-sensitive; there is no cast, row-level change or checkpoint to account for
-            CheckedWrite(BeamCheck.asDeclared(c, w), w.inputSchemas, schema, caseSensitive = true, rowMutation = None, lineageBoundaryTypes = Set.empty),
-            options,
-            sink,
-            runId,
-            capabilities,
-            Some(job)
-          )
-      }
-    }
+      logger.warn(s"Invaract found no write it recognises in this Beam pipeline, so nothing was checked against '${c.id}@${c.version}'.")
+    translation.writes.foreach(w => BeamCheck.refusal(c, w, options).fold(check(c, w))(why => reject(c, why, w)))
   }
+
+  private def check(c: Contract, w: TranslatedWrite): Unit =
+    VerificationPipeline.verifyWrite(
+      c,
+      // Avro and Beam column names are case-sensitive; there is no cast, row-level change or checkpoint to account for. A read
+      // the adapter sees but cannot locate is where a declared input may be read unseen: its plan node is that boundary.
+      CheckedWrite(
+        BeamCheck.asDeclared(c, w),
+        w.inputSchemas,
+        w.outputSchema.get, // `refusal` refuses a write with no schema before it gets here
+        caseSensitive = true,
+        rowMutation = None,
+        lineageBoundaryTypes = if (w.unlocatedReads.isEmpty) Set.empty else Set(BeamTranslator.UnlocatedSourceType)
+      ),
+      options,
+      sink,
+      runId,
+      capabilities,
+      Some(job)
+    )
+
+  private def reject(c: Contract, why: String, w: TranslatedWrite): Unit =
+    VerificationPipeline.rejectUnverifiableWrite(c, why, w.plan, sink, runId, Some(job))
 
   private def infer(translation: BeamTranslation): Unit = {
     translation.writes.foreach { w =>
       w.outputSchema match {
         case Some(schema) =>
           try {
-            val draft = ContractInference.infer(InferredWrite(w.location, w.format, None, schema), w.inputSchemas, w.plan)
-            report(InferenceStatus.Inferred, None, Some(w.location), Some(ContractParser.write(draft)))
+            val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.inputSchemas, w.plan)
+            // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
+            val (status, reason) =
+              if (w.unlocatedReads.isEmpty) (InferenceStatus.Inferred, None)
+              else (InferenceStatus.InferredDegraded, Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}"))
+            report(status, reason, Some(w.location), Some(ContractParser.write(draft)))
           } catch { case NonFatal(e) => report(InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(w.location), None) }
         case None =>
           report(InferenceStatus.SkippedUnrecognized, Some(s"the write to ${w.location} exposes no schema to infer a contract from"), Some(w.location), None)
@@ -126,4 +119,25 @@ private[beamadapter] object BeamCheck {
   /** The format the contract declares for the dataset `write` is checked against, normalised as the core compares it. */
   def declaredFormat(contract: Contract, write: TranslatedWrite): Option[String] =
     OutputChecker.expectedOutputFor(contract.outputs, write.location).flatMap(_.format).map(_.trim.toLowerCase).filter(_.nonEmpty)
+
+  /** The save mode the contract declares for the dataset `write` is checked against. */
+  def declaredSaveMode(contract: Contract, write: TranslatedWrite): Option[String] =
+    OutputChecker.expectedOutputFor(contract.outputs, write.location).flatMap(_.saveMode).map(_.trim.toLowerCase).filter(_.nonEmpty)
+
+  /** Why `write` is refused without being checked, if it is: what the contract asks about it cannot be told from the pipeline.
+    * The core skips a comparison when the actual side is unknown, so each of these would otherwise pass unchecked
+    * (docs/BEAM_ADAPTER.md, D10 to D12). */
+  def refusal(contract: Contract, write: TranslatedWrite, options: VerificationOptions): Option[String] =
+    if (write.outputSchema.isEmpty)
+      Some(s"a write to ${write.location} whose data exposes no schema (Beam shows only plain Java objects), so its columns cannot be checked")
+    else if (write.format.isEmpty && declaredFormat(contract, write).isDefined)
+      // the core skips a format check when the actual format is unknown, so a named format would pass a write nobody can name
+      Some(s"a write to ${write.location} through a sink whose file format cannot be told, while the contract declares '${declaredFormat(contract, write).get}'")
+    else if (write.plan.saveMode.isEmpty && declaredSaveMode(contract, write).isDefined)
+      // a file write has no save mode in Beam (it always replaces the files it names): only a BigQuery write states one
+      Some(s"a write to ${write.location} that states no save mode (only a BigQuery write does), while the contract declares '${declaredSaveMode(contract, write).get}'")
+    else if (options.rejectUndeclaredInputs && write.unlocatedReads.nonEmpty)
+      // strict mode promises no read goes undeclared, which cannot be shown for a read whose source is not known
+      Some(s"the write to ${write.location} depends on reads whose source cannot be located (${write.unlocatedReads.mkString("; ")}), so an undeclared input cannot be ruled out")
+    else None
 }

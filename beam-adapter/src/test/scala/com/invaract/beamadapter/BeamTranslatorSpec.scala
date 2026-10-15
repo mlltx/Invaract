@@ -10,7 +10,7 @@ import org.apache.avro.generic.GenericRecord
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.coders.ByteArrayCoder
 import org.apache.beam.sdk.extensions.avro.io.AvroIO
-import org.apache.beam.sdk.io.{FileIO, GenerateSequence, TFRecordIO, TextIO}
+import org.apache.beam.sdk.io.{WriteFiles, FileIO, GenerateSequence, TFRecordIO, TextIO}
 import org.apache.beam.sdk.io.parquet.ParquetIO
 import org.apache.beam.sdk.options.PipelineOptionsFactory
 import org.apache.beam.sdk.transforms.{Create, MapElements, PTransform, SerializableFunction}
@@ -122,12 +122,21 @@ class BeamTranslatorSpec extends AnyFunSuite {
     assert(w.format.isEmpty && w.location == "/data/out/other")
   }
 
+  test("a TFRecord write is recognised by its prefix, in the tfrecord format") {
+    val p = pipeline
+    p.apply("Bytes", Create.of(Array[Byte](1, 2)).withCoder(ByteArrayCoder.of())).apply("WriteRecords", TFRecordIO.write().to("/data/out/tf/part"))
+    val translation = BeamTranslator.translate(p)
+    assert(translation.unverifiable.isEmpty)
+    val Seq(w) = translation.writes
+    assert(withoutDrive(w.location) == "/data/out/tf/part" && w.format.contains("tfrecord"))
+  }
+
   test("a file write through a sink this adapter does not recognise is refused as unverifiable, not guessed") {
     val p = pipeline
-    p.apply("Bytes", Create.of(Array[Byte](1, 2)).withCoder(ByteArrayCoder.of())).apply("WriteRecords", TFRecordIO.write().to("/data/out/tf"))
+    p.apply("Lines", Create.of("a", "b")).apply("WriteTeam", WriteFiles.to[String, Void, String](new TeamSink("/data/out/team")))
     val translation = BeamTranslator.translate(p)
     assert(translation.writes.isEmpty)
-    assert(translation.unverifiable.map(_.operation).exists(m => m.contains("TFRecord") || m.contains("does not recognise")))
+    assert(translation.unverifiable.map(_.operation).exists(_.contains("TeamSink, which this adapter does not recognise")))
   }
 
   test("several writes are each translated, and a team's own composite around a write is seen through") {
@@ -235,6 +244,23 @@ private final class Identity[T] extends SerializableFunction[T, T] {
 
 private final class CsvLine extends SerializableFunction[GenericRecord, String] {
   override def apply(r: GenericRecord): String = r.toString
+}
+
+/** A team's own file sink, which no Beam IO names. */
+private final class TeamSink(dir: String)
+    extends org.apache.beam.sdk.io.FileBasedSink[String, Void, String](
+      org.apache.beam.sdk.options.ValueProvider.StaticValueProvider.of(org.apache.beam.sdk.io.FileBasedSink.convertToFileResourceIfPossible(dir)),
+      org.apache.beam.sdk.io.DynamicFileDestinations.constant[String](
+        org.apache.beam.sdk.io.DefaultFilenamePolicy.fromStandardParameters(
+          org.apache.beam.sdk.options.ValueProvider.StaticValueProvider.of(org.apache.beam.sdk.io.FileBasedSink.convertToFileResourceIfPossible(dir + "/part")),
+          null, null, false
+        )
+      )
+    ) {
+  override def createWriteOperation(): org.apache.beam.sdk.io.FileBasedSink.WriteOperation[Void, String] =
+    new org.apache.beam.sdk.io.FileBasedSink.WriteOperation[Void, String](this) {
+      override def createWriter(): org.apache.beam.sdk.io.FileBasedSink.Writer[Void, String] = throw new UnsupportedOperationException("graph only")
+    }
 }
 
 /** A sink whose class says nothing about its format. */

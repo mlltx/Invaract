@@ -8,6 +8,7 @@ import com.invaract.ir.Plan
 import com.invaract.testkit.{ConformanceAdapter, EnvironmentUnavailable, RecordingSink, ScenarioJob, ScenarioOutcome}
 import com.invaract.verification.{AdapterCapabilities, ConfigSource, ContractViolationException, VerificationOptions}
 import org.apache.beam.runners.direct.DirectRunner
+import org.apache.beam.sdk.io.gcp.testing.{FakeBigQueryServices, FakeDatasetService, FakeJobService}
 import org.apache.beam.sdk.options.PipelineOptionsFactory
 import org.apache.beam.sdk.{Pipeline, PipelineResult, PipelineRunner}
 
@@ -31,8 +32,9 @@ class BeamConformanceAdapter extends ConformanceAdapter {
     val root = Files.createTempDirectory(s"beam-conformance-")
     try {
       val beamOptions = PipelineOptionsFactory.create()
+      beamOptions.setTempLocation(root.resolve("tmp").toString)
       val pipeline = Pipeline.create(beamOptions)
-      BeamScenarioJobs.build(pipeline, job, root)
+      BeamScenarioJobs.build(pipeline, job, root, BeamConformanceAdapter.targetFor(contract, job))
       val check = InvaractBeam.enforce(contract, options, Some(sink), ConfigSource.empty, InvaractBeam.jobInfoOf(beamOptions))
       val runner = InvaractRunner.enforcing(check, DirectRunner.fromOptions(beamOptions).asInstanceOf[PipelineRunner[PipelineResult]])
       runner.run(pipeline).waitUntilFinish()
@@ -48,6 +50,21 @@ class BeamConformanceAdapter extends ConformanceAdapter {
 }
 
 private[beamadapter] object BeamConformanceAdapter {
+
+  /** The project of the in-memory BigQuery the scenario jobs write to. */
+  val Project = "conformance"
+
+  /** Files, unless the scenario is about something only a BigQuery write states in Beam - a save mode, or a catalog table - in
+    * which case the job writes a BigQuery table, to a fresh in-memory BigQuery (Beam's own `FakeBigQueryServices`) so it runs. */
+  def targetFor(contract: Contract, job: ScenarioJob): BeamScenarioJobs.Target =
+    if (job.output.registeredAs.isEmpty && !contract.outputs.exists(_.saveMode.isDefined)) BeamScenarioJobs.ToFiles
+    else {
+      FakeDatasetService.setUp()
+      FakeJobService.setUp()
+      val datasets = new FakeDatasetService()
+      datasets.createDataset(Project, job.output.location.split('/').init.mkString("_"), "", "", null)
+      BeamScenarioJobs.BigQuery(new FakeBigQueryServices().withDatasetService(datasets).withJobService(new FakeJobService()), Project)
+    }
 
   /** Removes `root` and everything under it; a file the platform still holds open is left rather than failing the run. */
   def deleteQuietly(root: Path): Unit =

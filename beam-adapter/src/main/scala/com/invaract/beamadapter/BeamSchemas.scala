@@ -129,4 +129,53 @@ private[beamadapter] object BeamSchemas {
       case _                 => LogicalType.OtherType("unknown")
     }
   }
+
+  /** The columns of a BigQuery table schema given as JSON (`{"fields":[{"name":..,"type":..,"mode":..,"fields":[..]}]}`, the form
+    * `BigQueryIO.write().withSchema(...)` publishes), mapped as docs/MULTI_ENGINE_ADAPTERS.md's type table says; `None` when it is not
+    * a table schema (a schema the job computes per destination is published as text, not JSON). */
+  def fromBigQueryJson(json: String): Option[LogicalSchema] =
+    Try(new Yaml().load[AnyRef](json) match {
+      case schema: java.util.Map[_, _] =>
+        Option(schema.asInstanceOf[java.util.Map[String, AnyRef]].get("fields")).collect { case fields: java.util.List[_] => bigQueryFields(fields) }
+      case _ => None
+    }).toOption.flatten
+
+  private def bigQueryFields(fields: java.util.List[_]): LogicalSchema =
+    LogicalSchema(fields.asScala.toList.map { f =>
+      val field = f.asInstanceOf[java.util.Map[String, AnyRef]]
+      val mode = Option(field.get("mode")).map(_.toString.toUpperCase).getOrElse("NULLABLE")
+      val element = bigQueryType(field)
+      // REPEATED is an array that is never null itself (BigQuery stores an empty array); REQUIRED is not nullable
+      if (mode == "REPEATED") LogicalField(field.get("name").toString, LogicalType.ArrayType(element), nullable = false)
+      else LogicalField(field.get("name").toString, element, nullable = mode != "REQUIRED")
+    })
+
+  private def bigQueryType(field: java.util.Map[String, AnyRef]): LogicalType = {
+    def asInt(key: String): Option[Int] = Option(field.get(key)).flatMap(v => Try(v.toString.toInt).toOption)
+    Option(field.get("type")).map(_.toString.toUpperCase).getOrElse("") match {
+      case "STRING"               => LogicalType.StringType
+      case "BYTES"                => LogicalType.BinaryType
+      case "INTEGER" | "INT64"    => LogicalType.LongType
+      case "FLOAT" | "FLOAT64"    => LogicalType.DoubleType
+      case "BOOLEAN" | "BOOL"     => LogicalType.BooleanType
+      case "NUMERIC"              => LogicalType.DecimalType(asInt("precision").getOrElse(38), asInt("scale").getOrElse(9))
+      // a BIGNUMERIC wider than the neutral decimal's 38 digits has no neutral equivalent
+      case "BIGNUMERIC" | "BIGDECIMAL" =>
+        (asInt("precision"), asInt("scale")) match {
+          case (Some(p), s) if p <= 38 => LogicalType.DecimalType(p, s.getOrElse(0))
+          case _                       => LogicalType.OtherType("bignumeric")
+        }
+      case "DATE"                 => LogicalType.DateType
+      case "DATETIME"             => LogicalType.TimestampNtzType
+      case "TIME"                 => LogicalType.TimeType
+      case "TIMESTAMP"            => LogicalType.TimestampType
+      case "JSON"                 => LogicalType.JsonType
+      case "GEOGRAPHY"            => LogicalType.GeographyType
+      case "INTERVAL"             => LogicalType.IntervalType
+      case "RECORD" | "STRUCT"    =>
+        Option(field.get("fields")).collect { case nested: java.util.List[_] => LogicalType.StructType(bigQueryFields(nested).fields) }
+          .getOrElse(LogicalType.OtherType("struct"))
+      case other                  => LogicalType.OtherType(other.toLowerCase)
+    }
+  }
 }

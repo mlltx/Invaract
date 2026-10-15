@@ -255,4 +255,84 @@ class BeamCheckSpec extends AnyFunSuite {
     otherSinkWrite(r)
     InvaractBeam.enforce(contractWithOutputFormat(Some("  "))).verify(r) // a blank format declares nothing
   }
+
+  // --- reads that cannot be located, save modes, BigQuery ---
+
+  private val bigQueryContract = com.invaract.contract.ContractParser.parse(
+    """id: orders_report
+      |version: "1.0.0"
+      |inputs:
+      |  - name: orders
+      |    location: in/orders
+      |    schema:
+      |      fields:
+      |        - { name: id, type: long }
+      |outputs:
+      |  - name: report
+      |    location: ds/report
+      |    saveMode: append
+      |    schema:
+      |      fields:
+      |        - { name: id, type: long, required: true }
+      |""".stripMargin
+  )
+
+  private def queryToBigQuery(p: Pipeline, disposition: org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition): Unit = {
+    val schema = new com.google.api.services.bigquery.model.TableSchema()
+      .setFields(java.util.Arrays.asList(new com.google.api.services.bigquery.model.TableFieldSchema().setName("id").setType("INT64").setMode("REQUIRED")))
+    p.apply("Query", org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.readTableRows().fromQuery("SELECT id FROM `proj.in.orders`").usingStandardSql())
+      .apply("Write", org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.writeTableRows().to("proj:ds.report").withSchema(schema).withWriteDisposition(disposition))
+  }
+
+  test("a declared input the job may read through a read that cannot be located is reported unverifiable, not missing") {
+    val capture = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    InvaractBeam.enforce(bigQueryContract, sink = Some(capture)).verify(p) // does not throw: MISSING_INPUT would be a false alarm
+    val Seq(passed) = capture.events.collect { case e: ContractValidationEvent => e }
+    assert(passed.status == "PASSED")
+    assert(passed.unverifiableInputs.map(i => (i.inputName, i.unknownNodeTypes)) == List(("orders", List(BeamTranslator.UnlocatedSourceType))))
+  }
+
+  test("strict about undeclared inputs, a write that depends on a read that cannot be located is refused") {
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    val strict = com.invaract.verification.VerificationOptions(rejectUndeclaredInputs = true)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(bigQueryContract, strict).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("an undeclared input cannot be ruled out") && e.getMessage.contains("Query: a BigQuery query"))
+  }
+
+  test("a BigQuery write's save mode is checked against the declared one") {
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_TRUNCATE)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(bigQueryContract).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputSaveModeMismatch))
+  }
+
+  test("a file write, which states no save mode, is refused when the contract declares one, and checked when it declares none") {
+    val withSaveMode = ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(saveMode = Some("append"))))
+    val p = pipeline
+    ordersToParquet(p)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(withSaveMode).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("states no save mode") && e.getMessage.contains("'append'"))
+
+    val blank = ExampleJob.contract().copy(outputs = ExampleJob.contract().outputs.map(_.copy(saveMode = Some(" "))))
+    val q = pipeline
+    ordersToParquet(q)
+    InvaractBeam.enforce(blank).verify(q) // a blank save mode declares nothing
+  }
+
+  test("dry-run mode marks a draft that cannot list every input degraded, naming the read") {
+    val capture = new Capture
+    val p = pipeline
+    queryToBigQuery(p, org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
+    new BeamCheck(None, com.invaract.verification.VerificationOptions(), Some(capture), InvaractBeam.jobInfoOf(PipelineOptionsFactory.create()), BeamCapabilities.declared)
+      .verify(p)
+    val Seq(event) = capture.events.collect { case e: ContractInferenceEvent => e }
+    assert(event.status == InferenceStatus.InferredDegraded)
+    assert(event.reason.exists(_.contains("Query: a BigQuery query")))
+    assert(event.contractYaml.exists(y => y.contains("saveMode: append") && y.contains("location: proj/ds/report")))
+  }
 }
