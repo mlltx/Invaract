@@ -263,3 +263,47 @@ class BeamProjectionReadSpec extends AnyFunSuite {
     assert(w.outputSchema.exists(_.fields.map(_.name) == List("id")), "what is written is the projection")
   }
 }
+
+/** Text written or read in a known format by Beam's schema-aware transforms, so its columns are known. */
+class BeamTextFormatsSpec extends AnyFunSuite {
+  import org.apache.beam.sdk.schemas.Schema
+  import org.apache.beam.sdk.io.csv.CsvIO
+  import org.apache.beam.sdk.transforms.{JsonToRow, ToJson}
+  import org.apache.beam.sdk.values.Row
+  import org.apache.commons.csv.CSVFormat
+
+  private val rows = Schema.builder().addInt64Field("id").addNullableField("amount", Schema.FieldType.INT64).build()
+  private def pipeline = Pipeline.create(PipelineOptionsFactory.create())
+  private def parsedJson(p: Pipeline) = p.apply("Lines", TextIO.read().from("/data/in/lines/*.json")).apply("Parse", JsonToRow.withSchema(rows))
+  private def columns(s: Option[LogicalSchema]) = s.map(_.fields.map(f => f.name -> f.nullable))
+
+  test("a text read parsed straight into rows has the parser's columns, and CsvIO writes csv with the rows' columns") {
+    val p = pipeline
+    parsedJson(p).apply("Csv", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.format.contains("csv") && withoutDrive(w.location) == "/data/out/csv/part")
+    assert(columns(w.outputSchema).contains(List("id" -> false, "amount" -> true)))
+    assert(w.inputSchemas.map { case (l, s) => l -> s.fields.map(_.name) } == List("/data/in/lines" -> List("id", "amount")))
+  }
+
+  test("a text write of rows ToJson made is json, with the rows' columns") {
+    val p = pipeline
+    parsedJson(p).apply("Json", ToJson.of[Row]()).apply("Write", TextIO.write().to("/data/out/json/part"))
+    val Seq(w) = BeamTranslator.translate(p).writes
+    assert(w.format.contains("json") && w.plan.format.contains("json"))
+    assert(columns(w.outputSchema).contains(List("id" -> false, "amount" -> true)))
+  }
+
+  test("a text read whose lines a parser shares with another step, or that no parser reads, has no columns") {
+    val p = pipeline
+    val lines = p.apply("Lines", TextIO.read().from("/data/in/lines/*.json"))
+    lines.apply("Parse", JsonToRow.withSchema(rows)).apply("Csv", CsvIO.writeRows("/data/out/csv/part", CSVFormat.DEFAULT.withHeader("id", "amount")))
+    lines.apply("Raw", TextIO.write().to("/data/out/raw"))
+    val writes = BeamTranslator.translate(p).writes
+    assert(writes.forall(_.inputSchemas.isEmpty), "the read's lines are not all parsed, so the parser's columns are not the dataset's")
+    val raw = writes.find(_.location.endsWith("raw")).get
+    assert(raw.outputSchema.isEmpty && raw.format.contains("text"), "plain lines are text, with no columns")
+  }
+
+  private def withoutDrive(location: String): String = location.replaceFirst("^[A-Za-z]:(?=/)", "")
+}

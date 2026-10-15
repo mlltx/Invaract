@@ -48,7 +48,8 @@ private[beamadapter] object BeamTranslator {
   def translate(top: List[BeamStep]): BeamTranslation = {
     val nodes = top.flatMap(visible)
     val producers = nodes.flatMap(n => n.step.outputs.map(_.name -> n)).toMap
-    val consumed = nodes.flatMap(_.step.inputs.map(_.name)).toSet
+    val consumers = nodes.flatMap(n => n.step.inputs.map(_.name -> n)).groupBy(_._1).map { case (k, v) => k -> v.map(_._2) }
+    val consumed = consumers.keySet
 
     val planOf = mutable.Map.empty[String, Plan]
     // by step name: a Node is a case class over the whole step subtree, which `distinct` would hash in full
@@ -88,17 +89,29 @@ private[beamadapter] object BeamTranslator {
       val above = upstream(w)
       val located = above.collect { case r: ReadNode => r }
       // a read's columns: its own output's; for the folder a FileIO.match() reads, those of the reader its files are handed to
-      val readSchemas = located.flatMap(r => r.columns.toList.flatMap(s => r.locations.map(_ -> s)))
+      // a text read parsed straight away into rows (JsonToRow, CsvIO.parseRows) has the parser's columns
+      def parsedColumns(r: ReadNode): Option[LogicalSchema] =
+        r.step.outputs.headOption.flatMap(o => consumers.getOrElse(o.name, Nil) match {
+          case parser :: Nil if BeamIO.isTextParser(parser.step) => parser.step.outputs.headOption.flatMap(BeamSchemas.of)
+          case _                                                 => None
+        })
+      val readSchemas = located.flatMap(r => r.columns.orElse(parsedColumns(r)).toList.flatMap(s => r.locations.map(_ -> s)))
       val readerSchemas = above.collect { case f: FileReaderNode => f }.flatMap { f =>
         f.columns.toList.flatMap(s => upstream(f).collect { case r: ReadNode => r }.flatMap(_.locations).map(_ -> s))
       }
       val unlocated = above.collect { case u: UnlocatedReadNode => s"${u.step.name}: ${u.what}" } ++
         above.collect { case f: FileReaderNode if !upstream(f).exists(_.isInstanceOf[ReadNode]) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
+      // a text write of what a formatter made from rows (ToJson) has those rows' columns, in the formatter's format
+      val formatter = if (!w.format.contains("text")) None else sourcesOf(w) match {
+        case (o: OtherNode) :: Nil => BeamIO.textFormatterFormat(o.step).map(f => f -> o.step.inputs.headOption.flatMap(BeamSchemas.of))
+        case _                     => None
+      }
+      val written = formatter.fold(w)(f => w.copy(format = Some(f._1)))
       TranslatedWrite(
-        w.location,
-        w.format,
-        writePlan(w),
-        w.declaredSchema.orElse(w.step.inputs.headOption.flatMap(BeamSchemas.of)),
+        written.location,
+        written.format,
+        writePlan(written),
+        w.declaredSchema.orElse(w.step.inputs.headOption.flatMap(BeamSchemas.of)).orElse(formatter.flatMap(_._2)),
         (readSchemas ++ readerSchemas).distinct,
         unlocated.distinct,
         bounded = w.step.inputs.forall(_.bounded)

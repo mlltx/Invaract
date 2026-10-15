@@ -150,6 +150,17 @@ private[beamadapter] object BeamIO {
   private def isInJobSource(sourceClass: String): Boolean =
     sourceClass.endsWith("Create$Values$CreateSource") || sourceClass.contains("CountingSource")
 
+  /** Steps that turn lines of text into rows with a schema (`JsonToRow`, `CsvIO.parseRows`): the columns a text read really has
+    * when it is parsed straight away. */
+  def isTextParser(step: BeamStep): Boolean =
+    Set("JsonToRow$JsonToRowFn", "JsonToRow$JsonToRowWithFailures", "AutoValue_CsvIOParse").contains(simpleName(step))
+
+  /** Steps that turn rows into lines of text in a known format (`ToJson`): the columns and format a text write of their output has. */
+  def textFormatterFormat(step: BeamStep): Option[String] = simpleName(step) match {
+    case "ToJson" => Some(Formats.Json)
+    case _        => None
+  }
+
   // --- writes other than file writes ---
 
   /** The write `step` is, if it is one of the non-file IOs (BigQuery, Kafka, JDBC, Pub/Sub). */
@@ -224,12 +235,16 @@ private[beamadapter] object BeamIO {
   def isFileWrite(step: BeamStep): Boolean = step.transform.isInstanceOf[WriteFiles[_, _, _]]
 
   /** The file write a write unit (a step holding exactly one `WriteFiles`) makes: where its files land and in which format. */
-  def fileWrite(unit: BeamStep): IoWrite = {
+  def fileWrite(unit: BeamStep): IoWrite =
+    // CsvIO writes its rows as CSV through a text sink: the format is known even though the sink's is only "text"
+    fileWrite(unit, if (simpleName(unit) == "AutoValue_CsvIO_Write") Some(Formats.Csv) else None)
+
+  private def fileWrite(unit: BeamStep, knownFormat: Option[String]): IoWrite = {
     val all = unit.withDescendants
     val sink = all.map(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = all.flatMap(_.display.get("filePrefix")).headOption
     def prefixed(format: String, what: String): IoWrite =
-      prefix.fold[IoWrite](IoWrite.Unverifiable(s"$what write whose file prefix is not published"))(p => IoWrite.Located(BeamLocations.folder(p), Some(format)))
+      prefix.fold[IoWrite](IoWrite.Unverifiable(s"$what write whose file prefix is not published"))(p => IoWrite.Located(BeamLocations.folder(p), knownFormat.orElse(Some(format))))
     sink match {
       case Some("org.apache.beam.sdk.io.TextSink")  => prefixed(Formats.Text, "a text")
       case Some(avro) if avro.endsWith(".AvroSink") => prefixed(Formats.Avro, "an Avro")
@@ -290,9 +305,10 @@ private[beamadapter] object BeamLocations {
     folder(kept.mkString("/"))
   }
 
-  /** A BigQuery table as Beam states it: a table spec (`proj:ds.table`, `proj.ds.table` or `ds.table`) or its JSON form
-    * (`{"projectId":..,"datasetId":..,"tableId":..}`). Located as `proj/ds/table` (`ds/table` when no project is stated, as
-    * the job's default project is not known), and registered in the `bigquery` catalog under `[proj, ds]`, `table`. */
+  /** A BigQuery table as Beam states it: a table spec (`proj:ds.table`, `proj.ds.table` or `ds.table`, with or without a
+    * partition decorator) or its JSON form (`{"projectId":..,"datasetId":..,"tableId":..}`). Located as `proj/ds/table`
+    * (`ds/table` when no project is stated, as the job's default project is not known), and registered in the `bigquery`
+    * catalog under `[proj, ds]`, `table`. */
   def bigQueryTable(spec: String): Option[BigQueryTable] = {
     val parts: Option[(Option[String], String, String)] =
       if (spec.trim.startsWith("{"))
@@ -313,7 +329,9 @@ private[beamadapter] object BeamLocations {
           case _ => None
         }
       }
-    parts.map { case (project, dataset, table) =>
+    parts.map { case (project, dataset, decorated) =>
+      // a partition decorator (`report$20240101`) names a partition of the table, not another table
+      val table = decorated.takeWhile(_ != '$')
       BigQueryTable(
         LocationMatching.fromParts(project.toSeq ++ Seq(dataset, table)),
         CatalogIdentity(technology = Some(CatalogTechnologies.BigQuery), namespace = project.toList :+ dataset, table = Some(table))

@@ -26,6 +26,8 @@ class BeamLocationsSpec extends AnyFunSuite {
     assert(bigQueryTable("example.com:proj:ds.orders").contains(bq(Some("example.com:proj"), "ds", "orders")))
     assert(bigQueryTable("""{"projectId":"proj","datasetId":"ds","tableId":"orders"}""").contains(bq(Some("proj"), "ds", "orders")))
     assert(bigQueryTable("""{"datasetId":"ds","tableId":"orders"}""").contains(bq(None, "ds", "orders")))
+    assert(bigQueryTable("proj:ds.orders$20240101").contains(bq(Some("proj"), "ds", "orders")), "a partition decorator names a partition of the table")
+    assert(bigQueryTable("""{"projectId":"proj","datasetId":"ds","tableId":"orders$2024"}""").contains(bq(Some("proj"), "ds", "orders")))
   }
 
   test("a BigQuery table spec that is not one names no table") {
