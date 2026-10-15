@@ -122,6 +122,13 @@ Test / fork := true
 // compare with: set this to the first released version, and add the module to the CI loops (check_modules.py says where).
 import com.typesafe.tools.mima.core._
 mimaPreviousArtifacts := Set.empty
+// The adapter's API is what a job or a platform touches: InvaractRunner (and its registrar), InvaractBeam, BeamCheck,
+// InvaractBeamOptions (and its registrar) and BeamCapabilities. Everything below is `private[beamadapter]`, which Scala compiles to
+// public bytecode, so MiMa sees it; no code outside this module can call it, so a change to it is not a break.
+mimaBinaryIssueFilters ++= Seq(
+  "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
+  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$"
+).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*"))
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating
 // Requirement"). Never lower them to make a failure go away.
