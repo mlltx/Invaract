@@ -195,6 +195,12 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
 - **D17. Decision needed: a declared output no write lands on.** Beam sees the whole pipeline before it runs, so it could report a
   declared output the pipeline never writes (`MISSING_OUTPUT`), which Spark, checking one write at a time, cannot. Today each write is
   checked on its own, as on Spark. Doing it needs a whole-pipeline entry in `VerificationPipeline` (a core change).
+- **D18. Decision needed: an output with no columns can never pass.** A write of plain strings (a dead-letter folder of error
+  lines, a log export) exposes no columns, so it is refused (the survey's D5), and a contract cannot declare such an output either:
+  the contract format requires every schema to list at least one field. Options: (a) keep it so (a job with a text side output
+  is refused); (b) let a contract declare an output with no schema (a contract-model change, for every adapter); (c) a text write
+  of the result of a known formatter keeps its rows' columns (done for `ToJson` and `CsvIO`). Recommended: (b), for outputs whose
+  content no contract governs.
 
 ## Friction log
 

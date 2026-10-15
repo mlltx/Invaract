@@ -125,24 +125,40 @@ class BeamSchemasSpec extends AnyFunSuite {
     ))
   }
 
-  test("Beam logical types are told apart by identifier and an unknown one keeps it") {
-    def logical(identifier: String): LogicalType = {
-      val lt = new BeamSchema.LogicalType[String, String] {
-        def getIdentifier: String = identifier
-        def getArgumentType: FieldType = FieldType.STRING
-        def getArgument: String = ""
-        def getBaseType: FieldType = FieldType.STRING
-        def toBaseType(input: String): String = input
-        def toInputType(base: String): String = base
-      }
-      BeamSchemas.fromBeam(BeamSchema.builder().addLogicalTypeField("c", lt).build()).fields.head.dataType
+  test("Beam's logical types map by identifier, as Beam SQL and the schema transforms use them, and an unknown one keeps it") {
+    import org.apache.beam.sdk.schemas.logicaltypes._
+    def mapped(lt: BeamSchema.LogicalType[_, _]): LogicalType =
+      BeamSchemas.fromBeam(BeamSchema.builder().addField("c", FieldType.logicalType(lt)).build()).fields.head.dataType
+    assert(mapped(SqlTypes.DATE) == DateType)
+    assert(mapped(SqlTypes.TIME) == TimeType)
+    assert(mapped(SqlTypes.DATETIME) == TimestampNtzType)
+    assert(mapped(SqlTypes.TIMESTAMP) == TimestampType, "Beam SQL's TIMESTAMP is a micros instant")
+    assert(mapped(new NanosInstant()) == TimestampType)
+    assert(mapped(FixedPrecisionNumeric.of(10, 2)) == DecimalType(10, 2))
+    assert(mapped(FixedPrecisionNumeric.of(38, 0)) == DecimalType(38, 0))
+    assert(mapped(EnumerationType.create("a", "b")) == StringType)
+    assert(mapped(SqlTypes.UUID) == StringType)
+    assert(mapped(FixedString.of(4)) == StringType && mapped(VariableString.of(8)) == StringType)
+    assert(mapped(FixedBytes.of(4)) == BinaryType && mapped(VariableBytes.of(8)) == BinaryType)
+    assert(mapped(new NanosDuration()) == OtherType("beam:logical_type:nanos_duration:v1"), "a duration has no neutral type")
+    val own = new BeamSchema.LogicalType[String, String] {
+      def getIdentifier: String = "my:own:type"
+      def getArgumentType: FieldType = FieldType.STRING
+      def getArgument: String = ""
+      def getBaseType: FieldType = FieldType.STRING
+      def toBaseType(input: String): String = input
+      def toInputType(base: String): String = base
     }
-    assert(logical("beam:logical_type:datetime:v1") == TimestampNtzType)
-    assert(logical("beam:logical_type:timestamp:v1") == TimestampType)
-    assert(logical("beam:logical_type:date:v1") == DateType)
-    assert(logical("beam:logical_type:time:v1") == TimeType)
-    assert(logical("beam:logical_type:fixed_bytes:v1") == BinaryType)
-    assert(logical("my:own:type") == OtherType("my:own:type"))
+    assert(mapped(own) == OtherType("my:own:type"), "a type is not guessed from its base type")
+    val decimalWithoutArgument = new BeamSchema.LogicalType[String, String] {
+      def getIdentifier: String = "beam:logical_type:fixed_decimal:v1"
+      def getArgumentType: FieldType = FieldType.STRING
+      def getArgument: String = "not a row"
+      def getBaseType: FieldType = FieldType.STRING
+      def toBaseType(input: String): String = input
+      def toInputType(base: String): String = base
+    }
+    assert(mapped(decimalWithoutArgument) == OtherType("fixed_decimal"), "a decimal whose precision cannot be read is not given one")
   }
 
   // --- where a collection's columns come from ---

@@ -46,19 +46,37 @@ private[beamadapter] object BeamSchemas {
     case TypeName.ARRAY | TypeName.ITERABLE => LogicalType.ArrayType(beamType(t.getCollectionElementType))
     case TypeName.MAP      => LogicalType.MapType(beamType(t.getMapKeyType), beamType(t.getMapValueType))
     case TypeName.ROW      => LogicalType.StructType(fromBeam(t.getRowSchema).fields)
-    case TypeName.LOGICAL_TYPE => logicalType(t.getLogicalType.getIdentifier)
+    case TypeName.LOGICAL_TYPE => logicalType(t.getLogicalType)
     case other             => LogicalType.OtherType(other.name().toLowerCase)
   }
 
-  /** Beam's SQL logical types by identifier (`beam:logical_type:<name>:v1`); anything else keeps its identifier. */
-  private def logicalType(identifier: String): LogicalType = {
-    val name = identifier.toLowerCase
-    if (name.contains("datetime")) LogicalType.TimestampNtzType
-    else if (name.contains("timestamp")) LogicalType.TimestampType
-    else if (name.contains("date")) LogicalType.DateType
-    else if (name.contains("time")) LogicalType.TimeType
-    else if (name.contains("bytes")) LogicalType.BinaryType
-    else LogicalType.OtherType(identifier)
+  /** Beam's logical types by identifier (`beam:logical_type:<name>:v1`, `Enum` for an enumeration), as Beam SQL and the schema
+    * transforms use them: the date and time types, a fixed-precision decimal (its precision and scale are the type's argument), and
+    * the string and bytes types that only bound a length. Any other identifier keeps it: a type the adapter cannot name is never
+    * guessed from its base type. */
+  private def logicalType(lt: BeamSchema.LogicalType[_, _]): LogicalType = lt.getIdentifier match {
+    case "beam:logical_type:date:v1"                                         => LogicalType.DateType
+    case "beam:logical_type:time:v1"                                         => LogicalType.TimeType
+    case "beam:logical_type:datetime:v1"                                     => LogicalType.TimestampNtzType
+    case "beam:logical_type:micros_instant:v1" | "beam:logical_type:nanos_instant:v1" | "beam:logical_type:millis_instant:v1" =>
+      LogicalType.TimestampType
+    case "beam:logical_type:fixed_decimal:v1" => decimalOf(lt).getOrElse(LogicalType.OtherType("fixed_decimal"))
+    case "beam:logical_type:fixed_char:v1" | "beam:logical_type:var_char:v1" | "beam:logical_type:uuid:v1" | "Enum" => LogicalType.StringType
+    case "beam:logical_type:fixed_bytes:v1" | "beam:logical_type:var_bytes:v1"                                    => LogicalType.BinaryType
+    case other => LogicalType.OtherType(other)
+  }
+
+  /** A fixed-precision decimal's precision and scale: from its argument row when Beam gives one, otherwise from the two fields
+    * `FixedPrecisionNumeric` keeps them in (it returns no argument in the releases tested). `None` when neither can be read, so the
+    * column is not given a precision nobody stated. */
+  private def decimalOf(lt: BeamSchema.LogicalType[_, _]): Option[LogicalType] = {
+    def fromArgument = Try(lt.getArgument[org.apache.beam.sdk.values.Row]).toOption.flatMap(Option(_))
+      .flatMap(arg => Try(LogicalType.DecimalType(arg.getInt32("precision").intValue, arg.getInt32("scale").intValue)).toOption)
+    def fromFields = Try {
+      def field(name: String): Int = { val f = lt.getClass.getDeclaredField(name); f.setAccessible(true); f.getInt(lt) }
+      LogicalType.DecimalType(field("precision"), field("scale"))
+    }.toOption
+    fromArgument.orElse(fromFields)
   }
 
   /** The Avro schema `coder` carries, as the contract's columns. An Avro coder exposes it as `getSchema` (an
