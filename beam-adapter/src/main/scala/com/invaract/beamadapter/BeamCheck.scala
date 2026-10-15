@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.{Contract, ContractParser}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, LocationMatching, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -58,6 +58,17 @@ final class BeamCheck private[beamadapter] (
             runId,
             Some(job)
           )
+        case Some(_) if w.format.isEmpty && BeamCheck.declaredFormat(c, w).isDefined =>
+          // the core skips a format check when the actual format is unknown; a contract that names a format would then pass a
+          // write through a sink nobody can name, so it is refused instead (docs/BEAM_ADAPTER.md, D10)
+          VerificationPipeline.rejectUnverifiableWrite(
+            c,
+            s"a write to ${w.location} through a sink whose file format cannot be told, while the contract declares '${BeamCheck.declaredFormat(c, w).get}'",
+            w.plan,
+            sink,
+            runId,
+            Some(job)
+          )
         case Some(schema) =>
           VerificationPipeline.verifyWrite(
             c,
@@ -103,13 +114,16 @@ private[beamadapter] object BeamCheck {
     * is `text` and nothing in the graph says whether its lines are CSV or JSON (docs/BEAM_ADAPTER.md, D5). */
   private val TextFamily = Set("text", "csv", "json")
 
-  /** `write`'s plan, with a text write reported in the text-family format the contract declares for the dataset it lands on
-    * (`csv` and `json` included), since the graph cannot tell them apart; a contract that declares any other format for it, or
-    * none, sees `text`, and a mismatch stays a mismatch. The limit is the declaration's (`check.format` is partial), not a guess. */
+  /** `write`'s plan, with a text write reported in the text-family format the contract declares for the dataset it is checked
+    * against (`csv` and `json` included), since the graph cannot tell them apart; a contract that declares any other format for
+    * it, or none, sees `text`, and a mismatch stays a mismatch. The declared dataset is the one the core's format check uses
+    * (`OutputChecker.expectedOutputFor`: a single-output contract's only output even when the location missed), so the two
+    * never disagree. The limit is the declaration's (`check.format` is partial), not a guess. */
   def asDeclared(contract: Contract, write: TranslatedWrite): com.invaract.ir.Write =
     if (!write.format.contains("text")) write.plan
-    else {
-      val declared = contract.outputs.find(o => LocationMatching.matches(o.location, write.location)).flatMap(_.format).map(_.trim.toLowerCase)
-      declared.filter(TextFamily.contains).fold(write.plan)(f => write.plan.copy(format = Some(f)))
-    }
+    else declaredFormat(contract, write).filter(TextFamily.contains).fold(write.plan)(f => write.plan.copy(format = Some(f)))
+
+  /** The format the contract declares for the dataset `write` is checked against, normalised as the core compares it. */
+  def declaredFormat(contract: Contract, write: TranslatedWrite): Option[String] =
+    OutputChecker.expectedOutputFor(contract.outputs, write.location).flatMap(_.format).map(_.trim.toLowerCase).filter(_.nonEmpty)
 }

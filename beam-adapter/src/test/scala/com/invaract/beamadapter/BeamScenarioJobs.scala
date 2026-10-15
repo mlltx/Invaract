@@ -17,7 +17,7 @@ import org.apache.beam.sdk.transforms.join.{CoGbkResult, CoGroupByKey, KeyedPCol
 import org.apache.beam.sdk.transforms.{Contextful, DoFn, Filter, GroupByKey, MapElements, ParDo, ProcessFunction, SerializableFunction, View}
 import org.apache.beam.sdk.values.{KV, PCollection, PCollectionView, TupleTag, TypeDescriptor, TypeDescriptors}
 import org.apache.parquet.avro.AvroParquetWriter
-import org.apache.parquet.io.LocalOutputFile
+import org.apache.parquet.io.{OutputFile, PositionOutputStream}
 
 import java.nio.file.{Files, Path => NioPath}
 import scala.collection.JavaConverters._
@@ -78,13 +78,31 @@ private[beamadapter] object BeamScenarioJobs {
   /** An empty Parquet file of `schema` at the input's location, so a read of the folder finds a dataset. */
   private def materialize(root: NioPath, input: ScenarioInput, schema: Schema): Unit = materialize(root.resolve(input.location), schema, Nil)
 
-  /** A Parquet file of `schema` holding `rows` in folder `dir`. Written through parquet's own `LocalOutputFile`, not Hadoop's
-    * file system, so a machine without Hadoop's native libraries (Windows) writes it all the same. */
+  /** A Parquet file of `schema` holding `rows` in folder `dir`. Written through a plain local `OutputFile`, not Hadoop's
+    * file system, so a machine without Hadoop's native libraries (Windows) writes it all the same. (Parquet's own
+    * `LocalOutputFile` would do, but it arrived in Parquet 1.14 and the oldest Beam release tested brings 1.13.) */
   def materialize(dir: NioPath, schema: Schema, rows: List[GenericRecord]): Unit = {
     Files.createDirectories(dir)
-    val writer = AvroParquetWriter.builder[GenericRecord](new LocalOutputFile(dir.resolve("part-0.parquet"))).withSchema(schema).build()
+    val writer = AvroParquetWriter.builder[GenericRecord](new LocalFile(dir.resolve("part-0.parquet"))).withSchema(schema).build()
     try rows.foreach(writer.write)
     finally writer.close()
+  }
+
+  private final class LocalFile(path: NioPath) extends OutputFile {
+    override def create(blockSizeHint: Long): PositionOutputStream = createOrOverwrite(blockSizeHint)
+    override def createOrOverwrite(blockSizeHint: Long): PositionOutputStream = {
+      val out = new java.io.BufferedOutputStream(Files.newOutputStream(path))
+      new PositionOutputStream {
+        private var position = 0L
+        override def getPos: Long = position
+        override def write(b: Int): Unit = { out.write(b); position += 1 }
+        override def write(b: Array[Byte], off: Int, len: Int): Unit = { out.write(b, off, len); position += len }
+        override def flush(): Unit = out.flush()
+        override def close(): Unit = out.close()
+      }
+    }
+    override def supportsBlockSize(): Boolean = false
+    override def defaultBlockSize(): Long = 0L
   }
 
   // --- combining the inputs: nothing, a keyed join, or a cartesian product ---

@@ -228,4 +228,31 @@ class BeamCheckSpec extends AnyFunSuite {
     )
     assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputFormatMismatch))
   }
+
+  test("a text write to the wrong place in a single-output contract is reported for its location only, not also for its format") {
+    // the declared output is the one the write is checked against even when the location misses (OutputChecker.expectedOutputFor),
+    // so the text-family rule must use the same declared output, or a csv contract would also see a format mismatch
+    val p = pipeline
+    textWrite(p, "/data/elsewhere/lines")
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithOutputFormat(Some("csv"))).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.OutputLocationMismatch))
+  }
+
+  test("a write through a sink whose format cannot be told is refused when the contract declares a format, and checked when it declares none") {
+    def otherSinkWrite(p: Pipeline): Unit =
+      p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
+        .apply("WriteOther", FileIO.write[GenericRecord]().via(new OtherSink).to("/data/out/lines"))
+    val p = pipeline
+    otherSinkWrite(p)
+    val e = intercept[ContractViolationException](InvaractBeam.enforce(contractWithOutputFormat(Some("parquet"))).verify(p))
+    assert(e.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
+    assert(e.getMessage.contains("whose file format cannot be told") && e.getMessage.contains("'parquet'"))
+
+    val q = pipeline
+    otherSinkWrite(q)
+    InvaractBeam.enforce(contractWithOutputFormat(None)).verify(q) // nothing declared, nothing to tell apart
+    val r = pipeline
+    otherSinkWrite(r)
+    InvaractBeam.enforce(contractWithOutputFormat(Some("  "))).verify(r) // a blank format declares nothing
+  }
 }

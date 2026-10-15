@@ -62,8 +62,15 @@ pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toCharArray)
 
 name := "invaract-beam-adapter"
 
-// The Beam release this adapter is built and tested against (docs/BEAM_ADAPTER.md: only this version has been probed).
-val beamVersion = "2.77.0"
+// The Beam release this adapter is built and tested against: `beam.primary` in supported-beam-versions.properties, the one
+// list of the Beam releases CI has evidence for (docs/BEAM_ADAPTER.md, "Beam version compatibility"). CI's beam-version-matrix
+// job runs this suite against each `beam.verified` release by setting INVARACT_TEST_BEAM_VERSION; a plain `sbt test` uses the primary.
+val beamVersion = sys.env.getOrElse("INVARACT_TEST_BEAM_VERSION", {
+  val props = new java.util.Properties()
+  val in = new java.io.FileInputStream(file("src/main/resources/supported-beam-versions.properties"))
+  try props.load(in) finally in.close()
+  props.getProperty("beam.primary").trim
+})
 
 libraryDependencies ++= Seq(
   "com.invaract" %% "invaract-contract" % "0.13.0",
@@ -84,7 +91,15 @@ libraryDependencies ++= Seq(
   "org.apache.beam" % "beam-runners-direct-java" % beamVersion % "test",
   "org.apache.beam" % "beam-sdks-java-io-parquet" % beamVersion % "test",
   "org.apache.hadoop" % "hadoop-client" % "3.4.1" % "test",
-  "org.apache.hadoop" % "hadoop-common" % "3.4.1" % "test"
+  "org.apache.hadoop" % "hadoop-common" % "3.4.1" % "test",
+  // The other IOs a Beam job commonly reads and writes, so the adapter's tests can build real pipelines with them (the
+  // graphs are only constructed, never run against the services): BigQuery, Kafka and JDBC.
+  "org.apache.beam" % "beam-sdks-java-io-google-cloud-platform" % beamVersion % "test",
+  // Beam's Kafka IO depends on Confluent's schema-registry client, which is not on Maven Central (and not needed to
+  // construct a KafkaIO graph), so it is left out.
+  ("org.apache.beam" % "beam-sdks-java-io-kafka" % beamVersion % "test").excludeAll(ExclusionRule("io.confluent")),
+  "org.apache.kafka" % "kafka-clients" % "3.9.1" % "test",
+  "org.apache.beam" % "beam-sdks-java-io-jdbc" % beamVersion % "test"
 )
 
 scalacOptions ++= Seq(
