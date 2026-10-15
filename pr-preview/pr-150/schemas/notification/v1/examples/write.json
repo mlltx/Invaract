@@ -1,0 +1,64 @@
+{
+  "format": "parquet",
+  "icebergSnapshotId": null,
+  "eventType": "WRITE",
+  "catalog": null,
+  "location": "file:/home/user/Invaract/demo/output/result.parquet",
+  "timestamp": 1791616870381,
+  "rowCount": 10,
+  "bytesWritten": 1324,
+  "job": {
+    "engineDetails": {
+      "master": "local[*]",
+      "deployMode": "client"
+    },
+    "name": "InvaractDemoJobHarness",
+    "startTimeMs": 1791616859629,
+    "attributes": {
+      "team": "orders",
+      "dag": "orders_daily"
+    },
+    "jobId": "orders_nightly",
+    "engineVersion": "3.5.7",
+    "runId": "local-1791616860604",
+    "user": "root",
+    "engine": "spark"
+  },
+  "eventId": "f2ff702406da2560f0c5f62eac759e12cc799eeac36c0b31c108bdb5f5e9d469",
+  "operation": null,
+  "partitionColumns": [],
+  "schema": [
+    {
+      "name": "id",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value_squared",
+      "type": "integer",
+      "nullable": true
+    },
+    {
+      "name": "value_tier",
+      "type": "string",
+      "nullable": false
+    }
+  ],
+  "fileCount": 1,
+  "durationMs": 1183,
+  "deltaVersion": null,
+  "metadata": {
+    "description": "{purpose=Contract for the output of the demo InvaractPlugin pipeline (plugin/src/main/scala/com/invaract/plugin/InvaractPlugin.scala), written by runner/DemoJobHarness.scala to demo/output/result.parquet.\n}",
+    "owner": "invaract-demo"
+  },
+  "saveMode": "overwrite",
+  "schemaVersion": 1,
+  "runId": "local-1791616860604",
+  "contract": "invaract_demo_output@1.0.0",
+  "datasetType": null
+}
