@@ -719,6 +719,12 @@ code path (<code dir="auto">PipelineRunner.fromOptions</code> on the delegate’
 <li><strong>D17. Decision needed: a declared output no write lands on.</strong> Beam sees the whole pipeline before it runs, so it could report a
 declared output the pipeline never writes (<code dir="auto">MISSING_OUTPUT</code>), which Spark, checking one write at a time, cannot. Today each write is
 checked on its own, as on Spark. Doing it needs a whole-pipeline entry in <code dir="auto">VerificationPipeline</code> (a core change).</li>
+<li><strong>D18. Decision needed: an output with no columns can never pass.</strong> A write of plain strings (a dead-letter folder of error
+lines, a log export) exposes no columns, so it is refused (the survey’s D5), and a contract cannot declare such an output either:
+the contract format requires every schema to list at least one field. Options: (a) keep it so (a job with a text side output
+is refused); (b) let a contract declare an output with no schema (a contract-model change, for every adapter); (c) a text write
+of the result of a known formatter keeps its rows’ columns (done for <code dir="auto">ToJson</code> and <code dir="auto">CsvIO</code>). Recommended: (b), for outputs whose
+content no contract governs.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="friction-log">Friction log</h2><a class="sl-anchor-link" href="#friction-log"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Friction log”</span></a></div>
 <p>Every undocumented decision, surprise, or guess made while building this adapter, as it happened. It is the input to improving
