@@ -28,6 +28,9 @@ class BeamCheckSpec extends AnyFunSuite {
 
   private def pipeline: Pipeline = Pipeline.create(PipelineOptionsFactory.create())
 
+  /** A Windows drive (`D:`) taken off the paths in `text`: a text write's prefix is made absolute, with the drive on Windows. */
+  private def withoutDrive(text: String): String = text.replaceAll("(?<![A-Za-z])[A-Za-z]:(?=/)", "")
+
   private def ordersToParquet(p: Pipeline, dir: String = "/data/out/report"): Unit =
     p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet"))
       .apply("WriteReport", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to(dir))
@@ -155,8 +158,9 @@ class BeamCheckSpec extends AnyFunSuite {
     val events = capture.events.collect { case e: ContractInferenceEvent => e }.toList
     assert(events.map(_.status) == List(InferenceStatus.InferredDegraded, InferenceStatus.SkippedUnrecognized))
     // a write with no columns gets a draft that declares none for it, and says so (D18)
-    assert(events.head.reason.contains("the write to /data/out/lines exposes no columns, so the draft declares none for it"))
-    assert(events.head.contractYaml.exists(y => y.contains("location: /data/out/lines") && !y.contains("schema:")))
+    // a text write's prefix is made absolute, so on Windows it carries the drive
+    assert(events.head.reason.map(withoutDrive).contains("the write to /data/out/lines exposes no columns, so the draft declares none for it"))
+    assert(events.head.contractYaml.map(withoutDrive).exists(y => y.contains("location: /data/out/lines") && !y.contains("schema:")))
     assert(events.head.selfCheck.contains(SelfCheckStatus.Passed))
     assert(events(1).reason.exists(_.contains("PushToSomeService")))
   }
@@ -176,7 +180,7 @@ class BeamCheckSpec extends AnyFunSuite {
     assert(summary.statusCounts == Map(InferenceStatus.Inferred -> 1L, InferenceStatus.InferredDegraded -> 1L))
     assert(summary.mergeStatus == MergeStatus.Merged)
     val merged = com.invaract.contract.ContractParser.parse(summary.mergedContractYaml.get)
-    assert(merged.id == "nightly-orders" && merged.outputs.map(_.location) == List("/data/out/a", "/data/out/lines"))
+    assert(merged.id == "nightly-orders" && merged.outputs.map(o => withoutDrive(o.location)) == List("/data/out/a", "/data/out/lines"))
     assert(summary.job.engine.contains("beam"))
   }
 
