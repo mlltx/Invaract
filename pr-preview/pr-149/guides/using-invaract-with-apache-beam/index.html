@@ -81,22 +81,24 @@ command line for a job whose source it does not own. The contract is the same YA
 different.</p>
 <aside aria-label="What this does and does not check" class="starlight-aside starlight-aside--caution"><p class="starlight-aside__title" aria-hidden="true"><svg aria-hidden="true" class="starlight-aside__icon astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 16a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm10.67 1.47-8.05-14a3 3 0 0 0-5.24 0l-8 14A3 3 0 0 0 3.94 22h16.12a3 3 0 0 0 2.61-4.53Zm-1.73 2a1 1 0 0 1-.88.51H3.94a1 1 0 0 1-.88-.51 1 1 0 0 1 0-1l8-14a1 1 0 0 1 1.78 0l8.05 14a1 1 0 0 1 .05 1.02v-.02ZM12 8a1 1 0 0 0-1 1v4a1 1 0 0 0 2 0V9a1 1 0 0 0-1-1Z"/></svg>What this does and does not check</p><div class="starlight-aside__content"><p>The Beam adapter reads the <em>shape</em> of a pipeline: where it reads, where it writes, which
 columns and types come out, and in which format. It cannot read what your own functions do to
-values, and it cannot see which column a filter, join or grouping uses. It checks pipelines
-that read and write <strong>Parquet, Avro and text files</strong>; other IO (BigQueryIO, KafkaIO, JdbcIO, …)
-is not recognised yet. A contract that relies on something the adapter cannot check is
-refused with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> rather than passed unchecked. The full list is in
-<a href="/Invaract/pr-preview/pr-149/reference/engine-capabilities/">Engine Capabilities</a>.</p></div></aside>
+values, and it cannot see which column a filter, join or grouping uses. It recognises reads
+and writes of <strong>Parquet, Avro, text, CSV and TFRecord files, BigQuery tables, Kafka topics,
+JDBC tables and Pub/Sub topics</strong>, batch or streaming. A contract that relies on something the
+adapter cannot check is refused with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code> rather than passed
+unchecked. The full list is in <a href="/Invaract/pr-preview/pr-149/reference/engine-capabilities/">Engine Capabilities</a>.</p></div></aside>
 <div class="sl-heading-wrapper level-h2"><h2 id="what-a-job-needs">What a job needs</h2><a class="sl-anchor-link" href="#what-a-job-needs"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “What a job needs”</span></a></div>
 <p>The job must build its options from its command line the way any Beam job does
 (<code dir="auto">PipelineOptionsFactory.fromArgs(args)</code>) and must <strong>not</strong> choose its own runner in code.
-Beam is a <code dir="auto">provided</code> dependency of the adapter: the job brings its own Beam (2.77.0 is the
-version the adapter is tested with).</p>
+Beam is a <code dir="auto">provided</code> dependency of the adapter: the job brings its own Beam. The adapter is
+tested with Beam 2.60.0, 2.65.0, 2.70.0 and 2.77.0.</p>
 <p>Add the <code dir="auto">invaract-beam-adapter</code> jar to the job’s classpath, then name the runner and the
 contract:</p>
-<div class="expressive-code"><link rel="stylesheet" href="/Invaract/pr-preview/pr-149/_astro/ec.w36nc.css"><script type="module" src="/Invaract/pr-preview/pr-149/_astro/ec.0vx5m.js"></script><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">java</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">-cp</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">job.jar:invaract-beam-adapter.jar</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">com.example.Job</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#F78C6C;--1:#AA0982">\</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#82AAFF;--1:#3B61B0">--runner=com.invaract.beamadapter.InvaractRunner</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#F78C6C;--1:#AA0982">\</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#82AAFF;--1:#3B61B0">--invaractContract=contracts/orders_report.yaml</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="java -cp job.jar:invaract-beam-adapter.jar com.example.Job \  --runner=com.invaract.beamadapter.InvaractRunner \  --invaractContract=contracts/orders_report.yaml"><div></div></button></div></figure></div>
+<div class="expressive-code"><link rel="stylesheet" href="/Invaract/pr-preview/pr-149/_astro/ec.w36nc.css"><script type="module" src="/Invaract/pr-preview/pr-149/_astro/ec.0vx5m.js"></script><figure class="frame is-terminal not-content"><figcaption class="header"><span class="title"></span><span class="sr-only">Terminal window</span></figcaption><pre data-language="bash"><code><div class="ec-line"><div class="code"><span style="--0:#82AAFF;--1:#3B61B0">java</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#82AAFF;--1:#3B61B0">-cp</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">job.jar:invaract-beam-adapter.jar</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#ECC48D;--1:#3B61B0">com.example.Job</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#F78C6C;--1:#AA0982">\</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#82AAFF;--1:#3B61B0">--runner=Invaract</span><span style="--0:#D6DEEB;--1:#403F53"> </span><span style="--0:#F78C6C;--1:#AA0982">\</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span style="--0:#82AAFF;--1:#3B61B0">--invaractContract=contracts/orders_report.yaml</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="java -cp job.jar:invaract-beam-adapter.jar com.example.Job \  --runner=Invaract \  --invaractContract=contracts/orders_report.yaml"><div></div></button></div></figure></div>
 <p><code dir="auto">InvaractRunner</code> receives the finished pipeline before anything has started, checks it, and
 hands it to the real runner. By default that is the <code dir="auto">DirectRunner</code>; name another with
-<code dir="auto">--invaractDelegate=&#x3C;runner></code>. The settings (<code dir="auto">--invaractContract</code>, <code dir="auto">--invaractLocationMap</code>,
+<code dir="auto">--invaractDelegate=&#x3C;runner></code> and give it its own options as usual, for example
+<code dir="auto">--invaractDelegate=FlinkRunner --flinkMaster=...</code> (<code dir="auto">--runner=com.invaract.beamadapter.InvaractRunner</code>
+works too, if you prefer the full class name). The settings (<code dir="auto">--invaractContract</code>, <code dir="auto">--invaractLocationMap</code>,
 <code dir="auto">--invaractNotifyConfig</code>, <code dir="auto">--invaractOrgPolicy</code>, <code dir="auto">--invaractRejectUndeclaredInputs</code>,
 <code dir="auto">--invaractRegistryUrl</code>, …) are Beam options like any other, found by Beam without any code
 in the job.</p>
@@ -134,26 +136,56 @@ unmodified example job in the adapter’s tests (the job’s folder shortened to
 
 
 
-<table><thead><tr><th>In the job</th><th>Declared in the contract</th></tr></thead><tbody><tr><td><code dir="auto">ParquetIO.read(...).from("in/orders/*.parquet")</code> (or <code dir="auto">TextIO</code>, <code dir="auto">AvroIO</code>)</td><td>the folder, <code dir="auto">in/orders</code></td></tr><tr><td><code dir="auto">FileIO.write().to("out/report")</code></td><td>the directory, <code dir="auto">out/report</code></td></tr><tr><td><code dir="auto">TextIO.write().to("out/text")</code>, <code dir="auto">AvroIO.write...to("out/avro/part")</code></td><td>the prefix as passed to <code dir="auto">.to()</code>, <code dir="auto">out/text</code></td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>In the job</th><th>Declared in the contract</th></tr></thead><tbody><tr><td><code dir="auto">ParquetIO.read(...).from("in/orders/*.parquet")</code> (or <code dir="auto">TextIO</code>, <code dir="auto">AvroIO</code>), <code dir="auto">FileIO.match().filepattern(...)</code></td><td>the folder, <code dir="auto">in/orders</code> (also for <code dir="auto">in/orders/date=*/part-*.parquet</code> or <code dir="auto">in/orders/**</code>)</td></tr><tr><td><code dir="auto">FileIO.write().to("out/report")</code>, <code dir="auto">FileIO.writeDynamic()...to("out/report")</code></td><td>the directory, <code dir="auto">out/report</code></td></tr><tr><td><code dir="auto">TextIO.write().to("out/text")</code>, <code dir="auto">AvroIO.write...to("out/avro/part")</code>, <code dir="auto">CsvIO.writeRows("out/csv/part", ...)</code></td><td>the prefix as passed to <code dir="auto">.to()</code>, <code dir="auto">out/text</code></td></tr><tr><td><code dir="auto">BigQueryIO...from("proj:ds.orders")</code>, <code dir="auto">BigQueryIO.write()...to("proj:ds.report")</code></td><td><code dir="auto">proj/ds/orders</code>, or <code dir="auto">ds/orders</code> for that table in any project</td></tr><tr><td><code dir="auto">KafkaIO...withBootstrapServers("broker:9092").withTopic("orders")</code></td><td><code dir="auto">broker:9092/orders</code>, or <code dir="auto">orders</code> on any cluster</td></tr><tr><td><code dir="auto">JdbcIO</code> with URL <code dir="auto">jdbc:postgresql://db/shop</code>, table <code dir="auto">orders</code></td><td><code dir="auto">jdbc:postgresql://db/shop/orders</code>, or <code dir="auto">orders</code></td></tr><tr><td><code dir="auto">PubsubIO...fromTopic("projects/p/topics/orders")</code></td><td><code dir="auto">projects/p/topics/orders</code></td></tr></tbody></table>
 <p>A relative location matches any path that ends with it, so a contract need not know where a
 deployment keeps its data; declare an absolute location to pin one.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="formats-types-and-what-cannot-be-told">Formats, types and what cannot be told</h2><a class="sl-anchor-link" href="#formats-types-and-what-cannot-be-told"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Formats, types and what cannot be told”</span></a></div>
 <ul>
-<li>A write through <code dir="auto">ParquetIO.sink</code> is <code dir="auto">parquet</code>, through <code dir="auto">AvroIO</code> is <code dir="auto">avro</code>, and through a text
-writer is <code dir="auto">text</code>. A text writer publishes no delimiter, so a text write satisfies a declared
-<code dir="auto">csv</code>, <code dir="auto">json</code> or <code dir="auto">text</code>; it does not satisfy <code dir="auto">parquet</code>.</li>
-<li>The columns come from the data feeding the write: an Avro schema or a Beam row schema.
-A write whose data is plain Java objects (a <code dir="auto">TextIO.write()</code> of strings) has no columns to
-check, so it is <strong>refused as an unverifiable write</strong>, not passed.</li>
-<li>An input’s schema is the one the job states it expects, not the files’ real schema; Beam does
-not open files before running.</li>
-<li>A step that ends the pipeline without being a recognised write (BigQueryIO, a function that
-pushes rows to a service) is refused as an unverifiable write. A function that does so in the
-middle of a pipeline cannot be seen by any check made before the run.</li>
-<li>The Beam adapter does not support: save-mode and catalog requirements for file writes,
-transformation-shape rules (required filter, join or group-by), static data-quality proofs,
-role consistency, fingerprints and column lineage. A contract that needs one is refused with
-<code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>, naming it.</li>
+<li>A write through <code dir="auto">ParquetIO.sink</code> is <code dir="auto">parquet</code>, through <code dir="auto">AvroIO</code> is <code dir="auto">avro</code>, through
+<code dir="auto">CsvIO.writeRows</code> is <code dir="auto">csv</code>, a text write of what <code dir="auto">ToJson</code> made is <code dir="auto">json</code>, and BigQuery, Kafka
+and JDBC writes are <code dir="auto">bigquery</code>, <code dir="auto">kafka</code> and <code dir="auto">jdbc</code>. A plain text writer publishes no
+delimiter, so its write satisfies a declared <code dir="auto">csv</code>, <code dir="auto">json</code> or <code dir="auto">text</code>; it does not satisfy
+<code dir="auto">parquet</code>.</li>
+<li>The columns come from the data feeding the write (an Avro schema or a Beam row schema), or
+from the table schema a BigQuery write declares. A write whose data is plain Java objects (a
+<code dir="auto">TextIO.write()</code> of strings) has no columns to check, so it is <strong>refused as an unverifiable
+write</strong>, not passed.</li>
+<li>An input’s schema is the one the job states for it: the file schema a Parquet or Avro read
+names (even when the job reads only some columns), or the rows a <code dir="auto">JsonToRow</code> or
+<code dir="auto">CsvIO.parseRows</code> straight after a text read produces. Beam does not open files before running.</li>
+<li><strong>Save mode and catalog</strong>: a BigQuery write states both (<code dir="auto">WRITE_APPEND</code>, <code dir="auto">WRITE_TRUNCATE</code>,
+<code dir="auto">WRITE_EMPTY</code> are <code dir="auto">append</code>, <code dir="auto">overwrite</code>, <code dir="auto">error</code>; the table is in the <code dir="auto">bigquery</code> catalog). No
+other Beam write has a save mode, so a contract that declares one for a file, Kafka or JDBC
+output has the write refused as unverifiable.</li>
+<li><strong>Reads Invaract can see but not locate</strong>: a BigQuery query, a JDBC query over more than one
+table, a Kafka topic pattern, file patterns the job computes, or a source Invaract does not
+know. A declared input such a read might be is reported as unverifiable, not missing, and the
+job runs; with <code dir="auto">--invaractRejectUndeclaredInputs=true</code> the write is refused instead, since an
+undeclared input can no longer be ruled out.</li>
+<li>A step that ends the pipeline without being a recognised write (a function that pushes rows to
+a service, a write to an IO Invaract does not know, a write whose destination the job computes
+per element) is refused as an unverifiable write. So is a step that only reports on the
+pipeline at its end, such as a metrics count with nothing after it. A function that writes in
+the middle of a pipeline cannot be seen by any check made before the run.</li>
+<li>The Beam adapter does not support transformation-shape rules (required filter, join or
+group-by), static data-quality proofs, role consistency, fingerprints and column lineage. A
+contract that needs one is refused with <code dir="auto">UNSUPPORTED_CONTRACT_FEATURE</code>, naming it.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="when-the-command-line-cannot-reach-the-job">When the command line cannot reach the job</h2><a class="sl-anchor-link" href="#when-the-command-line-cannot-reach-the-job"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “When the command line cannot reach the job”</span></a></div>
 <p>A job that sets its runner in code after reading its arguments overrides <code dir="auto">--runner</code>, and a job
@@ -174,4 +206,4 @@ contract inferred from each write it can describe. With a
 <li><a href="/Invaract/pr-preview/pr-149/guides/resolving-dataset-locations/">Resolve Dataset Locations at Runtime</a>: <code dir="auto">ref://</code> locations, here via <code dir="auto">--invaractLocationMap</code>.</li>
 <li><a href="/Invaract/pr-preview/pr-149/guides/using-a-contract-registry/">Use a Contract Registry</a>: <code dir="auto">registry://</code> contracts, here via <code dir="auto">--invaractContract</code> and <code dir="auto">--invaractRegistryUrl</code>.</li>
 <li><a href="/Invaract/pr-preview/pr-149/guides/enforcing-organizational-policy/">Enforce an Organizational Policy</a>: here via <code dir="auto">--invaractOrgPolicy</code>.</li>
-</ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/guides/using-invaract-with-apache-beam.mdx" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-10-13T22:02:14.000Z">Oct 13, 2026</time></p></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"><a href="/Invaract/pr-preview/pr-149/guides/using-a-contract-registry/" rel="prev" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-b5raizh3">Previous<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">Use a Contract Registry</span></span></a><a href="/Invaract/pr-preview/pr-149/concepts/data-contracts/" rel="next" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-b5raizh3">Next<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">Data Contracts</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
+</ul></div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/mlltx/Invaract/edit/main/docs-site/src/content/docs/guides/using-invaract-with-apache-beam.mdx" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a><p>Last updated: <time datetime="2026-10-15T10:39:26.000Z">Oct 15, 2026</time></p></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"><a href="/Invaract/pr-preview/pr-149/guides/using-a-contract-registry/" rel="prev" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-b5raizh3">Previous<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">Use a Contract Registry</span></span></a><a href="/Invaract/pr-preview/pr-149/concepts/data-contracts/" rel="next" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-b5raizh3">Next<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">Data Contracts</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>
