@@ -126,8 +126,12 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     val java = s"${System.getProperty("java.home")}/bin/java"
     // the same JVM flags this test JVM has (Spark needs its --add-opens), minus any agent
     val flags = ManagementFactory.getRuntimeMXBean.getInputArguments.asScala.filterNot(_.startsWith("-agent")).toList
-    val command = (java :: flags) ++ List("-cp", System.getProperty("java.class.path"), MissingOutputJob.getClass.getName.stripSuffix("$"),
+    val args = flags ++ List("-cp", System.getProperty("java.class.path"), MissingOutputJob.getClass.getName.stripSuffix("$"),
       contractFile.toString, out.toString, failOnMissing.toString, writeAudit.toString)
+    // in an argument file: the class path is longer than a Windows command line may be
+    val argFile = out.resolve("job.args")
+    Files.write(argFile, args.map(a => "\"" + a.replace("\\", "\\\\").replace("\"", "\\\"") + "\"").mkString("\n").getBytes("UTF-8"))
+    val command = List(java, s"@$argFile")
     val log = out.resolve("job.log").toFile
     val process = new ProcessBuilder(command.asJava).redirectErrorStream(true).redirectOutput(log).start()
     assert(process.waitFor(5, TimeUnit.MINUTES), "the job did not end")
