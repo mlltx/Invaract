@@ -209,9 +209,10 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   `VerificationPipeline.requireOutputsWritten` with every write's location, right after the unverifiable-step gate and before any
   write is checked: one `MISSING_OUTPUT` per declared output nothing lands on, one FAILED event, nothing started. A pipeline with
   no recognised write at all is refused the same way (it used to pass with a warning). The new capability `check.outputsWritten`
-  (not blocking, since every contract declares outputs) is `supported` here and `unsupported` on Spark, which checks one write at
-  a time and cannot know a write will never come; the kit's `declared-output-never-written` scenario holds it. The three
-  `derivedFrom` scenarios became single-output contracts, so no scenario but that one has a job that skips a declared output.
+  (not blocking, since every contract declares outputs) is `supported` here and `partial` on Spark, which checks one write at a
+  time and so finds it when the application ends (docs/SPARK_ADAPTER.md, "Declared outputs never written"); the kit's
+  `declared-output-never-written` scenario holds it. Kit jobs can make several writes (`ExtraWrite`), so the `derivedFrom`
+  scenarios keep their two-output contracts and write both outputs.
 - **D18. Decided: a dataset may declare no columns.** A write of plain strings (a dead-letter folder of error lines, a log export)
   exposes no columns. The contract format now lets a dataset leave `schema` out (or list no fields): its content is not governed,
   `SchemaChecker` compares nothing for it, and `ContractValidator` warns so the omission is never silent. A Beam write with no

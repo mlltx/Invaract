@@ -76,7 +76,7 @@ that sets them, so a consumer can group or route findings without special-casing
 
 | Type | Meaning |
 |---|---|
-| `MISSING_OUTPUT` | A declared output was never written. One violation per declared output with no write landing on it. An adapter that sees a whole job before it runs (Beam) refuses a job that never writes one of its contract's outputs, before anything starts; Spark, which checks one write at a time, cannot know a write will never come (see the `check.outputsWritten` row in [Engine Capabilities](/reference/engine-capabilities/)). |
+| `MISSING_OUTPUT` | A declared output was never written. One violation per declared output with no write landing on it. An adapter that sees a whole job before it runs (Beam) refuses a job that never writes one of its contract's outputs, before anything starts. Spark checks one write at a time, so it finds this when the application ends: it reports it then, after the job's other writes, and with `spark.invaract.failOnMissingOutput=true` the driver exits with status 1 (see [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/#every-declared-output-must-be-written)). |
 | `OUTPUT_LOCATION_MISMATCH` | The write's actual location doesn't match any of the contract's declared output locations. |
 | `OUTPUT_FORMAT_MISMATCH` | The write's actual format doesn't match the contract's declared format. Only checked when both are known. |
 | `OUTPUT_SAVE_MODE_MISMATCH` | The write's actual save mode doesn't match the contract's declared `saveMode`. Only checked when both are known. |

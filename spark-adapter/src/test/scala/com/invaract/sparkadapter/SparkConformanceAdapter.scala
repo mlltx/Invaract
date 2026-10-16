@@ -94,6 +94,10 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
         case Some(table) => writer.insertInto(table)
         case None        => writer.save(target)
       }
+      // the job's further writes, in order: each a copy of an input, checked as a write of its own
+      job.extraWrites.foreach { w =>
+        spark.read.parquet(path(scenarioId, w.input.location)).write.format(w.output.format).mode(w.output.saveMode).save(path(scenarioId, w.output.location))
+      }
     }
   }
 
@@ -199,9 +203,15 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     active = Some(ContractEnforcementRule.forContract(contract, options, sink)(spark))
     try {
       body
-      sink.passed
+      // the job has ended: a declared output it never wrote is reported now, as it is when a real application ends
+      DeclaredOutputs.finishAll(spark.sparkContext) match {
+        case Nil     => sink.passed
+        case missing => sink.rejected(missing.flatMap(_.result.violations).map(_.violationType).toSet)
+      }
     } catch {
-      case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
+      case e: ContractViolationException =>
+        DeclaredOutputs.discardAll(spark.sparkContext)
+        sink.rejected(e.result.violations.map(_.violationType).toSet)
     } finally active = None
   }
 
@@ -209,7 +219,7 @@ class SparkConformanceAdapter extends ConformanceAdapter with AutoCloseable {
     * values). Done while no contract is active.
     */
   private def materializeInputs(scenarioId: String, job: ScenarioJob): Unit =
-    job.inputs.foreach { input =>
+    (job.inputs ++ job.extraWrites.map(_.input)).distinct.foreach { input =>
       spark.createDataFrame(spark.sparkContext.emptyRDD[Row], structType(input.schema)).write.mode("overwrite").parquet(path(scenarioId, input.location))
     }
 

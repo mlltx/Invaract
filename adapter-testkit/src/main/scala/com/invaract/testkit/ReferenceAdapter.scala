@@ -35,8 +35,11 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
         )
       // the whole job is known, as on Beam: a declared output it never writes refuses it before its write is checked
       if (checksOutputsWritten)
-        VerificationPipeline.requireOutputsWritten(contract, List(job.output.location), ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
+        VerificationPipeline.requireOutputsWritten(contract, job.writtenLocations, ReferenceAdapter.translate(job), Some(sink), None, Some(jobInfo))
       VerificationPipeline.verifyWrite(contract, checkedWrite(job), options, Some(sink), None, Some(capabilities), Some(jobInfo))
+      // the job's further writes, in order, each checked as a write of its own
+      if (checksExtraWrites)
+        job.extraWrites.foreach(w => VerificationPipeline.verifyWrite(contract, ReferenceAdapter.copyWrite(w), options, Some(sink), None, Some(capabilities), Some(jobInfo)))
       sink.passed
     } catch {
       case e: ContractViolationException => sink.rejected(e.result.violations.map(_.violationType).toSet)
@@ -46,6 +49,10 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
   /** Whether the adapter refuses a job that never writes a declared output (`check.outputsWritten`); the kit's own tests
     * turn it off to show the scenario for it catches the omission. */
   protected def checksOutputsWritten: Boolean = true
+
+  /** Whether the adapter checks a job's further writes (`ScenarioJob.extraWrites`), not only its main one; the kit's own
+    * tests turn it off to show the scenarios for it catch the omission. */
+  protected def checksExtraWrites: Boolean = true
 
   /** Which engine and job the adapter's events name - an adapter that publishes events always says which engine it is. */
   protected def jobInfo: JobInfo = JobInfo(engine = Some(capabilities.adapter))
@@ -128,6 +135,17 @@ object ReferenceAdapter {
     val shaped: Plan = job.groupBy.fold[Plan](Project(stepped, columns))(keys => Aggregate(stepped, keys.map(ref(job, 0, _)), columns))
     Write(DatasetRef(job.output.location), shaped, Some(job.output.format), Some(job.output.saveMode), catalogOf(job.output))
   }
+
+  /** A further write: its input read and written unchanged, every column as the input has it. */
+  def copyWrite(write: ExtraWrite): CheckedWrite =
+    CheckedWrite(
+      plan = Write(DatasetRef(write.output.location), Read(DatasetRef(write.input.location)), Some(write.output.format), Some(write.output.saveMode), catalogOf(write.output)),
+      inputSchemas = List(write.input.location -> write.input.schema),
+      outputSchema = write.input.schema,
+      caseSensitive = false,
+      rowMutation = None,
+      lineageBoundaryTypes = Set.empty
+    )
 
   def outputSchema(job: ScenarioJob): LogicalSchema = {
     def source(i: Int, column: String): LogicalField =

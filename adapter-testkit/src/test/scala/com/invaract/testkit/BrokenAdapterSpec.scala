@@ -26,9 +26,11 @@ class BrokenAdapterSpec extends AnyFunSuite {
       rewriteChecked: CheckedWrite => CheckedWrite = identity,
       rewriteOutcome: (ScenarioJob, ScenarioOutcome) => ScenarioOutcome = (_, o) => o,
       boundaryTypes: Set[String] = Set.empty,
-      outputsWritten: Boolean = true
+      outputsWritten: Boolean = true,
+      extraWrites: Boolean = true
   ) extends ReferenceAdapter() {
     override protected def checksOutputsWritten: Boolean = outputsWritten
+    override protected def checksExtraWrites: Boolean = extraWrites
     override protected def checkedWrite(job: ScenarioJob): CheckedWrite = {
       val c = super.checkedWrite(job)
       rewriteChecked(c.copy(plan = rewritePlan(job, c.plan), lineageBoundaryTypes = boundaryTypes))
@@ -180,6 +182,8 @@ class BrokenAdapterSpec extends AnyFunSuite {
       Set("lineage-passthrough-cast-and-constant", "lineage-through-join-and-filter", "sensitivity-follows-a-cast", "role-control-contributing-contradicts", "role-source-contributing-conforms")),
     Mistake("does not refuse a job that never writes a declared output", new Variant(outputsWritten = false),
       Set("declared-output-never-written")),
+    Mistake("checks only the first write a job makes", new Variant(extraWrites = false),
+      Set("an-undeclared-second-write-is-blocked")),
     Mistake("cannot classify a row-level change", new Variant(rewriteChecked = _.copy(rowMutation = None)),
       Set("unconditional-delete-forbidden")),
     Mistake("flattens nested types to strings",

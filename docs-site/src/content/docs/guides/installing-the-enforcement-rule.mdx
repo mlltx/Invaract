@@ -168,3 +168,28 @@ Only a plan that translates to a recognized write is verified — everything els
 recognized today, and
 [Fail-Closed by Default](/concepts/fail-closed/) for what happens when your job
 writes via a shape Invaract doesn't recognize at all.
+
+## Every declared output must be written
+
+A contract that declares an output promises the job writes it. Spark checks each write as it
+runs, so whether every declared output was written is known only when the job ends: when the
+application stops, Invaract publishes a `FAILED` validation with one `MISSING_OUTPUT` per
+declared output the job never wrote, and logs it as an error, for example
+`the job never writes declared output 'audit' (out/audit)`. The job's other writes have already
+happened by then; nothing is blocked.
+
+To have the job fail as well, so the scheduler or CI step running it stops what depends on it:
+
+```bash
+spark-submit \
+  --conf spark.sql.extensions=com.invaract.sparkadapter.InvaractSparkSessionExtension \
+  --conf spark.invaract.contract=/path/to/contract.yaml \
+  --conf spark.invaract.failOnMissingOutput=true \
+  ...
+```
+
+The driver then exits with status 1 after Spark has shut down. Two things to know: in YARN
+cluster mode a failed attempt may be retried (`spark.yarn.maxAppAttempts`), which runs the job
+again; and a write Invaract cannot see (an RDD `saveAsTextFile`) counts as not written. An engine
+that sees the whole job before it runs, such as Beam, refuses such a job before it starts instead
+(see [Use Invaract with Apache Beam](/guides/using-invaract-with-apache-beam/)).

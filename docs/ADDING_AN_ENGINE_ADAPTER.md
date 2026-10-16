@@ -170,7 +170,10 @@ An adapter gets that by calling `ContractReference`/`AttachSetup`, and has no re
 ## Step 5: Run the kit, one capability at a time
 
 `<Engine>ConformanceAdapter.run` builds the neutral `ScenarioJob` as a real job on the engine and runs it through
-the adapter's real enforcement; it finishes with `sink.passed` or `sink.rejected(types)`. Then, in this order,
+the adapter's real enforcement; it finishes with `sink.passed` or `sink.rejected(types)`. A job can make further writes
+after its main one (`job.extraWrites`, each a copy of an input to another location): build them too, after the main
+write, so every write the job makes is checked. If the engine finds a declared output never written only once the job
+has ended (`check.outputsWritten` partial, as on Spark), end the job inside `run` and report it there. Then, in this order,
 declare a capability `supported`, run `<Engine>ConformanceSpec`, and fix what diverges:
 
 1. Operations and structure: `read.batch`, `write.batch`, `check.location`, `check.schema`, `check.inputExistence`.

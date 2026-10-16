@@ -103,13 +103,26 @@ object Conformance {
     case object RejectedAsUnsupported extends Expected
   }
 
-  /** Compares what the adapter did with what it must have done. */
+  /** Compares what the adapter did with what it must have done, for a job that makes one write. */
   def judge(
       expected: Expected,
       outcome: ScenarioOutcome,
       capabilities: AdapterCapabilities,
       expectNonDeterministic: Option[Set[String]] = None,
       analysis: Analysis = Analysis()
+  ): ScenarioVerdict = judge(expected, outcome, capabilities, expectNonDeterministic, analysis, writes = 1)
+
+  /** Compares what the adapter did with what it must have done, for a job that makes `writes` writes. A job that passes
+    * publishes one PASSED validation per write. One that is blocked publishes one FAILED validation, after a PASSED one
+    * for each write it was allowed first - none when the adapter refuses the whole job before it runs, up to every write
+    * when it finds what is wrong only once they have all run (a declared output Spark never saw written). */
+  def judge(
+      expected: Expected,
+      outcome: ScenarioOutcome,
+      capabilities: AdapterCapabilities,
+      expectNonDeterministic: Option[Set[String]],
+      analysis: Analysis,
+      writes: Int
   ): ScenarioVerdict = {
     val verdict: Option[String] = (expected, outcome) match {
       case (Expected.Pass, _: ScenarioOutcome.Passed) => None
@@ -130,11 +143,24 @@ object Conformance {
       case Some(reason) => ScenarioVerdict.Diverges(reason)
       case None =>
         val reports = Set[Support](Support.Supported, Support.Partial).contains(capabilities.supportOf(Capability.ReportingNotifications))
-        val wanted = if (expected == Expected.Pass) List("PASSED") else List("FAILED")
-        if (reports && outcome.statuses != wanted) {
+        val statuses = outcome.statuses
+        // a blocked write publishes FAILED in place of its PASSED; only an output never written can be found after every
+        // write has run and passed, so only that rejection may follow a PASSED for each write
+        val foundAfterTheJob = outcome match {
+          case r: ScenarioOutcome.Rejected => r.violationTypes == Set(ViolationType.MissingOutput)
+          case _                           => false
+        }
+        val mostPassed = if (foundAfterTheJob) writes else writes - 1
+        val published =
+          if (expected == Expected.Pass) statuses == List.fill(writes)("PASSED")
+          else statuses.lastOption.contains("FAILED") && statuses.init.forall(_ == "PASSED") && statuses.size - 1 <= mostPassed
+        val wanted =
+          if (expected == Expected.Pass) List.fill(writes)("PASSED").mkString("exactly [", ", ", "]")
+          else s"one FAILED, after at most $mostPassed PASSED"
+        if (reports && !published) {
           ScenarioVerdict.Diverges(
-            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish exactly " +
-              s"${wanted.mkString("[", ", ", "]")} validation event(s); it published ${outcome.statuses.mkString("[", ", ", "]")}"
+            s"the adapter declares reporting.notifications ${capabilities.supportOf(Capability.ReportingNotifications).id} and must publish " +
+              s"$wanted validation event(s); it published ${statuses.mkString("[", ", ", "]")}"
           )
         } else if (reports && outcome.eventEngines.exists(_ != Some(capabilities.adapter))) {
           ScenarioVerdict.Diverges(
@@ -213,7 +239,7 @@ object Conformance {
       case Left(reason) => ScenarioVerdict.Skipped(reason)
       case Right(expected) =>
         try
-          judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis) match {
+          judge(expected, adapter.run(scenario.id, scenario.contract, scenario.job, scenario.options), caps, scenario.expectNonDeterministic, scenario.analysis, scenario.job.writes) match {
             case ScenarioVerdict.Conforms => judgeTranslation(adapter, scenario)
             case other                    => other
           }

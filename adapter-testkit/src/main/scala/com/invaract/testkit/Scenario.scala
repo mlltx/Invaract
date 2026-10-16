@@ -66,6 +66,12 @@ object RowChange {
   case object FilteredDelete extends RowChange
 }
 
+/** A further write the same job makes, after its main one: `input` copied unchanged (every column) to `output`. It reads
+  * nothing the main write reads unless it is the same input, and is checked against the contract like any write - so a
+  * job can write every output its contract declares, or write somewhere the contract does not mention.
+  */
+final case class ExtraWrite(input: ScenarioInput, output: ScenarioOutput)
+
 /** A job described in no engine's terms: read one or two inputs (two are inner-joined), optionally
   * keep the rows where a column of the first input is greater than zero, project `columns`, write
   * `output`. Each adapter turns this into its own engine's real job and runs it under enforcement.
@@ -99,6 +105,9 @@ object RowChange {
   * without it, because the reads beneath such a step are still reads - an adapter that drops what it could not
   * interpret has lost them, and reports a genuinely read input missing or an undeclared read unseen.
   *
+  * With `extraWrites` the job makes further writes after its main one (`ExtraWrite`), each checked as a write of its own,
+  * in order.
+  *
   * With `streaming` set the inputs are read as streams and the output is written as a stream (run to
   * completion over the inputs that exist, then stopped), one input only. What the contract says about the job
   * must come out the same as for the batch job: the stream is the declared input, the stream's sink the output.
@@ -115,7 +124,8 @@ final case class ScenarioJob(
     streaming: Boolean = false,
     opaqueStep: Boolean = false,
     crossJoin: Boolean = false,
-    groupBy: Option[List[String]] = None
+    groupBy: Option[List[String]] = None,
+    extraWrites: List[ExtraWrite] = Nil
 ) {
   require(inputs.nonEmpty && inputs.size <= 2, "a scenario job reads one or two inputs")
   require(inputs.size == 1 || join.isDefined || crossJoin, "a two-input job must say how its inputs are joined")
@@ -131,6 +141,13 @@ final case class ScenarioJob(
   )
   require(!opaqueStep || (rowChange.isEmpty && !untranslatableWrite && !boundary && !streaming), "an opaque step is part of a plain read-transform-write")
   require(!streaming || (inputs.size == 1 && rowChange.isEmpty && !untranslatableWrite && !boundary), "a streaming job is a plain read-transform-write of one input")
+  require(extraWrites.isEmpty || (rowChange.isEmpty && !untranslatableWrite && !streaming), "only a plain batch job makes further writes")
+
+  /** Where the job's writes land, the main one first: every write it makes. */
+  def writtenLocations: List[String] = output.location :: extraWrites.map(_.output.location)
+
+  /** How many writes the job makes. */
+  def writes: Int = 1 + extraWrites.size
 }
 
 /** What running a scenario through an adapter produced. `statuses` are the `ContractValidationEvent`

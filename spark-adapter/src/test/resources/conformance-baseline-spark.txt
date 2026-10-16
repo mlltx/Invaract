@@ -19,6 +19,8 @@ undeclared-input-rejected
 derived-from-excuses-an-input-the-output-is-not-built-from
 derived-from-requires-every-source-of-the-output
 derived-from-rejects-a-read-of-another-outputs-source
+an-undeclared-second-write-is-blocked
+declared-output-never-written
 unrecognized-step-keeps-the-reads-beneath-it-visible
 unrecognized-step-does-not-hide-an-undeclared-read
 output-format-matches

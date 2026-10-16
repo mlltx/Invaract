@@ -51,8 +51,8 @@ capabilities:
     note: Declared locations are matched by normalized path suffix. A CTAS with no pre-existing physical path (Hive) has a known, documented location-resolution gap, and ClickHouse reads and writes report locations in different formats.
     docs: SPARK_ADAPTER.md
   check.outputsWritten:
-    status: unsupported
-    note: Spark is checked one write at a time, as each runs, so it cannot know that a declared output will never be written. A job that never writes one is not refused.
+    status: partial
+    note: Spark is checked one write at a time, as each runs, so a declared output never written is found only when the application ends. It is reported then (a FAILED validation and an error in the driver log) after the job's other writes have happened; with spark.invaract.failOnMissingOutput=true the driver also exits with status 1.
   check.schema:
     status: supported
     note: Column names follow spark.sql.caseSensitive.
