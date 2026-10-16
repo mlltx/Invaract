@@ -263,6 +263,22 @@ class BeamIOSpec extends AnyFunSuite {
     assert(t.writes.isEmpty && t.unverifiable.map(_.operation).exists(_.contains("WriteSpanner")))
   }
 
+  // --- the schema a file write writes with ---
+
+  test("a file write's columns are the schema its sink writes with, not the records' (which may carry more)") {
+    val narrow = new org.apache.avro.Schema.Parser().parse("""{"type":"record","name":"N","fields":[{"name":"id","type":"long"}]}""")
+    def written(write: org.apache.beam.sdk.values.PCollection[GenericRecord] => Unit) = {
+      val p = pipeline
+      write(p.apply("ReadOrders", ParquetIO.read(OrdersSchema).from("/data/in/orders/*.parquet")))
+      val Seq(w) = BeamTranslator.translate(p).writes
+      w.outputSchema.map(_.fields.map(_.name))
+    }
+    assert(written(_.apply("W", FileIO.write[GenericRecord]().via(ParquetIO.sink(narrow)).to("/data/out/p"))).contains(List("id")))
+    assert(written(_.apply("W", FileIO.write[GenericRecord]().via(org.apache.beam.sdk.extensions.avro.io.AvroIO.sink[GenericRecord](narrow)).to("/data/out/a"))).contains(List("id")))
+    assert(written(_.apply("W", org.apache.beam.sdk.extensions.avro.io.AvroIO.writeGenericRecords(narrow).to("/data/out/av/part"))).contains(List("id")))
+    assert(written(_.apply("W", FileIO.write[GenericRecord]().via(ParquetIO.sink(OrdersSchema)).to("/data/out/same"))).contains(List("id", "amount")))
+  }
+
   // --- classic templates: paths that are runtime parameters ---
 
   private def templateOptions = PipelineOptionsFactory.fromArgs().as(classOf[TemplateOptions])

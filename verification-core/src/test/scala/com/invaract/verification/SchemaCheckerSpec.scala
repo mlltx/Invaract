@@ -21,6 +21,16 @@ class SchemaCheckerSpec extends AnyFunSuite {
 
   private def types(vs: List[Violation]): List[String] = vs.map(_.violationType)
 
+  test("a dataset that declares no fields governs no column: nothing is compared, even rejecting undeclared fields") {
+    val schema = Cols().add("id", IntegerType).add("line", StringType)
+    Seq(Side.Output, Side.Input).foreach { side =>
+      assert(check(Nil, schema, side, rejectUndeclared = true).isEmpty)
+      assert(check(Nil, LogicalSchema(Nil), side, rejectUndeclared = true).isEmpty)
+    }
+    assert(types(check(List(CField("id", "integer")), schema, rejectUndeclared = true)) == List(ViolationType.UndeclaredOutputColumn),
+      "one declared field is a schema like any other")
+  }
+
   // --- scalar behaviour is unchanged ----------------------------------------
 
   test("scalars: matching type and nullability is clean; a wrong scalar type reports the bare typeName on both sides") {
@@ -65,8 +75,8 @@ class SchemaCheckerSpec extends AnyFunSuite {
     assert(in.forall(_.message.contains("INPUT")) && out.forall(_.message.contains("OUTPUT")))
     assert(in(1).remediation.contains("to the input") && out(1).remediation.contains("to the output"))
     assert(in(2).remediation.contains("before the input is produced") && out(2).remediation.contains("before the output is produced"))
-    val undeclaredIn = check(Nil, Cols().add("z", StringType), Side.Input, rejectUndeclared = true)
-    val undeclaredOut = check(Nil, Cols().add("z", StringType), Side.Output, rejectUndeclared = true)
+    val undeclaredIn = check(List(CField("a", "string")), Cols().add("a", StringType).add("z", StringType), Side.Input, rejectUndeclared = true)
+    val undeclaredOut = check(List(CField("a", "string")), Cols().add("a", StringType).add("z", StringType), Side.Output, rejectUndeclared = true)
     assert(types(undeclaredIn) == List(ViolationType.UndeclaredInputColumn) && types(undeclaredOut) == List(ViolationType.UndeclaredOutputColumn))
     assert(undeclaredIn.head.remediation.contains("transformation's input") && undeclaredOut.head.remediation.contains("transformation's output"))
   }

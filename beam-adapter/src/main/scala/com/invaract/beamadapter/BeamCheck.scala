@@ -3,7 +3,8 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.contract.{Contract, ContractParser}
+import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
+import com.invaract.ir.UnknownPlan
 import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline, Violation}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
@@ -45,8 +46,10 @@ final class BeamCheck private[beamadapter] (
   private def enforce(c: Contract, translation: BeamTranslation): Unit = {
     // a step that may change data but that cannot be checked is refused before any write is judged (fail closed)
     translation.unverifiable.headOption.foreach(u => VerificationPipeline.rejectUnverifiableWrite(c, u.operation, u.plan, sink, runId, Some(job)))
-    if (translation.writes.isEmpty)
-      logger.warn(s"Invaract found no write it recognises in this Beam pipeline, so nothing was checked against '${c.id}@${c.version}'.")
+    // the whole pipeline is known: an output the contract declares that no write lands on refuses the job (docs/BEAM_ADAPTER.md, D17)
+    VerificationPipeline.requireOutputsWritten(
+      c, translation.writes.map(_.location), UnknownPlan("the pipeline's writes", "Pipeline", translation.writes.map(_.plan)), sink, runId, Some(job)
+    )
     translation.writes.foreach(w => BeamCheck.refusal(c, w, options).fold(check(c, w))(why => reject(c, why, w)))
   }
 
@@ -58,7 +61,8 @@ final class BeamCheck private[beamadapter] (
       CheckedWrite(
         BeamCheck.asDeclared(c, w),
         w.inputSchemas,
-        w.outputSchema.get, // `refusal` refuses a write with no schema before it gets here
+        // `refusal` refuses a write with no schema unless the output it lands on declares no columns either
+        w.outputSchema.getOrElse(LogicalSchema(Nil)),
         caseSensitive = true,
         rowMutation = None,
         lineageBoundaryTypes = Set(BeamTranslator.UnlocatedSourceType)
@@ -75,28 +79,29 @@ final class BeamCheck private[beamadapter] (
 
   private def infer(translation: BeamTranslation): Unit = {
     val outcomes = translation.writes.map { w =>
-      w.outputSchema match {
-        case Some(schema) =>
-          try {
-            val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.inputSchemas, w.plan)
-            // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
-            val (status, reason) =
-              if (w.unlocatedReads.isEmpty) (InferenceStatus.Inferred, None)
-              else (InferenceStatus.InferredDegraded, Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}"))
-            // the draft checked against the write it describes, as enforcement would check it
-            val selfCheck = DryRunSelfCheck.of(
-              draft, BeamCheck.asDeclared(draft, w), w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType)
-            )
-            report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck))
-            status -> Some(draft)
-          } catch {
-            case NonFatal(e) =>
-              report(InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(w.location), None)
-              InferenceStatus.InferenceError -> None
-          }
-        case None =>
-          report(InferenceStatus.SkippedUnrecognized, Some(s"the write to ${w.location} exposes no schema to infer a contract from"), Some(w.location), None)
-          InferenceStatus.SkippedUnrecognized -> None
+      // a write whose columns cannot be told gets a draft that declares none for it (D18)
+      val (schema, noColumns) = w.outputSchema.fold[(LogicalSchema, Option[String])](
+        LogicalSchema(Nil) -> Some(s"the write to ${w.location} exposes no columns, so the draft declares none for it")
+      )(_ -> None)
+      try {
+        val draft = ContractInference.infer(InferredWrite(w.location, w.format, w.plan.saveMode, schema), w.inputSchemas, w.plan)
+        // a draft that cannot list every input (a read it could not locate) is degraded, and says which read
+        val unlocated =
+          if (w.unlocatedReads.isEmpty) None
+          else Some(s"inputs the pipeline reads but that cannot be located are missing from the draft: ${w.unlocatedReads.mkString("; ")}")
+        val degradations = noColumns.toList ++ unlocated
+        val (status, reason) =
+          if (degradations.isEmpty) (InferenceStatus.Inferred, None) else (InferenceStatus.InferredDegraded, Some(degradations.mkString("; ")))
+        // the draft checked against the write it describes, as enforcement would check it
+        val selfCheck = DryRunSelfCheck.of(
+          draft, BeamCheck.asDeclared(draft, w), w.inputSchemas, schema, options, caseSensitive = true, Set(BeamTranslator.UnlocatedSourceType)
+        )
+        report(status, reason, Some(w.location), Some(ContractParser.write(draft)), Some(selfCheck))
+        status -> Some(draft)
+      } catch {
+        case NonFatal(e) =>
+          report(InferenceStatus.InferenceError, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"), Some(w.location), None)
+          InferenceStatus.InferenceError -> None
       }
     } ++ translation.unverifiable.map { u =>
       report(InferenceStatus.SkippedUnrecognized, Some(u.operation), None, None)
@@ -158,6 +163,12 @@ private[beamadapter] object BeamCheck {
   def declaredFormat(contract: Contract, write: TranslatedWrite): Option[String] =
     OutputChecker.expectedOutputFor(contract.outputs, write.location).flatMap(_.format).map(_.trim.toLowerCase).filter(_.nonEmpty)
 
+  /** Whether the dataset `write` is checked against declares columns (`true` when it lands on no declared output). One that
+    * declares none (a dead-letter folder of text lines) does not govern its content, so a write whose columns cannot be told
+    * is no reason to refuse it (docs/BEAM_ADAPTER.md, D18). */
+  def declaresColumns(contract: Contract, write: TranslatedWrite): Boolean =
+    OutputChecker.expectedOutputFor(contract.outputs, write.location).forall(_.schema.fields.nonEmpty)
+
   /** The save mode the contract declares for the dataset `write` is checked against. */
   def declaredSaveMode(contract: Contract, write: TranslatedWrite): Option[String] =
     OutputChecker.expectedOutputFor(contract.outputs, write.location).flatMap(_.saveMode).map(_.trim.toLowerCase).filter(_.nonEmpty)
@@ -166,7 +177,7 @@ private[beamadapter] object BeamCheck {
     * The core skips a comparison when the actual side is unknown, so each of these would otherwise pass unchecked
     * (docs/BEAM_ADAPTER.md, D10 to D12). */
   def refusal(contract: Contract, write: TranslatedWrite, options: VerificationOptions): Option[String] =
-    if (write.outputSchema.isEmpty)
+    if (write.outputSchema.isEmpty && declaresColumns(contract, write))
       Some(s"a write to ${write.location} whose data exposes no schema (Beam shows only plain Java objects), so its columns cannot be checked")
     else if (write.format.isEmpty && declaredFormat(contract, write).isDefined)
       // the core skips a format check when the actual format is unknown, so a named format would pass a write nobody can name

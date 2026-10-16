@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/mlltx/Invaract/main/contract/schema/invaract-contract.schema.json",
   "title": "Invaract Data Contract",
-  "description": "Structural shape of a contract document Invaract's `contract` module (com.invaract.contract.ContractParser/ContractValidator) accepts, modeled after the Open Data Contract Standard (ODCS) - see docs/CONTRACT_MODEL.md. This schema is deliberately permissive at every level (`additionalProperties: true`) to match the parser's own design: an unrecognized key is preserved verbatim rather than rejected, so a contract authored for other ODCS-based tooling stays valid input here too. It also intentionally sits between two layers of the real Scala implementation: some constraints here (id, version, dataset name/location/schema, field name/type) mirror ContractParser's hard parse failures; others (outputs being present and non-empty, a schema's fields being non-empty) mirror ContractValidator's Error-level checks rather than the parser alone, because a document that merely parses but fails validation isn't a useful contract either. Two things this schema does NOT and cannot enforce, both still Scala-side responsibilities: duplicate-name detection (dataset names, field names) and cross-field business rules (e.g. ContractValidator's required-and-nullable warning) - see docs/CONTRACT_MODEL.md's \"JSON Schema\" section for the full list of what's schema-level versus what stays engine-only.",
+  "description": "Structural shape of a contract document Invaract's `contract` module (com.invaract.contract.ContractParser/ContractValidator) accepts, modeled after the Open Data Contract Standard (ODCS) - see docs/CONTRACT_MODEL.md. This schema is deliberately permissive at every level (`additionalProperties: true`) to match the parser's own design: an unrecognized key is preserved verbatim rather than rejected, so a contract authored for other ODCS-based tooling stays valid input here too. It also intentionally sits between two layers of the real Scala implementation: some constraints here (id, version, dataset name/location, field name/type) mirror ContractParser's hard parse failures; others (outputs being present and non-empty) mirror ContractValidator's Error-level checks rather than the parser alone, because a document that merely parses but fails validation isn't a useful contract either. Two things this schema does NOT and cannot enforce, both still Scala-side responsibilities: duplicate-name detection (dataset names, field names) and cross-field business rules (e.g. ContractValidator's required-and-nullable warning) - see docs/CONTRACT_MODEL.md's \"JSON Schema\" section for the full list of what's schema-level versus what stays engine-only.",
   "type": "object",
   "required": ["id", "version", "outputs"],
   "additionalProperties": true,
@@ -54,7 +54,7 @@
   "$defs": {
     "dataset": {
       "type": "object",
-      "required": ["name", "location", "schema"],
+      "required": ["name", "location"],
       "additionalProperties": true,
       "properties": {
         "name": {
@@ -133,9 +133,8 @@
       "properties": {
         "fields": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/$defs/field" },
-          "description": "The 'fields' key itself is a ContractParser hard requirement; a dataset schema with zero fields parses but fails ContractValidator with an Error (\"Schema must declare at least one field\"), so this schema requires at least one up front."
+          "description": "The 'fields' key itself is a ContractParser hard requirement within a present 'schema'. A dataset with no 'schema', or with no fields, declares no columns: its content is not governed and its columns are not checked (ContractValidator warns, so a schema left out by mistake is never silent)."
         }
       }
     },

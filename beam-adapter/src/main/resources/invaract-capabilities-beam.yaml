@@ -53,9 +53,12 @@ capabilities:
   check.location:
     status: supported
     note: TextIO states its read pattern as given but its write prefix as an absolute path, so both are normalised; a FileIO write states no location in its display data, so its output directory is read from FileIO.Write by reflection (Beam 2.77.0; a write it cannot read is refused as unverifiable).
+  check.outputsWritten:
+    status: supported
+    note: The whole pipeline is known before it runs, so a declared output that no recognised write lands on refuses the job before anything starts.
   check.schema:
     status: partial
-    note: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare.
+    note: Known where the sink or the collection carries a schema (Parquet and Avro schemas, BigQuery table schemas, Beam row schemas). A text sink, or a collection of plain Java objects with no schema, has none to compare; its write is refused unless the output declares no columns.
   check.nestedTypes:
     status: supported
     note: Beam ROW, ARRAY and MAP, and Avro records, arrays and maps, map to struct, array and map wherever a schema is known.
@@ -117,7 +120,7 @@ capabilities:
     status: supported
   reporting.dryRunInference:
     status: partial
-    note: Inputs and outputs and their schemas can be inferred where the graph states them; text outputs have no schema to infer. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
+    note: Inputs and outputs and their schemas can be inferred where the graph states them; a text write of strings gets a draft output that declares no columns. Each draft, self-checked against its own write, then one job summary merging them, is published before the pipeline runs.
   failClosed.unverifiableWrites:
     status: partial
     note: A terminal step that is not a recognised sink is refused. A function that writes to an outside system in the middle of the pipeline is invisible to the graph.

@@ -231,6 +231,32 @@ object VerificationPipeline {
     }
   }
 
+  /** Refuses a whole job that never writes one of the contract's declared outputs (`MISSING_OUTPUT`, one per output; see
+    * `OutputChecker.unwrittenOutputs`). For an adapter that sees every write of a job before any runs (Beam's pipeline):
+    * call it once, with the location of every write the job makes, before checking the writes themselves, so a refused job
+    * publishes one FAILED validation and nothing else. An adapter that checks one write at a time cannot know a write will
+    * never come, and declares `check.outputsWritten` unsupported instead. Does nothing when every output is written.
+    *
+    * @param writeLocations where the job's writes land, as the adapter reports them
+    * @param translatedPlan the job as the adapter translated it, rendered in the explanation
+    */
+  def requireOutputsWritten(
+      contract: Contract,
+      writeLocations: List[String],
+      translatedPlan: ir.Plan,
+      sink: Option[NotificationSink] = None,
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
+  ): Unit = {
+    requireValidContract(contract, sink, runId, job)
+    val missing = OutputChecker.unwrittenOutputs(contract.outputs, writeLocations)
+    if (missing.nonEmpty) {
+      val result = VerificationResult.of(s"${contract.id}@${contract.version}", missing)
+      publishValidation(contract, result, sink, runId, job)
+      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
+    }
+  }
+
   /** The fail-closed response: an operation that looks like it writes or
     * otherwise mutates data, but that the adapter has no translation for, so
     * it was never actually checked against the contract. Always throws -

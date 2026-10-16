@@ -58,7 +58,9 @@ inputs:
   location declared here still matches, by suffix — see
   [Contract Format](/reference/contract-format/#location-matching).
 - `format` — optional, e.g. `csv`, `parquet`, `delta`.
-- `schema.fields` — at least one field, each with a `name` and `type`.
+- `schema.fields` — the fields, each with a `name` and `type`. A dataset whose content no
+  contract governs (a folder of rejected text lines, say) can leave `schema` out: its columns are
+  then not checked, and validation warns so the omission is never an accident.
 
 ## Declare outputs
 

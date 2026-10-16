@@ -30,6 +30,8 @@ capabilities:
     status: supported
   check.location:
     status: supported
+  check.outputsWritten:
+    status: supported
   check.schema:
     status: supported
   check.nestedTypes:
