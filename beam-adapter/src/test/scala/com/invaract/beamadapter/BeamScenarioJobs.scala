@@ -102,6 +102,14 @@ private[beamadapter] object BeamScenarioJobs {
       case ToFiles                     => write(shaped, job, root, outAvro)
       case BigQuery(services, project) => writeBigQuery(shaped, job, out, services, project)
     }
+    // the job's further writes, after its main one: each a copy of an input, in parquet
+    job.extraWrites.zipWithIndex.foreach { case (extra, i) =>
+      val schema = avro(s"extra_${extra.input.location.replace('/', '_')}", extra.input.schema)
+      materialize(root, extra.input, schema)
+      pipeline
+        .apply(s"ReadExtra$i", ParquetIO.read(schema).from(root.resolve(extra.input.location).toString + "/*.parquet"))
+        .apply(s"WriteExtra$i", FileIO.write[GenericRecord]().via(ParquetIO.sink(schema)).to(root.resolve(extra.output.location).toString).withSuffix(".parquet"))
+    }
   }
 
   // --- reading ---

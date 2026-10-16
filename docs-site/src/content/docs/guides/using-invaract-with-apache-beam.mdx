@@ -105,8 +105,8 @@ A contract that declares an output promises the job writes it. Because the whole
 known before it runs, a pipeline that never writes one of its contract's outputs is refused
 before anything starts, with one `MISSING_OUTPUT` violation per output nothing lands on, as in
 `the job never writes declared output 'audit' (out/audit)`. Write it, or take it out of the
-contract if the job no longer produces it. (Spark checks one write at a time, as each runs, so
-it cannot know a write will never come and does not refuse this.)
+contract if the job no longer produces it. (Spark checks one write at a time, as each runs, so it
+finds this only when the job ends; see [Install the Enforcement Rule](/guides/installing-the-enforcement-rule/#every-declared-output-must-be-written).)
 
 ## How locations are written in a contract
 

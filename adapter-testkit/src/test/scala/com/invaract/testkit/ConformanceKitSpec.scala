@@ -54,7 +54,7 @@ class ConformanceKitSpec extends AnyFunSuite {
   test("a scenario's focus is something its own contract or operations actually exercise") {
     Scenarios.all.foreach { s =>
       // a contract declaring an output the job never writes is what check.outputsWritten is about
-      val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, List(s.job.output.location)).nonEmpty
+      val unwritten = OutputChecker.unwrittenOutputs(s.contract.outputs, s.job.writtenLocations).nonEmpty
       val relied = CapabilityCheck.required(s.contract, s.options).map(_._1).toSet ++ (if (unwritten) Set(Capability.CheckOutputsWritten) else Set.empty)
       s.focus.foreach { c =>
         assert(
@@ -440,5 +440,48 @@ class ConformanceKitSpec extends AnyFunSuite {
     val untranslatable = Scenarios.all.find(_.id == "untranslatable-write-fails-closed").get
     val adapter = new ReferenceAdapter(caps)
     assert(Conformance.evaluateWithin(adapter, caps, untranslatable, 1.minute).isInstanceOf[ScenarioVerdict.Skipped])
+  }
+}
+
+/** What a job of several writes must publish (`Conformance.judge` with `writes`). */
+class JudgeStatusesSpec extends AnyFunSuite {
+  import Conformance.Expected
+
+  private val caps = ReferenceAdapter.declared
+  private def passed(statuses: String*) = ScenarioOutcome.Passed(statuses.toList, Set.empty, Set.empty, Map.empty, Set.empty)
+  private def rejected(types: Set[String], statuses: String*) = ScenarioOutcome.Rejected(types, statuses.toList, Set.empty, Set.empty, Map.empty, Set.empty)
+  private def judge(expected: Expected, outcome: ScenarioOutcome, writes: Int) = Conformance.judge(expected, outcome, caps, None, Analysis(), writes)
+  private def diverges(v: ScenarioVerdict, why: String) = v match {
+    case ScenarioVerdict.Diverges(reason) => reason.contains(why)
+    case _                                => false
+  }
+
+  test("a job that passes publishes one PASSED per write, no more and no fewer") {
+    assert(judge(Expected.Pass, passed("PASSED", "PASSED"), 2) == ScenarioVerdict.Conforms)
+    assert(diverges(judge(Expected.Pass, passed("PASSED"), 2), "must publish exactly [PASSED, PASSED] validation event(s); it published [PASSED]"))
+    assert(diverges(judge(Expected.Pass, passed("PASSED", "PASSED"), 1), "exactly [PASSED]"))
+  }
+
+  test("a blocked job publishes one FAILED last, after a PASSED for each write allowed before it") {
+    val location = Expected.RejectExactly(Set(ViolationType.OutputLocationMismatch))
+    val types = Set(ViolationType.OutputLocationMismatch)
+    assert(judge(location, rejected(types, "PASSED", "PASSED", "FAILED"), 3) == ScenarioVerdict.Conforms)
+    assert(judge(location, rejected(types, "FAILED"), 3) == ScenarioVerdict.Conforms, "refused before anything ran")
+    assert(diverges(judge(location, rejected(types, "FAILED", "FAILED"), 3), "one FAILED, after at most 2 PASSED"), "a FAILED is the last event")
+    assert(diverges(judge(location, rejected(types, "FAILED", "PASSED"), 3), "it published [FAILED, PASSED]"))
+    assert(diverges(judge(location, rejected(types, "PASSED", "FAILED"), 1), "one FAILED, after at most 0 PASSED"),
+      "a single write that is blocked publishes FAILED in place of its PASSED")
+    assert(diverges(judge(location, rejected(types), 1), "it published []"))
+  }
+
+  test("only an output never written may be reported after every write has passed") {
+    val missing = Set(ViolationType.MissingOutput)
+    val expected = Expected.RejectExactly(missing)
+    assert(judge(expected, rejected(missing, "PASSED", "FAILED"), 1) == ScenarioVerdict.Conforms, "found when the job ends")
+    assert(judge(expected, rejected(missing, "FAILED"), 1) == ScenarioVerdict.Conforms, "or before it runs")
+    assert(diverges(judge(expected, rejected(missing, "PASSED", "PASSED", "FAILED"), 1), "one FAILED, after at most 1 PASSED"))
+    val withMore = Set(ViolationType.MissingOutput, ViolationType.OutputLocationMismatch)
+    assert(diverges(judge(Expected.RejectExactly(withMore), rejected(withMore, "PASSED", "FAILED"), 1), "after at most 0 PASSED"),
+      "a rejection that is not only a missing output was found at a write")
   }
 }

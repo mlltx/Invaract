@@ -973,6 +973,28 @@ real code running in the driver: a contract is therefore an input to trust like 
 that serves contracts must authenticate its publishers. The registry client class is instantiated without this
 check because it can only come from platform configuration, never from a contract.
 
+## Declared outputs never written (`DeclaredOutputs`)
+
+A contract that declares an output promises the job writes it (`check.outputsWritten`). Spark checks each write as it
+runs, from that write's own plan, and builds no plan of the whole job: when one write is checked, a later write has no
+plan yet, and the driver code may never reach it (an `if`, an exception, a loop). So a declared output never written is
+known only when the job ends, and Spark declares the capability `partial`.
+
+`ContractEnforcementRule.forContract` (and so `InvaractSparkSessionExtension`) records the location of every write it
+checks, in one `DeclaredOutputs` per application and contract, shared by every session that enforces the contract. A
+`SparkListener` decides it at application end: `VerificationPipeline.requireOutputsWritten` with every recorded location,
+which publishes a FAILED `ContractValidationEvent` with one `MISSING_OUTPUT` per declared output nothing landed on and
+logs the explanation as an error. The job's other writes have happened by then; nothing is blocked.
+
+With `spark.invaract.failOnMissingOutput=true` (`InvaractConf.FailOnMissingOutput`) the driver also exits with status 1
+(`DeclaredOutputs.ExitStatus`), so a scheduler or CI step running the job sees it fail and stops what depends on it. The
+exit is made by a Hadoop `ShutdownHookManager` hook at priority 0, after Spark's own shutdown (40) and the file systems'
+close (10); it calls `Runtime.halt`, which ends any other JVM shutdown hook still running (the last log lines can be
+lost). In YARN cluster mode a failed attempt may be retried (`spark.yarn.maxAppAttempts`), which runs the job again. A
+write Invaract cannot see (an RDD `saveAsTextFile`) is not recorded, so its output counts as never written.
+`DeclaredOutputsSpec` runs a real job in a JVM of its own and reads its exit status. The conformance kit's Spark runner
+ends each scenario's job with `DeclaredOutputs.finishAll`, which is how `declared-output-never-written` conforms on Spark.
+
 ## Known limitations
 
 - **A new V1 data-source table created with `.saveAsTable()` fails a `catalog.required` contract.** Spark

@@ -33,9 +33,9 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 
 | Capability | What it means | Suite check | beam | spark |
 |---|---|---|---|---|
-| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (45) | ✅ | ✅ |
+| `read.batch` | A batch read is recognized as one of the contract's inputs. | verified (46) | ✅ | ✅ |
 | `read.streaming` | A streaming read is recognized as one of the contract's inputs. | verified (2) | ✅ | ✅ |
-| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (46) | ✅ | ✅ |
+| `write.batch` | A batch write is recognized and checked against the contract before it executes. | verified (47) | ✅ | ✅ |
 | `write.streaming` | A streaming write is recognized and checked against the contract. | verified (2) | ✅ | ◐ |
 | `write.rowLevelDml` | Row-level MERGE / UPDATE / DELETE is recognized as a write. | verified (4) | — | ✅ |
 | `write.stateChange` | A non-write operation that commits a schema change at a location (for example a snapshot rollback) is checked. | attested | — | ✅ |
@@ -45,8 +45,8 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | Capability | What it means | Suite check | beam | spark |
 |---|---|---|---|---|
 | `check.inputExistence` | Declared inputs must be read (MISSING_INPUT), and undeclared reads can be rejected (UNDECLARED_INPUT). *(blocks if unsupported)* | verified (8) | ✅ | ✅ |
-| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | verified (3) | ✅ | ◐ |
-| `check.outputsWritten` | A job that never writes a declared output is refused (MISSING_OUTPUT). | verified (1) | ✅ | ✖ |
+| `check.location` | A write lands where the contract says (OUTPUT_LOCATION_MISMATCH). *(blocks if unsupported)* | verified (4) | ✅ | ◐ |
+| `check.outputsWritten` | A job that never writes a declared output is refused (MISSING_OUTPUT). | verified (1) | ✅ | ◐ |
 | `check.schema` | Field presence, type and nullability of inputs and outputs. *(blocks if unsupported)* | verified (7) | ◐ | ✅ |
 | `check.nestedTypes` | Nested types (array, map, struct) are compared structurally, not just by keyword. *(blocks if unsupported)* | verified (2) | ✅ | ✅ |
 | `check.format` | A declared output format is checked (OUTPUT_FORMAT_MISMATCH). *(blocks if unsupported)* | verified (2) | ◐ | ✅ |
@@ -120,12 +120,12 @@ Attested:
 
 ## Conformance results
 
-The suite has 52 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
+The suite has 53 scenarios. For each adapter, the scenarios it is held to conform to: its checked-in baseline, which its own test run must match exactly (a scenario that stops conforming fails the build, and one that starts must be added).
 
 | Adapter | Scenarios conforming | Of |
 |---|---|---|
-| `beam` | 41 | 52 |
-| `spark` | 51 | 52 |
+| `beam` | 42 | 53 |
+| `spark` | 53 | 53 |
 
 ## Notes
 
@@ -168,7 +168,7 @@ The suite has 52 scenarios. For each adapter, the scenarios it is held to confor
 - `write.stateChange` — supported: Nine Iceberg CALL procedures that commit a schema change are checked against the contract. ([details](https://github.com/mlltx/Invaract/blob/main/docs/connectors/iceberg.md))
 - `check.inputExistence` — supported: Also scoped per output through derivedFrom; a read hidden behind an unresolved lineage boundary is reported as unverifiable, not missing.
 - `check.location` — partial: Declared locations are matched by normalized path suffix. A CTAS with no pre-existing physical path (Hive) has a known, documented location-resolution gap, and ClickHouse reads and writes report locations in different formats. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))
-- `check.outputsWritten` — unsupported: Spark is checked one write at a time, as each runs, so it cannot know that a declared output will never be written. A job that never writes one is not refused.
+- `check.outputsWritten` — partial: Spark is checked one write at a time, as each runs, so a declared output never written is found only when the application ends. It is reported then (a FAILED validation and an error in the driver log) after the job's other writes have happened; with spark.invaract.failOnMissingOutput=true the driver also exits with status 1.
 - `check.schema` — supported: Column names follow spark.sql.caseSensitive.
 - `check.nestedTypes` — supported: array, map and struct are compared structurally, ignoring nullability inside a container.
 - `check.catalogRegistration` — supported: Hive, Delta and Iceberg catalog registrations are recognized. ([details](https://github.com/mlltx/Invaract/blob/main/docs/SPARK_ADAPTER.md))

@@ -13,7 +13,8 @@ import com.invaract.verification.{AdapterCapabilities, VerificationOptions}
   * `run` turns a neutral `ScenarioJob` into a real @@Engine@@ job and runs it through the adapter's REAL
   * enforcement path - the engine's own hook, not a direct call to `VerificationPipeline` (that is what
   * `ReferenceAdapter` does, and why it proves nothing about an engine). It finishes with `sink.passed` or
-  * `sink.rejected(violationTypes)`; the sink is handed to the enforcement as its notification sink.
+  * `sink.rejected(violationTypes)`; the sink is handed to the enforcement as its notification sink. A job may make
+  * further writes after its main one (`job.extraWrites`): build those too, so every write the job makes is checked.
   *
   * Everything the declaration marks `unsupported` or `not-applicable` is skipped by the kit, so with the
   * generated declaration (all unsupported) every conformance test is canceled and this compiles and passes.
