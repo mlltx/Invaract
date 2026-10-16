@@ -124,6 +124,10 @@ private[sparkadapter] object DeclaredOutputs {
     * several jobs on one application (the conformance kit) uses between them. */
   def finishAll(sc: SparkContext): List[ContractViolationException] = detach(sc).flatMap(a => report(a.outputs))
 
+  /** Whether an exit hook waits on any contract `sc` enforces (`failOnMissingOutput` was set). */
+  private[sparkadapter] def exitHookAttached(sc: SparkContext): Boolean =
+    byJob.asScala.exists { case ((context, _), attached) => (context eq sc) && attached.hook.isDefined }
+
   /** Forgets every contract `sc` enforces without judging it (a job that already failed). */
   def discardAll(sc: SparkContext): Unit = detach(sc)
 

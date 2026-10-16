@@ -83,6 +83,30 @@ class DeclaredOutputsSpec extends AnyFunSuite {
     assert(first.exists(_.result.violations.map(_.location) == List(Some(s"$out/audit"))))
     assert(outputs.finish() eq first)
     assert(sink.validations.map(_.status) == List("FAILED"))
+    assert(first.get.getMessage.contains(s"the job's writes: file:$out/report)"), "the plan names the writes")
+    val none = new DeclaredOutputs(contract(out), None, None, None).finish()
+    assert(none.get.getMessage.contains("the job's writes: none)"), "and says so when there were none")
+  }
+
+  test("an exit hook waits on the job only under failOnMissingOutput=true") {
+    def attached(setting: Option[String]): Boolean = {
+      val out = Files.createTempDirectory("declared-outputs-conf")
+      val c = contract(out)
+      val builder = SparkSession.builder().master("local[1]").appName("DeclaredOutputsSpec").config("spark.ui.enabled", "false")
+      setting.foreach(v => builder.config("spark.invaract.failOnMissingOutput", v))
+      val spark = builder.withExtensions(_.injectCheckRule(s => ContractEnforcementRule.forContract(c, VerificationOptions())(s))).getOrCreate()
+      try {
+        spark.range(1).write.parquet(s"$out/report")
+        DeclaredOutputs.exitHookAttached(spark.sparkContext)
+      } finally {
+        DeclaredOutputs.discardAll(spark.sparkContext)
+        spark.stop()
+      }
+    }
+    assert(attached(Some("true")))
+    assert(attached(Some(" TRUE ")))
+    assert(!attached(Some("false")))
+    assert(!attached(None))
   }
 
   test("the shutdown hook exits with status 1 only when a declared output was never written") {
