@@ -72,6 +72,31 @@ not gated on any particular predicate shape: `col IS NOT NULL`, `col != 'deleted
 than `required_join_columns`'s equality-pairing requirement on purpose — "the plan must
 filter on this column somewhere" doesn't presume what the filter should actually assert.
 
+## On Apache Beam
+
+The Beam adapter checks these rules where a pipeline uses Beam's **schema transforms**, which
+name the columns they use:
+
+| Rule | Satisfied by |
+|---|---|
+| `required_filter_columns` | `Filter.create().whereFieldName("amount", ...)` (or `whereFieldNames`, `whereFieldId`) |
+| `required_group_by` | `Group.byFieldNames("customer_id")`, with or without `.aggregateField(...)`; `Group.globally()` groups by nothing |
+| `required_join_columns` | `Join.innerJoin(customers).using("id")` or `.on(Join.FieldsEqual.left("customer_id").right("id"))` (inner, outer and broadcast joins), and `CoGroup.join(By.fieldNames("id"))` |
+| `forbid_cross_join` | violated by a `CoGroup` joined on no fields (`By.fieldNames()`), which matches every row of one side with every row of the other |
+
+A filter, grouping or join written as code (`Filter.by`, a `DoFn`, `GroupByKey`,
+`CoGroupByKey`) or in SQL (`SqlTransform`) is opaque: Invaract cannot see which columns it uses.
+
+- **A `required_*` rule is not satisfied by one.** A pipeline that filters only in a `DoFn` is
+  rejected under `required_filter_columns`, the same as one that never filters.
+- **Under `forbid_cross_join`, such a step refuses the write as `UNVERIFIABLE_WRITE`.** This
+  covers a step that combines several collections in code (a `CoGroupByKey`, or a function
+  given another collection as a side input), because any of them could be a cross join.
+  `Flatten`, which only concatenates collections, is not refused.
+- **Schema transforms are read from Beam's own objects.** Each Beam release the adapter is
+  tested against is checked for this. If a release changed them so the columns could not be
+  read, a contract with any of these rules would refuse the write rather than guess.
+
 ## What these rules don't check yet
 
 - **Which specific rows a filter's predicate actually excludes**, or whether it's trivially

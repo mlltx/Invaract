@@ -9,7 +9,6 @@ import org.apache.avro.Schema
 import org.apache.avro.generic.{GenericData, GenericRecord}
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.extensions.avro.coders.AvroGenericCoder
-import org.apache.beam.sdk.coders.{KvCoder, StringUtf8Coder}
 import com.google.api.services.bigquery.model.{TableFieldSchema, TableRow, TableSchema}
 import org.apache.beam.sdk.io.{FileIO, TextIO}
 import org.apache.beam.sdk.io.gcp.bigquery.{BigQueryIO, BigQueryServices}
@@ -19,9 +18,11 @@ import org.apache.beam.sdk.transforms.Watch
 import org.apache.beam.sdk.transforms.windowing.{FixedWindows, Window}
 import org.joda.time.Duration
 import org.apache.beam.sdk.transforms.DoFn.ProcessElement
-import org.apache.beam.sdk.transforms.join.{CoGbkResult, CoGroupByKey, KeyedPCollectionTuple}
-import org.apache.beam.sdk.transforms.{Contextful, DoFn, Filter, GroupByKey, MapElements, ParDo, ProcessFunction, SerializableFunction, View}
-import org.apache.beam.sdk.values.{KV, PCollection, PCollectionView, TupleTag, TypeDescriptor, TypeDescriptors}
+import org.apache.beam.sdk.extensions.avro.coders.AvroCoder
+import org.apache.beam.sdk.extensions.avro.schemas.utils.AvroUtils
+import org.apache.beam.sdk.schemas.transforms.{CoGroup, Group, Join, Filter => SchemaFilter}
+import org.apache.beam.sdk.transforms.{Combine, Contextful, Count, DoFn, MapElements, ParDo, SerializableFunction}
+import org.apache.beam.sdk.values.{PCollection, PCollectionTuple, Row, TypeDescriptor}
 import org.apache.parquet.avro.AvroParquetWriter
 import org.apache.parquet.io.{OutputFile, PositionOutputStream}
 
@@ -79,13 +80,11 @@ private[beamadapter] object BeamScenarioJobs {
       return
     }
 
-    val (joined, joinedFieldOf) = combine(reads, schemas, job)
-    val filtered = job.filterColumn.fold(joined) { column =>
-      {
-        val positive: ProcessFunction[GenericRecord, java.lang.Boolean] = new PositiveFn(joinedFieldOf(0, column))
-        joined.apply("Filter", Filter.by[GenericRecord, ProcessFunction[GenericRecord, java.lang.Boolean]](positive))
-      }
+    // the filter, on the first input before anything is joined to it: Beam's schema Filter, which names the column it reads
+    val firstFiltered = job.filterColumn.fold(reads.head) { column =>
+      asRows(reads.head, schemas.head, "AsRows0").apply("Filter", SchemaFilter.create[GenericRecord]().whereFieldName[AnyRef](column, new PositiveValue))
     }
+    val (filtered, joinedFieldOf) = combine(firstFiltered :: reads.tail, schemas, job)
     val stepped =
       if (job.opaqueStep) filtered.apply("OpaqueStep", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new IdentityFn)).setCoder(filtered.getCoder)
       else filtered
@@ -144,6 +143,11 @@ private[beamadapter] object BeamScenarioJobs {
     override def defaultBlockSize(): Long = 0L
   }
 
+  /** `records` as a collection with a Beam schema (`schema`'s), which Beam's schema transforms need: a step of its own, so the
+    * read's own output is left as the read made it. */
+  private def asRows(records: PCollection[GenericRecord], schema: Schema, name: String): PCollection[GenericRecord] =
+    records.apply(name, MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new IdentityFn)).setCoder(AvroUtils.schemaCoder(schema))
+
   // --- combining the inputs: nothing, a keyed join, or a cartesian product ---
 
   /** The records the rest of the job works on, and the field of those records that holds `(input, column)`. */
@@ -157,22 +161,17 @@ private[beamadapter] object BeamScenarioJobs {
       val merged = mergedSchema(schemas)
       val joinedFieldOf = (i: Int, column: String) => s"${if (i == 0) "l" else "r"}_$column"
       val mergedCoder = AvroGenericCoder.of(merged)
-      val combined: PCollection[GenericRecord] = job.join match {
-        case Some(JoinOn(left, right)) =>
-          val tags = List(new TupleTag[GenericRecord]("l"), new TupleTag[GenericRecord]("r"))
-          val keyed = reads.zip(List(left, right)).zipWithIndex.map { case ((read, column), i) =>
-            read
-              .apply(s"Key$i", MapElements.into(TypeDescriptors.kvs(TypeDescriptors.strings(), TypeDescriptor.of(classOf[GenericRecord]))).via(new KeyFn(column)))
-              .setCoder(KvCoder.of(StringUtf8Coder.of(), read.getCoder.asInstanceOf[org.apache.beam.sdk.coders.Coder[GenericRecord]]))
-          }
-          KeyedPCollectionTuple.of(tags(0), keyed(0)).and(tags(1), keyed(1))
-            .apply("Join", CoGroupByKey.create[String]())
-            .apply("Merge", ParDo.of(new MergeFn(merged.toString, schemas(0).toString, schemas(1).toString)))
-            .setCoder(mergedCoder)
+      // Beam's schema transforms, which name the columns they match on: a Join on the two columns, or, for a cartesian product, a
+      // CoGroup on no columns at all (every row of each side in the one group)
+      val left = if (reads.head.hasSchema) reads.head else asRows(reads.head, schemas(0), "AsRows0")
+      val right = asRows(reads(1), schemas(1), "AsRows1")
+      val rows: PCollection[Row] = job.join match {
+        case Some(JoinOn(l, r)) =>
+          left.apply("Join", Join.innerJoin[GenericRecord, GenericRecord](right).on(Join.FieldsEqual.left(l).right(r)))
         case None =>
-          val other: PCollectionView[java.util.List[GenericRecord]] = reads(1).apply("OtherSide", View.asList[GenericRecord]())
-          reads.head.apply("CrossJoin", ParDo.of(new CrossFn(merged.toString, other)).withSideInputs(other)).setCoder(mergedCoder)
+          PCollectionTuple.of("lhs", left).and("rhs", right).apply("CrossJoin", CoGroup.join(CoGroup.By.fieldNames()).crossProductJoin())
       }
+      val combined = rows.apply("Merge", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new MergeRowFn(merged.toString))).setCoder(mergedCoder)
       (combined, joinedFieldOf)
     }
 
@@ -185,18 +184,20 @@ private[beamadapter] object BeamScenarioJobs {
 
   // --- grouping ---
 
+  /** Beam's schema `Group` by the key columns, counting each group's rows. */
   private def grouped(
       input: PCollection[GenericRecord],
       keyFields: List[String],
       columns: List[ResolvedColumn],
       out: Schema
-  ): PCollection[GenericRecord] =
-    input
-      .apply("KeyForGroup", MapElements.into(TypeDescriptors.kvs(TypeDescriptors.strings(), TypeDescriptor.of(classOf[GenericRecord]))).via(new KeyFn(keyFields.mkString(",")) ))
-      .setCoder(KvCoder.of(StringUtf8Coder.of(), input.getCoder.asInstanceOf[org.apache.beam.sdk.coders.Coder[GenericRecord]]))
-      .apply("Group", GroupByKey.create[String, GenericRecord]())
-      .apply("Count", ParDo.of(new GroupFn(out.toString, columns)))
+  ): PCollection[GenericRecord] = {
+    val rows = if (input.hasSchema) input else asRows(input, input.getCoder.asInstanceOf[AvroCoder[GenericRecord]].getSchema, "AsRowsForGroup")
+    val count = Count.combineFn[AnyRef]().asInstanceOf[Combine.CombineFn[AnyRef, AnyRef, java.lang.Long]]
+    rows
+      .apply("Group", Group.byFieldNames[GenericRecord](keyFields: _*).aggregateField(keyFields.head, count, "total"))
+      .apply("Count", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new GroupRowFn(out.toString, columns)))
       .setCoder(AvroGenericCoder.of(out))
+  }
 
   // --- writing ---
 
@@ -293,13 +294,11 @@ private[beamadapter] object BeamScenarioJobs {
     override def apply(r: GenericRecord): GenericRecord = r
   }
 
-  final class PositiveFn(field: String) extends SerializableFunction[GenericRecord, java.lang.Boolean] {
-    override def apply(r: GenericRecord): java.lang.Boolean = java.lang.Boolean.valueOf(Option(r.get(field)).exists(_.toString.toLong > 0))
+  final class PositiveValue extends SerializableFunction[AnyRef, java.lang.Boolean] {
+    override def apply(v: AnyRef): java.lang.Boolean = java.lang.Boolean.valueOf(Option(v).exists(_.toString.toLong > 0))
   }
 
-  final class KeyFn(columns: String) extends SerializableFunction[GenericRecord, KV[String, GenericRecord]] {
-    override def apply(r: GenericRecord): KV[String, GenericRecord] = KV.of(columns.split(",").map(c => String.valueOf(r.get(c))).mkString("|"), r)
-  }
+
 
   final class ProjectFn(schemaJson: String, columns: List[ResolvedColumn]) extends SerializableFunction[GenericRecord, GenericRecord] {
     override def apply(r: GenericRecord): GenericRecord = recordOf(schemaJson, columns, r, 0L)
@@ -318,35 +317,34 @@ private[beamadapter] object BeamScenarioJobs {
     @ProcessElement def process(@DoFn.Element number: java.lang.Long): Unit = ()
   }
 
-  final class MergeFn(mergedJson: String, leftJson: String, rightJson: String) extends DoFn[KV[String, CoGbkResult], GenericRecord] {
-    @ProcessElement def process(@DoFn.Element element: KV[String, CoGbkResult], out: DoFn.OutputReceiver[GenericRecord]): Unit = {
-      val merged = new Schema.Parser().parse(mergedJson)
-      val lefts = element.getValue.getAll(new TupleTag[GenericRecord]("l")).asScala
-      val rights = element.getValue.getAll(new TupleTag[GenericRecord]("r")).asScala
-      for (l <- lefts; r <- rights) out.output(joinRecords(merged, l, r))
+  /** A joined row (Beam's `lhs`/`rhs`: one row of each side) as one record with each side's columns prefixed `l_` and `r_`. */
+  final class MergeRowFn(mergedJson: String) extends SerializableFunction[Row, GenericRecord] {
+    override def apply(joined: Row): GenericRecord = {
+      val record = new GenericData.Record(new Schema.Parser().parse(mergedJson))
+      List("lhs" -> "l", "rhs" -> "r").foreach { case (side, prefix) =>
+        val row = joined.getRow(side)
+        row.getSchema.getFieldNames.asScala.foreach(f => record.put(s"${prefix}_$f", avroValue(row.getValue[AnyRef](f))))
+      }
+      record
     }
   }
 
-  final class CrossFn(mergedJson: String, other: PCollectionView[java.util.List[GenericRecord]]) extends DoFn[GenericRecord, GenericRecord] {
-    @ProcessElement def process(c: DoFn[GenericRecord, GenericRecord]#ProcessContext): Unit = {
-      val merged = new Schema.Parser().parse(mergedJson)
-      c.sideInput(other).asScala.foreach(r => c.output(joinRecords(merged, c.element(), r)))
+  /** A grouped row (Beam's `key`, the group's key columns, and `value`, its `total`) as the output record. */
+  final class GroupRowFn(outJson: String, columns: List[ResolvedColumn]) extends SerializableFunction[Row, GenericRecord] {
+    override def apply(grouped: Row): GenericRecord = {
+      val key = grouped.getRow("key")
+      val record = new GenericData.Record(new Schema.Parser().parse(outJson))
+      columns.foreach {
+        case Copy(name, field) => record.put(name, avroValue(key.getValue[AnyRef](field)))
+        case RowCount(name)    => record.put(name, grouped.getRow("value").getInt64("total"))
+        case other             => throw new IllegalArgumentException(s"a grouped job's columns are its keys and its row count, not $other")
+      }
+      record
     }
   }
 
-  private def joinRecords(merged: Schema, left: GenericRecord, right: GenericRecord): GenericRecord = {
-    val record = new GenericData.Record(merged)
-    left.getSchema.getFields.asScala.foreach(f => record.put(s"l_${f.name}", left.get(f.name)))
-    right.getSchema.getFields.asScala.foreach(f => record.put(s"r_${f.name}", right.get(f.name)))
-    record
-  }
-
-  final class GroupFn(outJson: String, columns: List[ResolvedColumn]) extends DoFn[KV[String, java.lang.Iterable[GenericRecord]], GenericRecord] {
-    @ProcessElement def process(@DoFn.Element element: KV[String, java.lang.Iterable[GenericRecord]], out: DoFn.OutputReceiver[GenericRecord]): Unit = {
-      val records = element.getValue.asScala.toList
-      out.output(recordOf(outJson, columns, records.head, records.size.toLong))
-    }
-  }
+  /** A Beam row's value as an Avro record holds it (a Beam array is a Java collection, which Avro takes as it is). */
+  private def avroValue(v: AnyRef): AnyRef = v
 
   // --- the neutral schema as Avro ---
 

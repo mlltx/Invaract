@@ -63,6 +63,9 @@ object InvaractConf {
   /** `"true"` makes a job that never wrote an output its contract declares exit with a failure status, for an adapter
     * that finds that only once the job has ended (Spark). An adapter that sees the whole job first refuses it instead. */
   val FailOnMissingOutput = "failOnMissingOutput"
+  /** Comma-separated names of the steps a platform trusts not to move governed data (`TrustedSteps`): a step that ends a job
+    * without being a write the adapter recognises is not refused when named here. `*` stands for any run of characters. */
+  val TrustedSteps = "trustedSteps"
 
   // What `AttachSetup` reads to decide what a job is attached to, and how.
   /** The contract to enforce: a file path, or a `registry://<id>@<version>` reference (`ContractReference`). */

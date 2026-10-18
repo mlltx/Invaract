@@ -134,8 +134,9 @@ An adapter owns exactly this, and nothing the pipeline already does:
 ### Spelling the configuration keys
 
 The neutral names are `InvaractConf`'s (`locationMap`, `rejectUndeclaredInputs`, `rejectUndeclaredFields`,
-`computeFingerprint`, `staticDataQuality`, `roleConsistency`, `orgPolicy`, `orgPolicyOverlays`, and for attaching
-`contract`, `dryRun`, `notifyConfig`, `registryUrl`, `registryClientClass`). An adapter supplies a
+`computeFingerprint`, `staticDataQuality`, `roleConsistency`, `orgPolicy`, `orgPolicyOverlays`, `failOnMissingOutput` and
+`trustedSteps` (each for an adapter that has what it governs: an end-of-job check, a refusal of steps that end a job),
+and for attaching `contract`, `dryRun`, `notifyConfig`, `registryUrl`, `registryClientClass`). An adapter supplies a
 `ConfigSource` that spells them in the engine's own configuration surface and never invents a second name for a
 neutral setting. Spark's is `spark.invaract.<name>`; an adapter for an engine with a different surface follows the same
 convention, once, in one place:

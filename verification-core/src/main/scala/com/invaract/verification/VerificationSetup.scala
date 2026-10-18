@@ -30,6 +30,10 @@ import com.invaract.verification.notification.{JobInfo, NotificationSink}
   */
 object VerificationSetup {
 
+  /** The steps `config` says the platform trusts (`InvaractConf.TrustedSteps`): what an adapter does not refuse as an
+    * unverifiable step that ends the job. */
+  def trustedSteps(config: ConfigSource): TrustedSteps = TrustedSteps.from(config)
+
   /** The resolver built when `locationMap` isn't configured: `NoOpLocationResolver`,
     * so a contract with no `ref://` locations is completely unaffected and one
     * that does declare a reference fails immediately with a clear, actionable
