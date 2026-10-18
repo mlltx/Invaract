@@ -81,8 +81,14 @@ capabilities:
     status: not-applicable
     note: There is no row-level DML in Beam.
   rules.planShape:
-    status: unsupported
-    note: The fields a schema filter, join or group-by uses are held in non-public state and the plain-function forms are opaque; supporting these would rest on reflection into Beam internals or on analysing SQL (SqlTransform).
+    status: partial
+    note: >-
+      Read from Beam's schema transforms - Filter.create().whereFieldName(s), Group.byFieldNames/byFieldIds (with or without
+      aggregation) and Group.globally(), Join (inner, outer, broadcast) and CoGroup - whose fields are read by reflection from
+      members the version matrix checks on every Beam release. A filter, grouping or join written as code (Filter.by, a DoFn,
+      GroupByKey, CoGroupByKey) or in SQL (SqlTransform) is opaque: a required_* rule is not met by it, and under
+      forbid_cross_join a step that combines several collections in code refuses the write as unverifiable, as does a schema
+      transform whose fields cannot be read under any of these rules.
   rules.custom:
     status: unsupported
     note: Custom rule verifiers are given a row-level change to judge, and Beam has none.

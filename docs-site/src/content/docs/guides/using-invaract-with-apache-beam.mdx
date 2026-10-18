@@ -16,7 +16,8 @@ different.
 <Aside type="caution" title="What this does and does not check">
 The Beam adapter reads the *shape* of a pipeline: where it reads, where it writes, which
 columns and types come out, and in which format. It cannot read what your own functions do to
-values, and it cannot see which column a filter, join or grouping uses. It recognises reads
+values. It sees which columns a filter, join or grouping uses only when it is one of Beam's
+schema transforms (`Filter`, `Join`, `CoGroup`, `Group`). It recognises reads
 and writes of **Parquet, Avro, text, CSV and TFRecord files, BigQuery tables, Kafka topics,
 JDBC tables and Pub/Sub topics**, batch or streaming. A contract that relies on something the
 adapter cannot check is refused with `UNSUPPORTED_CONTRACT_FEATURE` rather than passed
@@ -44,7 +45,7 @@ hands it to the real runner. By default that is the `DirectRunner`; name another
 `--invaractDelegate=<runner>` and give it its own options as usual, for example
 `--invaractDelegate=FlinkRunner --flinkMaster=...` (`--runner=com.invaract.beamadapter.InvaractRunner`
 works too, if you prefer the full class name). The settings (`--invaractContract`, `--invaractLocationMap`,
-`--invaractNotifyConfig`, `--invaractOrgPolicy`, `--invaractRejectUndeclaredInputs`,
+`--invaractNotifyConfig`, `--invaractOrgPolicy`, `--invaractRejectUndeclaredInputs`, `--invaractTrustedSteps`,
 `--invaractRegistryUrl`, ...) are Beam options like any other, found by Beam without any code
 in the job.
 
@@ -156,12 +157,32 @@ deployment keeps its data; declare an absolute location to pin one.
   undeclared input can no longer be ruled out.
 - A step that ends the pipeline without being a recognised write (a function that pushes rows to
   a service, a write to an IO Invaract does not know, a write whose destination the job computes
-  per element) is refused as an unverifiable write. So is a step that only reports on the
-  pipeline at its end, such as a metrics count with nothing after it. A function that writes in
-  the middle of a pipeline cannot be seen by any check made before the run.
-- The Beam adapter does not support transformation-shape rules (required filter, join or
-  group-by), static data-quality proofs, role consistency, fingerprints and column lineage. A
-  contract that needs one is refused with `UNSUPPORTED_CONTRACT_FEATURE`, naming it.
+  per element) is refused as an unverifiable write, unless it only reports on the job (see
+  [Steps that only report](#steps-that-only-report)). A function that writes in the middle of a
+  pipeline cannot be seen by any check made before the run.
+- Transformation-shape rules (required filter, join or group-by columns, no cross join) are
+  checked where the pipeline uses Beam's schema transforms; see
+  [Enforce Transformation Shape Rules](/guides/enforcing-transformation-rules/#on-apache-beam).
+- The Beam adapter does not support static data-quality proofs, role consistency, fingerprints
+  and column lineage. A contract that needs one is refused with `UNSUPPORTED_CONTRACT_FEATURE`,
+  naming it.
+
+## Steps that only report
+
+A step at the end of a pipeline that does nothing but report on the job is let through in two
+cases:
+
+- **It reads only what writes report.** This means the file names a `FileIO` or `TextIO` write
+  hands on (`getPerDestinationOutputFilenames()`), or the tables a BigQuery load wrote. Steps
+  in between that read only those count too. Such a step sees names, not data, so a step that
+  announces the files a job wrote is not refused. A BigQuery write's failed or successful
+  inserts are rows, so a step that reads them is still refused, as is a step that also reads
+  data (directly or as a side input).
+- **The platform trusts it.** `--invaractTrustedSteps` takes comma-separated step names. `*`
+  stands for any run of characters, as in `--invaractTrustedSteps=NotifyTeam,Metrics*`. A step
+  named there that ends the pipeline is not refused. It is logged at INFO when let through.
+  This trusts a step, not a destination: a write Invaract cannot verify is refused even if its
+  name matches.
 
 ## Dataflow templates
 

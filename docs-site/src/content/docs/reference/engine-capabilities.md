@@ -58,7 +58,7 @@ capability the suite has no scenario for yet is listed by the suite as unverifie
 | Capability | What it means | Suite check | beam | spark |
 |---|---|---|---|---|
 | `rules.dml` | DML rules: merge_condition, forbid_unconditional_delete, allowed_update_columns. *(blocks if unsupported)* | verified (2) | — | ◐ |
-| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (8) | ✖ | ✅ |
+| `rules.planShape` | Transformation-shape rules: required_group_by, forbid_cross_join, required_join_columns, required_filter_columns. *(blocks if unsupported)* | verified (8) | ◐ | ✅ |
 | `rules.custom` | Custom rule types (customRuleTypes) resolve and run. *(blocks if unsupported)* | attested | ✖ | ✅ |
 
 ### Analysis and lineage
@@ -145,7 +145,7 @@ The suite has 53 scenarios. For each adapter, the scenarios it is held to confor
 - `check.saveMode` — partial: BigQueryIO writes state one (WRITE_APPEND, WRITE_TRUNCATE, WRITE_EMPTY are append, overwrite, error). File, Kafka, JDBC and Pub/Sub writes have no write disposition in Beam, so a contract that declares a save mode for one of them has the write refused as unverifiable rather than passed unchecked.
 - `check.catalogRegistration` — partial: A BigQueryIO table is registered in the bigquery catalog under its project, dataset and table, and is checked as such (on the read side too). File, Kafka and JDBC datasets have no catalog in Beam, so a contract requiring one sees them as unregistered.
 - `rules.dml` — not-applicable: There is no row-level DML in Beam.
-- `rules.planShape` — unsupported: The fields a schema filter, join or group-by uses are held in non-public state and the plain-function forms are opaque; supporting these would rest on reflection into Beam internals or on analysing SQL (SqlTransform).
+- `rules.planShape` — partial: Read from Beam's schema transforms - Filter.create().whereFieldName(s), Group.byFieldNames/byFieldIds (with or without aggregation) and Group.globally(), Join (inner, outer, broadcast) and CoGroup - whose fields are read by reflection from members the version matrix checks on every Beam release. A filter, grouping or join written as code (Filter.by, a DoFn, GroupByKey, CoGroupByKey) or in SQL (SqlTransform) is opaque: a required_* rule is not met by it, and under forbid_cross_join a step that combines several collections in code refuses the write as unverifiable, as does a schema transform whose fields cannot be read under any of these rules.
 - `rules.custom` — unsupported: Custom rule verifiers are given a row-level change to judge, and Beam has none.
 - `analysis.staticDataQuality` — unsupported: Proving a property of an output column needs to see how it is computed; functions in Beam are opaque Java code.
 - `analysis.roleConsistency` — unsupported: Needs column-level usage, which the graph does not give.

@@ -67,6 +67,10 @@ trait InvaractBeamOptions extends PipelineOptions {
   def getInvaractRoleConsistency: String
   def setInvaractRoleConsistency(value: String): Unit
 
+  @Description("Comma-separated names of steps the platform trusts not to move governed data (a metrics or a notification step), * for any run of characters: a step that ends the pipeline without a recognised write is not refused when named here.")
+  def getInvaractTrustedSteps: String
+  def setInvaractTrustedSteps(value: String): Unit
+
   @Description("The runner the checked pipeline is handed to once it passes (a runner's simple or full class name). Default: DirectRunner.")
   def getInvaractDelegate: String
   def setInvaractDelegate(value: String): Unit
@@ -90,6 +94,7 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case InvaractConf.ComputeFingerprint     => options.getInvaractComputeFingerprint
       case InvaractConf.StaticDataQuality      => options.getInvaractStaticDataQuality
       case InvaractConf.RoleConsistency        => options.getInvaractRoleConsistency
+      case InvaractConf.TrustedSteps           => options.getInvaractTrustedSteps
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 

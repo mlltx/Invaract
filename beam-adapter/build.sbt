@@ -129,7 +129,7 @@ mimaPreviousArtifacts := Set.empty
 // public bytecode, so MiMa sees it; no code outside this module can call it, so a change to it is not a break.
 mimaBinaryIssueFilters ++= Seq(
   "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
-  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$"
+  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$", "BeamShapes", "SchemaShape", "JoinSide"
 ).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*"))
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating

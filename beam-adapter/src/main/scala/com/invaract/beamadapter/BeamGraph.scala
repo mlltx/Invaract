@@ -29,7 +29,8 @@ private[beamadapter] final case class BeamCollection(
 
 /** One step of a pipeline as the graph walk reports it: a composite step (made of smaller ones, in `children`) or a
   * primitive one. `display` is the step's own display data - the label sheet a step publishes about itself, which is
-  * where a read states its file pattern.
+  * where a read states its file pattern. `inputTags` names each input by the tag the step was given it under (a `CoGroup`
+  * of several collections joins them by these names).
   */
 private[beamadapter] final case class BeamStep(
     name: String,
@@ -37,7 +38,8 @@ private[beamadapter] final case class BeamStep(
     inputs: List[BeamCollection],
     outputs: List[BeamCollection],
     display: Map[String, String],
-    children: List[BeamStep]
+    children: List[BeamStep],
+    inputTags: Map[String, String] = Map.empty
 ) {
   def className: String = transform.getClass.getName
   def isComposite: Boolean = children.nonEmpty
@@ -83,7 +85,8 @@ private[beamadapter] object BeamGraph {
       inputs = node.getInputs.values.asScala.toList.collect { case c: PCollection[_] => collectionOf(c) },
       outputs = node.getOutputs.values.asScala.toList.collect { case c: PCollection[_] => collectionOf(c) },
       display = displayOf(node.getTransform),
-      children = children
+      children = children,
+      inputTags = node.getInputs.asScala.toList.collect { case (tag, c: PCollection[_]) => c.getName -> tag.getId }.toMap
     )
 
   private def collectionOf(c: PCollection[_]): BeamCollection =

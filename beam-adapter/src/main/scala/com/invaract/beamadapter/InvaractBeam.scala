@@ -30,7 +30,7 @@ object InvaractBeam {
     val job = jobInfoOf(options)
     AttachSetup.select(config) match {
       case AttachPlan.Enforce(contract, sink) => enforce(contract, VerificationOptions(), sink, config, job)
-      case AttachPlan.DryRun(sink)            => new BeamCheck(None, VerificationOptions(), sink, job, BeamCapabilities.declared)
+      case AttachPlan.DryRun(sink)            => new BeamCheck(None, VerificationOptions(), sink, job, BeamCapabilities.declared, VerificationSetup.trustedSteps(config))
     }
   }
 
@@ -46,7 +46,7 @@ object InvaractBeam {
     val located = VerificationSetup.resolveContractLocations(contract, config)
     val resolved = VerificationSetup.resolveVerificationOptions(options, config)
     val (governed, governedOptions) = VerificationSetup.enforceOrgPolicy(located, resolved, config, sink, job.runId, Some(job))
-    new BeamCheck(Some(governed), governedOptions, sink, job, BeamCapabilities.declared)
+    new BeamCheck(Some(governed), governedOptions, sink, job, BeamCapabilities.declared, VerificationSetup.trustedSteps(config))
   }
 
   /** Checks `pipeline` as its own options say (`fromOptions(pipeline.getOptions)`). One line a job author can add when the

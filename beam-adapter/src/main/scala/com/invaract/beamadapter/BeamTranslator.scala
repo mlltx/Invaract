@@ -4,7 +4,7 @@
 package com.invaract.beamadapter
 
 import com.invaract.contract.LogicalSchema
-import com.invaract.ir.{DatasetRef, Plan, Read, UnknownPlan, Write}
+import com.invaract.ir.{Aggregate, BooleanExpr, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, Plan, Read, UDF, UnknownPlan, Write}
 import org.apache.beam.sdk.Pipeline
 
 import scala.collection.mutable
@@ -13,6 +13,10 @@ import scala.collection.mutable
   * writer's format could not be told), the plan that produces its data (with the save mode and catalog table a BigQuery write
   * states), the columns of the data it writes (the write's own declared schema, else the data's; `None` when neither is
   * known), the columns of every located read upstream of it, and the reads upstream of it that could not be located.
+  *
+  * For the transformation-shape rules (docs/BEAM_ADAPTER.md, D19): `opaqueCombines` are the steps upstream of it that combine
+  * several collections in code the translation cannot read (a `CoGroupByKey`, a function given another collection as a side
+  * input), any of which could be a cross join; `unreadableShapes` the schema transforms upstream whose fields could not be read.
   */
 private[beamadapter] final case class TranslatedWrite(
     location: String,
@@ -20,13 +24,20 @@ private[beamadapter] final case class TranslatedWrite(
     plan: Write,
     outputSchema: Option[LogicalSchema],
     inputSchemas: List[(String, LogicalSchema)],
-    unlocatedReads: List[String] = Nil
+    unlocatedReads: List[String] = Nil,
+    opaqueCombines: List[String] = Nil,
+    unreadableShapes: List[String] = Nil
 )
 
-/** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). */
-private[beamadapter] final case class UnverifiableStep(operation: String, plan: Plan)
+/** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). `step` is
+  * the step's full name when it is a step that ends the pipeline without being a recognised write, which a platform may name
+  * as trusted (`TrustedSteps`, docs/BEAM_ADAPTER.md, D14); a write it cannot verify has none, since trusting it would pass data
+  * written somewhere the contract cannot see. */
+private[beamadapter] final case class UnverifiableStep(operation: String, plan: Plan, step: Option[String] = None)
 
-private[beamadapter] final case class BeamTranslation(writes: List[TranslatedWrite], unverifiable: List[UnverifiableStep])
+/** The pipeline's writes, what it cannot verify, and the steps that end it but read only what writes report (`reportSteps`, let
+  * through: D14). */
+private[beamadapter] final case class BeamTranslation(writes: List[TranslatedWrite], unverifiable: List[UnverifiableStep], reportSteps: List[String] = Nil)
 
 /** The pipeline graph (`BeamGraph`) as the engine-neutral plan (`ir.Plan`) the verifiers work on.
   *
@@ -35,26 +46,31 @@ private[beamadapter] final case class BeamTranslation(writes: List[TranslatedWri
   * step never hides a read beneath it; a read from outside the pipeline that states no location becomes an `ir.UnknownPlan` of
   * source type `UnlocatedSourceType`, which the verifiers treat as a place a declared input may be read without being seen; and a
   * step that ends the pipeline without being a recognised write is reported as unverifiable. The design reasons are
-  * docs/BEAM_ADAPTER.md's D1 to D12.
+  * docs/BEAM_ADAPTER.md's D1 to D12. Beam's schema transforms (`BeamShapes`) become the `ir.Filter`, `ir.Aggregate` and
+  * `ir.Join` they are, with the columns they use, so the transformation-shape rules can be checked (D19).
   */
 private[beamadapter] object BeamTranslator {
 
   /** The `ir.UnknownPlan.sourceType` of a read from outside the pipeline that states no location. */
   val UnlocatedSourceType = "UnlocatedRead"
 
+  /** The `ir.UDF.engineType` of a filter's predicate: Java code, of which only the columns it is given are known. */
+  val PredicateEngineType = "BeamPredicate"
+
   def translate(pipeline: Pipeline): BeamTranslation = translate(BeamGraph.of(pipeline))
 
   def translate(top: List[BeamStep]): BeamTranslation = {
     val nodes = top.flatMap(visible)
     val producers = nodes.flatMap(n => n.step.outputs.map(_.name -> n)).toMap
-    val consumers = nodes.flatMap(n => n.step.inputs.map(_.name -> n)).groupBy(_._1).map { case (k, v) => k -> v.map(_._2) }
+    val consumers = nodes.flatMap(n => inputsOf(n.step).map(_.name -> n)).groupBy(_._1).map { case (k, v) => k -> v.map(_._2) }
     val consumed = consumers.keySet
 
     val planOf = mutable.Map.empty[String, Plan]
-    // by step name: a Node is a case class over the whole step subtree, which `distinct` would hash in full
+    // by step name: a Node is a case class over the whole step subtree, which `distinct` would hash in full. What a write hands on
+    // (the files it wrote, a signal that it is done) is about the write, not data it read, so a write is never a source of data.
     def sourcesOf(node: Node): List[Node] = {
       val seen = mutable.Set.empty[String]
-      node.step.inputs.flatMap(i => producers.get(i.name)).filter(n => seen.add(n.step.name))
+      inputsOf(node.step).flatMap(i => producers.get(i.name)).filterNot(isWrite).filter(n => seen.add(n.step.name))
     }
     def passThrough(n: Node, description: String, sourceType: String): Plan = UnknownPlan(description, sourceType, sourcesOf(n).map(plan))
     def plan(node: Node): Plan = planOf.getOrElseUpdate(
@@ -69,11 +85,39 @@ private[beamadapter] object BeamTranslator {
         // a reader handed files by a step that does not say where they are is itself a read whose source is not located
         case f: FileReaderNode =>
           passThrough(f, s"${f.step.name} (${BeamIO.simpleName(f.step)})", if (readsLocated(f)) BeamIO.simpleName(f.step) else UnlocatedSourceType)
-        case o: OtherNode             => passThrough(o, s"${o.step.name} (${BeamIO.simpleName(o.step)})", BeamIO.simpleName(o.step))
+        case o: OtherNode =>
+          BeamShapes.of(o.step) match {
+            case Some(shape) => shaped(o, shape)
+            case None        => passThrough(o, s"${o.step.name} (${BeamIO.simpleName(o.step)})", BeamIO.simpleName(o.step))
+          }
         case w: WriteNode             => writePlan(w)
         case u: UnverifiableWriteNode => passThrough(u, s"${u.step.name}: ${u.why}", BeamIO.simpleName(u.step))
       }
     )
+    /** A schema transform as the plan node it is: the filter, grouping or join, over the plans of what feeds it. */
+    def shaped(o: OtherNode, shape: SchemaShape): Plan = shape match {
+      case SchemaShape.Filtered(predicates) =>
+        // one predicate per filter, each a function of the columns it is given, all of which must hold
+        val conditions = predicates.map(cols => UDF(None, cols.map(c => ColumnReference(ColumnRef(c))), Some(PredicateEngineType)): Expr)
+        Filter(single(o), conditions.reduceOption((a, b) => BooleanExpr("AND", List(a, b))).getOrElse(UDF(None, Nil, Some(PredicateEngineType))))
+      case SchemaShape.Grouped(keys) => Aggregate(single(o), keys.map(k => ColumnReference(ColumnRef(k))), Nil)
+      case SchemaShape.Joined(joinType, first :: rest) =>
+        def sidePlan(side: JoinSide): Plan =
+          producers.get(side.collection).map(plan).getOrElse(UnknownPlan(s"${o.step.name}: no step produces ${side.collection}", BeamIO.simpleName(o.step)))
+        rest.foldLeft(sidePlan(first)) { (joined, side) =>
+          // each side is matched with the first on its key columns, position by position; a side with none is a cross product
+          val pairs = first.keys.zip(side.keys).map { case (l, r) =>
+            Comparison("=", ColumnReference(ColumnRef(l, Some(first.qualifier))), ColumnReference(ColumnRef(r, Some(side.qualifier)))): Expr
+          }
+          Join(joined, sidePlan(side), joinType, pairs.reduceOption((a, b) => BooleanExpr("AND", List(a, b))))
+        }
+      case SchemaShape.Joined(_, Nil) | SchemaShape.Unreadable(_) =>
+        passThrough(o, s"${o.step.name} (${BeamIO.simpleName(o.step)})", UnreadableShapeSourceType)
+    }
+    def single(o: OtherNode): Plan = sourcesOf(o).map(plan) match {
+      case only :: Nil => only
+      case many        => UnknownPlan(s"${o.step.name}: several inputs", "Inputs", many)
+    }
     def writePlan(w: WriteNode): Write = Write(DatasetRef(w.location), inputPlan(w), w.format, w.saveMode, w.catalog)
     def inputPlan(w: WriteNode): Plan = sourcesOf(w) match {
       case Nil     => UnknownPlan(s"${w.step.name}: no input was found", BeamIO.simpleName(w.step))
@@ -110,21 +154,66 @@ private[beamadapter] object BeamTranslator {
         case _                     => None
       }
       val written = formatter.filter(_ => w.format.contains("text")).fold(w)(f => w.copy(format = Some(f._1)))
+      val others = above.collect { case o: OtherNode => o }
+      // what the transformation-shape rules cannot see past (D19): a schema transform it could not read, or a step that combines
+      // several collections in code (not Flatten, which only concatenates them)
+      val unreadable = others.collect { case o if BeamShapes.of(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }
+      val combines = others.collect {
+        case o if !BeamShapes.recognises(o.step) && !BeamIO.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step)
+      }
       TranslatedWrite(
         written.location,
         written.format,
         writePlan(written),
         w.declaredSchema.orElse(w.step.inputs.headOption.flatMap(BeamSchemas.of)).orElse(formatter.flatMap(_._2)),
         (readSchemas ++ readerSchemas).distinct,
-        unlocated.distinct
+        unlocated.distinct,
+        combines.distinct,
+        unreadable.distinct
       )
     }
 
+    /** Whether everything `node` reads is what writes report - the files they wrote, the tables they loaded - directly or
+      * through steps that themselves read only that: it sees names, not data (D14). A write's result that holds rows (a BigQuery
+      * write's failed inserts) is data, and so is anything that does not come from a write. */
+    def readsOnlyReports(node: Node, via: Set[String]): Boolean = {
+      val read = inputsOf(node.step)
+      read.nonEmpty && read.forall { c =>
+        producers.get(c.name) match {
+          case Some(w) if isWrite(w)                          => BeamIO.isWriteReport(c)
+          case Some(o: OtherNode) if !via(o.step.name) => readsOnlyReports(o, via + node.step.name)
+          case _                                              => false
+        }
+      }
+    }
+
     val unwritable = nodes.collect { case u: UnverifiableWriteNode => u }.map(u => UnverifiableStep(u.why, plan(u)))
-    val endsPipeline = nodes.collect { case o: OtherNode if o.step.outputs.forall(c => !consumed.contains(c.name)) => o }
-      .map(o => UnverifiableStep(s"a step that ends the pipeline but is not a recognised write: ${o.step.name} (${BeamIO.simpleName(o.step)})", plan(o)))
-    BeamTranslation(writes, unwritable ++ endsPipeline)
+    val (reporting, ending) = nodes.collect { case o: OtherNode if o.step.outputs.forall(c => !consumed.contains(c.name)) => o }
+      .partition(o => readsOnlyReports(o, Set.empty))
+    val endsPipeline = ending.map(o =>
+      UnverifiableStep(s"a step that ends the pipeline but is not a recognised write: ${describe(o.step)}", plan(o), Some(o.step.name))
+    )
+    BeamTranslation(writes, unwritable ++ endsPipeline, reporting.map(o => describe(o.step)))
   }
+
+  /** The `ir.UnknownPlan.sourceType` of a schema transform whose fields could not be read (`SchemaShape.Unreadable`). */
+  val UnreadableShapeSourceType = "UnreadableSchemaTransform"
+
+  private def isWrite(node: Node): Boolean = node.isInstanceOf[WriteNode] || node.isInstanceOf[UnverifiableWriteNode]
+
+  private def describe(step: BeamStep): String = s"${step.name} (${BeamIO.simpleName(step)})"
+
+  /** What `step` reads: its own inputs, then what the steps inside it take from outside it. A composite does not always list
+    * everything it uses (a schema `Join` lists only its left side; the right reaches the steps inside it directly), so a read
+    * feeding only those inner steps would otherwise not be upstream of anything. */
+  private[beamadapter] def inputsOf(step: BeamStep): List[BeamCollection] =
+    if (!step.isComposite) step.inputs
+    else {
+      val inner = step.withDescendants.tail
+      val madeInside = inner.flatMap(_.outputs.map(_.name)).toSet
+      val seen = mutable.Set.empty[String]
+      (step.inputs ++ inner.flatMap(_.inputs).filterNot(c => madeInside.contains(c.name))).filter(c => seen.add(c.name))
+    }
 
   // --- the steps that matter, found top-down so the outermost recognisable step wins ---
 
@@ -154,7 +243,9 @@ private[beamadapter] object BeamTranslator {
       case Some(node) => List(node)
       case None =>
         if (isFileWriteUnit(step)) List(writeNode(step, BeamIO.fileWrite(step)))
-        else if (step.isComposite && containsIo(step)) step.children.flatMap(visible)
+        else if (BeamShapes.recognises(step)) List(OtherNode(step))
+        // a team's own step that holds IO, or a schema transform, is looked into so what it does is seen
+        else if (step.isComposite && (containsIo(step) || step.withDescendants.tail.exists(BeamShapes.recognises))) step.children.flatMap(visible)
         else List(OtherNode(step))
     }
 

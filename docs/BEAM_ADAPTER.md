@@ -77,7 +77,7 @@ backing is not allowed.
 | `check.saveMode` | partial | `output-save-mode-matches`, `output-save-mode-mismatch` (written as BigQuery writes to Beam's in-memory BigQuery); BeamCheckSpec for the refusal of a declared save mode on a write that states none |
 | `check.catalogRegistration` | partial | `catalog-required-output-unregistered` (a file write), `catalog-required-output-registered` (a BigQuery table); BeamIOSpec for a BigQuery read's catalog identity |
 | `rules.dml` | not-applicable | not applicable: no row-level DML |
-| `rules.planShape` | unsupported | declared unsupported, so the kit expects a safe refusal: `required-filter-column-present`, `required-filter-column-missing` (+6 more) conform by refusing |
+| `rules.planShape` | partial | `required-filter-column-present`, `required-filter-column-missing`, `forbid-cross-join-allows-a-keyed-join`, `forbid-cross-join-blocks-a-cartesian-product`, `required-join-columns-present`, `required-join-columns-missing`, `required-group-by-present`, `required-group-by-wrong-keys` (the kit's jobs use Beam's schema `Filter`, `Join`, `CoGroup` and `Group`); BeamShapesSpec for every schema transform read, the code-written forms and both refusals (D19) |
 | `rules.custom` | unsupported | declared unsupported: a custom rule judges a row-level change, and Beam has none |
 | `analysis.staticDataQuality` | unsupported | declared unsupported, so the kit expects a safe refusal: `static-data-quality-proves-a-constant`, `static-data-quality-cannot-prove-a-passthrough` (+1 more) conform by refusing |
 | `analysis.roleConsistency` | unsupported | declared unsupported, so the kit expects a safe refusal: `role-source-contributing-conforms`, `role-control-contributing-contradicts` conform by refusing |
@@ -131,7 +131,9 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | `KafkaIO` write to a topic | ✅ (refused for having no schema unless the collection has one) | `BeamIOSpec` "a Kafka read is located..." |
 | `JdbcIO` write: a plain `INSERT INTO` one table | ✅ `<url>/<table>`; 🚫 any other statement | `BeamIOSpec` "a JDBC read of one plain table...", "...a statement that is not an INSERT is unverifiable" |
 | A declared save mode on a write that states none (every write but BigQuery) | 🚫 refused as unverifiable (D13) | `BeamCheckSpec` "a file write, which states no save mode..." |
-| A step that ends the pipeline without a recognised write (any other IO, a `DoFn` with a side effect, a metrics step, a step that consumes a write's own result) | 🚫 refused as unverifiable (D14 is a decision for the reviewer) | scenario `untranslatable-write-fails-closed`; `BeamCheckSpec`; probes 07, 08 (friction log 18) |
+| A step that ends the pipeline without a recognised write (any other IO, a `DoFn` with a side effect, a metrics step) | 🚫 refused as unverifiable, unless the platform names it in `--invaractTrustedSteps` (D14) | scenario `untranslatable-write-fails-closed`; `BeamCheckSpec`; `BeamReportStepsSpec` "a step the platform trusts..." |
+| A step that ends the pipeline reading only what writes report (a `FileIO`/`TextIO` write's file names, a BigQuery load's tables), directly or through steps that read only that | ✅ let through: it sees names, not data (D14) | `BeamReportStepsSpec` "a step that reads the files a write wrote...", "so does one fed by steps..." |
+| A step reading a write's result that holds rows (BigQuery failed or successful inserts), or a write's result and data | 🚫 refused as unverifiable (D14) | `BeamReportStepsSpec` "a write's result that holds rows...", "a step that also reads data..." |
 | A side effect in the middle of a pipeline, a read inside a function | declared limit: no pre-run check can see it | survey section 9 |
 | A Kafka write of key-value pairs; a Kafka read without metadata | ✅ the columns `key` and `value` (D20) | `BeamCheckSpec` "a Kafka job is checked on the key and value it writes..."; `BeamSchemasSpec` |
 | A classic template's runtime parameters (`ValueProvider` paths with no value yet) | ✅ a read is unlocated, 🚫 a write is refused, each naming the parameter (D21) | `BeamIOSpec` "a read from a template parameter...", "a write to a template parameter..."; `BeamCheckSpec` |
@@ -143,7 +145,10 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | BigQuery's Storage Read (`DIRECT_READ`, selected fields) and Storage Write APIs | ✅ the same table read and write | `BeamIOSpec` "BigQuery's Storage Read and Write APIs..." |
 | A Pub/Sub read from a subscription | ✅ located at the subscription path (the pipeline does not state its topic) | `BeamIOSpec` "a Pub/Sub read from a subscription..." |
 | Files handed to a reader by in-job data (`Create.of` of file metadata) | ✅ an unlocated read: a declared input it may be is unverifiable, not missing | `BeamCheckSpec` "files handed to a reader by a step that does not say where they are..." |
-| Join, grouping, filter, opaque function | ✅ kept as unknown steps that carry the reads beneath them (the fields they use are not public, so shape rules are refused) | scenarios `unrecognized-step-*`, `required-*`, `forbid-cross-join-*` |
+| Beam's schema `Filter` (`whereFieldName(s)`, `whereFieldId`), `Group` (`byFieldNames`/`byFieldIds`, with or without aggregation; `globally()`), `Join` (inner, outer, broadcast) and `CoGroup` | ✅ the `ir.Filter`, `ir.Aggregate` and `ir.Join` they are, with the columns they use, read by reflection (D19); 🚫 one whose fields cannot be read refuses a write under any shape rule | scenarios `required-*`, `forbid-cross-join-*`; `BeamShapesSpec` |
+| A team's own step holding a schema transform | ✅ looked into, so the transform inside is seen | `BeamShapesSpec` "a team's own step that holds a schema transform..." |
+| The right side of a schema `Join` (Beam lists it only on the steps inside the join) | 🔧 now upstream of the write it feeds; it was missed, so a declared input read there was reported missing and an undeclared one went unseen | `BeamShapesSpec` "the right side of a join...", "an undeclared read reaching a write only through a join's right side..." |
+| A join, grouping or filter written as code (`Filter.by`, a `DoFn`, `GroupByKey`, `CoGroupByKey`, a side input) or in SQL | ✅ an unknown step that carries the reads beneath it; a `required_*` rule is not met by it; 🚫 under `forbid_cross_join` a step combining collections in code refuses the write (D19); `Flatten` is a union, not refused | scenarios `unrecognized-step-*`; `BeamShapesSpec` "steps that combine collections in code...", "forbid_cross_join refuses a write fed by..." |
 | Beam SQL (`SqlTransform`) over a collection, and the tables a query defines (`CREATE EXTERNAL TABLE`) | ✅ an opaque step with known output columns; its own tables are reads and writes the translator sees | `BeamSqlSpec` |
 | A BigQuery write of rows with `useBeamSchema()` | ✅ the rows' columns | `BeamIOSpec` "a BigQuery write of rows with useBeamSchema..." |
 | Row-level MERGE, UPDATE, DELETE; schema-change commands | n/a, Beam has none | declaration |
@@ -194,11 +199,22 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   unverifiable (report-only) rather than missing, and with `rejectUndeclaredInputs` the write is refused, because an undeclared
   input cannot be ruled out. Refusing every such job was the alternative; it would block every job that reads a BigQuery query.
 - **D13. A contract that declares a save mode for a write that states none is refused**, for the reason D10 is.
-- **D14. Decision needed: steps that end the pipeline but only report on it.** A step that consumes only a recognised write's own
-  result (the file names a `FileIO` write returns, a BigQuery `WriteResult`) or a metrics or logging step whose output nobody uses
-  is refused as an unverifiable write, by the survey's D6 rule. Real jobs do both (notify-on-write, count-and-log). Options:
-  (a) keep refusing (today); (b) let a step through that consumes only a write's result, since it sees file names, not the data;
-  (c) an allow-list of step names a platform trusts, an engine-neutral setting in `InvaractConf`. Recommended: (b) and (c).
+- **D14. Decided (b) and (c): steps that end the pipeline but only report on it.** A step that consumes only a recognised write's
+  result, or a metrics or logging step whose output nobody uses, was refused as an unverifiable write by the survey's D6 rule, and
+  real jobs do both (notify-on-write, count-and-log). Now:
+  - **(b)** A step that ends the pipeline and reads only what writes report is let through, and logged
+    (`BeamTranslation.reportSteps`). "Only what writes report" means every input is a write's result whose coder holds names, not
+    rows, either directly or through steps that themselves read only that (`BeamIO.isWriteReport`):
+    - file names, `KvCoder(VoidCoder, StringUtf8Coder)`;
+    - `TableDestinationCoder` (a BigQuery load's tables).
+    A BigQuery write's failed or successful inserts are `TableRowJsonCoder` or `BigQueryStorageApiInsertErrorCoder` (rows), so a step
+    reading them stays refused, as does one that also reads data. A coder not on that list counts as data, so the rule fails closed.
+    A write's result is never a source of data either (a `Wait.on` its file names does not inherit its reads).
+  - **(c)** The engine-neutral `InvaractConf.TrustedSteps` (`trustedSteps`) names steps a platform trusts, comma-separated, with
+    `*` for any run of characters (`TrustedSteps`, read by `VerificationSetup.trustedSteps`; Beam's spelling is
+    `--invaractTrustedSteps`). A step named there that ends the pipeline is let through and logged. A write the adapter cannot
+    verify is still refused whatever its name: `UnverifiableStep.step` is set only for steps that end the pipeline.
+  - Spark has no such refusal (each write is checked from its own plan), so it does not read the setting.
 - **D15. A JDBC query's table is taken only from a plain `SELECT ... FROM <one table>`** (no join, sub-query, set operation or
   comma list); anything else is an `UnlocatedRead` (D12). No SQL parser is pulled in. `BeamLocations.singleTableOf`.
 - **D16. The production runner proven is Flink**, in a local mini-cluster, on the Flink line Beam publishes for the release under
@@ -221,14 +237,30 @@ place, and the ones marked **decision needed** are for a reviewer to confirm or 
   job to fix rather than the contract: a BigQuery write of `TableRow`s into an existing table that names no schema
   (`CREATE_NEVER`), whose columns exist but only BigQuery knows them (`withSchema`, or rows with a Beam schema and
   `useBeamSchema()`, fixes it).
-- **D19. Decision needed: plan-shape rules for Beam's schema transforms.** `Filter.whereFieldName(s)`, `Group.byFieldNames`,
-  `Join.innerJoin(...).using(...)` and `CoGroup` name the fields they use, which is what `required_filter_columns`,
-  `required_group_by`, `required_join_columns` and `forbid_cross_join` check. None of them has a public getter (checked with
-  `javap` on 2.77.0), so reading them means reflecting into private state, as the adapter already does for a JDBC URL and a
-  decimal's precision. Options: (a) keep `rules.planShape` unsupported (today); (b) read the schema transforms' fields by
-  reflection, gated by the version matrix and failing closed when reflection fails, and declare `rules.planShape` partial: a
-  filter or join written as a plain function stays opaque, so a rule requiring one would reject it. Recommended: (b), since
-  the rules are column lists and schema transforms are how Beam users who care about columns write these steps.
+- **D19. Decided (b): plan-shape rules from Beam's schema transforms.** `Filter.whereFieldName(s)`, `Group.byFieldNames`,
+  `Join` and `CoGroup` name the fields they use, which is what `required_filter_columns`, `required_group_by`,
+  `required_join_columns` and `forbid_cross_join` check. None of them has a public getter, so `BeamShapes` reads them by reflection.
+  - **What is read:**
+    - `Filter.Inner.filters` and each filter's `getFieldAccessDescriptor()`;
+    - `Group.ByFields.getFieldAccessDescriptor()` (through `CombineFieldsByFields.getByFields()`);
+    - `Join.Impl`'s `joinType`, `rhs` and `predicate.lhs`/`rhs`;
+    - `CoGroup`'s `joinArgs` (`allInputsJoinArgs`, `joinArgsMap`, each `By`'s descriptor and optional participation).
+    `javap` shows these the same on 2.60.0, 2.65.0, 2.70.0 and 2.77.0, and the suite passes on each. The fields are resolved
+    against the input's schema with Beam's public `FieldAccessDescriptor.resolve`, so `byFieldIds` and `*` become names, and a
+    nested field is its top-level column.
+  - **What each becomes:**
+    - a filter is an `ir.Filter` whose condition is one `ir.UDF` per predicate over the columns it is given;
+    - a grouping is an `ir.Aggregate` keyed by its columns;
+    - a join or co-group is `ir.Join`s, each side matched with the first on its key columns position by position. A side with no
+      keys has no condition, a cross join.
+  - **Where it fails closed:**
+    - A transform whose fields cannot be read is `SchemaShape.Unreadable`, and refuses a write under any shape rule.
+    - Under `forbid_cross_join`, a step that combines several collections in code (`CoGroupByKey`, a function with a side input)
+      refuses the write, because the rule passes when it sees no join and a join in code is not seen. `Flatten` is a union, so it
+      is not refused.
+    - A `required_*` rule is simply not met by a filter, grouping or join written as code.
+  - **Declared `rules.planShape: partial`.** The kit's scenario jobs now build their filter, joins and grouping from these
+    transforms, and all eight plan-shape scenarios conform by checking.
 - **D20. A key-value pair of plain values is the columns `key` and `value`.** Kafka's own record model, and the columns a Spark
   job writes to a Kafka topic, so one contract describes a Kafka output on either engine. The types come from the pair's coders
   (string, the integer widths, double, float, boolean, bytes); `NullableCoder`, which KafkaIO always uses, makes a column
@@ -300,7 +332,8 @@ Every undocumented decision, surprise, or guess made while building this adapter
     reported the projection as the dataset's columns (fixed); 12 `Partition` (fine); 13 a side input from a second read (the read is
     seen); 14 a text `writeDynamic` (fine); the IO probes found the `FileIO.match()` read idiom, which hid its read entirely (fixed),
     the schema-aware text transforms (fixed), BigQuery partition decorators (fixed) and `Impulse`-driven sources (fixed).
-19. **The portable form does not name a transform's fields either.** `PipelineTranslation.toProto` carries a schema transform's
+19. **The portable form does not name a transform's fields either** (superseded by D19: the Java objects in the graph do hold
+    them, as `FieldAccessDescriptor`s, reachable by reflection and the same on every release in the matrix). `PipelineTranslation.toProto` carries a schema transform's
     configuration as a serialised Java function, and its display data only names the function's class, so a filter's, join's or
     group-by's fields are no more visible there than in the graph. `rules.planShape` stays unsupported. (A group-by's key schema
     does name its fields, but a filter's never appear, so the capability could not be claimed even as partial.)
@@ -327,6 +360,18 @@ Every undocumented decision, surprise, or guess made while building this adapter
     lacks would have passed. The columns are now the sink's (`getJsonSchema`, read like the sink class already is) or the Avro
     write's own (`schema` in its display data). Found with D17/D18's probe pass; a buggy `populateDisplayData` in a user
     transform was confirmed harmless (the step just has no display data).
+
+25. **A composite does not always list what it reads.** A schema `Join` lists only its left side as its input; the right reaches
+    the `CoGroup` inside it directly. The translator treats a composite with no IO as one step, so the right side's read was
+    upstream of nothing: a declared input read only there was reported missing, and with `rejectUndeclaredInputs` an undeclared one
+    passed unseen. Found while building D19. A composite's inputs are now its own plus what the steps inside it take from outside it
+    (`BeamTranslator.inputsOf`). That first made a `Wait.on` a write's file names inherit that write's reads, which is how D14's
+    rule arose that a write's result is never a source of data. *For the guide:* when an engine's composite steps are kept
+    whole, check that their declared inputs are everything they consume.
+26. **A safe refusal is conformance too, so the baseline did not move.** With `rules.planShape` unsupported the eight plan-shape
+    scenarios conformed by refusing; once partial they conform by checking, and the baseline file lists the same ids. Only the
+    ledger and the logs show the change. Reflection on AutoValue classes needs `getDeclaredMethods` up the class chain: the
+    abstract getters are package-private on the public class and implemented on the generated one.
 
 ## Unverified items
 

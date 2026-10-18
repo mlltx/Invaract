@@ -3,9 +3,9 @@
 
 package com.invaract.beamadapter
 
-import com.invaract.contract.{Contract, ContractParser, LogicalSchema}
+import com.invaract.contract.{Contract, ContractParser, LogicalSchema, RuleType}
 import com.invaract.ir.UnknownPlan
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, VerificationOptions, VerificationPipeline, Violation}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractInference, DryRunSelfCheck, DryRunSummary, InferredWrite, OutputChecker, TrustedSteps, VerificationOptions, VerificationPipeline, Violation}
 import com.invaract.verification.notification.{ContractInferenceEvent, InferenceStatus, JobInfo, NotificationSink}
 import org.apache.beam.sdk.Pipeline
 import org.slf4j.LoggerFactory
@@ -25,7 +25,8 @@ final class BeamCheck private[beamadapter] (
     options: VerificationOptions,
     sink: Option[NotificationSink],
     job: JobInfo,
-    capabilities: Option[AdapterCapabilities]
+    capabilities: Option[AdapterCapabilities],
+    trusted: TrustedSteps = TrustedSteps.Nobody
 ) {
   private val logger = LoggerFactory.getLogger(classOf[BeamCheck])
   private def runId: Option[String] = job.runId
@@ -36,7 +37,12 @@ final class BeamCheck private[beamadapter] (
   /** Verifies every write `pipeline` makes and throws `ContractViolationException` for the first that breaks the contract
     * (or that cannot be verified), publishing each outcome to the sink first. In dry-run mode it throws nothing. */
   def verify(pipeline: Pipeline): Unit = {
-    val translation = BeamTranslator.translate(pipeline)
+    val translated = BeamTranslator.translate(pipeline)
+    // a step that ends the pipeline is let through when it reads only what writes report, or when the platform trusts it (D14)
+    translated.reportSteps.foreach(s => logger.info(s"Invaract: $s ends the pipeline but reads only what writes report (file or table names), not data; let through"))
+    val (trustedSteps, unverifiable) = translated.unverifiable.partition(_.step.exists(trusted.trusts))
+    trustedSteps.foreach(u => logger.info(s"Invaract: ${u.step.get} ends the pipeline without a recognised write and is a trusted step; let through"))
+    val translation = translated.copy(unverifiable = unverifiable)
     contract match {
       case Some(c) => enforce(c, translation)
       case None    => infer(translation)
@@ -188,5 +194,13 @@ private[beamadapter] object BeamCheck {
     else if (options.rejectUndeclaredInputs && write.unlocatedReads.nonEmpty)
       // strict mode promises no read goes undeclared, which cannot be shown for a read whose source is not known
       Some(s"the write to ${write.location} depends on reads whose source cannot be located (${write.unlocatedReads.mkString("; ")}), so an undeclared input cannot be ruled out")
+    else if (ruleTypes(contract).exists(RuleType.PlanShapeTypes.contains) && write.unreadableShapes.nonEmpty)
+      // a schema transform it could not read could be the filter, grouping or join a rule asks about (D19)
+      Some(s"the write to ${write.location} depends on schema transforms whose fields could not be read on this Beam release (${write.unreadableShapes.mkString("; ")}), so the contract's transformation-shape rules cannot be checked")
+    else if (ruleTypes(contract).contains(RuleType.ForbidCrossJoin) && write.opaqueCombines.nonEmpty)
+      // a join written as code is not seen, and the rule passes when no join is seen: refuse rather than pass a cross join unseen (D19)
+      Some(s"the write to ${write.location} depends on steps that combine several collections in code (${write.opaqueCombines.mkString("; ")}), any of which could be a cross join, so forbid_cross_join cannot be checked")
     else None
+
+  private def ruleTypes(contract: Contract): Set[String] = contract.rules.map(_.ruleType).toSet
 }

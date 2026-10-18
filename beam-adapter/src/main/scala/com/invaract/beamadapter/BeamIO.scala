@@ -175,6 +175,21 @@ private[beamadapter] object BeamIO {
       (Set("Read$Bounded", "Read$Unbounded").contains(name) && step.display.get("source").exists(isInJobSource))
   }
 
+  /** Whether `result`, something a write hands on, holds only what the write reports - names (the files it wrote, the tables it
+    * loaded) or nothing - rather than rows: a FileIO or TextIO write's file names, a BigQuery load's table destinations. A BigQuery
+    * write's failed or successful inserts are rows, and so is anything whose coder is not one of these (docs/BEAM_ADAPTER.md, D14). */
+  def isWriteReport(result: BeamCollection): Boolean = result.coder.exists(reportCoder)
+
+  private def reportCoder(coder: org.apache.beam.sdk.coders.Coder[_]): Boolean = coder match {
+    case kv: org.apache.beam.sdk.coders.KvCoder[_, _] => reportCoder(kv.getKeyCoder) && reportCoder(kv.getValueCoder)
+    case _: org.apache.beam.sdk.coders.StringUtf8Coder | _: org.apache.beam.sdk.coders.VoidCoder => true
+    // TableDestinationCoder, V2, V3: a BigQuery table's name and description
+    case other => other.getClass.getName.startsWith("org.apache.beam.sdk.io.gcp.bigquery.TableDestinationCoder")
+  }
+
+  /** A union of collections (`Flatten.pCollections()`): it combines several collections without matching any row with another. */
+  def isUnion(step: BeamStep): Boolean = step.transform.isInstanceOf[org.apache.beam.sdk.transforms.Flatten.PCollections[_]]
+
   /** The sources behind `Create.of(...)`, `GenerateSequence` and a direct `Read.from(CountingSource...)`: data made by the job
     * itself, not read from anywhere. */
   private def isInJobSource(sourceClass: String): Boolean =
