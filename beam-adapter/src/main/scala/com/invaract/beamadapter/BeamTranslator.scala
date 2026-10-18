@@ -123,14 +123,27 @@ private[beamadapter] object BeamTranslator {
       case Nil     => UnknownPlan(s"${w.step.name}: no input was found", BeamIO.simpleName(w.step))
       case sources => sources.map(plan) match { case only :: Nil => only; case many => UnknownPlan(s"${w.step.name}: several inputs", "Inputs", many) }
     }
-    /** Every node upstream of `node`, each once. */
+    /** Every node upstream of `node`, each once, depth first (iterative: a pipeline can be thousands of steps deep). */
     def upstream(node: Node): List[Node] = {
       val seen = mutable.Set.empty[String]
-      def walk(n: Node): List[Node] = if (!seen.add(n.step.name)) Nil else n :: sourcesOf(n).flatMap(walk)
-      sourcesOf(node).flatMap(walk)
+      val out = mutable.ListBuffer.empty[Node]
+      var pending = sourcesOf(node)
+      while (pending.nonEmpty) {
+        val n = pending.head
+        pending = pending.tail
+        if (seen.add(n.step.name)) {
+          out += n
+          pending = sourcesOf(n) ++ pending
+        }
+      }
+      out.toList
     }
 
     def readsLocated(f: FileReaderNode): Boolean = upstream(f).exists(_.isInstanceOf[ReadNode])
+
+    // every plan built in the order Beam reports the steps (inputs first), so each finds its sources' plans already made and
+    // the recursion never runs deeper than one step: a pipeline thousands of steps long does not overflow the stack
+    nodes.foreach(plan)
 
     val writes = nodes.collect { case w: WriteNode => w }.map { w =>
       val above = upstream(w)
@@ -173,23 +186,28 @@ private[beamadapter] object BeamTranslator {
       )
     }
 
-    /** Whether everything `node` reads is what writes report - the files they wrote, the tables they loaded - directly or
-      * through steps that themselves read only that: it sees names, not data (D14). A write's result that holds rows (a BigQuery
-      * write's failed inserts) is data, and so is anything that does not come from a write. */
-    def readsOnlyReports(node: Node, via: Set[String]): Boolean = {
-      val read = inputsOf(node.step)
-      read.nonEmpty && read.forall { c =>
-        producers.get(c.name) match {
-          case Some(w) if isWrite(w)                          => BeamIO.isWriteReport(c)
-          case Some(o: OtherNode) if !via(o.step.name) => readsOnlyReports(o, via + node.step.name)
-          case _                                              => false
+    /** The steps that read only what writes report - the files they wrote, the tables they loaded - directly or through steps
+      * that themselves read only that: they see names, not data (D14). A write's result that holds rows (a BigQuery write's
+      * failed inserts) is data, and so is anything that does not come from a write. Decided in the order Beam reports the steps,
+      * so each step's sources are decided first; a source not yet decided counts as data. */
+    val readsOnlyReports = mutable.Set.empty[String]
+    nodes.foreach {
+      case o: OtherNode =>
+        val read = inputsOf(o.step)
+        val onlyReports = read.nonEmpty && read.forall { c =>
+          producers.get(c.name) match {
+            case Some(w) if isWrite(w)    => BeamIO.isWriteReport(c)
+            case Some(other: OtherNode)   => readsOnlyReports(other.step.name)
+            case _                        => false
+          }
         }
-      }
+        if (onlyReports) readsOnlyReports += o.step.name
+      case _ => ()
     }
 
     val unwritable = nodes.collect { case u: UnverifiableWriteNode => u }.map(u => UnverifiableStep(u.why, plan(u)))
     val (reporting, ending) = nodes.collect { case o: OtherNode if o.step.outputs.forall(c => !consumed.contains(c.name)) => o }
-      .partition(o => readsOnlyReports(o, Set.empty))
+      .partition(o => readsOnlyReports(o.step.name))
     val endsPipeline = ending.map(o =>
       UnverifiableStep(s"a step that ends the pipeline but is not a recognised write: ${describe(o.step)}", plan(o), Some(o.step.name))
     )

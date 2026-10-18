@@ -94,6 +94,16 @@ class BeamReportStepsSpec extends AnyFunSuite {
     assert(!BeamIO.isWriteReport(BeamCollection("c", bounded = true, None, None)), "no coder: nothing shows it holds only names")
   }
 
+  test("a step that reads back as data the files a write reported is refused: the reader turns names into rows") {
+    val p = pipeline
+    ordersToParquet(p).getPerDestinationOutputFilenames
+      .apply("Names", org.apache.beam.sdk.transforms.Values.create[String]())
+      .apply("Match", FileIO.matchAll()).apply("Open", FileIO.readMatches()).apply("ReadBack", ParquetIO.readFiles(OrdersSchema))
+      .apply("PushToSomeService", ParDo.of(new BeamScenarioJobs.SideEffectFn))
+    assert(refusal(p).exists(_.contains("PushToSomeService")))
+    assert(BeamTranslator.translate(p).reportSteps.isEmpty)
+  }
+
   // --- trusted steps ---
 
   private def counterToService(p: Pipeline): Unit =

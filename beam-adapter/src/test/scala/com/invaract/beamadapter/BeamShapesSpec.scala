@@ -14,7 +14,8 @@ import org.apache.beam.sdk.io.FileIO
 import org.apache.beam.sdk.io.parquet.ParquetIO
 import org.apache.beam.sdk.options.PipelineOptionsFactory
 import org.apache.beam.sdk.schemas.{FieldAccessDescriptor, Schema => BeamSchema}
-import org.apache.beam.sdk.schemas.transforms.{CoGroup, Group, Join, Filter => SchemaFilter}
+import org.apache.beam.sdk.extensions.sql.SqlTransform
+import org.apache.beam.sdk.schemas.transforms.{CoGroup, Group, Join, RenameFields, Filter => SchemaFilter}
 import org.apache.beam.sdk.transforms.join.{CoGroupByKey, KeyedPCollectionTuple}
 import org.apache.beam.sdk.transforms.{Count, Flatten, MapElements, PTransform, ParDo, SerializableFunction, View}
 import org.apache.beam.sdk.values.{KV, PCollection, PCollectionList, PCollectionTuple, Row, TupleTag, TypeDescriptor, TypeDescriptors}
@@ -47,6 +48,16 @@ class BeamShapesSpec extends AnyFunSuite {
   /** A positive-number test, given to a filter. */
   private final class Positive extends SerializableFunction[java.lang.Long, java.lang.Boolean] {
     override def apply(v: java.lang.Long): java.lang.Boolean = v != null && v > 0
+  }
+
+  /** A SQL result row as an orders record (the probes write it as orders). */
+  private final class RowAsOrder extends SerializableFunction[Row, GenericRecord] {
+    override def apply(r: Row): GenericRecord = {
+      val record = new org.apache.avro.generic.GenericData.Record(OrdersSchema)
+      record.put("id", r.getValue[AnyRef]("id"))
+      record.put("amount", r.getValue[AnyRef]("amount"))
+      record
+    }
   }
 
   private final class Both extends SerializableFunction[Row, java.lang.Boolean] {
@@ -350,6 +361,52 @@ class BeamShapesSpec extends AnyFunSuite {
     val Seq(drafted) = events.toList.collect { case e: ContractInferenceEvent => e }
     assert(drafted.status == InferenceStatus.Inferred, drafted)
     assert(drafted.contractYaml.exists(y => y.contains("in/orders") && y.contains("in/customers")))
+  }
+
+  // --- probes made permanent (friction log 27) ---
+
+  /** A SQL query over orders and customers, its rows written as orders: Beam SQL builds a GROUP BY and a JOIN from the schema
+    * Group and Join, and compiles WHERE and SELECT into its own Calc step. */
+  private def sqlJob(query: String): Pipeline = {
+    val p = pipeline
+    val both = PCollectionTuple.of("o", rows(p, "ReadOrders", "orders")).and("c", rows(p, "ReadCustomers", "customers"))
+    toParquet(both.apply("Sql", SqlTransform.query(query))
+      .apply("AsOrders", MapElements.into(TypeDescriptor.of(classOf[GenericRecord])).via(new RowAsOrder))
+      .setCoder(org.apache.beam.sdk.extensions.avro.coders.AvroCoder.of(OrdersSchema)))
+    p
+  }
+
+  test("a SQL query's GROUP BY and JOIN are seen, being Beam's own Group and Join; its WHERE is compiled into code and is not") {
+    val p = sqlJob("SELECT o.id, SUM(o.amount) AS amount FROM o JOIN c ON o.id = c.id WHERE o.amount > 0 GROUP BY o.id")
+    assert(verdict(contractWith("  - type: required_group_by\n    columns: [id]"), p) == Right(()))
+    assert(verdict(contractWith("  - type: required_join_columns\n    columns: [id]"), p) == Right(()))
+    assert(verdict(contractWith("  - type: forbid_cross_join"), p) == Right(()))
+    assert(verdict(contractWith("  - type: required_group_by\n    columns: [amount]"), p) == Left(List(ViolationType.RuleRequiredGroupByViolation)))
+    assert(verdict(contractWith("  - type: required_filter_columns\n    columns: [amount]"), p) == Left(List(ViolationType.RuleRequiredFilterColumnsViolation)))
+  }
+
+  test("Beam SQL refuses a cross join itself, when the pipeline is built, so none can come from a query") {
+    // if a Beam release ever builds one, this fails, and how it is built has to be looked at for forbid_cross_join
+    val e = intercept[UnsupportedOperationException](sqlJob("SELECT o.id, o.amount FROM o CROSS JOIN c"))
+    assert(e.getMessage.contains("CROSS JOIN"))
+  }
+
+  test("a filter is seen under the name the column has where it filters: after a rename, the new name") {
+    val p = pipeline
+    val renamed = rows(p, "ReadOrders", "orders").apply("Rename", RenameFields.create[GenericRecord]().rename("amount", "total"))
+    assert(renamed.getSchema.getFieldNames.asScala.toList == List("id", "total"))
+    renamed.apply("Positive", SchemaFilter.create[Row]().whereFieldName[java.lang.Long]("total", new Positive))
+    assert(shape(p, "Positive").contains(SchemaShape.Filtered(List(List("total")))))
+  }
+
+  test("a pipeline thousands of steps deep is translated and checked without running out of stack") {
+    val p = pipeline
+    var data: PCollection[GenericRecord] = rows(p, "ReadOrders", "orders")
+    (1 to 3000).foreach(i => data = data.apply(s"Positive$i", SchemaFilter.create[GenericRecord]().whereFieldName[java.lang.Long]("amount", new Positive)))
+    toParquet(data)
+    val started = System.nanoTime()
+    assert(verdict(contractWith("  - type: required_filter_columns\n    columns: [amount]", inputs = List("orders")), p) == Right(()))
+    assert((System.nanoTime() - started) / 1000000 < 30000, "and in well under a minute")
   }
 
   // --- the code the tests above are built from ---

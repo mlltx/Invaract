@@ -148,8 +148,11 @@ rejection), or not investigated (an open item, not a finished one). None is left
 | Beam's schema `Filter` (`whereFieldName(s)`, `whereFieldId`), `Group` (`byFieldNames`/`byFieldIds`, with or without aggregation; `globally()`), `Join` (inner, outer, broadcast) and `CoGroup` | ✅ the `ir.Filter`, `ir.Aggregate` and `ir.Join` they are, with the columns they use, read by reflection (D19); 🚫 one whose fields cannot be read refuses a write under any shape rule | scenarios `required-*`, `forbid-cross-join-*`; `BeamShapesSpec` |
 | A team's own step holding a schema transform | ✅ looked into, so the transform inside is seen | `BeamShapesSpec` "a team's own step that holds a schema transform..." |
 | The right side of a schema `Join` (Beam lists it only on the steps inside the join) | 🔧 now upstream of the write it feeds; it was missed, so a declared input read there was reported missing and an undeclared one went unseen | `BeamShapesSpec` "the right side of a join...", "an undeclared read reaching a write only through a join's right side..." |
-| A join, grouping or filter written as code (`Filter.by`, a `DoFn`, `GroupByKey`, `CoGroupByKey`, a side input) or in SQL | ✅ an unknown step that carries the reads beneath it; a `required_*` rule is not met by it; 🚫 under `forbid_cross_join` a step combining collections in code refuses the write (D19); `Flatten` is a union, not refused | scenarios `unrecognized-step-*`; `BeamShapesSpec` "steps that combine collections in code...", "forbid_cross_join refuses a write fed by..." |
-| Beam SQL (`SqlTransform`) over a collection, and the tables a query defines (`CREATE EXTERNAL TABLE`) | ✅ an opaque step with known output columns; its own tables are reads and writes the translator sees | `BeamSqlSpec` |
+| A join, grouping or filter written as code (`Filter.by`, a `DoFn`, `GroupByKey`, `CoGroupByKey`, a side input), or a SQL `WHERE` | ✅ an unknown step that carries the reads beneath it; a `required_*` rule is not met by it; 🚫 under `forbid_cross_join` a step combining collections in code refuses the write (D19); `Flatten` is a union, not refused | scenarios `unrecognized-step-*`; `BeamShapesSpec` "steps that combine collections in code...", "forbid_cross_join refuses a write fed by..." |
+| Beam SQL (`SqlTransform`) over a collection, and the tables a query defines (`CREATE EXTERNAL TABLE`) | ✅ known output columns; its own tables are reads and writes the translator sees; its `GROUP BY` and `JOIN ... ON` are Beam's `Group` and `Join`, so shape rules see them (D19); its `WHERE` is compiled code, not seen; Beam SQL refuses a `CROSS JOIN` itself | `BeamSqlSpec`; `BeamShapesSpec` "a SQL query's GROUP BY and JOIN are seen...", "Beam SQL refuses a cross join itself..." |
+| A filter after a rename (`RenameFields`, `Select`) | ✅ seen under the name the column has at the filter, as the Spark adapter sees it | `BeamShapesSpec` "a filter is seen under the name the column has..." |
+| A pipeline thousands of steps deep | 🔧 a chain of 500 steps overflowed the stack (plans were built recursively); plans are now built in the order Beam reports the steps, and 3,000 steps translate and verify on a default stack | `BeamShapesSpec` "a pipeline thousands of steps deep..." |
+| A write's file names read back as data (`matchAll` + `readFiles`) at the end of the pipeline | 🚫 refused: the reader turns names into rows, so the step is not one that only reports (D14) | `BeamReportStepsSpec` "a step that reads back as data the files a write reported..." |
 | A BigQuery write of rows with `useBeamSchema()` | ✅ the rows' columns | `BeamIOSpec` "a BigQuery write of rows with useBeamSchema..." |
 | Row-level MERGE, UPDATE, DELETE; schema-change commands | n/a, Beam has none | declaration |
 | Hand-over to a production runner | ✅ Flink (a local mini-cluster), with its own options | `BeamProductionRunnerSpec` |
@@ -372,6 +375,23 @@ Every undocumented decision, surprise, or guess made while building this adapter
     scenarios conformed by refusing; once partial they conform by checking, and the baseline file lists the same ids. Only the
     ledger and the logs show the change. Reflection on AutoValue classes needs `getDeclaredMethods` up the class chain: the
     abstract getters are package-private on the public class and implemented on the generated one.
+
+27. **The probe pass after D14 and D19.** Four probes, each now a permanent test.
+    - **Beam SQL's join and grouping are seen.** D19 looks into a composite that holds a schema transform, and that includes
+      `SqlTransform`: Beam SQL builds `GROUP BY` from `Group.CombineFieldsByFields` and `JOIN ... ON` from `Join.Impl` (inside
+      `BeamCoGBKJoinRel`), so a query's grouping and join now satisfy the shape rules. Its `WHERE` and `SELECT` are compiled into
+      `BeamCalcRel`, so a SQL filter is not seen. Nothing passes wrongly: a filter not seen fails `required_filter_columns`.
+      Beam SQL throws on `CROSS JOIN` while the pipeline is built (`UnsupportedOperationException`); a test pins that, so a
+      release that starts building one shows up. The D19 text that called SQL opaque was wrong and is corrected.
+    - **A filter after a rename is seen under the new name.** It matches Spark, whose check reads the analyzed plan, where a
+      filter on a renamed column references the new name. Documented, not changed.
+    - **A deep pipeline overflowed the stack (fixed).** A chain of 500 schema filters threw `StackOverflowError`, because
+      `BeamTranslator` built each plan by recursing into its sources. Plans are now built in the order Beam reports the steps,
+      so each finds its sources' plans already made; the upstream walk is iterative, and "reads only reports" is decided in one
+      ordered pass. 5,000 steps translate in about 0.2 s and verify in about 0.2 s more.
+    - **A write's file names read back as data are refused.** `getPerDestinationOutputFilenames` → `FileIO.matchAll` →
+      `readFiles` → a terminal step is not a report step: the reader is a read, not a report.
+    *For the guide:* probe a pipeline a few thousand steps long; recursion over the engine's graph is the easy mistake.
 
 ## Unverified items
 
