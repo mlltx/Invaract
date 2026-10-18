@@ -84,8 +84,18 @@ name the columns they use:
 | `required_join_columns` | `Join.innerJoin(customers).using("id")` or `.on(Join.FieldsEqual.left("customer_id").right("id"))` (inner, outer and broadcast joins), and `CoGroup.join(By.fieldNames("id"))` |
 | `forbid_cross_join` | violated by a `CoGroup` joined on no fields (`By.fieldNames()`), which matches every row of one side with every row of the other |
 
+A **Beam SQL** query (`SqlTransform`) is checked the same way for its `GROUP BY` and `JOIN ... ON`,
+because Beam builds those from the same `Group` and `Join` transforms. Its `WHERE` is compiled
+into code, so it does not satisfy `required_filter_columns`. Beam SQL rejects a `CROSS JOIN`
+itself when the pipeline is built.
+
+A filter is seen under the name the column has where it filters. After
+`RenameFields.rename("amount", "total")`, a filter on `total` satisfies
+`required_filter_columns: [total]`, not `[amount]`. This matches how the Spark adapter judges a
+filter on a renamed column.
+
 A filter, grouping or join written as code (`Filter.by`, a `DoFn`, `GroupByKey`,
-`CoGroupByKey`) or in SQL (`SqlTransform`) is opaque: Invaract cannot see which columns it uses.
+`CoGroupByKey`) is opaque: Invaract cannot see which columns it uses.
 
 - **A `required_*` rule is not satisfied by one.** A pipeline that filters only in a `DoFn` is
   rejected under `required_filter_columns`, the same as one that never filters.

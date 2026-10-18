@@ -85,8 +85,9 @@ capabilities:
     note: >-
       Read from Beam's schema transforms - Filter.create().whereFieldName(s), Group.byFieldNames/byFieldIds (with or without
       aggregation) and Group.globally(), Join (inner, outer, broadcast) and CoGroup - whose fields are read by reflection from
-      members the version matrix checks on every Beam release. A filter, grouping or join written as code (Filter.by, a DoFn,
-      GroupByKey, CoGroupByKey) or in SQL (SqlTransform) is opaque: a required_* rule is not met by it, and under
+      members the version matrix checks on every Beam release; a Beam SQL query's GROUP BY and JOIN are built from these and
+      are seen too. A filter, grouping or join written as code (Filter.by, a DoFn, GroupByKey, CoGroupByKey), or a SQL WHERE
+      (compiled into code), is opaque: a required_* rule is not met by it, and under
       forbid_cross_join a step that combines several collections in code refuses the write as unverifiable, as does a schema
       transform whose fields cannot be read under any of these rules.
   rules.custom:
