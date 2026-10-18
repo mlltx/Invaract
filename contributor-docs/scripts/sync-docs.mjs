@@ -104,6 +104,13 @@ const PAGES = [
     order: 9,
   },
   {
+    src: 'docs/BEAM_PYTHON_ADAPTER_SURVEY.md',
+    slug: 'design/beam-python-adapter-survey',
+    section: 'Design Docs',
+    label: 'Beam Python Adapter Survey',
+    order: 9,
+  },
+  {
     src: 'docs/connectors/delta.md',
     slug: 'connectors/delta',
     section: 'Connectors',
