@@ -173,11 +173,14 @@ class BeamShapesSpec extends AnyFunSuite {
     toParquet(filtered, "/data/out/filtered")
     toParquet(orders.apply("Keys", Group.byFieldNames[GenericRecord]("id")), "/data/out/grouped")
     toParquet(orders.apply("Join", Join.innerJoin[GenericRecord, GenericRecord](customers).using("id")), "/data/out/joined")
+    toParquet(orders.apply("LeftJoin", Join.leftOuterJoin[GenericRecord, GenericRecord](customers).using("id")), "/data/out/left")
     val ordersRead = Read(DatasetRef("/data/in/orders"))
     val customersRead = Read(DatasetRef("/data/in/customers"))
     assert(writePlan(p, "/data/out/filtered") == IrFilter(ordersRead, UDF(None, List(col("amount")), Some(BeamTranslator.PredicateEngineType))))
     assert(writePlan(p, "/data/out/grouped") == Aggregate(ordersRead, List(col("id")), Nil))
     assert(writePlan(p, "/data/out/joined") == IrJoin(ordersRead, customersRead, JoinType.Inner, Some(Comparison("=", col("id", Some("lhs")), col("id", Some("rhs"))))))
+    // read from the Join itself, not from the CoGroup it is built from (which would make it a full outer join)
+    assert(writePlan(p, "/data/out/left") == IrJoin(ordersRead, customersRead, JoinType.LeftOuter, Some(Comparison("=", col("id", Some("lhs")), col("id", Some("rhs"))))))
   }
 
   test("several predicates are all required; a three-way CoGroup is joined to its first input; keyed by nothing, it has no condition") {

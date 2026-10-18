@@ -88,7 +88,8 @@ private[beamadapter] object BeamShapes {
   private def joined(join: Join.Impl[_, _], step: BeamStep): SchemaShape = {
     val left = step.inputs.headOption.getOrElse(throw new IllegalStateException("a join with no input"))
     val right = field(join, "rhs").asInstanceOf[PCollection[_]]
-    val rightSchema = if (right.hasSchema) Some(right.getSchema) else None
+    // a join needs a schema on both sides; without one this throws, and the join is Unreadable
+    val rightSchema = Some(right.getSchema)
     // a join is built with a condition; without one there is nothing to match the two sides on
     val (leftKeys, rightKeys) = Option(field(join, "predicate")) match {
       case Some(p) => (columns(field(p, "lhs"), left.rowSchema), columns(field(p, "rhs"), rightSchema))

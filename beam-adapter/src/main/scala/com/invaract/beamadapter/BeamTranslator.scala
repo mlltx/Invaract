@@ -206,14 +206,12 @@ private[beamadapter] object BeamTranslator {
   /** What `step` reads: its own inputs, then what the steps inside it take from outside it. A composite does not always list
     * everything it uses (a schema `Join` lists only its left side; the right reaches the steps inside it directly), so a read
     * feeding only those inner steps would otherwise not be upstream of anything. */
-  private[beamadapter] def inputsOf(step: BeamStep): List[BeamCollection] =
-    if (!step.isComposite) step.inputs
-    else {
-      val inner = step.withDescendants.tail
-      val madeInside = inner.flatMap(_.outputs.map(_.name)).toSet
-      val seen = mutable.Set.empty[String]
-      (step.inputs ++ inner.flatMap(_.inputs).filterNot(c => madeInside.contains(c.name))).filter(c => seen.add(c.name))
-    }
+  private[beamadapter] def inputsOf(step: BeamStep): List[BeamCollection] = {
+    val inner = step.withDescendants.tail
+    val madeInside = inner.flatMap(_.outputs.map(_.name)).toSet
+    val seen = mutable.Set.empty[String]
+    (step.inputs ++ inner.flatMap(_.inputs).filterNot(c => madeInside.contains(c.name))).filter(c => seen.add(c.name))
+  }
 
   // --- the steps that matter, found top-down so the outermost recognisable step wins ---
 
