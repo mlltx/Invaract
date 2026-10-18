@@ -22,6 +22,12 @@ object BeamCapabilities {
 
   lazy val declared: Option[AdapterCapabilities] = load(ResourcePath, BeamCapabilities.getClass.getClassLoader)
 
+  /** The declaration of the adapter for pipelines written with the Python SDK (docs/BEAM_PYTHON_ADAPTER.md), which shares this
+    * module's translation but sees less of a job than a Java pipeline shows. */
+  val PythonResourcePath = "invaract-capabilities-beam-python.yaml"
+
+  lazy val python: Option[AdapterCapabilities] = load(PythonResourcePath, BeamCapabilities.getClass.getClassLoader)
+
   /** The declaration at `path` on `classLoader`'s classpath, or `None` (logged) when it is absent or invalid. */
   def load(path: String, classLoader: ClassLoader): Option[AdapterCapabilities] =
     AdapterCapabilities.fromResource(path, classLoader) match {

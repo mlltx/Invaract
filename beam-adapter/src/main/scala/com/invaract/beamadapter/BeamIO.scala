@@ -188,7 +188,7 @@ private[beamadapter] object BeamIO {
   }
 
   /** A union of collections (`Flatten.pCollections()`): it combines several collections without matching any row with another. */
-  def isUnion(step: BeamStep): Boolean = step.transform.isInstanceOf[org.apache.beam.sdk.transforms.Flatten.PCollections[_]]
+  def isUnion(step: BeamStep): Boolean = step.transform.exists(_.isInstanceOf[org.apache.beam.sdk.transforms.Flatten.PCollections[_]])
 
   /** The sources behind `Create.of(...)`, `GenerateSequence` and a direct `Read.from(CountingSource...)`: data made by the job
     * itself, not read from anywhere. */
@@ -232,7 +232,7 @@ private[beamadapter] object BeamIO {
     }
 
   /** BigQuery's write dispositions as the canonical save modes (docs/MULTI_ENGINE_ADAPTERS.md, "Write modes"). */
-  private val BigQuerySaveModes = Map("WRITE_APPEND" -> "append", "WRITE_TRUNCATE" -> "overwrite", "WRITE_EMPTY" -> "error")
+  private[beamadapter] val BigQuerySaveModes = Map("WRITE_APPEND" -> "append", "WRITE_TRUNCATE" -> "overwrite", "WRITE_EMPTY" -> "error")
 
   private def bigQueryWrite(step: BeamStep): IoWrite =
     step.display.get("table").flatMap(BeamLocations.bigQueryTable) match {
@@ -268,7 +268,7 @@ private[beamadapter] object BeamIO {
   /** The connection URL of a `JdbcIO.write()`. It publishes its statement but not its connection: the URL is held by the
     * `DataSourceConfiguration` behind its data-source provider, read here by reflection, `None` on any failure. */
   private def jdbcUrlOf(step: BeamStep): Option[String] =
-    step.withDescendants.iterator.map(s => Try(jdbcUrlOfTransform(s.transform)).toOption.flatten).collectFirst { case Some(u) => u }
+    step.withDescendants.iterator.flatMap(_.transform).map(t => Try(jdbcUrlOfTransform(t)).toOption.flatten).collectFirst { case Some(u) => u }
 
   private def jdbcUrlOfTransform(t: AnyRef): Option[String] = {
     def field(o: AnyRef, name: String): Option[AnyRef] =
@@ -286,7 +286,7 @@ private[beamadapter] object BeamIO {
 
   // --- file writes (WriteFiles) ---
 
-  def isFileWrite(step: BeamStep): Boolean = step.transform.isInstanceOf[WriteFiles[_, _, _]]
+  def isFileWrite(step: BeamStep): Boolean = step.transform.exists(_.isInstanceOf[WriteFiles[_, _, _]])
 
   /** The file write a write unit (a step holding exactly one `WriteFiles`) makes: where its files land and in which format. */
   def fileWrite(unit: BeamStep): IoWrite =
@@ -295,7 +295,7 @@ private[beamadapter] object BeamIO {
 
   private def fileWrite(unit: BeamStep, knownFormat: Option[String]): IoWrite = {
     val all = unit.withDescendants
-    val sink = all.map(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
+    val sink = all.flatMap(_.transform).collectFirst { case w: WriteFiles[_, _, _] => w.getSink.getClass.getName }
     val prefix = all.flatMap(_.display.get("filePrefix")).headOption
     // the schema the files are written with (an Avro write states it): the records' own may have columns it leaves out
     val writtenSchema = all.flatMap(_.display.get("schema")).headOption.flatMap(BeamSchemas.fromAvroJson)
@@ -341,7 +341,7 @@ private[beamadapter] object BeamIO {
   private def fileIoWrite(steps: List[BeamStep]): Option[(String, AnyRef)] =
     steps.find(_.className.endsWith("AutoValue_FileIO_Write")).flatMap { s =>
       Try {
-        val t = s.transform
+        val t = s.transform.get
         def member(name: String): AnyRef = {
           val m = t.getClass.getDeclaredMethod(name)
           m.setAccessible(true)

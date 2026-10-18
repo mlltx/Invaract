@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "invaract-beam"
+version = "0.1.0"
+description = "Checks Apache Beam pipelines written in Python against a data contract before they are submitted."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = ["apache-beam>=2.60"]
+
+[project.urls]
+Homepage = "https://github.com/mlltx/Invaract"
+
+[tool.setuptools]
+packages = ["invaract_beam"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -36,8 +36,10 @@ final class BeamCheck private[beamadapter] (
 
   /** Verifies every write `pipeline` makes and throws `ContractViolationException` for the first that breaks the contract
     * (or that cannot be verified), publishing each outcome to the sink first. In dry-run mode it throws nothing. */
-  def verify(pipeline: Pipeline): Unit = {
-    val translated = BeamTranslator.translate(pipeline)
+  def verify(pipeline: Pipeline): Unit = verifyTranslation(BeamTranslator.translate(pipeline))
+
+  /** `verify`, for a pipeline already translated: how a pipeline read from its portable form is checked (`PortableCheck`). */
+  private[beamadapter] def verifyTranslation(translated: BeamTranslation): Unit = {
     // a step that ends the pipeline is let through when it reads only what writes report, or when the platform trusts it (D14)
     translated.reportSteps.foreach(s => logger.info(s"Invaract: $s ends the pipeline but reads only what writes report (file or table names), not data; let through"))
     val (trustedSteps, unverifiable) = translated.unverifiable.partition(_.step.exists(trusted.trusts))
@@ -50,12 +52,13 @@ final class BeamCheck private[beamadapter] (
   }
 
   private def enforce(c: Contract, translation: BeamTranslation): Unit = {
+    val pipelinePlan = UnknownPlan("the pipeline's writes", "Pipeline", translation.writes.map(_.plan))
+    // a contract that asks for something this adapter declares it cannot check is refused for that, first
+    capabilities.foreach(caps => VerificationPipeline.requireSupported(c, options, caps, pipelinePlan, sink, runId, Some(job)))
     // a step that may change data but that cannot be checked is refused before any write is judged (fail closed)
     translation.unverifiable.headOption.foreach(u => VerificationPipeline.rejectUnverifiableWrite(c, u.operation, u.plan, sink, runId, Some(job)))
     // the whole pipeline is known: an output the contract declares that no write lands on refuses the job (docs/BEAM_ADAPTER.md, D17)
-    VerificationPipeline.requireOutputsWritten(
-      c, translation.writes.map(_.location), UnknownPlan("the pipeline's writes", "Pipeline", translation.writes.map(_.plan)), sink, runId, Some(job)
-    )
+    VerificationPipeline.requireOutputsWritten(c, translation.writes.map(_.location), pipelinePlan, sink, runId, Some(job))
     translation.writes.foreach(w => BeamCheck.refusal(c, w, options).fold(check(c, w))(why => reject(c, why, w)))
   }
 
@@ -184,7 +187,7 @@ private[beamadapter] object BeamCheck {
     * (docs/BEAM_ADAPTER.md, D10 to D12). */
   def refusal(contract: Contract, write: TranslatedWrite, options: VerificationOptions): Option[String] =
     if (write.outputSchema.isEmpty && declaresColumns(contract, write))
-      Some(s"a write to ${write.location} whose data exposes no schema (Beam shows only plain Java objects), so its columns cannot be checked")
+      Some(s"a write to ${write.location} whose data exposes no schema (its items are plain objects, not rows with a schema), so its columns cannot be checked")
     else if (write.format.isEmpty && declaredFormat(contract, write).isDefined)
       // the core skips a format check when the actual format is unknown, so a named format would pass a write nobody can name
       Some(s"a write to ${write.location} through a sink whose file format cannot be told, while the contract declares '${declaredFormat(contract, write).get}'")

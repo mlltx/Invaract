@@ -78,4 +78,11 @@ object InvaractConf {
   val RegistryUrl = "registryUrl"
   /** Class name of the registry client to load, overriding the default. */
   val RegistryClientClass = "registryClientClass"
+
+  /** Every setting above. An adapter whose engine spells the settings in its own way (Beam's pipeline options, a Python package's
+    * flags) checks its spelling against this list in its tests, so a setting added here cannot be left unreachable on one engine. */
+  val All: List[String] = List(
+    Contract, DryRun, NotifyConfig, RegistryUrl, RegistryClientClass, LocationMap, OrgPolicy, OrgPolicyOverlays, RejectUndeclaredInputs,
+    RejectUndeclaredFields, ComputeFingerprint, StaticDataQuality, RoleConsistency, FailOnMissingOutput, TrustedSteps
+  )
 }

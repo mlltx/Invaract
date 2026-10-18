@@ -53,7 +53,7 @@ private[beamadapter] final case class JoinSide(collection: String, qualifier: St
 private[beamadapter] object BeamShapes {
 
   /** Whether `step` is one of the schema transforms read here (by class alone, without reading anything). */
-  def recognises(step: BeamStep): Boolean = step.transform match {
+  def recognises(step: BeamStep): Boolean = step.transform.orNull match {
     case _: Filter.Inner[_] | _: Group.ByFields[_] | _: Group.CombineFieldsByFields[_] | _: Group.Global[_] | _: Group.CombineGlobally[_, _] |
         _: Group.CombineFieldsGlobally[_] | _: Join.Impl[_, _] | _: CoGroup.Impl | _: CoGroup.ExpandCrossProduct =>
       true
@@ -71,7 +71,7 @@ private[beamadapter] object BeamShapes {
 
   private def shapeOf(step: BeamStep): SchemaShape = {
     val inputSchema = step.inputs.headOption.flatMap(_.rowSchema)
-    step.transform match {
+    step.transform.orNull match {
       case f: Filter.Inner[_] =>
         val filters = field(f, "filters").asInstanceOf[java.util.List[AnyRef]].asScala.toList
         SchemaShape.Filtered(filters.map(d => columns(call(d, "getFieldAccessDescriptor"), inputSchema)))

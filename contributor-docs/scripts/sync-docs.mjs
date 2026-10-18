@@ -104,6 +104,13 @@ const PAGES = [
     order: 9,
   },
   {
+    src: 'docs/BEAM_PYTHON_ADAPTER.md',
+    slug: 'design/beam-python-adapter',
+    section: 'Design Docs',
+    label: 'Beam Python Adapter',
+    order: 9,
+  },
+  {
     src: 'docs/BEAM_PYTHON_ADAPTER_SURVEY.md',
     slug: 'design/beam-python-adapter-survey',
     section: 'Design Docs',

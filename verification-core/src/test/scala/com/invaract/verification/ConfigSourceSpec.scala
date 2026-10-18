@@ -27,6 +27,15 @@ class ConfigSourceSpec extends AnyFunSuite {
     assert(source.describe(InvaractConf.OrgPolicyOverlays) == "spark.invaract.orgPolicyOverlays")
   }
 
+  test("All lists every setting InvaractConf names, once: an adapter's spelling of the settings is checked against it") {
+    val declared = InvaractConf.getClass.getDeclaredMethods.toList
+      .filter(m => m.getParameterCount == 0 && m.getReturnType == classOf[String])
+      .map(_.invoke(InvaractConf).asInstanceOf[String])
+    assert(declared.nonEmpty)
+    assert(InvaractConf.All.sorted == declared.sorted)
+    assert(InvaractConf.All.distinct == InvaractConf.All)
+  }
+
   test("the attach settings are spelled as the existing spark.invaract.* keys are") {
     assert(
       List(InvaractConf.Contract, InvaractConf.DryRun, InvaractConf.NotifyConfig, InvaractConf.RegistryUrl, InvaractConf.RegistryClientClass) ==

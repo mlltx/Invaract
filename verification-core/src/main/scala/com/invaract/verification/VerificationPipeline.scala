@@ -257,6 +257,33 @@ object VerificationPipeline {
     }
   }
 
+  /** Refuses `contract` before any write is judged when it relies on something `capabilities` declares unsupported (see
+    * `CapabilityCheck`): one FAILED validation with `UNSUPPORTED_CONTRACT_FEATURE` for each such requirement. `verifyWrite`
+    * makes the same check for each write; an adapter that sees the whole job before it runs calls this first, so a contract it
+    * cannot check is refused for that reason, and not for whichever of its writes it happens to judge first (a write refused as
+    * unverifiable would otherwise hide that the contract asks for something the adapter never checks). Does nothing when the
+    * adapter supports everything the contract relies on.
+    *
+    * @param translatedPlan the job as the adapter translated it, rendered in the explanation
+    */
+  def requireSupported(
+      contract: Contract,
+      options: VerificationOptions,
+      capabilities: AdapterCapabilities,
+      translatedPlan: ir.Plan,
+      sink: Option[NotificationSink] = None,
+      runId: Option[String] = None,
+      job: Option[JobInfo] = None
+  ): Unit = {
+    requireValidContract(contract, sink, runId, job)
+    val unsupported = CapabilityCheck.violations(contract, options, capabilities)
+    if (unsupported.nonEmpty) {
+      val result = VerificationResult.of(s"${contract.id}@${contract.version}", unsupported)
+      publishValidation(contract, result, sink, runId, job)
+      throw new ContractViolationException(result, explain(contract, translatedPlan, result))
+    }
+  }
+
   /** The fail-closed response: an operation that looks like it writes or
     * otherwise mutates data, but that the adapter has no translation for, so
     * it was never actually checked against the contract. Always throws -
