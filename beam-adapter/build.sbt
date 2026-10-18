@@ -130,7 +130,14 @@ mimaPreviousArtifacts := Set.empty
 mimaBinaryIssueFilters ++= Seq(
   "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
   "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$", "BeamShapes", "SchemaShape", "JoinSide"
-).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*"))
+).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*")) ++ Seq(
+  // A new option is a new getter/setter pair on InvaractBeamOptions, which MiMa reports because a class implementing the
+  // interface would lack them. None does: Beam implements an options interface itself, as a proxy made at run time, and a
+  // job only asks for it (`options.as(classOf[InvaractBeamOptions])`). So adding an option breaks no caller. Each new option
+  // is listed here by name, as MiMa's own output gives it, rather than the whole interface being filtered.
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.getInvaractTrustedSteps"),
+  ProblemFilters.exclude[ReversedMissingMethodProblem]("com.invaract.beamadapter.InvaractBeamOptions.setInvaractTrustedSteps")
+)
 
 // Line/branch coverage gating (sbt-scoverage), pinned a few points under a real measurement (CLAUDE.md's "Coverage Gating
 // Requirement"). Never lower them to make a failure go away.
