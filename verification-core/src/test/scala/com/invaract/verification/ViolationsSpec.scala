@@ -66,7 +66,7 @@ class ViolationsSpec extends AnyFunSuite {
     Violations.unresolvableCustomRuleType("c@1.0.0", "t", "x.Y", "boom") -> "",
     Violations.invalidInferredContract("outputs", "empty") -> "",
     Violations.orgPolicy("m", "r", Some("gold/out"), "p1") -> "LR",
-    Violations.unverifiableWrite("SomeCommand", "c@1.0.0") -> "A",
+    Violations.unverifiableWrite(UnverifiableOperation("SomeCommand", "it may write", "fix it"), "c@1.0.0") -> "A",
     Violations.unsupportedContractFeature("toy", Capability.CheckFormat, "a dataset declares a format", Some("no formats")) -> "EA"
   )
 
@@ -107,8 +107,11 @@ class ViolationsSpec extends AnyFunSuite {
     assert(Violations.requiredJoinColumnsRule(List("k"), planHasAnyJoin = true).message.endsWith("establishes an equality match on all of them"))
     assert(Violations.crossJoinRule(3).message.contains("3 join(s) with no condition"))
     assert(Violations.unverifiableDml("UPDATE", None).message.startsWith("this operation is a UPDATE"))
-    assert(Violations.unverifiableWrite("Foo", "c@1").message.startsWith("'Foo' looks like it may write"))
-    assert(Violations.unverifiableWrite("Foo", "c@1").message.contains("against contract 'c@1'"))
+    // the adapter's own words, then that it was not checked; its remediation, unchanged
+    val unchecked = Violations.unverifiableWrite(UnverifiableOperation("Foo", "'Foo' may write, unseen", "Do this."), "c@1")
+    assert(unchecked.message == "'Foo' may write, unseen. It was never checked against contract 'c@1'.")
+    assert(Violations.unverifiableWrite(UnverifiableOperation("Foo", "a step that ends it", "r"), "c@1").message.startsWith("A step that ends it."))
+    assert(unchecked.remediation == "Do this.")
   }
 
   test("missingInput only points at derivedFrom when asked to") {
@@ -172,7 +175,7 @@ class ViolationsSpec extends AnyFunSuite {
     val dml = Violations.unverifiableDml("UPDATE", Some("gold/out"))
     assert(dml.location.contains("gold/out") && dml.actual.contains("UPDATE"))
     assert(Violations.unverifiableDml("UPDATE", None).location.isEmpty)
-    assert(Violations.unverifiableWrite("SomeCommand", "c@1").actual.contains("SomeCommand"))
+    assert(Violations.unverifiableWrite(UnverifiableOperation("SomeCommand", "p", "r"), "c@1").actual.contains("SomeCommand"))
     val dq = Violations.dataQuality("amount", "range >= 0", Some("gold/out"))
     assert(dq.expected.contains("range >= 0") && dq.location.contains("gold/out") && dq.column.contains("amount"))
     val policy = Violations.orgPolicy("m", "r", None, "pol-1")

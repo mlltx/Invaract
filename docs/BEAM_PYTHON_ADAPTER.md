@@ -47,6 +47,7 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
 | Reading the portable form | `PortablePipeline.scala` |
 | pyarrow schemas | `PyArrowSchemas.scala` |
 | The checker program | `PortableCheck.scala` (`PythonConfigSource` spells the settings) |
+| What a refusal advises | `BeamAdvice.scala` (`BeamAdvice.Python`: the settings as Python spells them, the Python guide) |
 | The declaration | `beam-adapter/src/main/resources/invaract-capabilities-beam-python.yaml` |
 | The Python package | `beam-adapter/python/invaract_beam/` (`runner.py`, `options.py`), tests in `beam-adapter/python/tests/` |
 | Recorded pipelines (test fixtures) | `beam-adapter/src/test/resources/portable/*.pb`, made by `beam-adapter/python/tests/record_fixtures.py` |
@@ -59,9 +60,18 @@ else  → ContractViolation / CheckNotRun is raised; nothing runs
   then `PortableCheckSpec` fails until it is a Beam option (`InvaractBeamOptions` and `BeamConfigSource`) and a flag of the
   Python package (`SETTINGS` in `python/invaract_beam/options.py`), naming each file. A setting that only an adapter checking
   after the job reads (`failOnMissingOutput`) is left out of `BeamSettings.Names`.
-- **A new Python SDK release**: re-record the fixtures (`record_fixtures.py`, its docstring has the command) and run
-  `sbt test`; a renamed source or sink class, or a renamed display key, shows up as a failing `PythonStepsSpec` assertion.
-  Then run the `beam-python` CI job (it installs the SDK at `beam.primary`).
+- **Python SDK releases tested**: `beam.python.verified` (2.68.0, 2.71.0, 2.74.0 and 2.77.0). 2.68.0 is the floor: the
+  first release whose `WriteToParquet` takes `triggering_frequency`, which the streaming scenarios need.
+- **A new Python SDK release**: add it to the `beam-python` job's `beam-python-version` matrix in
+  `.github/workflows/test.yml`. Each run there records the test pipelines afresh with its release (`record_fixtures.py`)
+  before the tests read them, so a renamed source or sink class, display key or coder shows up as a failing
+  `PythonStepsSpec` assertion on that release. Once a run passes, add the release to `beam.python.verified` in
+  `supported-beam-versions.properties` (version-matrix-drift-check fails if a listed release is not in the matrix). To move
+  the committed recordings to it, re-record them (the script's docstring has the command), run `sbt test` and set
+  `beam.python.primary`. Recordings are not byte-for-byte reproducible (the SDK makes up new ids each time), so a re-recording
+  always shows as changed files.
+- **The checker's own Beam release** is `beam.primary`, like the Java adapter's; it reads the portable form whichever Python
+  SDK made it, which is what the matrix above checks.
 - **A new IO**: if it is built on a file source or sink, add the class to `PythonSteps.FileSources`/`FileSinks`; otherwise add a
   case to `sourceRead` or `write`, record a fixture for it in `record_fixtures.py`, and assert its translation in
   `PythonStepsSpec`. Until then it fails closed: a read is not located, a write ending the pipeline is refused.
@@ -156,9 +166,9 @@ A column is nullable unless pyarrow says `not null`, a Beam row field is not nul
 
 1. A dynamically created `NamedTuple` does not survive the round trip `Pipeline.run()` makes through the portable form, so a
    job that types rows built at run time should use `RowTypeConstraint` (the conformance jobs do).
-2. The core's remediation text for `UNVERIFIABLE_WRITE` names Spark's `FailClosedCommands` and `SparkPlanAdapter`, which is
-   misleading for both Beam adapters. Follow-up: an adapter-supplied remediation (an overload of
-   `VerificationPipeline.rejectUnverifiableWrite`).
+2. The core's remediation text for `UNVERIFIABLE_WRITE` named Spark's `FailClosedCommands` and `SparkPlanAdapter`, which
+   misled both Beam adapters. Fixed: the adapter supplies it (`UnverifiableOperation`); `BeamAdvice` holds the Beam advice,
+   with the setting spelled and the guide named for the SDK the pipeline was written with.
 3. Python's in-process runner is now Prism, which it downloads once (`~/.apache_beam/cache/prism`); a machine without network
    access needs it there before the conformance run.
 4. BigQuery has no in-memory stand-in in Python, so the BigQuery scenarios hand the checked pipeline to a runner that runs
@@ -169,5 +179,4 @@ A column is nullable unless pyarrow says `not null`, a Beam row field is not nul
 | Item | Cheapest check |
 |---|---|
 | Dataflow Flex Template Python launcher images have Java 11+ | `java -version` in the launcher image |
-| The display keys and source/sink classes are the same on Python SDKs older than 2.77.0 | run `record_fixtures.py` and `PythonStepsSpec` on each `beam.verified` release |
 | Beam YAML pipelines launched by `apache_beam.yaml.main` honour `--runner` | run one with the runner |

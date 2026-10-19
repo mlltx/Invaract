@@ -23,8 +23,8 @@ import scala.collection.JavaConverters._
   * than the assembled jar), and hands the pipeline to the real runner only if it passes.
   *
   * What happened is read back from what the checker published: its validation events, written by the file sink a platform
-  * would configure, and the job's exit status. A job the checker allows really runs on Python's in-process runner, over empty
-  * data, unless its sink has no in-process stand-in (BigQuery: Python has no in-memory BigQuery like Java's) or it never
+  * would configure, and the job's exit status. A job the checker allows really runs on Python's in-process runner, over one
+  * row per input, unless its sink has no in-process stand-in (BigQuery: Python has no in-memory BigQuery like Java's) or it never
   * ends (a stream); those are handed to a runner that runs nothing, after the same check.
   *
   * The Python environment is `INVARACT_TEST_PYTHON` (default `python3`) with `apache-beam[gcp]` and pyarrow installed; without

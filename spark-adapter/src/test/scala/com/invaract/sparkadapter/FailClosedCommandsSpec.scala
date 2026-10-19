@@ -20,4 +20,12 @@ class FailClosedCommandsSpec extends AnyFunSuite {
     // Call would - this must never silently resolve to "safe".
     assert(!FailClosedCommands.isKnownSafeIcebergProcedureCall(OneRowRelation()))
   }
+
+  test("an unverifiable command is described in Spark's own terms: its class, the known-safe list, the translation gap") {
+    val op = FailClosedCommands.unverifiable("MergeIntoCommand")
+    assert(op.name == "MergeIntoCommand")
+    assert(op.problem == "'MergeIntoCommand' looks like it may write or otherwise mutate data, but Invaract has no translation for it")
+    assert(op.remediation.startsWith("If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list"))
+    assert(op.remediation.contains("SparkPlanAdapter") && op.remediation.contains("docs/SPARK_ADAPTER.md"))
+  }
 }

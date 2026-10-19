@@ -29,11 +29,11 @@ private[beamadapter] final case class TranslatedWrite(
     unreadableShapes: List[String] = Nil
 )
 
-/** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). `step` is
-  * the step's full name when it is a step that ends the pipeline without being a recognised write, which a platform may name
-  * as trusted (`TrustedSteps`, docs/BEAM_ADAPTER.md, D14); a write it cannot verify has none, since trusting it would pass data
-  * written somewhere the contract cannot see. */
-private[beamadapter] final case class UnverifiableStep(operation: String, plan: Plan, step: Option[String] = None)
+/** Something that changes data but that the translation cannot check: refused, never passed unchecked (fail closed). `name` is
+  * the step's full name and `operation` what it is and why it cannot be checked. `step` is the name again when it is a step that
+  * ends the pipeline without being a recognised write, which a platform may name as trusted (`TrustedSteps`, docs/BEAM_ADAPTER.md,
+  * D14); a write it cannot verify has none, since trusting it would pass data written somewhere the contract cannot see. */
+private[beamadapter] final case class UnverifiableStep(name: String, operation: String, plan: Plan, step: Option[String] = None)
 
 /** The pipeline's writes, what it cannot verify, and the steps that end it but read only what writes report (`reportSteps`, let
   * through: D14). */
@@ -207,11 +207,11 @@ private[beamadapter] object BeamTranslator {
       case _ => ()
     }
 
-    val unwritable = nodes.collect { case u: UnverifiableWriteNode => u }.map(u => UnverifiableStep(u.why, plan(u)))
+    val unwritable = nodes.collect { case u: UnverifiableWriteNode => u }.map(u => UnverifiableStep(u.step.name, u.why, plan(u)))
     val (reporting, ending) = nodes.collect { case o: OtherNode if o.step.outputs.forall(c => !consumed.contains(c.name)) => o }
       .partition(o => readsOnlyReports(o.step.name))
     val endsPipeline = ending.map(o =>
-      UnverifiableStep(s"a step that ends the pipeline but is not a recognised write: ${describe(o.step)}", plan(o), Some(o.step.name))
+      UnverifiableStep(o.step.name, s"a step that ends the pipeline but is not a recognised write: ${describe(o.step)}", plan(o), Some(o.step.name))
     )
     BeamTranslation(writes, unwritable ++ endsPipeline, reporting.map(o => describe(o.step)))
   }

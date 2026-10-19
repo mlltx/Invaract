@@ -481,19 +481,22 @@ class VerificationPipelineSpec extends AnyFunSuite {
 
   // --- rejectUnverifiableWrite -----------------------------------------------------------------
 
+  private val merge = UnverifiableOperation("MergeIntoCommand", "'MergeIntoCommand' may write data unseen", "Translate it.")
+
   test("rejectUnverifiableWrite: always throws UNVERIFIABLE_WRITE naming the operation, after publishing FAILED") {
     val sink = new TestNotificationSink
     val ex = intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "MergeIntoCommand", UnknownPlan("a merge"), Some(sink), Some("app-2"))
+      VerificationPipeline.rejectUnverifiableWrite(contract, merge, UnknownPlan("a merge"), Some(sink), Some("app-2"))
     }
     assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnverifiableWrite))
     assert(ex.result.violations.head.message.contains("MergeIntoCommand"))
+    assert(ex.result.violations.head.remediation == merge.remediation, "the adapter's remediation, not one the core supplies")
     assert(ex.getMessage.contains("UnknownPlan(a merge)"))
     assert(validationEvents(sink).map(_.status) == List("FAILED"))
     assert(validationEvents(sink).head.runId.contains("app-2"))
     // and without a sink it still throws
     intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "X", UnknownPlan("y"))
+      VerificationPipeline.rejectUnverifiableWrite(contract, UnverifiableOperation("X", "x", "r"), UnknownPlan("y"))
     }
   }
 
@@ -552,7 +555,7 @@ class VerificationPipelineSpec extends AnyFunSuite {
   test("job: an unverifiable write's FAILED event names the job") {
     val sink = new TestNotificationSink
     intercept[ContractViolationException] {
-      VerificationPipeline.rejectUnverifiableWrite(contract, "MergeIntoCommand", UnknownPlan("a merge"), Some(sink), job = Some(job))
+      VerificationPipeline.rejectUnverifiableWrite(contract, merge, UnknownPlan("a merge"), Some(sink), job = Some(job))
     }
     assert(validationEvents(sink).map(_.job) == List(Some(job)))
   }

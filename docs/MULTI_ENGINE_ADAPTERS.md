@@ -169,7 +169,7 @@ one per thing an adapter can find:
 |---|---|
 | `verifyWrite(contract, write: => CheckedWrite, options, sink, runId, capabilities, job)` | a recognized write |
 | `verifyStateChange(contract, description, location, resultingSchema, caseSensitive, options, sink, runId, job)` | a state-changing, non-write operation that commits a schema change (Spark: Iceberg `CALL` procedures) |
-| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId, job)` | the fail-closed response to something that looks like a write but could not be translated |
+| `rejectUnverifiableWrite(contract, operation, translatedPlan, sink, runId, job)` | the fail-closed response to something that looks like a write but could not be checked; `operation` is an `UnverifiableOperation`, the adapter's own name for it, why it cannot be checked, and what to do about it in its engine's terms |
 
 `job` is the adapter's `JobInfo` (below): pass it on every call and it rides on every event the call publishes.
 
@@ -216,8 +216,9 @@ branch coverage; the three SPI files score 100% under mutation testing.
   `registryUrl`, `registryClientClass`). Done in the pre-adapter review: `ContractReference` and
   `AttachSetup` in `verification-core` (below, "Attaching to a job"). What stays in `spark-adapter` is
   installing the result: the check rule, the listener, the dry-run reporter and `jobId`/metadata keys.
-- *Fail-closed wording.* `UnverifiableWrite`'s remediation text still names Spark's
-  `FailClosedCommands`; `rejectUnverifiableWrite` is engine-neutral, the message is not yet.
+- *Fail-closed wording.* Done: `rejectUnverifiableWrite` takes an `UnverifiableOperation` whose problem
+  and remediation the adapter writes (Spark's are `FailClosedCommands.unverifiable`, Beam's `BeamAdvice`,
+  spelled for the SDK the pipeline was written with), so no adapter's refusal names another engine.
 
 ### Attaching to a job
 

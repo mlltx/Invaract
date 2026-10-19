@@ -61,7 +61,9 @@ submitted**. If the checker refuses the pipeline, or cannot run at all, the job 
 
 </Steps>
 
-The adapter is tested with the Python SDK of Beam 2.77.0.
+The adapter is tested with the Python SDK of Beam 2.68.0, 2.71.0, 2.74.0 and 2.77.0. A streaming
+pipeline that writes files needs 2.68.0 or later, the first release whose `WriteToParquet` takes
+`triggering_frequency`.
 
 ## A pipeline that keeps to its contract
 
@@ -198,6 +200,20 @@ call to a service) is refused, because it may move data where the contract canno
 are let through, exactly as for [Java pipelines](/guides/using-invaract-with-apache-beam/#steps-that-only-report):
 a step that reads only what a write reports (the file names a write produced), and a step a
 platform names as trusted: `--invaract_trusted_steps=Notify*,Metrics`.
+
+The refusal names the step and says which flag would trust it. For a job that ends with
+`rows | "PushToService" >> beam.Map(print)`:
+
+```text
+Why it violates the contract (1 violation):
+  1. [UNVERIFIABLE_WRITE] A step that ends the pipeline but is not a recognised write: PushToService (ParDo). It was never checked against contract 'orders_report@1.0.0'.
+How to correct it:
+  1. If this step moves no data the contract governs (it logs, counts or notifies), a platform can name it as trusted with --invaract_trusted_steps=PushToService. If it writes data, write through an IO transform Invaract recognises, with its destination fixed when the pipeline is built - see "Steps that end the pipeline" in the docs' guide (guides/using-invaract-with-beam-python).
+```
+
+A write Invaract cannot place (a destination the job computes, a template parameter) is
+refused the same way, but naming it as trusted does not let it through, and its remediation
+says so.
 
 ## When the command line cannot reach the job
 

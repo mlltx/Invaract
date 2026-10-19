@@ -512,7 +512,9 @@ object ContractEnforcementRule {
               job
             )
           case None if plan.isInstanceOf[Command] && !FailClosedCommands.isKnownSafe(plan) =>
-            VerificationPipeline.rejectUnverifiableWrite(contract, plan.getClass.getSimpleName, translated.plan, sink, applicationId, job)
+            VerificationPipeline.rejectUnverifiableWrite(
+              contract, FailClosedCommands.unverifiable(plan.getClass.getSimpleName), translated.plan, sink, applicationId, job
+            )
           case None =>
             () // not a Command at all (a Read/Project/Filter/...) - definitely not a write
         }

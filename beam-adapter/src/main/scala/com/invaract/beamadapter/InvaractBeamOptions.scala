@@ -106,7 +106,13 @@ private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) 
       case _                                   => null
     }).filter(_.trim.nonEmpty)
 
-  override def describe(name: String): String = "--invaract" + name.capitalize
+  override def describe(name: String): String = BeamConfigSource.spelling(name)
+}
+
+private[beamadapter] object BeamConfigSource {
+
+  /** How a Java pipeline is given the setting `name`: `--invaract` and its name, capitalised (`--invaractDryRun`). */
+  def spelling(name: String): String = "--invaract" + name.capitalize
 }
 
 /** Registers `InvaractBeamOptions` with Beam, found through `META-INF/services/org.apache.beam.sdk.options.PipelineOptionsRegistrar`. */

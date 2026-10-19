@@ -383,18 +383,15 @@ private[invaract] object Violations {
   def orgPolicy(message: String, remediation: String, location: Option[String], policyId: String): Violation =
     Violation(ViolationType.OrgPolicyViolation, message, remediation, location = location, rule = Some(policyId))
 
-  /** `commandClassName` is also reported as `actual`. */
-  def unverifiableWrite(commandClassName: String, contractRef: String): Violation =
+  /** The adapter's own words for the operation (`UnverifiableOperation`): its `problem`, then that it was not checked; its
+    * `remediation`; and its `name`, reported as `actual`.
+    */
+  def unverifiableWrite(operation: UnverifiableOperation, contractRef: String): Violation =
     Violation(
       ViolationType.UnverifiableWrite,
-      s"'$commandClassName' looks like it may write or otherwise mutate data, but Invaract has no " +
-        s"translation for it, so it was never checked against contract '$contractRef'.",
-      remediation =
-        "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
-          "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
-          "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
-          "\"Fail-closed on unverifiable writes\" section.",
-      actual = Some(commandClassName)
+      s"${operation.problem.capitalize}. It was never checked against contract '$contractRef'.",
+      remediation = operation.remediation,
+      actual = Some(operation.name)
     )
 
   /** `capability` is also reported as `expected`, and the declaring adapter as `actual`. `why` is

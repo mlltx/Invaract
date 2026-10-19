@@ -121,7 +121,9 @@ An adapter owns exactly this, and nothing the pipeline already does:
    `rejectUnverifiableWrite`), passing a `JobInfo` that names the engine (`engine`, `engineVersion`) and, if the
    engine has one, the job's stable id and the platform's attributes. Do not re-implement validation, verifier
    order, fingerprinting, events or the rejection text. The kit fails an adapter whose events do not name its
-   engine.
+   engine. The one text an adapter writes is for what it cannot check: `rejectUnverifiableWrite` takes an
+   `UnverifiableOperation`, the engine's name for the operation, why it cannot be checked, and what the job's owner
+   can do, naming the engine's own settings and docs.
 5. **Read configuration** through `ConfigSource`, `VerificationSetup` and `AttachSetup`, spelling the neutral keys
    the engine's way (see "Spelling the configuration keys" below). `AttachSetup.select` decides dry-run or
    enforcement, resolves the contract (a path or a `registry://` reference) and builds the sink; the adapter

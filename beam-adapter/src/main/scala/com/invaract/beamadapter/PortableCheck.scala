@@ -61,7 +61,7 @@ object PortableCheck {
         engineDetails = given.get("runner").map("runner" -> _).toMap,
         startTimeMs = Some(System.currentTimeMillis())
       )
-      val check = InvaractBeam.fromConfig(new PythonConfigSource(settings), job, BeamCapabilities.python)
+      val check = InvaractBeam.fromConfig(new PythonConfigSource(settings), job, BeamCapabilities.python, BeamAdvice.Python)
       check.verifyTranslation(BeamTranslator.translate(PortablePipeline.steps(Files.readAllBytes(Paths.get(pipeline))), PythonSteps))
       Passed
     } catch {
@@ -89,7 +89,7 @@ object PortableCheck {
   * a Python pipeline's own options are spelled. The package forwards each flag it was given to the checker unchanged. */
 private[beamadapter] final class PythonConfigSource(settings: Map[String, String]) extends ConfigSource {
   override def get(name: String): Option[String] = settings.get(PythonConfigSource.flag(name)).filter(_.trim.nonEmpty)
-  override def describe(name: String): String = "--" + PythonConfigSource.Prefix + PythonConfigSource.flag(name)
+  override def describe(name: String): String = PythonConfigSource.spelling(name)
 }
 
 private[beamadapter] object PythonConfigSource {
@@ -97,6 +97,9 @@ private[beamadapter] object PythonConfigSource {
 
   /** `dryRun` as the Python package spells it after the prefix: `dry_run`. */
   def flag(name: String): String = name.flatMap(c => if (c.isUpper) "_" + c.toLower else c.toString)
+
+  /** How a Python pipeline is given the setting `name`: `--invaract_dry_run`. */
+  def spelling(name: String): String = "--" + Prefix + flag(name)
 
   /** Every setting a Python pipeline can be given, as spelled after the prefix. */
   val Flags: Set[String] = BeamSettings.Names.map(flag).toSet

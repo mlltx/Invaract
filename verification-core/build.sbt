@@ -130,6 +130,12 @@ mimaBinaryIssueFilters ++= Seq(
   // CapabilityMatrix.main wrote a page without the conformance suite's coverage, which the drift test rejects; the
   // generator is adapter-testkit's CapabilityMatrixPage (./dev/capabilities). Nothing outside this repository runs it.
   ProblemFilters.exclude[DirectMissingMethodProblem]("com.invaract.verification.CapabilityMatrix.main"),
+  // Deliberate break, adapter-supplied wording for unverifiable writes: rejectUnverifiableWrite takes an
+  // UnverifiableOperation (the operation's name, why it cannot be checked, and the remediation, in the adapter's own
+  // terms) instead of the operation's name alone, so the core no longer supplies a remediation that names Spark to a
+  // Beam user (docs/MULTI_ENGINE_ADAPTERS.md). No consumers exist outside this repository; this is the exact line MiMa's
+  // own output suggests.
+  ProblemFilters.exclude[IncompatibleMethTypeProblem]("com.invaract.verification.VerificationPipeline.rejectUnverifiableWrite"),
   // Deliberate break, engine identity on the events: ContractValidationEvent, WriteEvent and JobSummaryEvent gained
   // `job: Option[JobInfo]` (the dry-run events always had one), so a consumer receiving events from more than one
   // engine can tell them apart (docs/MULTI_ENGINE_ADAPTERS.md, "Every event names its engine and job"). A new case

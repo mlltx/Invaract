@@ -3985,8 +3985,10 @@ Extend verification engine to support multiple execution engines.
 - [x] Beam Python pipelines (docs/BEAM_PYTHON_ADAPTER.md): the `invaract_beam` package's wrapper runner writes the
       pipeline's portable form and runs a Java checker on it, which translates it with the Beam adapter's own
       translator; conforms to 42 scenarios (13 by refusing safely: transformation-shape rules and analyses are
-      unsupported), real Python pipelines in CI's `beam-python` job. Publishing the package and the checker jar
-      is still to do
+      unsupported), real Python pipelines in CI's `beam-python` job, a matrix over Python SDK releases from 2.68
+      that records the test pipelines afresh with each. A refusal's advice is the adapter's own
+      (`UnverifiableOperation`), with the flag spelled for the SDK. Publishing the package and the checker jar is
+      still to do
 - [x] Every declared output must be written (`check.outputsWritten`): Beam refuses the pipeline before it
       runs; Spark reports at application end, with an opt-in failing exit status
 - [ ] SQL adapter (a warehouse engine, e.g. BigQuery SQL or Trino): survey first with `survey-engine-adapter`

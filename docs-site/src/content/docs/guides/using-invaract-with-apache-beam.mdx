@@ -185,6 +185,10 @@ cases:
   This trusts a step, not a destination: a write Invaract cannot verify is refused even if its
   name matches.
 
+A refused step is named in the `UNVERIFIABLE_WRITE` violation, and its remediation gives the
+flag that would trust it (`--invaractTrustedSteps=PushToSomeService`). A write's remediation
+says instead what the write would have to state, or that trusting it would not help.
+
 ## Dataflow templates
 
 A Flex Template builds its pipeline when it is launched, with the values of its parameters, so
