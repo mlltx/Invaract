@@ -1261,6 +1261,8 @@ jobs:
   beam-python:
     name: Beam Python adapter (beam-adapter's Python suites, SDK ${{ matrix.beam-python-version }})
     runs-on: ubuntu-latest
+    # a run takes about ten minutes; the cap stops an install that pip's resolver cannot settle from holding a runner
+    timeout-minutes: 60
     needs: changes
     if: needs.changes.outputs.beam == 'true'
     # docs/BEAM_PYTHON_ADAPTER.md. First the Python package's own tests (pytest), then beam-adapter's suites that read Python
