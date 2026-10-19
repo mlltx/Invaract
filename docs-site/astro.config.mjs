@@ -92,6 +92,10 @@ export default defineConfig({
 							label: 'Use Invaract with Apache Beam',
 							slug: 'guides/using-invaract-with-apache-beam',
 						},
+						{
+							label: 'Use Invaract with Beam Python Pipelines',
+							slug: 'guides/using-invaract-with-beam-python',
+						},
 					],
 				},
 				{

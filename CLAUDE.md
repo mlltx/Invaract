@@ -74,7 +74,8 @@ don't present it as something external consumers would bind to.
   scenarios every adapter's tests run — test-scope infrastructure, not part of any
   runtime jar), `beam-adapter` (the Apache Beam adapter: checks a pipeline before it is
   submitted through a wrapper runner named by `--runner`, the second adapter after
-  `spark-adapter` — see docs/BEAM_ADAPTER.md)
+  `spark-adapter` — see docs/BEAM_ADAPTER.md; it also checks pipelines written with Beam's Python SDK, through the
+  `invaract_beam` Python package in `beam-adapter/python` and a checker jar it runs — see docs/BEAM_PYTHON_ADAPTER.md)
 - **Example harness**: `plugin` (demo transformation), `runner` (demo job
   — `DemoJobHarness`), `demo` (fixtures + generated output), `web` (report
   viewer)

@@ -76,6 +76,14 @@ trait InvaractBeamOptions extends PipelineOptions {
   def setInvaractDelegate(value: String): Unit
 }
 
+/** The engine-neutral settings a Beam pipeline can be given: every one but `failOnMissingOutput`, which is for an adapter that finds a
+  * missing output only once the job has ended, where Beam's adapters refuse the job before it starts. `BeamConfigSource` and the
+  * Python package's flags (`PythonConfigSource`) are each checked against this list in tests, so a new setting cannot be left
+  * unreachable on either. */
+private[beamadapter] object BeamSettings {
+  val Names: List[String] = InvaractConf.All.filterNot(_ == InvaractConf.FailOnMissingOutput)
+}
+
 /** The Beam spelling of the engine-neutral settings: `--invaract<Name>`, read off the pipeline's own options. */
 private[beamadapter] final class BeamConfigSource(options: InvaractBeamOptions) extends ConfigSource {
 

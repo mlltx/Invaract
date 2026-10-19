@@ -5,7 +5,7 @@ package com.invaract.beamadapter
 
 import com.invaract.contract.Contract
 import com.invaract.verification.notification.{JobInfo, NotificationSink}
-import com.invaract.verification.{AttachPlan, AttachSetup, ConfigSource, VerificationOptions, VerificationSetup}
+import com.invaract.verification.{AdapterCapabilities, AttachPlan, AttachSetup, ConfigSource, VerificationOptions, VerificationSetup}
 import org.apache.beam.sdk.Pipeline
 import org.apache.beam.sdk.options.PipelineOptions
 
@@ -25,14 +25,16 @@ object InvaractBeam {
 
   /** The check the `--invaract...` options of `options` describe: enforcement of the contract named there, or dry-run mode.
     * Organizational policy is enforced here, once, eagerly - before any pipeline is looked at. */
-  def fromOptions(options: PipelineOptions): BeamCheck = {
-    val config = new BeamConfigSource(options.as(classOf[InvaractBeamOptions]))
-    val job = jobInfoOf(options)
+  def fromOptions(options: PipelineOptions): BeamCheck =
+    fromConfig(new BeamConfigSource(options.as(classOf[InvaractBeamOptions])), jobInfoOf(options), BeamCapabilities.declared)
+
+  /** The check the settings in `config` describe, for an adapter that declares `capabilities`: the Java pipeline's (`fromOptions`)
+    * or a Python pipeline's (`PortableCheck`), which differ only in how the settings are spelled and what is declared. */
+  private[beamadapter] def fromConfig(config: ConfigSource, job: JobInfo, capabilities: Option[AdapterCapabilities]): BeamCheck =
     AttachSetup.select(config) match {
-      case AttachPlan.Enforce(contract, sink) => enforce(contract, VerificationOptions(), sink, config, job)
-      case AttachPlan.DryRun(sink)            => new BeamCheck(None, VerificationOptions(), sink, job, BeamCapabilities.declared, VerificationSetup.trustedSteps(config))
+      case AttachPlan.Enforce(contract, sink) => enforcing(contract, VerificationOptions(), sink, config, job, capabilities)
+      case AttachPlan.DryRun(sink)            => new BeamCheck(None, VerificationOptions(), sink, job, capabilities, VerificationSetup.trustedSteps(config))
     }
-  }
 
   /** Enforcement of `contract` under `options`, resolving `ref://` locations, overlaying the settings in `config` and
     * applying organizational policy exactly as every adapter does (`VerificationSetup`). */
@@ -42,11 +44,20 @@ object InvaractBeam {
       sink: Option[NotificationSink] = None,
       config: ConfigSource = ConfigSource.empty,
       job: JobInfo = JobInfo(engine = Some(Engine))
+  ): BeamCheck = enforcing(contract, options, sink, config, job, BeamCapabilities.declared)
+
+  private def enforcing(
+      contract: Contract,
+      options: VerificationOptions,
+      sink: Option[NotificationSink],
+      config: ConfigSource,
+      job: JobInfo,
+      capabilities: Option[AdapterCapabilities]
   ): BeamCheck = {
     val located = VerificationSetup.resolveContractLocations(contract, config)
     val resolved = VerificationSetup.resolveVerificationOptions(options, config)
     val (governed, governedOptions) = VerificationSetup.enforceOrgPolicy(located, resolved, config, sink, job.runId, Some(job))
-    new BeamCheck(Some(governed), governedOptions, sink, job, BeamCapabilities.declared, VerificationSetup.trustedSteps(config))
+    new BeamCheck(Some(governed), governedOptions, sink, job, capabilities, VerificationSetup.trustedSteps(config))
   }
 
   /** Checks `pipeline` as its own options say (`fromOptions(pipeline.getOptions)`). One line a job author can add when the

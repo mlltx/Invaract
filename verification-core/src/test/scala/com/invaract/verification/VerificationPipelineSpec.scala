@@ -151,6 +151,44 @@ class VerificationPipelineSpec extends AnyFunSuite {
     assert(ex.result.violations.forall(_.violationType == ViolationType.InvalidContract))
   }
 
+  test("requireSupported: a contract that relies only on what the adapter supports goes on, publishing nothing") {
+    val sink = new TestNotificationSink
+    VerificationPipeline.requireSupported(contract, VerificationOptions(), CapabilityFixtures.parsed(Map.empty), UnknownPlan("job"), Some(sink))
+    assert(sink.events.isEmpty)
+  }
+
+  test("requireSupported: one the adapter cannot check is refused before any write, with every unsupported requirement, one FAILED event first") {
+    val caps = CapabilityFixtures.parsed(Map(
+      "check.location" -> (("unsupported", Some("no locations here"))),
+      "check.inputExistence" -> (("unsupported", Some("no reads here")))
+    ))
+    val sink = new TestNotificationSink
+    val job = JobInfo(engine = Some("test"))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(contract, VerificationOptions(), caps, UnknownPlan("the job"), Some(sink), None, Some(job))
+    }
+    assert(ex.result.violations.map(_.violationType).distinct == List(ViolationType.UnsupportedContractFeature))
+    assert(ex.result.violations.size == CapabilityCheck.violations(contract, VerificationOptions(), caps).size && ex.result.violations.size >= 2)
+    assert(ex.getMessage.contains("the job"))
+    assert(validationEvents(sink).map(e => (e.status, e.job.flatMap(_.engine))) == List(("FAILED", Some("test"))))
+  }
+
+  test("requireSupported: an option the adapter declares unsupported is refused too") {
+    val caps = CapabilityFixtures.parsed(Map("analysis.staticDataQuality" -> (("unsupported", Some("no proofs here")))))
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(contract, VerificationOptions(staticDataQuality = true), caps, UnknownPlan("job"))
+    }
+    assert(ex.result.violations.map(_.violationType) == List(ViolationType.UnsupportedContractFeature))
+    VerificationPipeline.requireSupported(contract, VerificationOptions(), caps, UnknownPlan("job"))
+  }
+
+  test("requireSupported: an invalid contract is rejected as one") {
+    val ex = intercept[ContractViolationException] {
+      VerificationPipeline.requireSupported(ContractParser.parse("id: bad\nversion: \"1.0.0\"\n"), VerificationOptions(), CapabilityFixtures.parsed(Map.empty), UnknownPlan("job"))
+    }
+    assert(ex.result.violations.forall(_.violationType == ViolationType.InvalidContract))
+  }
+
   test("verifyWrite: an invalid contract is rejected BEFORE the adapter is asked to build the write") {
     val invalid = ContractParser.parse("id: bad\nversion: \"1.0.0\"\n") // no outputs
     var built = false

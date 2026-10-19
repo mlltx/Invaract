@@ -1,0 +1,207 @@
+---
+title: Use Invaract with Beam Python Pipelines
+description: Check an Apache Beam pipeline written in Python against a data contract before it is submitted, switched on from the command line without changing the job.
+sidebar:
+  order: 17
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide checks an [Apache Beam](https://beam.apache.org/) pipeline written with the **Python
+SDK** against a data contract **before the pipeline is submitted**, and shows how a platform team
+turns that on for a job whose source it does not own. The contract is the same YAML you
+[write for Spark](/guides/writing-a-contract/) or for a [Java Beam pipeline](/guides/using-invaract-with-apache-beam/).
+
+<Aside type="caution" title="What this does and does not check">
+Invaract reads the *shape* of a Python pipeline: where it reads, where it writes, which columns
+and types come out, and in which format. It cannot read what your own Python functions do, so the
+transformation-shape rules (`required_filter_columns`, `required_join_columns`,
+`required_group_by`, `forbid_cross_join`) are refused with `UNSUPPORTED_CONTRACT_FEATURE` rather
+than checked. It recognises reads and writes of **Parquet, Avro, text and TFRecord files, BigQuery
+tables and Pub/Sub topics**. The full list is in [Engine Capabilities](/reference/engine-capabilities/)
+(the `beam-python` column).
+</Aside>
+
+## How it works
+
+Your job is unchanged. Two flags switch the check on:
+
+- `--runner=invaract_beam.InvaractRunner` makes Beam hand the finished pipeline to Invaract's
+  runner, before any step has run.
+- `--invaract_delegate` names the runner the pipeline goes to once it passes (`DataflowRunner`,
+  `FlinkRunner`, ...). The default is the `DirectRunner`.
+
+The runner writes the pipeline's portable form (the language-neutral description every Beam SDK
+produces) to a temporary file and runs Invaract's checker on it. The checker is a Java program, the
+same code that checks Java pipelines, so **Java 11 or later must be installed where the job is
+submitted**. If the checker refuses the pipeline, or cannot run at all, the job does not start.
+
+## What a job needs
+
+<Steps>
+
+1. Install the `invaract_beam` package where the job is submitted. Until it is published, install
+   it from the repository:
+
+   ```bash
+   pip install "git+https://github.com/mlltx/Invaract#subdirectory=beam-adapter/python"
+   ```
+
+2. Build the checker jar, and tell the package where it is:
+
+   ```bash
+   cd beam-adapter && sbt assembly
+   export INVARACT_BEAM_CHECKER_JAR=$PWD/target/scala-2.12/invaract-beam-checker-0.1.0.jar
+   ```
+
+   `--invaract_checker_jar=<path>` on the job's command line does the same.
+
+3. Make sure the job builds its options from its command line, as Beam jobs usually do
+   (`PipelineOptions(argv)`), and does **not** set its runner in code.
+
+</Steps>
+
+The adapter is tested with the Python SDK of Beam 2.77.0.
+
+## A pipeline that keeps to its contract
+
+This contract is for a job that reads `in/orders` and writes `out/report`:
+
+```yaml
+id: orders_report
+version: "1.0.0"
+inputs:
+  - name: orders
+    location: in/orders
+    format: parquet
+outputs:
+  - name: report
+    location: out/report
+    format: parquet
+    schema:
+      fields:
+        - { name: id, type: long, required: true }
+        - { name: amount, type: long }
+```
+
+The job reads the orders, keeps the positive ones and writes a report:
+
+```python
+SCHEMA = pa.schema([pa.field("id", pa.int64(), nullable=False), ("amount", pa.int64())])
+
+with beam.Pipeline(options=PipelineOptions(beam_args)) as p:
+    (p | "ReadOrders" >> beam.io.ReadFromParquet(f"{root}/in/orders/*.parquet")
+       | "Positive" >> beam.Filter(lambda r: (r["amount"] or 0) > 0)
+       | "WriteReport" >> beam.io.WriteToParquet(f"{root}/{output}", SCHEMA, file_name_suffix=".parquet"))
+```
+
+A platform runs it with the runner and the contract:
+
+```bash
+python example_job.py --root=. \
+  --runner=invaract_beam.InvaractRunner \
+  --invaract_contract=contracts/orders_report.yaml
+```
+
+The pipeline is checked, passes, and runs on the `DirectRunner` as before, writing
+`out/report-00000-of-00001.parquet`. With `--invaract_notify_config` a `PASSED` validation event
+naming the engine `beam-python` is published (see [Notification Sinks](/guides/notification-sinks/)).
+
+## A pipeline that does not
+
+If the same job writes somewhere else (`--output=out/report_v2`), the job stops before anything
+runs, with the reason (the job's own traceback is left out):
+
+```text
+invaract_beam.runner.ContractViolation: Contract violation: 'orders_report@1.0.0' rejected this transformation. Write aborted.
+
+What the contract expects:
+  input  'orders' at in/orders: 
+  output 'report' at out/report: id: long, amount: long (optional)
+
+What the plan contains:
+  Write(./out/report_v2, format=parquet)
+  └─ UnknownPlan(Positive (ParDo))
+     └─ Read(./in/orders)
+
+Why it violates the contract (1 violation):
+  1. [OUTPUT_LOCATION_MISMATCH] contract declares output location 'out/report' but the plan writes to './out/report_v2'
+
+How to correct it:
+  1. Write to 'out/report' instead, or update the contract's declared output location to './out/report_v2' if this location change is intentional.
+```
+
+The exception is `invaract_beam.ContractViolation`. If the check could not be made at all (no
+Java, no checker jar, a setting the checker does not know), the exception is
+`invaract_beam.CheckNotRun`, and the job does not start either.
+
+## The settings
+
+Every Invaract setting is a flag of the job, spelled `--invaract_<setting>` (all values are text,
+so a switch is `--invaract_dry_run=true`):
+
+| Flag | What it does |
+|---|---|
+| `--invaract_contract` | The contract to enforce: a file path, or `registry://<id>@<version>` ([Use a Contract Registry](/guides/using-a-contract-registry/)). |
+| `--invaract_dry_run=true` | Infer a contract from the job's writes instead of enforcing one ([Dry-Run Mode](/guides/dry-run-mode/)). |
+| `--invaract_notify_config` | Where validation events go ([Notification Sinks](/guides/notification-sinks/)). |
+| `--invaract_location_map` | How `ref://` locations resolve ([Resolve Dataset Locations](/guides/resolving-dataset-locations/)). |
+| `--invaract_org_policy`, `--invaract_org_policy_overlays` | Organizational policy layered on the contract ([Enforce Organizational Policy](/guides/enforcing-organizational-policy/)). |
+| `--invaract_reject_undeclared_inputs=true`, `--invaract_reject_undeclared_fields=true` | Stricter checking of reads and columns. |
+| `--invaract_trusted_steps` | Steps that end the pipeline without a write that a platform trusts (see below). |
+| `--invaract_registry_url`, `--invaract_registry_client_class` | The contract registry. |
+
+And how the checker is run:
+
+| Flag | What it does |
+|---|---|
+| `--invaract_delegate` | The runner a passing pipeline is handed to. Default: `DirectRunner`. |
+| `--invaract_checker_jar` | The checker jar. Default: the `INVARACT_BEAM_CHECKER_JAR` environment variable. |
+| `--invaract_java` | The `java` program. Default: `$JAVA_HOME/bin/java`, else `java` on the `PATH`. |
+| `--invaract_java_options` | Options for the checker's JVM, such as `-Xmx512m`. |
+
+## Where locations come from
+
+- A file read is located at the folder its pattern reads: `data/in/orders/*.parquet` reads
+  `data/in/orders`.
+- A file write is located by its pattern up to the shard template: `WriteToParquet("data/out/report")`
+  writes `data/out/report-00000-of-00001.parquet`, located at `data/out/report`.
+- A BigQuery table `project:dataset.table` is `project/dataset/table`, registered in the `bigquery`
+  catalog.
+- A Pub/Sub topic or subscription is its full path (`projects/p/topics/t`).
+
+## Formats, types and what cannot be told
+
+- **Columns** are known when the write states the schema it writes (a Parquet write's pyarrow
+  schema, an Avro write's schema, a BigQuery load's table schema) or when the data is typed Beam
+  rows (`ReadFromParquet(..., as_rows=True)`, a `beam.Map(...).with_output_types(...)` that yields
+  rows). A write of plain Python dictionaries states no columns: if its output declares columns,
+  the write is refused rather than passed unchecked. A `beam.Select` with a computed field has an
+  untyped column, which counts as unknown.
+- **Formats** are the sink a write uses. A text write cannot tell CSV from JSON.
+- **Save modes**: only a BigQuery write states one (`WRITE_APPEND`, `WRITE_TRUNCATE`,
+  `WRITE_EMPTY` are `append`, `overwrite`, `error`). A contract that declares a save mode for a
+  file write has that write refused.
+- **Reads that state no location** are still seen, never mistaken for data the job makes:
+  a CSV read through pandas (`ReadFromCsv`), a BigQuery query, a source class Invaract does not
+  know, files matched by `fileio` (`MatchFiles`, `MatchContinuously`), a classic template's
+  parameter. A declared input such a read may be is reported unverifiable rather than missing, and
+  with `--invaract_reject_undeclared_inputs=true` the write is refused.
+- **Writes Invaract cannot place** are refused: a CSV write through pandas (`WriteToCsv`),
+  `fileio.WriteToFiles`, a BigQuery write whose table the job computes, a classic template's
+  parameter.
+
+## Steps that end the pipeline
+
+A step that ends the pipeline without being a write Invaract recognises (a `beam.Map(print)`, a
+call to a service) is refused, because it may move data where the contract cannot see. Two kinds
+are let through, exactly as for [Java pipelines](/guides/using-invaract-with-apache-beam/#steps-that-only-report):
+a step that reads only what a write reports (the file names a write produced), and a step a
+platform names as trusted: `--invaract_trusted_steps=Notify*,Metrics`.
+
+## When the command line cannot reach the job
+
+A job that sets its runner in code (`PipelineOptions(argv, runner="DirectRunner")`) or does not pass
+its command line to Beam is not checked: the flags never reach it. A job submitted from a machine
+without the package does not start (`ModuleNotFoundError: No module named 'invaract_beam'`), and one
+submitted without Java stops with `CheckNotRun`.

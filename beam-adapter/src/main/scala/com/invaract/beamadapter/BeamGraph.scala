@@ -28,20 +28,24 @@ private[beamadapter] final case class BeamCollection(
 )
 
 /** One step of a pipeline as the graph walk reports it: a composite step (made of smaller ones, in `children`) or a
-  * primitive one. `display` is the step's own display data - the label sheet a step publishes about itself, which is
-  * where a read states its file pattern. `inputTags` names each input by the tag the step was given it under (a `CoGroup`
-  * of several collections joins them by these names).
+  * primitive one. `className` is what built it: the Java class of the transform, or, for a pipeline read from its portable
+  * form (`PortablePipeline`), the Python class the SDK names in the step's annotations. `transform` is the transform itself,
+  * held only for a Java pipeline constructed in this JVM. `display` is the step's own display data - the label sheet a step
+  * publishes about itself, which is where a read states its file pattern - and `displayNamespaces` says, for each key, which
+  * class published it (a Python IO's source or sink; empty for a Java pipeline, where the keys alone are enough). `inputTags`
+  * names each input by the tag the step was given it under (a `CoGroup` of several collections joins them by these names).
   */
 private[beamadapter] final case class BeamStep(
     name: String,
-    transform: PTransform[_, _],
+    className: String,
     inputs: List[BeamCollection],
     outputs: List[BeamCollection],
     display: Map[String, String],
     children: List[BeamStep],
-    inputTags: Map[String, String] = Map.empty
+    inputTags: Map[String, String] = Map.empty,
+    transform: Option[PTransform[_, _]] = None,
+    displayNamespaces: Map[String, String] = Map.empty
 ) {
-  def className: String = transform.getClass.getName
   def isComposite: Boolean = children.nonEmpty
 
   /** This step and every step beneath it, outermost first. */
@@ -81,12 +85,13 @@ private[beamadapter] object BeamGraph {
   private def stepOf(node: TransformHierarchy#Node, children: List[BeamStep]): BeamStep =
     BeamStep(
       name = node.getFullName,
-      transform = node.getTransform,
+      className = node.getTransform.getClass.getName,
       inputs = node.getInputs.values.asScala.toList.collect { case c: PCollection[_] => collectionOf(c) },
       outputs = node.getOutputs.values.asScala.toList.collect { case c: PCollection[_] => collectionOf(c) },
       display = displayOf(node.getTransform),
       children = children,
-      inputTags = node.getInputs.asScala.toList.collect { case (tag, c: PCollection[_]) => c.getName -> tag.getId }.toMap
+      inputTags = node.getInputs.asScala.toList.collect { case (tag, c: PCollection[_]) => c.getName -> tag.getId }.toMap,
+      transform = Some(node.getTransform)
     )
 
   private def collectionOf(c: PCollection[_]): BeamCollection =

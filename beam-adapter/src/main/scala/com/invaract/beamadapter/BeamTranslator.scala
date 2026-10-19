@@ -57,10 +57,12 @@ private[beamadapter] object BeamTranslator {
   /** The `ir.UDF.engineType` of a filter's predicate: Java code, of which only the columns it is given are known. */
   val PredicateEngineType = "BeamPredicate"
 
-  def translate(pipeline: Pipeline): BeamTranslation = translate(BeamGraph.of(pipeline))
+  def translate(pipeline: Pipeline): BeamTranslation = translate(BeamGraph.of(pipeline), JavaSteps)
 
-  def translate(top: List[BeamStep]): BeamTranslation = {
-    val nodes = top.flatMap(visible)
+  /** The top-level steps `top`, whose steps `io` knows (`JavaSteps` for a Java pipeline, `PythonSteps` for one read from
+    * its portable form). */
+  def translate(top: List[BeamStep], io: StepCatalogue): BeamTranslation = {
+    val nodes = top.flatMap(visible(_, io))
     val producers = nodes.flatMap(n => n.step.outputs.map(_.name -> n)).toMap
     val consumers = nodes.flatMap(n => inputsOf(n.step).map(_.name -> n)).groupBy(_._1).map { case (k, v) => k -> v.map(_._2) }
     val consumed = consumers.keySet
@@ -86,7 +88,7 @@ private[beamadapter] object BeamTranslator {
         case f: FileReaderNode =>
           passThrough(f, s"${f.step.name} (${BeamIO.simpleName(f.step)})", if (readsLocated(f)) BeamIO.simpleName(f.step) else UnlocatedSourceType)
         case o: OtherNode =>
-          BeamShapes.of(o.step) match {
+          io.shape(o.step) match {
             case Some(shape) => shaped(o, shape)
             case None        => passThrough(o, s"${o.step.name} (${BeamIO.simpleName(o.step)})", BeamIO.simpleName(o.step))
           }
@@ -152,7 +154,7 @@ private[beamadapter] object BeamTranslator {
       // a text read parsed straight away into rows (JsonToRow, CsvIO.parseRows) has the parser's columns
       def parsedColumns(r: ReadNode): Option[LogicalSchema] =
         r.step.outputs.headOption.flatMap(o => consumers.getOrElse(o.name, Nil) match {
-          case parser :: Nil if BeamIO.isTextParser(parser.step) => parser.step.outputs.headOption.flatMap(BeamSchemas.of)
+          case parser :: Nil if io.isTextParser(parser.step) => parser.step.outputs.headOption.flatMap(BeamSchemas.of)
           case _                                                 => None
         })
       val readSchemas = located.flatMap(r => r.columns.orElse(parsedColumns(r)).toList.flatMap(s => r.locations.map(_ -> s)))
@@ -163,16 +165,16 @@ private[beamadapter] object BeamTranslator {
         above.collect { case f: FileReaderNode if !readsLocated(f) => s"${f.step.name}: files handed to it by a step that does not say where they are" }
       // a write of what a formatter made from rows (ToJson) has those rows' columns; a text write of it is in the formatter's format
       val formatter = sourcesOf(w) match {
-        case (o: OtherNode) :: Nil => BeamIO.textFormatterFormat(o.step).map(f => f -> o.step.inputs.headOption.flatMap(BeamSchemas.of))
+        case (o: OtherNode) :: Nil => io.textFormatterFormat(o.step).map(f => f -> o.step.inputs.headOption.flatMap(BeamSchemas.of))
         case _                     => None
       }
       val written = formatter.filter(_ => w.format.contains("text")).fold(w)(f => w.copy(format = Some(f._1)))
       val others = above.collect { case o: OtherNode => o }
       // what the transformation-shape rules cannot see past (D19): a schema transform it could not read, or a step that combines
       // several collections in code (not Flatten, which only concatenates them)
-      val unreadable = others.collect { case o if BeamShapes.of(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }
+      val unreadable = others.collect { case o if io.shape(o.step).exists(_.isInstanceOf[SchemaShape.Unreadable]) => describe(o.step) }
       val combines = others.collect {
-        case o if !BeamShapes.recognises(o.step) && !BeamIO.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step)
+        case o if !io.recognisesShape(o.step) && !io.isUnion(o.step) && sourcesOf(o).size > 1 => describe(o.step)
       }
       TranslatedWrite(
         written.location,
@@ -253,15 +255,15 @@ private[beamadapter] object BeamTranslator {
   private final case class UnverifiableWriteNode(step: BeamStep, why: String) extends Node
   private final case class OtherNode(step: BeamStep) extends Node
 
-  private def visible(step: BeamStep): List[Node] =
-    if (BeamIO.isInJobData(step)) List(OtherNode(step))
-    else BeamIO.read(step).map(readNode(step, _)).orElse(BeamIO.write(step).map(writeNode(step, _))) match {
+  private def visible(step: BeamStep, io: StepCatalogue): List[Node] =
+    if (io.isInJobData(step)) List(OtherNode(step))
+    else io.read(step).map(readNode(step, _)).orElse(io.write(step).map(writeNode(step, _))) match {
       case Some(node) => List(node)
       case None =>
-        if (isFileWriteUnit(step)) List(writeNode(step, BeamIO.fileWrite(step)))
-        else if (BeamShapes.recognises(step)) List(OtherNode(step))
+        if (isFileWriteUnit(step, io)) List(writeNode(step, io.fileWrite(step)))
+        else if (io.recognisesShape(step)) List(OtherNode(step))
         // a team's own step that holds IO, or a schema transform, is looked into so what it does is seen
-        else if (step.isComposite && (containsIo(step) || step.withDescendants.tail.exists(BeamShapes.recognises))) step.children.flatMap(visible)
+        else if (step.isComposite && (containsIo(step, io) || step.withDescendants.tail.exists(io.recognisesShape))) step.children.flatMap(visible(_, io))
         else List(OtherNode(step))
     }
 
@@ -276,22 +278,22 @@ private[beamadapter] object BeamTranslator {
     case IoWrite.Unverifiable(why)                                    => UnverifiableWriteNode(step, why)
   }
 
-  private def isIo(s: BeamStep): Boolean = BeamIO.read(s).isDefined || BeamIO.write(s).isDefined || BeamIO.isFileWrite(s)
+  private def isIo(s: BeamStep, io: StepCatalogue): Boolean = io.read(s).isDefined || io.write(s).isDefined || io.isFileWrite(s)
 
   /** Whether an IO step is beneath `step`, not counting the steps that make data in the job (an Impulse inside `Create.of`). */
-  private def containsIo(step: BeamStep): Boolean = withoutJobData(step).exists(isIo)
+  private def containsIo(step: BeamStep, io: StepCatalogue): Boolean = withoutJobData(step, io).exists(isIo(_, io))
 
   /** The outermost step that holds exactly one file write and no other IO: the write as the job wrote it (`TextIO.write()`,
     * `FileIO.write()`, or a team's composite around one). Anything holding more is searched deeper. */
-  private def isFileWriteUnit(step: BeamStep): Boolean = {
-    val all = withoutJobData(step)
-    all.count(BeamIO.isFileWrite) == 1 && !all.exists(s => BeamIO.read(s).isDefined || BeamIO.write(s).isDefined)
+  private def isFileWriteUnit(step: BeamStep, io: StepCatalogue): Boolean = {
+    val all = withoutJobData(step, io)
+    all.count(io.isFileWrite) == 1 && !all.exists(s => io.read(s).isDefined || io.write(s).isDefined)
   }
 
   /** `step` and every step beneath it, leaving out the steps that make data in the job and what they are built from (a
     * `Create.of` inside Beam's own `WriteFiles` is not a read inside the write). */
-  private def withoutJobData(step: BeamStep): List[BeamStep] =
-    if (BeamIO.isInJobData(step)) Nil else step :: step.children.flatMap(withoutJobData)
+  private def withoutJobData(step: BeamStep, io: StepCatalogue): List[BeamStep] =
+    if (io.isInJobData(step)) Nil else step :: step.children.flatMap(withoutJobData(_, io))
 
   /** The folder a read pattern reads from (kept here for the tests that pin it). */
   private[beamadapter] def readLocation(pattern: String): String = BeamLocations.folderOf(pattern)

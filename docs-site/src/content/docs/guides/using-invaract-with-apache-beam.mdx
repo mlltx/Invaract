@@ -11,7 +11,8 @@ This guide checks an [Apache Beam](https://beam.apache.org/) pipeline against a 
 **before the pipeline is submitted**, and shows how a platform team turns that on from the
 command line for a job whose source it does not own. The contract is the same YAML you
 [write for Spark](/guides/writing-a-contract/); only the way Invaract reaches the job is
-different.
+different. For a pipeline written in **Python**, see
+[Use Invaract with Beam Python Pipelines](/guides/using-invaract-with-beam-python/).
 
 <Aside type="caution" title="What this does and does not check">
 The Beam adapter reads the *shape* of a pipeline: where it reads, where it writes, which

@@ -83,7 +83,8 @@ libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.2.18" % "test",
   // verification-core's own `provided` dependencies, needed to run its classes here.
   "org.slf4j" % "slf4j-api" % "2.0.17" % "provided",
-  "org.slf4j" % "slf4j-simple" % "2.0.7" % "test",
+  // the binding the checker jar logs through (to standard error); a job's own JVM brings its own, so it is not a runtime dependency
+  "org.slf4j" % "slf4j-simple" % "2.0.7" % "provided",
   // Beam itself is `provided`: the job being checked brings its own Beam, and this adapter must not pull a second one
   // in. Only the SDK core is needed by the adapter (the pipeline graph, display data, coders, row schemas); every
   // IO transform is recognised by class name and read through its public display data, so a job that never uses
@@ -120,6 +121,23 @@ scalacOptions ++= Seq(
 
 Test / fork := true
 
+// The checker a Python pipeline is checked by (PortableCheck, docs/BEAM_PYTHON_ADAPTER.md): one runnable jar the Python package
+// runs with `java -jar`. Unlike this module's own jar, which a Java job puts beside the Beam it already has, the checker runs on
+// its own, so it bundles Beam's SDK core (the `provided` dependencies) and a log binding. `sbt assembly` builds it.
+assembly / assemblyJarName := s"invaract-beam-checker-${version.value}.jar"
+assembly / mainClass := Some("com.invaract.beamadapter.PortableCheck")
+assembly / fullClasspath := (Compile / fullClasspath).value
+assembly / test := {}
+assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", "services", _*)                                       => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".SF"))   => MergeStrategy.discard
+  case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".DSA"))  => MergeStrategy.discard
+  case PathList("META-INF", xs @ _*) if xs.lastOption.exists(_.endsWith(".RSA"))  => MergeStrategy.discard
+  case PathList("META-INF", "MANIFEST.MF")                                        => MergeStrategy.discard
+  case x if x.endsWith("module-info.class")                                       => MergeStrategy.discard
+  case _                                                                           => MergeStrategy.first
+}
+
 // API compatibility (MiMa), the gate the other published modules have. A module with no release has nothing to
 // compare with: set this to the first released version, and add the module to the CI loops (check_modules.py says where).
 import com.typesafe.tools.mima.core._
@@ -129,7 +147,8 @@ mimaPreviousArtifacts := Set.empty
 // public bytecode, so MiMa sees it; no code outside this module can call it, so a change to it is not a break.
 mimaBinaryIssueFilters ++= Seq(
   "BeamTranslator", "TranslatedWrite", "UnverifiableStep", "BeamTranslation", "BeamGraph", "BeamStep", "BeamCollection", "BeamSchemas",
-  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$", "BeamShapes", "SchemaShape", "JoinSide"
+  "BeamIO", "IoRead", "IoWrite", "BeamLocations", "BeamConfigSource", "BeamCheck$", "BeamShapes", "SchemaShape", "JoinSide", "StepCatalogue",
+  "JavaSteps", "PythonSteps", "PortablePipeline", "PyArrowSchemas", "PythonConfigSource", "BeamSettings"
 ).map(name => ProblemFilters.exclude[Problem](s"com.invaract.beamadapter.$name*")) ++ Seq(
   // A new option is a new getter/setter pair on InvaractBeamOptions, which MiMa reports because a class implementing the
   // interface would lack them. None does: Beam implements an options interface itself, as a proxy made at run time, and a

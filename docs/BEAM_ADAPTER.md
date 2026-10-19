@@ -392,6 +392,17 @@ Every undocumented decision, surprise, or guess made while building this adapter
     - **A write's file names read back as data are refused.** `getPerDestinationOutputFilenames` → `FileIO.matchAll` →
       `readFiles` → a terminal step is not a report step: the reader is a read, not a report.
     *For the guide:* probe a pipeline a few thousand steps long; recursion over the engine's graph is the easy mistake.
+28. **Python pipelines share this translator.** The Beam Python adapter (docs/BEAM_PYTHON_ADAPTER.md) reads a Python pipeline's
+    portable form into the same `BeamStep` tree and translates it with this module's `BeamTranslator`. Three changes here made
+    that possible, none of which changes what a Java pipeline is checked for (the Java conformance baseline did not move):
+    - `BeamStep` names the class that built it (`className`) and holds the live transform only for a Java pipeline
+      (`transform: Option`); `BeamIO` and `BeamShapes` read the transform where they did before.
+    - What the translator asks about steps is a `StepCatalogue`: `JavaSteps` (`BeamIO`, `BeamShapes`) for a Java pipeline,
+      `PythonSteps` for a Python one. The walk, the fail-closed rules and D14 are written once.
+    - A contract that relies on something the adapter declares unsupported is refused for that before any write is judged
+      (`VerificationPipeline.requireSupported`, new in verification-core). Before, a write refused as unverifiable could hide that
+      the contract asked for a check this adapter never makes.
+    *For the guide:* when an engine has more than one SDK, translate each into the same step tree and keep one translator.
 
 ## Unverified items
 
