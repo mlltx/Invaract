@@ -61,7 +61,9 @@ submitted**. If the checker refuses the pipeline, or cannot run at all, the job 
 
 </Steps>
 
-The adapter is tested with the Python SDK of Beam 2.77.0.
+The adapter is tested with the Python SDK of Beam 2.68.0, 2.71.0, 2.74.0 and 2.77.0. A streaming
+pipeline that writes files needs 2.68.0 or later, the first release whose `WriteToParquet` takes
+`triggering_frequency`.
 
 ## A pipeline that keeps to its contract
 
