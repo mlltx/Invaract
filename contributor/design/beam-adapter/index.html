@@ -1067,6 +1067,21 @@ ordered pass. 5,000 steps translate in about 0.2 s and verify in about 0.2 s mor
 <em>For the guide:</em> probe a pipeline a few thousand steps long; recursion over the engine’s graph is the easy mistake.</li>
 </ul>
 </li>
+<li>
+<p><strong>Python pipelines share this translator.</strong> The Beam Python adapter (docs/BEAM_PYTHON_ADAPTER.md) reads a Python pipeline’s
+portable form into the same <code dir="auto">BeamStep</code> tree and translates it with this module’s <code dir="auto">BeamTranslator</code>. Three changes here made
+that possible, none of which changes what a Java pipeline is checked for (the Java conformance baseline did not move):</p>
+<ul>
+<li><code dir="auto">BeamStep</code> names the class that built it (<code dir="auto">className</code>) and holds the live transform only for a Java pipeline
+(<code dir="auto">transform: Option</code>); <code dir="auto">BeamIO</code> and <code dir="auto">BeamShapes</code> read the transform where they did before.</li>
+<li>What the translator asks about steps is a <code dir="auto">StepCatalogue</code>: <code dir="auto">JavaSteps</code> (<code dir="auto">BeamIO</code>, <code dir="auto">BeamShapes</code>) for a Java pipeline,
+<code dir="auto">PythonSteps</code> for a Python one. The walk, the fail-closed rules and D14 are written once.</li>
+<li>A contract that relies on something the adapter declares unsupported is refused for that before any write is judged
+(<code dir="auto">VerificationPipeline.requireSupported</code>, new in verification-core). Before, a write refused as unverifiable could hide that
+the contract asked for a check this adapter never makes.
+<em>For the guide:</em> when an engine has more than one SDK, translate each into the same step tree and keep one translator.</li>
+</ul>
+</li>
 </ol>
 <div class="sl-heading-wrapper level-h2"><h2 id="unverified-items">Unverified items</h2><a class="sl-anchor-link" href="#unverified-items"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Unverified items”</span></a></div>
 <p>What could not be checked against the engine, to be settled by the adapter’s own tests.</p>
