@@ -1259,16 +1259,26 @@ jobs:
         run: cd beam-adapter && sbt test
 
   beam-python:
-    name: Beam Python adapter (beam-adapter's Python suites)
+    name: Beam Python adapter (beam-adapter's Python suites, SDK ${{ matrix.beam-python-version }})
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.beam == 'true'
-    # docs/BEAM_PYTHON_ADAPTER.md. First the Python package's own tests (pytest), then beam-adapter's suites that run real Python
-    # pipelines: the conformance kit's scenarios (BeamPythonConformanceSpec), the attach tests and the attested claims. They run
-    # strictly here (INVARACT_CONFORMANCE_STRICT): without this job's Python environment they are canceled, as in every other
-    # beam-adapter run, and this is the job where a missing environment is a failure. The checker the Python jobs run is this
-    # commit's beam-adapter, from its own test classpath. The Python SDK is the Beam release beam-adapter is built against
-    # (beam.primary in supported-beam-versions.properties), so the two never drift apart.
+    # docs/BEAM_PYTHON_ADAPTER.md. First the Python package's own tests (pytest), then beam-adapter's suites that read Python
+    # pipelines: the unit tests on recorded pipelines, the conformance kit's scenarios (BeamPythonConformanceSpec), the attach
+    # tests and the attested claims. They run strictly here (INVARACT_CONFORMANCE_STRICT): without this job's Python
+    # environment the live suites are canceled, as in every other beam-adapter run, and this is the job where a missing
+    # environment is a failure.
+    #
+    # One run per Python SDK release a team may write its pipelines with. The pipelines the unit tests read
+    # (src/test/resources/portable) are recorded afresh with that release first, so a renamed source or sink class, display
+    # key or coder shows up as a failing assertion on the release that renamed it. The checker is this commit's beam-adapter,
+    # built against beam.primary's Java libraries whatever the SDK, as the released checker jar is. The releases CI has
+    # evidence for are beam.python.verified in supported-beam-versions.properties (version-matrix-drift-check keeps the two
+    # in step); the committed recordings are made with beam.python.primary.
+    strategy:
+      fail-fast: false
+      matrix:
+        beam-python-version: ["2.60.0", "2.65.0", "2.70.0", "2.77.0"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1286,13 +1296,16 @@ jobs:
 
       # The package is built, not installed: the suites below put it on PYTHONPATH, and one of them shows a job on a machine
       # where it is not installed, which an installed package would make impossible.
-      - name: Install the Python SDK, and build the package
+      - name: Install the Python SDK ${{ matrix.beam-python-version }}, and build the package
         shell: bash
         run: |
-          BEAM=$(grep '^beam.primary' beam-adapter/src/main/resources/supported-beam-versions.properties | cut -d= -f2 | tr -d ' ')
           python -m pip install --upgrade pip
-          python -m pip install "apache-beam[gcp]==$BEAM" pytest
+          python -m pip install "apache-beam[gcp]==${{ matrix.beam-python-version }}" pytest
           python -m pip wheel --no-deps -w "$RUNNER_TEMP/wheel" beam-adapter/python
+
+      - name: Record the test pipelines with this SDK
+        shell: bash
+        run: cd "$(mktemp -d)" && python "$GITHUB_WORKSPACE/beam-adapter/python/tests/record_fixtures.py" "$GITHUB_WORKSPACE/beam-adapter/src/test/resources/portable"
 
       - name: Test the Python package
         shell: bash
@@ -1303,7 +1316,7 @@ jobs:
         run: |
           export INVARACT_TEST_PYTHON="$(command -v python)"
           export INVARACT_CONFORMANCE_STRICT=true
-          cd beam-adapter && sbt "testOnly *BeamPythonConformanceSpec *BeamPythonAttachSpec *BeamPythonAttestedClaimsSpec *PortableCheckSpec"
+          cd beam-adapter && sbt "testOnly *PortablePipelineSpec *PythonStepsSpec *PortableCheckSpec *BeamAdviceSpec *BeamPythonConformanceSpec *BeamPythonAttachSpec *BeamPythonAttestedClaimsSpec"
 
   version-matrix-drift-check:
     name: Version matrix drift check
@@ -1381,6 +1394,7 @@ jobs:
               ("delta", "delta-version-matrix", "delta-version"),
               ("iceberg", "iceberg-version-matrix", "iceberg-version"),
               ("beam", "beam-version-matrix", "beam-version"),
+              ("beam.python", "beam-python", "beam-python-version"),
           ]
 
           drifted = False

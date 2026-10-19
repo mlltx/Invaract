@@ -157,7 +157,7 @@ verified write is structurally wrong. See
 
 | Type | Meaning |
 |---|---|
-| `UNVERIFIABLE_WRITE` | The plan is command-shaped and isn't on the known-safe list, but doesn't translate to a recognized write either — Invaract can't confirm it's safe, so it's rejected. |
+| `UNVERIFIABLE_WRITE` | Something may write or change data, but Invaract can't check it, so it's rejected rather than let through. On Spark: a command-shaped plan that isn't on the known-safe list and doesn't translate to a recognized write. On Beam: a step that ends the pipeline without being a recognized write, or a write that doesn't state what the contract asks of it (its columns, format or save mode). The remediation says what to do in the engine's own terms. |
 | `RULE_UNVERIFIABLE_DML` | The plan is genuinely row-level DML of a kind the active contract declares a rule for, but Invaract couldn't extract the fact that rule needs (e.g. Iceberg's merge-on-read `UPDATE`). |
 | `INVALID_CONTRACT` | The contract itself is structurally unsound (e.g. no declared outputs) — caught before any plan is checked against it. |
 | `UNSUPPORTED_CONTRACT_FEATURE` | The contract relies on something the engine adapter in use declares it cannot verify (a catalog requirement, a rule, a nested type, a format, ...), so passing the write would represent an unchecked requirement as checked. `expected` is the capability id, e.g. `check.catalogRegistration`; the message gives the adapter's own reason. Remove what needs it from the contract, or use an adapter that supports it — see [Engine Capabilities](/reference/engine-capabilities/). The Spark adapter declares none of the checks a contract can ask for as unsupported, so this does not occur with it today. |

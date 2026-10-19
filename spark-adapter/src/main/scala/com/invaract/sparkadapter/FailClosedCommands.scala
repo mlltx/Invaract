@@ -3,6 +3,7 @@
 
 package com.invaract.sparkadapter
 
+import com.invaract.verification.UnverifiableOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /** The known-safe exemption list for `ContractEnforcementRule`'s fail-closed
@@ -44,6 +45,17 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
   * to avoid.
   */
 private[sparkadapter] object FailClosedCommands {
+
+  /** A command this list does not exempt and `SparkPlanAdapter` does not translate, as the rejection describes it. */
+  def unverifiable(commandClassName: String): UnverifiableOperation =
+    UnverifiableOperation(
+      commandClassName,
+      s"'$commandClassName' looks like it may write or otherwise mutate data, but Invaract has no translation for it",
+      "If this command genuinely doesn't write data, add its class to FailClosedCommands' known-safe list " +
+        "(with the same reasoning documented there) and open an issue/PR. If it does write data, that's a " +
+        "real translation gap in SparkPlanAdapter - see docs/SPARK_ADAPTER.md's " +
+        "\"Fail-closed on unverifiable writes\" section."
+    )
 
   def isKnownSafe(plan: LogicalPlan): Boolean =
     if (plan.getClass.getName == icebergCallClassName) isKnownSafeIcebergProcedureCall(plan)

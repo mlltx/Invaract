@@ -5,7 +5,7 @@ package com.invaract.testkit
 
 import com.invaract.contract.{Contract, LogicalField, LogicalSchema, LogicalType}
 import com.invaract.ir.{Aggregate, AggregateCall, CatalogIdentity, DeleteScope, RowMutation, FunctionCatalog, Cast, ColumnRef, ColumnReference, Comparison, DatasetRef, Expr, Filter, Join, JoinType, Literal, NamedExpr, Plan, Project, Read, UnknownPlan, Write}
-import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, VerificationOptions, VerificationPipeline}
+import com.invaract.verification.{AdapterCapabilities, CheckedWrite, ContractViolationException, MutationClassification, MutationKind, UnverifiableOperation, VerificationOptions, VerificationPipeline}
 import com.invaract.verification.notification.JobInfo
 
 /** The smallest possible adapter: it "runs" a `ScenarioJob` by translating it straight into the
@@ -27,7 +27,11 @@ class ReferenceAdapter(override val capabilities: AdapterCapabilities = Referenc
       if (job.untranslatableWrite)
         VerificationPipeline.rejectUnverifiableWrite(
           contract,
-          "ReferenceTruncate",
+          UnverifiableOperation(
+            "ReferenceTruncate",
+            "'ReferenceTruncate' changes data, but the reference adapter has no translation for it",
+            "The reference adapter translates only the kit's scenario jobs; a scenario that expects this refusal is meant to get it."
+          ),
           com.invaract.ir.UnknownPlan(s"an operation on ${job.output.location} the reference adapter has no translation for"),
           Some(sink),
           None,

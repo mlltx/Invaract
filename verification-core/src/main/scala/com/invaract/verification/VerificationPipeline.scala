@@ -289,14 +289,14 @@ object VerificationPipeline {
     * it was never actually checked against the contract. Always throws -
     * `ViolationType.UnverifiableWrite`.
     *
-    * @param operation the engine's own name for the operation (Spark: the
-    *   command's class name), named in the violation.
+    * @param operation the operation, in the adapter's own words: its name,
+    *   why it cannot be checked, and what the job's owner can do about it.
     * @param translatedPlan what the adapter did produce for it (typically an
     *   `ir.UnknownPlan`), rendered in the explanation.
     */
   def rejectUnverifiableWrite(
       contract: Contract,
-      operation: String,
+      operation: UnverifiableOperation,
       translatedPlan: ir.Plan,
       sink: Option[NotificationSink] = None,
       runId: Option[String] = None,

@@ -26,7 +26,8 @@ final class BeamCheck private[beamadapter] (
     sink: Option[NotificationSink],
     job: JobInfo,
     capabilities: Option[AdapterCapabilities],
-    trusted: TrustedSteps = TrustedSteps.Nobody
+    trusted: TrustedSteps = TrustedSteps.Nobody,
+    advice: BeamAdvice = BeamAdvice.Java
 ) {
   private val logger = LoggerFactory.getLogger(classOf[BeamCheck])
   private def runId: Option[String] = job.runId
@@ -56,7 +57,10 @@ final class BeamCheck private[beamadapter] (
     // a contract that asks for something this adapter declares it cannot check is refused for that, first
     capabilities.foreach(caps => VerificationPipeline.requireSupported(c, options, caps, pipelinePlan, sink, runId, Some(job)))
     // a step that may change data but that cannot be checked is refused before any write is judged (fail closed)
-    translation.unverifiable.headOption.foreach(u => VerificationPipeline.rejectUnverifiableWrite(c, u.operation, u.plan, sink, runId, Some(job)))
+    translation.unverifiable.headOption.foreach { u =>
+      val operation = if (u.step.isDefined) advice.endingStep(u.name, u.operation) else advice.unplacedWrite(u.name, u.operation)
+      VerificationPipeline.rejectUnverifiableWrite(c, operation, u.plan, sink, runId, Some(job))
+    }
     // the whole pipeline is known: an output the contract declares that no write lands on refuses the job (docs/BEAM_ADAPTER.md, D17)
     VerificationPipeline.requireOutputsWritten(c, translation.writes.map(_.location), pipelinePlan, sink, runId, Some(job))
     translation.writes.foreach(w => BeamCheck.refusal(c, w, options).fold(check(c, w))(why => reject(c, why, w)))
@@ -84,7 +88,7 @@ final class BeamCheck private[beamadapter] (
     )
 
   private def reject(c: Contract, why: String, w: TranslatedWrite): Unit =
-    VerificationPipeline.rejectUnverifiableWrite(c, why, w.plan, sink, runId, Some(job))
+    VerificationPipeline.rejectUnverifiableWrite(c, advice.unstatedWrite(w.location, why), w.plan, sink, runId, Some(job))
 
   private def infer(translation: BeamTranslation): Unit = {
     val outcomes = translation.writes.map { w =>
