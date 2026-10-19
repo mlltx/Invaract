@@ -1300,7 +1300,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "apache-beam[gcp]==${{ matrix.beam-python-version }}" pytest
+          python -m pip install "apache-beam[gcp,dataframe]==${{ matrix.beam-python-version }}" pytest
           python -m pip wheel --no-deps -w "$RUNNER_TEMP/wheel" beam-adapter/python
 
       - name: Record the test pipelines with this SDK
